@@ -22,6 +22,15 @@ export async function createDirectRuntimeStream(input: {
   reasoningEnabled: boolean
   images: Array<{ base64Data: string; mediaType: string; filename?: string }>
   hotlineEnabled: boolean
+  vaultContextGraphSelection?: {
+    nodeIds: string[]
+    expectedGenerationId: string
+    expansion?: {
+      depth: number
+      direction: "outgoing" | "incoming" | "both"
+      maxNodes: number
+    }
+  }
   abortSignal?: AbortSignal
 }): Promise<ReadableStream<any> | null> {
   const resolution = await trpcClient.agentRuntimeChat.prepare.mutate({
@@ -97,6 +106,9 @@ export async function createDirectRuntimeStream(input: {
           mode: input.mode,
           reasoningEffort: input.reasoningEffort,
           reasoningEnabled: input.reasoningEnabled,
+          ...(input.vaultContextGraphSelection
+            ? { vaultContextGraphSelection: input.vaultContextGraphSelection }
+            : {}),
         },
         {
           onData(event) {

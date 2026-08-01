@@ -13,18 +13,21 @@ export function revealSettingsTarget(searchTarget: string, root: ParentNode = do
   )
   if (!target) return false
 
-  target.scrollIntoView({ block: "center", behavior: "smooth" })
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
+  target.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" })
   const focusTarget = target.matches(FOCUSABLE_SETTINGS_TARGET)
     ? target
     : target.querySelector<HTMLElement>(FOCUSABLE_SETTINGS_TARGET)
   ;(focusTarget ?? target).focus({ preventScroll: true })
-  target.animate(
-    [
-      { boxShadow: "0 0 0 0 rgba(245, 158, 11, 0)" },
-      { boxShadow: "0 0 0 2px rgba(245, 158, 11, 0.65)" },
-      { boxShadow: "0 0 0 0 rgba(245, 158, 11, 0)" },
-    ],
-    { duration: 1200, easing: "ease-out" },
-  )
+  if (!reduceMotion) {
+    target.animate(
+      [
+        { boxShadow: "0 0 0 0 rgba(0, 52, 255, 0)" },
+        { boxShadow: "0 0 0 2px rgba(0, 52, 255, 0.65)" },
+        { boxShadow: "0 0 0 0 rgba(0, 52, 255, 0)" },
+      ],
+      { duration: 180, easing: "ease-out" },
+    )
+  }
   return true
 }

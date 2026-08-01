@@ -66,6 +66,13 @@ export function initDatabase() {
   return initializeDatabase()
 }
 
+/** Main-process services that require a better-sqlite3 transaction boundary. */
+export function getSqliteDatabase(): Database.Database {
+  initializeDatabase()
+  if (!sqlite) throw new Error("Database is not initialized")
+  return sqlite
+}
+
 function initializeDatabase(maintenanceLease?: string) {
   if (maintenanceOwner && maintenanceOwner !== maintenanceLease)
     throw new Error(`Database is paused for bounded maintenance: ${maintenanceOwner}.`)

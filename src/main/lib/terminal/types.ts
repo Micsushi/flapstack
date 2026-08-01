@@ -15,6 +15,7 @@ export interface TerminalSession {
   shell: string
   startTime: number
   usedFallback: boolean
+  performanceOwnershipToken?: string
 }
 
 export interface TerminalDataEvent {
@@ -53,6 +54,7 @@ export interface CreateSessionParams {
 
 export interface InternalCreateSessionParams extends CreateSessionParams {
   useFallbackShell?: boolean
+  performanceOwnershipToken?: string
 }
 
 export interface DetectedPort {

@@ -1,5 +1,14 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { ChevronLeft, HardDrive, Keyboard, Mic, Search, ShieldCheck, X } from "lucide-react"
+import {
+  ChevronLeft,
+  HardDrive,
+  Keyboard,
+  Mic,
+  Search,
+  ShieldCheck,
+  Smartphone,
+  X,
+} from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { EyeOpenFilledIcon, SlidersFilledIcon } from "../../icons"
 import {
@@ -41,6 +50,7 @@ const SETTINGS_TAB_ICONS: Partial<
   coordination: SlidersFilledIcon,
   "agent-profiles": CustomAgentIconFilled,
   "local-models": HardDrive,
+  "mobile-companion": Smartphone,
   "api-providers": BrainFilledIcon,
   voice: Mic,
   keyboard: Keyboard,

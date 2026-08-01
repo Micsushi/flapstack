@@ -1,22 +1,59 @@
 "use client"
 
-import { memo } from "react"
+import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual"
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Ref,
+  type RefObject,
+} from "react"
 import { useAtomValue } from "jotai"
-import { userMessageIdsPerChatAtom } from "../stores/message-store"
+import { messageGroupsPerChatAtom, userMessageIdsPerChatAtom } from "../stores/message-store"
 import { IsolatedMessageGroup } from "./isolated-message-group"
+import { useStreamingStatusStore } from "../stores/streaming-status-store"
 
 // ============================================================================
 // ISOLATED MESSAGES SECTION (LAYER 3)
 // ============================================================================
-// Renders ALL message groups by subscribing to userMessageIdsAtom.
-// Only re-renders when a new user message is added (new conversation turn).
-// Each group independently subscribes to its own data via IsolatedMessageGroup.
+// Retains the complete group index while mounting only a measured, overscanned
+// window against the owning Chat pane's real scroll container.
 //
 // During streaming:
 // - This component does NOT re-render (userMessageIds don't change)
 // - Individual groups don't re-render (their user msg + assistant IDs don't change)
 // - Only the AssistantMessageItem for the streaming message re-renders
 // ============================================================================
+
+export interface MessageVirtualizerHandle {
+  scrollToMessage: (
+    messageId: string,
+    options?: { align?: "start" | "center" | "end"; focus?: boolean },
+  ) => boolean
+  getMountedGroupCount: () => number
+  getTotalGroupCount: () => number
+}
+
+export function findVisibleTranscriptAnchor(
+  renderedItems: Array<{ key: string; start: number }>,
+  scrollTop: number,
+): { key: string; viewportOffset: number } | null {
+  const renderedAnchor =
+    renderedItems
+      .filter((item) => item.start <= scrollTop)
+      .sort((left, right) => right.start - left.start)[0] ?? renderedItems[0]
+  return renderedAnchor
+    ? {
+        key: renderedAnchor.key,
+        viewportOffset: renderedAnchor.start - scrollTop,
+      }
+    : null
+}
 
 interface IsolatedMessagesSectionProps {
   subChatId: string
@@ -48,6 +85,8 @@ interface IsolatedMessagesSectionProps {
     hasStickyContent?: boolean
   }>
   toolRegistry: Record<string, { icon: any; title: (args: any) => string }>
+  scrollElementRef?: RefObject<HTMLElement | null>
+  virtualizerRef?: Ref<MessageVirtualizerHandle>
 }
 
 function areSectionPropsEqual(
@@ -68,7 +107,9 @@ function areSectionPropsEqual(
     prev.UserBubbleComponent === next.UserBubbleComponent &&
     prev.ToolCallComponent === next.ToolCallComponent &&
     prev.MessageGroupWrapper === next.MessageGroupWrapper &&
-    prev.toolRegistry === next.toolRegistry
+    prev.toolRegistry === next.toolRegistry &&
+    prev.scrollElementRef === next.scrollElementRef &&
+    prev.virtualizerRef === next.virtualizerRef
   )
 }
 
@@ -87,32 +128,258 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
   ToolCallComponent,
   MessageGroupWrapper,
   toolRegistry,
+  scrollElementRef,
+  virtualizerRef,
 }: IsolatedMessagesSectionProps) {
   // Per-subchat selector - split panes render fully independently.
   const userMsgIds = useAtomValue(userMessageIdsPerChatAtom(subChatId))
+  const messageGroups = useAtomValue(messageGroupsPerChatAtom(subChatId))
+  const sectionRef = useRef<HTMLDivElement>(null)
+  const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null)
+  const [scrollMargin, setScrollMargin] = useState(0)
+  const subChatStatus = useStreamingStatusStore(
+    useCallback((state) => state.statuses[subChatId] ?? "ready", [subChatId]),
+  )
+  const isStreaming = subChatStatus === "streaming" || subChatStatus === "submitted"
+  const rangeExtractor = useCallback(
+    (range: Parameters<typeof defaultRangeExtractor>[0]) => {
+      const indexes = defaultRangeExtractor(range)
+      const tail = userMsgIds.length - 1
+      if (!isStreaming || tail < 0 || indexes.includes(tail)) return indexes
+      return [...indexes, tail]
+    },
+    [isStreaming, userMsgIds.length],
+  )
+  const virtualizer = useVirtualizer({
+    count: userMsgIds.length,
+    getScrollElement: () => scrollElementRef?.current ?? null,
+    getItemKey: (index) => userMsgIds[index] ?? index,
+    estimateSize: () => 240,
+    overscan: 6,
+    rangeExtractor,
+    scrollMargin,
+    enabled: Boolean(scrollElementRef),
+  })
+  const virtualItems = virtualizer.getVirtualItems()
+  const previousUserMsgIdsRef = useRef(userMsgIds)
+  const visibleAnchorRef = useRef<{
+    key: string
+    viewportOffset: number
+  } | null>(null)
+  const captureVisibleAnchor = useCallback(() => {
+    if (!scrollElement) return
+    const renderedItems = Array.from(
+      sectionRef.current?.querySelectorAll<HTMLElement>("[data-virtual-message-group]") ?? [],
+    )
+      .map((element) => ({
+        key: element.dataset.virtualMessageGroup,
+        start:
+          Number.parseFloat(element.style.transform.match(/-?\d+(?:\.\d+)?/)?.[0] ?? "NaN") +
+          scrollMargin,
+      }))
+      .filter(
+        (item): item is { key: string; start: number } =>
+          Boolean(item.key) && Number.isFinite(item.start),
+      )
+    visibleAnchorRef.current = findVisibleTranscriptAnchor(renderedItems, scrollElement.scrollTop)
+  }, [scrollElement, scrollMargin])
+
+  useEffect(() => {
+    const section = sectionRef.current
+    const nextScrollElement = scrollElementRef?.current ?? null
+    setScrollElement(nextScrollElement)
+    if (!section || !nextScrollElement) {
+      setScrollMargin(0)
+      return
+    }
+    const updateMargin = () => {
+      const sectionRect = section.getBoundingClientRect()
+      const scrollRect = nextScrollElement.getBoundingClientRect()
+      setScrollMargin(sectionRect.top - scrollRect.top + nextScrollElement.scrollTop)
+    }
+    updateMargin()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(updateMargin)
+    observer.observe(nextScrollElement)
+    observer.observe(section)
+    if (section.parentElement) observer.observe(section.parentElement)
+    return () => observer.disconnect()
+  }, [scrollElementRef, subChatId])
+
+  useLayoutEffect(() => {
+    if (previousUserMsgIdsRef.current !== userMsgIds) return
+    captureVisibleAnchor()
+  }, [captureVisibleAnchor, userMsgIds, virtualItems])
+
+  useLayoutEffect(() => {
+    const previousIds = previousUserMsgIdsRef.current
+    previousUserMsgIdsRef.current = userMsgIds
+    const anchor = visibleAnchorRef.current
+    if (!scrollElement || !anchor || previousIds === userMsgIds) return
+    const previousIndex = previousIds.indexOf(anchor.key)
+    const nextIndex = userMsgIds.indexOf(anchor.key)
+    if (previousIndex < 0 || nextIndex < 0 || previousIndex === nextIndex) return
+    let frame = 0
+    let frameId = 0
+    const restoreAnchor = () => {
+      const anchorElement = Array.from(
+        sectionRef.current?.querySelectorAll<HTMLElement>("[data-virtual-message-group]") ?? [],
+      ).find((element) => element.dataset.virtualMessageGroup === anchor.key)
+      const renderedStart = anchorElement
+        ? Number.parseFloat(anchorElement.style.transform.match(/-?\d+(?:\.\d+)?/)?.[0] ?? "NaN") +
+          scrollMargin
+        : Number.NaN
+      if (Number.isFinite(renderedStart)) {
+        scrollElement.scrollTo({
+          top: Math.max(0, renderedStart - anchor.viewportOffset),
+          behavior: "auto",
+        })
+      } else {
+        virtualizer.scrollToIndex(nextIndex, { align: "start", behavior: "auto" })
+      }
+      frame += 1
+      if (frame < 8) frameId = requestAnimationFrame(restoreAnchor)
+    }
+    frameId = requestAnimationFrame(restoreAnchor)
+    return () => cancelAnimationFrame(frameId)
+  }, [scrollElement, scrollMargin, userMsgIds, virtualizer])
+
+  useEffect(() => {
+    if (!scrollElement) return
+    let frameId = 0
+    let frame = 0
+    const captureSettledVisibleAnchor = () => {
+      captureVisibleAnchor()
+      frame += 1
+      if (frame < 8) frameId = requestAnimationFrame(captureSettledVisibleAnchor)
+    }
+    const handleScroll = () => {
+      cancelAnimationFrame(frameId)
+      frame = 0
+      captureSettledVisibleAnchor()
+    }
+    captureVisibleAnchor()
+    scrollElement.addEventListener("scroll", handleScroll, { passive: true })
+    return () => {
+      cancelAnimationFrame(frameId)
+      scrollElement.removeEventListener("scroll", handleScroll)
+    }
+  }, [captureVisibleAnchor, scrollElement])
+
+  const groupIndexByMessageId = useMemo(() => {
+    const indexes = new Map<string, number>()
+    messageGroups.forEach((group, index) => {
+      indexes.set(group.userMsgId, index)
+      for (const assistantMsgId of group.assistantMsgIds) indexes.set(assistantMsgId, index)
+    })
+    return indexes
+  }, [messageGroups])
+  const focusMessageAfterMount = useCallback(
+    (messageId: string) => {
+      let attempts = 0
+      let previousTarget: HTMLElement | null = null
+      let stableFrames = 0
+      const focus = () => {
+        const target = Array.from(
+          scrollElement?.querySelectorAll<HTMLElement>(
+            "[data-user-message-id], [data-assistant-message-id]",
+          ) ?? [],
+        ).find(
+          (element) =>
+            element.dataset.userMessageId === messageId ||
+            element.dataset.assistantMessageId === messageId,
+        )
+        if (target) {
+          if (!target.hasAttribute("tabindex")) target.tabIndex = -1
+          target.focus({ preventScroll: true })
+          stableFrames = target === previousTarget ? stableFrames + 1 : 1
+          previousTarget = target
+          if (stableFrames >= 8) return
+        } else {
+          previousTarget = null
+          stableFrames = 0
+        }
+        attempts += 1
+        if (attempts < 30) requestAnimationFrame(focus)
+      }
+      requestAnimationFrame(focus)
+    },
+    [scrollElement],
+  )
+  useImperativeHandle(
+    virtualizerRef,
+    () => ({
+      scrollToMessage(messageId, options) {
+        const index = groupIndexByMessageId.get(messageId)
+        if (index === undefined || !scrollElement) return false
+        const align = options?.align ?? "center"
+        const offset = virtualizer.getOffsetForIndex(index, align)?.[0]
+        if (offset === undefined) return false
+        const itemStart = virtualizer.getOffsetForIndex(index, "start")?.[0] ?? offset
+        visibleAnchorRef.current = {
+          key: userMsgIds[index]!,
+          viewportOffset: itemStart - offset,
+        }
+        virtualizer.scrollToIndex(index, { align, behavior: "auto" })
+        if (options?.focus) focusMessageAfterMount(messageId)
+        return true
+      },
+      getMountedGroupCount: () => virtualizer.getVirtualItems().length,
+      getTotalGroupCount: () => userMsgIds.length,
+    }),
+    [focusMessageAfterMount, groupIndexByMessageId, scrollElement, userMsgIds.length, virtualizer],
+  )
 
   return (
-    <>
-      {userMsgIds.map((userMsgId) => (
-        <IsolatedMessageGroup
-          key={userMsgId}
-          userMsgId={userMsgId}
-          subChatId={subChatId}
-          chatId={chatId}
-          isMobile={isMobile}
-          sandboxSetupStatus={sandboxSetupStatus}
-          stickyTopClass={stickyTopClass}
-          sandboxSetupError={sandboxSetupError}
-          onRetrySetup={onRetrySetup}
-          onRollback={onRollback}
-          onEditLatest={onEditLatest}
-          onFork={onFork}
-          UserBubbleComponent={UserBubbleComponent}
-          ToolCallComponent={ToolCallComponent}
-          MessageGroupWrapper={MessageGroupWrapper}
-          toolRegistry={toolRegistry}
-        />
-      ))}
-    </>
+    <div
+      ref={sectionRef}
+      role="feed"
+      aria-busy={isStreaming}
+      aria-label="Chat transcript"
+      data-total-message-groups={userMsgIds.length}
+      data-mounted-message-groups={virtualItems.length}
+      data-virtualization-ready={Boolean(scrollElement) || undefined}
+      className="relative w-full"
+      style={{ height: `${virtualizer.getTotalSize()}px` }}
+    >
+      {virtualItems.map((virtualItem) => {
+        const userMsgId = userMsgIds[virtualItem.index]
+        if (!userMsgId) return null
+        return (
+          <div
+            key={virtualItem.key}
+            ref={virtualizer.measureElement}
+            role="article"
+            aria-label={`Conversation turn ${virtualItem.index + 1} of ${userMsgIds.length}`}
+            aria-posinset={virtualItem.index + 1}
+            aria-setsize={userMsgIds.length}
+            data-index={virtualItem.index}
+            data-virtual-message-group={userMsgId}
+            className="absolute left-0 top-0 w-full"
+            style={{
+              transform: `translateY(${virtualItem.start - scrollMargin}px)`,
+            }}
+          >
+            <IsolatedMessageGroup
+              userMsgId={userMsgId}
+              subChatId={subChatId}
+              chatId={chatId}
+              isMobile={isMobile}
+              sandboxSetupStatus={sandboxSetupStatus}
+              stickyTopClass={stickyTopClass}
+              sandboxSetupError={sandboxSetupError}
+              onRetrySetup={onRetrySetup}
+              onRollback={onRollback}
+              onEditLatest={onEditLatest}
+              onFork={onFork}
+              UserBubbleComponent={UserBubbleComponent}
+              ToolCallComponent={ToolCallComponent}
+              MessageGroupWrapper={MessageGroupWrapper}
+              toolRegistry={toolRegistry}
+            />
+          </div>
+        )
+      })}
+    </div>
   )
 }, areSectionPropsEqual)

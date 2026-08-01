@@ -51,9 +51,18 @@ import { coordinationEnginesRouter } from "./coordination-engines"
 import { orchestrationOperationsRouter } from "./orchestration-operations"
 import { devRuntimeActivityFixturesRouter } from "./dev-runtime-activity-fixtures"
 import { agentProfilesRouter } from "./agent-profiles"
+import { agentPersonalitiesRouter, createAgentPersonalityStore } from "./agent-personalities"
+import { configureAgentPersonalityResolutionPort } from "../../agent-profiles/personality-resolution"
 import { betaFeaturesRouter } from "./beta-features"
+import { visualCaptureRouter } from "./visual-capture"
+import { mobileBridgeRouter } from "./mobile-bridge"
+import {
+  createFeatureVisibilityRouter,
+  FEATURE_VISIBILITY_CHANGED_EVENT,
+} from "./feature-visibility"
 import { createGitRouter } from "../../git"
 import { app, BrowserWindow } from "electron"
+import { join } from "node:path"
 import { isDevTestControlEnabled, isPreviewExecutable } from "../../mcp-test-control/lifecycle"
 import { isRuntimeActivityFixtureAvailable } from "../../agent-runtime/activity-fixture-settings"
 import { IS_DEV } from "../../../constants"
@@ -63,6 +72,13 @@ import { IS_DEV } from "../../../constants"
  * Uses getter pattern to avoid stale window references
  */
 export function createAppRouter(getWindow: () => BrowserWindow | null) {
+  configureAgentPersonalityResolutionPort({
+    resolve: (ref, profileScope) =>
+      createAgentPersonalityStore().resolveCombinedVisible(
+        ref,
+        profileScope.type === "project" ? profileScope : { type: "user", projectId: null },
+      ),
+  })
   const devTestControlEnabled = isDevTestControlEnabled(
     !app.isPackaged,
     app.isPackaged && isPreviewExecutable(),
@@ -122,7 +138,22 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     coordinationEngines: coordinationEnginesRouter,
     orchestrationOperations: orchestrationOperationsRouter,
     agentProfiles: agentProfilesRouter,
+    agentPersonalities: agentPersonalitiesRouter,
     betaFeatures: betaFeaturesRouter,
+    visualCapture: visualCaptureRouter,
+    mobileBridge: mobileBridgeRouter,
+    featureVisibility: createFeatureVisibilityRouter({
+      path: join(app.getPath("userData"), "data", "feature-visibility.json"),
+      freshProfilePreset:
+        process.env.FLAPSTACK_STAGE6_PERFORMANCE_PROFILE === "1" ? "standard" : undefined,
+      broadcast: (snapshot) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) {
+            window.webContents.send(FEATURE_VISIBILITY_CHANGED_EVENT, snapshot)
+          }
+        }
+      },
+    }),
     ...(devRuntimeActivityFixturesEnabled
       ? { devRuntimeActivityFixtures: devRuntimeActivityFixturesRouter }
       : {}),

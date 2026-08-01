@@ -2,7 +2,8 @@
 
 ### S6-F12-T1 — Migrate typed sections into stable seed-note identities
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F12
 - Outcome: Existing and new vaults expose the six typed sections as durable seed nodes without data or recovery loss.
 - Scope: Additive note/scan schema; stable IDs; reserved frontmatter; section-to-note mapping; migration journal; backups; rollback; restart and worktree invariants.
@@ -15,7 +16,8 @@
 
 ### S6-F12-T2 — Enforce Obsidian-open and Git-safe vault location behavior
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F12
 - Outcome: Central and project-owned vaults open in Obsidian without making project memory commit-eligible by default.
 - Scope: Encoded absolute-path Obsidian URI; availability/fallback UX; preserve/ignore `.obsidian`; project-owned local Git common-dir exclusion; `git check-ignore`; tracking opt-in/removal; worktrees; diagnostics.
@@ -28,7 +30,9 @@
 
 ### S6-F12-T3 — Parse and resolve the supported Obsidian Markdown subset
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:real-obsidian-created-content`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:real-obsidian-created-content` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F12
 - Outcome: Markdown produces deterministic portable note metadata and link candidates without destructive rewriting.
 - Scope: Byte-preserving frontmatter; reserved IDs/types; aliases/tags; Wikilinks; headings; block IDs; embeds; relative Markdown links; Unicode/case/path normalization; unresolved/ambiguous diagnostics; secret-safe metadata.
@@ -41,7 +45,8 @@
 
 ### S6-F12-T4 — Build the rebuildable graph index and external-change watcher
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F12
 - Outcome: Nodes, edges, backlinks, search, and change state stay coherent across Flapstack and Obsidian edits.
 - Scope: Node/edge/attachment tables; immutable scan generations; full/incremental rescan; debounced watcher; create/edit/move/rename/delete; crash recovery; invalidation; unresolved links; index rebuild.
@@ -54,7 +59,9 @@
 
 ### S6-F12-T5 — Add custom-note, folder, attachment, and conflict workflows
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:real-obsidian-crud-roundtrip`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:real-obsidian-crud-roundtrip` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F12
 - Outcome: Users manage an extensible Obsidian-compatible note tree while seed notes retain typed behavior.
 - Scope: Create/open/edit/move/rename/delete custom notes/folders; safe attachments/embeds; tree/search; frontmatter properties; broken links; external indicators; exact diff/conflict/adopt/restore; multi-window drafts.
@@ -67,7 +74,9 @@
 
 ### S6-F12-T6 — Add accessible backlinks, local graph, and whole-vault graph
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:native-assistive-technology`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:native-assistive-technology` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F12
 - Outcome: Users inspect and navigate project knowledge relationships visually or through an equivalent list.
 - Scope: Backlinks/outlinks; local/full graph; node focus/open; filters by seed/type/tag/folder/link state; search; progressive layout; graph adapter; selected-node details; keyboard/touch/reader/reduced-motion/list fallback; multi-window state.
@@ -80,7 +89,8 @@
 
 ### S6-F12-T7 — Extend explicit run context and approved agent note operations
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F12
 - Outcome: Custom nodes help agents without turning links into hidden memory or arbitrary filesystem access.
 - Scope: Exact node selection at project/task/run; optional previewed depth/direction/budget expansion; provenance manifests; truncation/rejection; bounded MCP list/read/create/update/move helpers; approval/audit/invalidation; seed helpers.
@@ -93,7 +103,8 @@
 
 ### S6-F12-T8 — Extend portability, recovery, and security to graph vaults
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F12
 - Outcome: Interoperable vaults survive export/import, root remapping, corruption, and recovery without trusting derived indexes or unsafe Obsidian state.
 - Scope: Versioned graph bundle; notes/folders/safe attachments/frontmatter/backups; `.obsidian` exclusion; dry-run mapping/conflicts; derived-index rebuild; interrupted operations; rollback; orphan/broken link report; threat model and diagnostics.
@@ -106,13 +117,17 @@
 
 ### S6-F12-T9 — Close Obsidian and knowledge-graph acceptance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:real-obsidian-interoperability`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:real-obsidian-interoperability` remains uncertified.
+- [ ] Release evidence: `release-gate` remains uncertified for native-distribution-knowledge-graph.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F12
 - Outcome: One exact SHA proves the same project vault in Flapstack and real Obsidian with truthful Git, graph, context, recovery, accessibility, performance, and package behavior.
 - Scope: Matrix S6-KG; fresh/Stage 4 upgrade; central/project-owned; real Obsidian create/edit/link/rename/attachment/conflict; graph/list; agent context; export/import; Git status; restart; scale; docs/help; native packages.
 - Out of scope: Unsupported Obsidian plugins, hosted sync, automatic release or repository commits.
 - Acceptance: All S6-KG rows pass; no knowledge file is commit-eligible by default; no P0/P1 or acceptance blocker; supported syntax/limits and unsupported behavior are documented.
 - Verification: Node 22 `npm run check`; strict OpenSpec; `npm run dev` plus `npm run dev:verify`; S6-F9 budgets; real Obsidian and package walkthroughs on promoted platforms; exact-SHA evidence crosswalk.
-- Blocked by: S6-F12-T5, S6-F12-T6, S6-F12-T7, S6-F12-T8, S6-F9-T8, S6-F10-T8
+- Blocked by for T2-core: the `T2-core` scopes of S6-F12-T5, S6-F12-T6, S6-F12-T7, S6-F12-T8, and S6-F9-T8.
+- Release certification remains blocked by: S6-F10-T8.
 - Blocks: S6-F11-T1
 - Context: `docs/stage6-full-feature-test-matrix.md`, `docs/stage6-execution-plan.md`, project knowledge docs, root `ui-design.md`.

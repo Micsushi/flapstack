@@ -66,6 +66,36 @@ describe("attachment write path safety", () => {
     expect(readFileSync(join(root, "nested/file.txt"), "utf8")).toBe("second")
   })
 
+  it("never removes an adjacent or replacement inode during failed post-write cleanup", async () => {
+    const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
+    roots.push(root)
+    const target = join(root, "created.txt")
+    const movedCreated = join(root, "moved-created.txt")
+    const adjacent = join(root, "adjacent.txt")
+    writeFileSync(adjacent, "adjacent sentinel")
+
+    await expect(
+      writeFileInsideRoot(
+        root,
+        "created.txt",
+        { data: "owned payload" },
+        {
+          afterCommit: () => {
+            throw new Error("forced database failure")
+          },
+          beforeFailureCleanup: () => {
+            renameSync(target, movedCreated)
+            writeFileSync(target, "replacement sentinel")
+          },
+        },
+      ),
+    ).rejects.toThrow("forced database failure")
+
+    expect(readFileSync(adjacent, "utf8")).toBe("adjacent sentinel")
+    expect(readFileSync(target, "utf8")).toBe("replacement sentinel")
+    expect(readFileSync(movedCreated, "utf8")).toBe("owned payload")
+  })
+
   it("aborts when the verified parent is swapped before commit", async () => {
     const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
     const outside = mkdtempSync(join(tmpdir(), "flapstack-safe-outside-"))

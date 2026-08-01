@@ -1,3 +1,9 @@
+import {
+  parseStage6ElectronMeasurementControl,
+  type Stage6ElectronMeasurementAction,
+  type Stage6ElectronMeasurementOperation,
+} from "./stage6-electron-performance-control"
+
 export const DEV_RENDERER_CONTROL_REQUEST_CHANNEL = "dev-renderer-control:request"
 export const DEV_RENDERER_CONTROL_RESPONSE_CHANNEL = "dev-renderer-control:response"
 export const DEV_MCP_SETTINGS_INVALIDATION_CHANNEL = "dev-mcp:settings-changed"
@@ -50,6 +56,8 @@ export type DevRendererControlCommand =
       chatId: string
       subChatId: string
       project: { id: string; name: string; path: string }
+      persistedMessages: unknown[]
+      prepareStage6PerformanceProfile?: true
       showOrchestration?: boolean
     }
   | {
@@ -142,6 +150,12 @@ export type DevRendererControlCommand =
       runId?: string
       index?: number
     }
+  | {
+      command: "performance.measure"
+      budgetId: string
+      action: Stage6ElectronMeasurementAction
+      operation: Stage6ElectronMeasurementOperation
+    }
 
 export type DevRendererControlRequest = DevRendererControlCommand & { requestId: string }
 
@@ -178,6 +192,7 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       "mcp.get",
       "mcp.control",
       "orchestration.get",
+      "performance.measure",
     ].includes(String(value.command))
   ) {
     return null
@@ -259,6 +274,8 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       typeof value.subChatId !== "string" ||
       value.subChatId.length < 1 ||
       value.subChatId.length > 200 ||
+      !Array.isArray(value.persistedMessages) ||
+      value.persistedMessages.length > 200 ||
       !value.project ||
       typeof value.project !== "object"
     ) {
@@ -276,6 +293,12 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       return null
     }
     if (value.showOrchestration !== undefined && typeof value.showOrchestration !== "boolean") {
+      return null
+    }
+    if (
+      value.prepareStage6PerformanceProfile !== undefined &&
+      value.prepareStage6PerformanceProfile !== true
+    ) {
       return null
     }
   }
@@ -478,6 +501,22 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       !["toggle", "open-review", "show-all", "undo"].includes(String(value.operation))
     ) {
       return null
+    }
+  }
+  if (value.command === "performance.measure") {
+    if (
+      Object.keys(value).some(
+        (key) => !["requestId", "command", "budgetId", "action", "operation"].includes(key),
+      )
+    ) {
+      return null
+    }
+    const measurement = parseStage6ElectronMeasurementControl(value)
+    if (!measurement) return null
+    return {
+      requestId: value.requestId,
+      command: "performance.measure",
+      ...measurement,
     }
   }
   return value as DevRendererControlRequest

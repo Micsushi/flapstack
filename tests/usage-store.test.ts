@@ -406,6 +406,59 @@ describe("usage SQLite integration", () => {
     expect(JSON.stringify(await listProviderStates(db))).not.toContain("provider-secret-value")
   })
 
+  it("records an Admin failure without dropping personal samples or disabling the provider", async () => {
+    const settings = normalizeUsageSettings({})
+    settings.providers.codex.enabled = true
+    const engine = new UsageEngine("daemon", {
+      db,
+      getSecret: async () => "revoked-admin-key",
+      loadSettings: () => settings,
+      loadProviders: () => [
+        testProvider("codex", async (source, ctx) => {
+          ctx.reportSourceFailure?.({
+            source: "admin",
+            accountTag: "openai-org:org-test",
+            status: "auth-failed",
+            detail: "Provider rejected the configured credential",
+          })
+          return [
+            sample({
+              providerId: "codex",
+              accountTag: "personal-account",
+              source,
+              sourceTag: "personal-oauth",
+              percentUsed: 25,
+              dedupeKey: "personal-after-admin-revoke",
+            }),
+          ]
+        }),
+      ],
+    })
+
+    await expect(engine.runOnce()).resolves.toMatchObject([
+      {
+        providerId: "codex",
+        status: "auth-failed",
+        inserted: 1,
+        error: "Provider rejected the configured credential",
+      },
+    ])
+    expect(settings.providers.codex.enabled).toBe(true)
+    expect(await listRecentSamples(db, { providerId: "codex" })).toEqual([
+      expect.objectContaining({ accountTag: "personal-account", sourceTag: "personal-oauth" }),
+    ])
+    expect(await listProviderStates(db)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerId: "codex",
+          accountTag: "openai-org:org-test",
+          status: "auth-failed",
+          configured: false,
+        }),
+      ]),
+    )
+  })
+
   it("persists OpenCode token usage even when model pricing is unknown", async () => {
     sqlite!.prepare("INSERT INTO agent_runs (id) VALUES (?)").run("run-unknown-price")
     await captureOpenCodeRunUsage(db, {
@@ -1048,7 +1101,10 @@ function cursorSample(percentUsed: number, capturedAt: Date): UsageSampleInput {
 
 function testProvider(
   id: "codex" | "anthropic",
-  poll: (source: UsageSampleInput["source"]) => Promise<UsageSampleInput[]>,
+  poll: (
+    source: UsageSampleInput["source"],
+    ctx: Parameters<UsageProvider["pollLatest"]>[0],
+  ) => Promise<UsageSampleInput[]>,
 ): UsageProvider {
   return {
     id,
@@ -1062,8 +1118,8 @@ function testProvider(
       supportsDaemon: true,
       supportsHistorical: true,
     }),
-    pollLatest: async (ctx) => poll(ctx.source),
-    reconcileSince: async (ctx) => poll(ctx.source),
+    pollLatest: async (ctx) => poll(ctx.source, ctx),
+    reconcileSince: async (ctx) => poll(ctx.source, ctx),
     supportsDaemon: () => true,
     supportsHistorical: () => true,
   }

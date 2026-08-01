@@ -7,6 +7,12 @@ import { z } from "zod"
 import * as appDatabaseSchema from "../db/schema"
 import { bindFilesystemRootIdentity } from "../git/security/path-validation"
 import {
+  assertProjectVaultGitTrackingTransitionSupported,
+  ensureProjectVaultGitExclusion,
+  removeProjectVaultGitExclusion,
+  restoreProjectVaultGitExclusionForImportTransaction,
+} from "../project-vaults/git-exclusion"
+import {
   PORTABLE_BUNDLE_LAYOUT,
   PORTABLE_SCOPE_IDS,
   PORTABILITY_LIMITS,
@@ -40,8 +46,10 @@ import {
   snapshotRegularFileNoFollow,
   stableJson,
   type RegularFileSnapshot,
+  writeJsonRecoveryAtomic,
   writeJsonAtomic,
 } from "./io"
+import { ProjectVaultGraphIndex } from "../project-vaults/graph-index"
 import { portableScopeRegistry } from "./scope-registry"
 import { redactText, sanitizeStructuredValue } from "./secrets"
 
@@ -133,6 +141,7 @@ export type PortableConflictResolution = "keep-local" | "use-incoming" | "keep-b
 
 export type ImportApplyHooks = {
   faultAt?:
+    | "after-git-exclusion"
     | "after-backup"
     | "after-files"
     | "before-database-commit"
@@ -143,6 +152,9 @@ export type ImportApplyHooks = {
   beforeDatabaseRestore?: () => void | Promise<void>
   afterDatabaseRestore?: () => void | Promise<void>
   afterRevalidation?: () => void | Promise<void>
+  afterGitExclusionMutation?: () => void
+  afterFilePublish?: () => void
+  afterDatabaseCommittedJournal?: () => void
   beforeFileRollback?: () => void | Promise<void>
   beforeReviewedLeafRead?: () => void | Promise<void>
 }
@@ -169,7 +181,22 @@ type ImportJournal = {
     existed: boolean
     targetBinding: PortableTargetBinding
   }>
+  projectVaultGitExclusionRoots: string[]
+  projectVaultGitTrackingRoots: string[]
+  projectVaultGitRestoreActions: ProjectVaultGitRestoreAction[]
   conflictArtifactPath: string
+}
+
+type ProjectVaultGitRestoreAction = {
+  projectRoot: string
+  action: "ensure" | "remove"
+}
+
+type ProjectVaultGitImportPlan = {
+  safetyRoots: string[]
+  preflightEnsureRoots: string[]
+  finalizeTrackingRoots: string[]
+  restoreActions: ProjectVaultGitRestoreAction[]
 }
 
 type BackupSourceBinding = Pick<RegularFileSnapshot, "sha256" | "bytes" | "deviceId" | "inodeId">
@@ -323,6 +350,18 @@ const importJournalSchema = z
         })
         .strict(),
     ),
+    projectVaultGitExclusionRoots: z.array(z.string().min(1)).default([]),
+    projectVaultGitTrackingRoots: z.array(z.string().min(1)).default([]),
+    projectVaultGitRestoreActions: z
+      .array(
+        z
+          .object({
+            projectRoot: z.string().min(1),
+            action: z.enum(["ensure", "remove"]),
+          })
+          .strict(),
+      )
+      .default([]),
     conflictArtifactPath: z.string().min(1),
   })
   .strict()
@@ -577,38 +616,66 @@ async function applyPortableImportInsideLifecycle(input: {
     (entry) => entry.kind === "conflict" && !input.resolutions?.[entry.id],
   )
   if (unresolved.length > 0) throw new Error("Resolve every import conflict before apply.")
+  const projectVaultGitPlan = resolveProjectVaultGitImportPlan(
+    plan,
+    input.databasePath,
+    input.resolutions,
+  )
 
   const operationId = randomUUID()
   const operationRoot = join(input.stateRoot, "operations", operationId)
   const databaseBackupPath = join(operationRoot, "backup", "agents.db")
   const conflictArtifactPath = join(operationRoot, "conflicts.json")
-  await mkdir(dirname(databaseBackupPath), { recursive: true, mode: 0o700 })
-  const source = new Database(input.databasePath, { readonly: true, fileMustExist: true })
+  let journal: ImportJournal | null = null
   try {
-    await source.backup(databaseBackupPath)
-  } finally {
-    source.close()
+    await mkdir(dirname(databaseBackupPath), { recursive: true, mode: 0o700 })
+    const source = new Database(input.databasePath, { readonly: true, fileMustExist: true })
+    try {
+      await source.backup(databaseBackupPath)
+    } finally {
+      source.close()
+    }
+    const databaseBackupBinding = await snapshotBackupSource(databaseBackupPath)
+    journal = {
+      schemaVersion: 2,
+      operationId,
+      planId: plan.id,
+      phase: "backup-created",
+      databasePath: input.databasePath,
+      databaseBackupPath,
+      databaseBackupBinding,
+      fileBackups: [],
+      projectVaultGitExclusionRoots: projectVaultGitPlan.safetyRoots,
+      projectVaultGitTrackingRoots: projectVaultGitPlan.finalizeTrackingRoots,
+      projectVaultGitRestoreActions: projectVaultGitPlan.restoreActions,
+      conflictArtifactPath,
+    }
+    await writeJournal(input.stateRoot, journal)
+    ensureProjectVaultGitExclusions(projectVaultGitPlan.preflightEnsureRoots)
+    input.hooks?.afterGitExclusionMutation?.()
+    fault(input.hooks, "after-git-exclusion")
+  } catch (error) {
+    if (journal) {
+      try {
+        await rollbackJournal(journal, input.databasePath, input.hooks)
+        journal.phase = "rolled-back"
+        await writeJournal(input.stateRoot, journal)
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "Import Git exclusion preflight failed and its rollback also failed.",
+        )
+      }
+    }
+    throw error
   }
-  const databaseBackupBinding = await snapshotBackupSource(databaseBackupPath)
-  const journal: ImportJournal = {
-    schemaVersion: 2,
-    operationId,
-    planId: plan.id,
-    phase: "backup-created",
-    databasePath: input.databasePath,
-    databaseBackupPath,
-    databaseBackupBinding,
-    fileBackups: [],
-    conflictArtifactPath,
-  }
-  await writeJournal(input.stateRoot, journal)
-  fault(input.hooks, "after-backup")
-
+  if (!journal) throw new Error("Import recovery journal was not created.")
   let applied = 0
   let skipped = 0
   let preservedConflicts = 0
   const conflictArtifacts: unknown[] = []
   try {
+    fault(input.hooks, "after-backup")
     journal.phase = "files-publishing"
     await writeJournal(input.stateRoot, journal)
     for (const file of plan.files) {
@@ -672,6 +739,7 @@ async function applyPortableImportInsideLifecycle(input: {
         targetPath,
         file.targetBinding,
       )
+      input.hooks?.afterFilePublish?.()
       applied += 1
     }
     journal.phase = "files-published"
@@ -723,9 +791,12 @@ async function applyPortableImportInsideLifecycle(input: {
     } finally {
       database.close()
     }
+    await rebuildImportedProjectVaultGraphs(input.databasePath, importedProjectVaultIds(plan))
     journal.phase = "database-committed"
     await writeJournal(input.stateRoot, journal)
+    input.hooks?.afterDatabaseCommittedJournal?.()
     fault(input.hooks, "after-database-commit")
+    removeProjectVaultGitExclusions(journal.projectVaultGitTrackingRoots)
     if (conflictArtifacts.length > 0) await writeJsonAtomic(conflictArtifactPath, conflictArtifacts)
     await recordFileBases(input.stateRoot, plan.files, input.resolutions)
     journal.phase = "complete"
@@ -744,6 +815,49 @@ async function applyPortableImportInsideLifecycle(input: {
     await writeJournal(input.stateRoot, journal)
     throw error
   }
+}
+
+async function rebuildImportedProjectVaultGraphs(
+  databasePath: string,
+  projectIds: readonly string[],
+): Promise<void> {
+  if (projectIds.length === 0) return
+  const database = new Database(databasePath)
+  try {
+    database.pragma("foreign_keys = ON")
+    const requiredTables = [
+      "filesystem_root_registrations",
+      "project_vault_sections",
+      "project_vault_graph_edges",
+      "project_vault_graph_generations",
+      "project_vault_graph_nodes",
+      "project_vault_graph_state",
+    ] as const
+    if (requiredTables.some((tableName) => !tableExists(database, tableName))) return
+    for (const projectId of projectIds) {
+      if (database.prepare("SELECT 1 FROM project_vaults WHERE project_id = ?").get(projectId)) {
+        await new ProjectVaultGraphIndex(database).rebuild(projectId, {
+          migrateSeedIdentities: false,
+        })
+      }
+    }
+  } finally {
+    database.close()
+  }
+}
+
+function importedProjectVaultIds(plan: PortableImportPlan): string[] {
+  const ids = new Set(
+    plan.manifest.scopes
+      .filter((scope) => scope.id === "project-vaults")
+      .flatMap((scope) => scope.projectIds ?? []),
+  )
+  for (const diff of plan.database) {
+    if (diff.scopeId !== "project-vaults") continue
+    const projectId = diff.incoming.project_id ?? diff.identity.project_id
+    if (typeof projectId === "string" && projectId) ids.add(projectId)
+  }
+  return [...ids].sort((left, right) => left.localeCompare(right, "en-US"))
 }
 
 function bindImportedProjectVaultRoots(
@@ -1219,6 +1333,147 @@ function recordDatabaseBase(database: Database.Database, diff: PortableDatabaseD
     )
 }
 
+function resolveProjectVaultGitImportPlan(
+  plan: PortableImportPlan,
+  databasePath: string,
+  resolutions: Readonly<Record<string, PortableConflictResolution>> | undefined,
+): ProjectVaultGitImportPlan {
+  const safetyRoots = new Set<string>()
+  const preflightEnsureRoots = new Set<string>()
+  const finalizeTrackingRoots = new Set<string>()
+  const restoreActions = new Map<string, ProjectVaultGitRestoreAction["action"]>()
+  const database = new Database(databasePath, { readonly: true, fileMustExist: true })
+  try {
+    for (const [projectId, vaultRootInput] of Object.entries(
+      plan.targetRoots.projectVaults ?? {},
+    )) {
+      const vaultRoot = resolve(vaultRootInput)
+      const writesVault = plan.files.some((file) => {
+        const resolution = resolutions?.[file.id]
+        return (
+          file.scopeId === "project-vaults" &&
+          file.targetPath !== null &&
+          isPathInside(vaultRoot, resolve(file.targetPath)) &&
+          file.kind !== "skip" &&
+          resolution !== "keep-local" &&
+          resolution !== "keep-both"
+        )
+      })
+      if (!writesVault) continue
+
+      const projectRootInput =
+        plan.targetRoots.projects?.[projectId] ??
+        (
+          database.prepare("SELECT path FROM projects WHERE id = ?").get(projectId) as
+            { path: string } | undefined
+        )?.path
+      if (!projectRootInput) {
+        throw new Error(`Project-owned vault import ${projectId} is missing its project root.`)
+      }
+      const projectRoot = resolve(projectRootInput)
+      if (vaultRoot !== resolve(projectRoot, ".flapstack", "knowledge")) continue
+      safetyRoots.add(projectRoot)
+      const importTrackingEnabled = effectiveProjectVaultGitTrackingEnabled(
+        database,
+        plan,
+        projectId,
+        resolutions,
+      )
+      if (importTrackingEnabled) finalizeTrackingRoots.add(projectRoot)
+      else preflightEnsureRoots.add(projectRoot)
+
+      const restoreAction = currentProjectVaultGitRestoreAction(database, projectId)
+      if (
+        (importTrackingEnabled && restoreAction === "ensure") ||
+        (!importTrackingEnabled && restoreAction === "remove")
+      ) {
+        assertProjectVaultGitTrackingTransitionSupported(projectRoot)
+      }
+      const existingAction = restoreActions.get(projectRoot)
+      if (existingAction && existingAction !== restoreAction) {
+        throw new Error("Project vault mappings require conflicting Git exclusion rollback states.")
+      }
+      restoreActions.set(projectRoot, restoreAction)
+    }
+  } finally {
+    database.close()
+  }
+  return {
+    safetyRoots: [...safetyRoots].sort(),
+    preflightEnsureRoots: [...preflightEnsureRoots].sort(),
+    finalizeTrackingRoots: [...finalizeTrackingRoots].sort(),
+    restoreActions: [...restoreActions]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([projectRoot, action]) => ({ projectRoot, action })),
+  }
+}
+
+function effectiveProjectVaultGitTrackingEnabled(
+  database: Database.Database,
+  plan: PortableImportPlan,
+  projectId: string,
+  resolutions: Readonly<Record<string, PortableConflictResolution>> | undefined,
+): boolean {
+  const incomingPolicy = plan.database.find(
+    (diff) =>
+      diff.scopeId === "project-vaults" &&
+      diff.tableName === "project_vault_policies" &&
+      String(diff.identity.project_id ?? "") === projectId,
+  )
+  if (incomingPolicy) {
+    const resolution = resolutions?.[incomingPolicy.id]
+    const usesIncoming =
+      incomingPolicy.kind !== "skip" && resolution !== "keep-local" && resolution !== "keep-both"
+    if (usesIncoming) {
+      const row = decodePortableRow(incomingPolicy.incoming)
+      return row.git_tracking_enabled === true || row.git_tracking_enabled === 1
+    }
+  }
+  if (!tableExists(database, "project_vault_policies")) return false
+  const current = database
+    .prepare("SELECT git_tracking_enabled FROM project_vault_policies WHERE project_id = ?")
+    .get(projectId) as { git_tracking_enabled: number } | undefined
+  return current?.git_tracking_enabled === 1
+}
+
+function currentProjectVaultGitRestoreAction(
+  database: Database.Database,
+  projectId: string,
+): ProjectVaultGitRestoreAction["action"] {
+  if (!tableExists(database, "project_vault_policies")) return "remove"
+  const current = database
+    .prepare(
+      "SELECT location_mode, git_tracking_enabled FROM project_vault_policies WHERE project_id = ?",
+    )
+    .get(projectId) as
+    { location_mode: "app-managed" | "project-owned"; git_tracking_enabled: number } | undefined
+  return current?.location_mode === "project-owned" && current.git_tracking_enabled !== 1
+    ? "ensure"
+    : "remove"
+}
+
+function ensureProjectVaultGitExclusions(projectRoots: readonly string[]): void {
+  for (const projectRoot of projectRoots) ensureProjectVaultGitExclusion(projectRoot)
+}
+
+function removeProjectVaultGitExclusions(projectRoots: readonly string[]): void {
+  for (const projectRoot of projectRoots) removeProjectVaultGitExclusion(projectRoot)
+}
+
+function restoreProjectVaultGitExclusions(
+  operationId: string,
+  actions: readonly ProjectVaultGitRestoreAction[],
+): void {
+  for (const { projectRoot, action } of [...actions].reverse()) {
+    restoreProjectVaultGitExclusionForImportTransaction(operationId, projectRoot, action)
+  }
+}
+
+function isPathInside(root: string, target: string): boolean {
+  const child = relative(root, target)
+  return child === "" || (child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child))
+}
+
 async function rollbackJournal(
   journal: ImportJournal,
   expectedDatabasePath: string,
@@ -1227,6 +1482,7 @@ async function rollbackJournal(
   if (resolve(journal.databasePath) !== resolve(expectedDatabasePath))
     throw new Error("Import journal database target does not match the active profile database.")
   await hooks?.beforeFileRollback?.()
+  ensureProjectVaultGitExclusions(journal.projectVaultGitExclusionRoots)
   const restoresDatabase =
     journal.phase === "database-applying" ||
     journal.phase === "database-committed" ||
@@ -1268,6 +1524,7 @@ async function rollbackJournal(
       await hooks?.afterDatabaseRestore?.()
     }
   }
+  restoreProjectVaultGitExclusions(journal.operationId, journal.projectVaultGitRestoreActions)
 }
 
 function targetRootFor(
@@ -1729,7 +1986,7 @@ function journalPath(stateRoot: string, operationId: string): string {
 }
 
 async function writeJournal(stateRoot: string, journal: ImportJournal): Promise<void> {
-  await writeJsonAtomic(journalPath(stateRoot, journal.operationId), journal)
+  await writeJsonRecoveryAtomic(journalPath(stateRoot, journal.operationId), journal)
 }
 
 function assertUuid(value: string): void {

@@ -160,6 +160,73 @@ export async function writeJsonAtomic(path: string, value: unknown): Promise<voi
   await rename(temporary, path)
 }
 
+export type JsonAtomicPersistenceGuarantee = "process-crash" | "power-loss"
+
+export type JsonAtomicPersistenceCapability = {
+  processCrashSafe: true
+  powerLossSafe: boolean
+  powerLossLimitation: string | null
+}
+
+export function getJsonAtomicPersistenceCapability(): JsonAtomicPersistenceCapability {
+  if (process.platform === "win32") {
+    return {
+      processCrashSafe: true,
+      powerLossSafe: false,
+      powerLossLimitation:
+        "Node cannot flush a Windows directory entry after atomic rename; power-loss durability is unavailable.",
+    }
+  }
+  return { processCrashSafe: true, powerLossSafe: true, powerLossLimitation: null }
+}
+
+export async function writeJsonRecoveryAtomic(
+  path: string,
+  value: unknown,
+  requiredGuarantee: JsonAtomicPersistenceGuarantee = "process-crash",
+): Promise<void> {
+  const capability = getJsonAtomicPersistenceCapability()
+  if (requiredGuarantee === "power-loss" && !capability.powerLossSafe) {
+    throw new Error(capability.powerLossLimitation ?? "Power-loss durability is unavailable.")
+  }
+  const directory = dirname(path)
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const temporary = `${path}.tmp-${randomUUID()}`
+  let temporaryHandle: Awaited<ReturnType<typeof open>> | null = null
+  try {
+    temporaryHandle = await open(temporary, "wx", 0o600)
+    await temporaryHandle.writeFile(stableJson(value))
+    await temporaryHandle.sync()
+    await temporaryHandle.close()
+    temporaryHandle = null
+
+    await rename(temporary, path)
+    await syncRegularFile(path)
+    if (capability.powerLossSafe) await syncContainingDirectory(directory)
+  } finally {
+    await temporaryHandle?.close()
+    await rm(temporary, { force: true })
+  }
+}
+
+async function syncRegularFile(path: string): Promise<void> {
+  const handle = await open(path, "r+")
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+async function syncContainingDirectory(path: string): Promise<void> {
+  const handle = await open(path, "r")
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
 export async function readJsonFile<T>(
   path: string,
   maxBytes = 16_000_000,

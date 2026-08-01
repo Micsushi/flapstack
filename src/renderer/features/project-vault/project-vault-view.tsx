@@ -11,6 +11,7 @@ import {
   Clock3,
   Edit3,
   FileText,
+  FolderTree,
   Loader2,
   RefreshCw,
   RotateCcw,
@@ -69,6 +70,8 @@ import {
   VaultContextPicker,
   type SectionId,
 } from "./project-vault-navigation"
+import { ProjectVaultGraphPanel } from "./project-vault-graph-panel"
+import { ProjectVaultCustomNotesPanel } from "./project-vault-custom-notes-panel"
 
 const projectVaultEditorCacheAtom = atom<VaultEditorCache>({})
 
@@ -110,6 +113,8 @@ export function ProjectVaultView() {
       return { ...current, [projectId]: next }
     })
   const [showHistory, setShowHistory] = useState(false)
+  const [showGraph, setShowGraph] = useState(false)
+  const [showCustomNotes, setShowCustomNotes] = useState(false)
   const [selectedBackupId, setSelectedBackupId] = useState<string | null>(null)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [setupSections, setSetupSections] = useState<SectionId[]>(["index", "handoff"])
@@ -611,7 +616,11 @@ export function ProjectVaultView() {
               loading={searchQueryResult.isFetching}
               error={searchQueryResult.error?.message}
               onSelect={(sectionId) => {
-                if (isSectionId(sectionId)) setSelectedSectionId(sectionId)
+                if (isSectionId(sectionId)) {
+                  setSelectedSectionId(sectionId)
+                  setShowGraph(false)
+                  setShowCustomNotes(false)
+                }
               }}
               onExit={() => searchInputRef.current?.focus()}
             />
@@ -621,7 +630,11 @@ export function ProjectVaultView() {
               sections={sections}
               selected={selectedSectionId}
               editors={editors}
-              onSelect={setSelectedSectionId}
+              onSelect={(sectionId) => {
+                setSelectedSectionId(sectionId)
+                setShowGraph(false)
+                setShowCustomNotes(false)
+              }}
             />
           )}
           <div className="border-t px-3 py-2 text-[10px] text-muted-foreground">
@@ -646,6 +659,30 @@ export function ProjectVaultView() {
           />
           <div className="mt-auto border-t p-2">
             <Button
+              variant={showGraph ? "secondary" : "ghost"}
+              size="sm"
+              className="w-full justify-start"
+              aria-pressed={showGraph}
+              onClick={() => {
+                setShowGraph((value) => !value)
+                setShowCustomNotes(false)
+              }}
+            >
+              <BookOpen className="mr-2 h-4 w-4" /> Knowledge graph
+            </Button>
+            <Button
+              variant={showCustomNotes ? "secondary" : "ghost"}
+              size="sm"
+              className="w-full justify-start"
+              aria-pressed={showCustomNotes}
+              onClick={() => {
+                setShowCustomNotes((value) => !value)
+                setShowGraph(false)
+              }}
+            >
+              <FolderTree className="mr-2 h-4 w-4" /> Custom notes
+            </Button>
+            <Button
               variant={showHistory ? "secondary" : "ghost"}
               size="sm"
               className="w-full justify-start"
@@ -657,7 +694,11 @@ export function ProjectVaultView() {
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col">
-          {selectedSectionId && readQuery.error ? (
+          {showCustomNotes ? (
+            <ProjectVaultCustomNotesPanel projectId={projectId} />
+          ) : showGraph ? (
+            <ProjectVaultGraphPanel projectId={projectId} />
+          ) : selectedSectionId && readQuery.error ? (
             <ErrorState
               title="Section cannot be opened"
               message={readQuery.error.message}

@@ -16,11 +16,25 @@ import {
   readProjectVaultSection,
   writeProjectVaultSection,
 } from "../project-vaults/storage"
+import {
+  ProjectVaultCustomNotes,
+  ProjectVaultNoteConflictError,
+} from "../project-vaults/custom-notes"
+import { currentProjectVaultGraph, ProjectVaultGraphIndex } from "../project-vaults/graph-index"
+import {
+  buildProjectVaultGraphContext,
+  type ProjectVaultGraphExpansionDirection,
+} from "../project-vaults/graph-context"
 import type { McpCallerIdentity, McpControlErrorCode, McpControlResponse } from "./types"
 
 const id = z.string().trim().min(1).max(128)
 const sectionId = z.enum(projectVaultSectionIds)
 const content = z.string().max(200_000)
+const nodeContent = z.string().max(1_048_576)
+const generationId = z.string().uuid()
+const nodeId = z.string().trim().min(1).max(200)
+const hash = z.string().regex(/^[0-9a-f]{64}$/)
+const relativePath = z.string().trim().min(1).max(1_000)
 const exactTitle = z
   .string()
   .trim()
@@ -63,6 +77,68 @@ const schemas = {
       title: exactTitle,
       decision: z.string().trim().min(1).max(20_000),
       rationale: z.string().trim().min(1).max(20_000).optional(),
+    })
+    .strict(),
+  list_vault_nodes: z.object({ projectId: id, expectedGenerationId: generationId }).strict(),
+  read_vault_node: z.object({ projectId: id, nodeId, expectedGenerationId: generationId }).strict(),
+  create_vault_node: z
+    .object({
+      projectId: id,
+      relativePath,
+      title: z.string().trim().min(1).max(200),
+      body: z.string().max(1_048_576).optional(),
+    })
+    .strict(),
+  update_vault_node: z
+    .object({
+      projectId: id,
+      nodeId,
+      expectedGenerationId: generationId,
+      expectedVersion: z.number().int().positive(),
+      expectedHash: hash,
+      content: nodeContent,
+    })
+    .strict(),
+  move_vault_node: z
+    .object({
+      projectId: id,
+      nodeId,
+      expectedGenerationId: generationId,
+      destinationPath: relativePath,
+      expectedVersion: z.number().int().positive(),
+      expectedHash: hash,
+    })
+    .strict(),
+  link_vault_nodes: z
+    .object({
+      projectId: id,
+      sourceNodeId: nodeId,
+      targetNodeId: nodeId,
+      expectedGenerationId: generationId,
+      expectedVersion: z.number().int().positive(),
+      expectedHash: hash,
+    })
+    .strict(),
+  preview_vault_context: z
+    .object({
+      projectId: id,
+      nodeIds: z.array(nodeId).max(24),
+      expectedGenerationId: generationId,
+      expansion: z
+        .object({
+          depth: z.number().int().min(0).max(2),
+          direction: z.enum(["outgoing", "incoming", "both"]),
+          maxNodes: z.number().int().min(1).max(24),
+        })
+        .strict()
+        .optional(),
+      budget: z
+        .object({
+          maxBytes: z.number().int().min(0).max(24_000),
+          maxEstimatedTokens: z.number().int().min(0).max(6_000),
+        })
+        .strict()
+        .optional(),
     })
     .strict(),
 } as const
@@ -176,10 +252,157 @@ export function createMcpProjectVaultService(
             })
             return { ok: true, data: { ...sectionMetadata(section), changed: true } }
           }
+          case "list_vault_nodes": {
+            const request = parsed.data as z.infer<typeof schemas.list_vault_nodes>
+            const graph = exactGraph(sqlite, request.projectId, request.expectedGenerationId)
+            return {
+              ok: true,
+              data: {
+                projectId: request.projectId,
+                generationId: graph.generationId,
+                nodes: graph.nodes.map(nodeMetadata),
+              },
+            }
+          }
+          case "read_vault_node": {
+            const request = parsed.data as z.infer<typeof schemas.read_vault_node>
+            const node = exactCustomNode(
+              sqlite,
+              request.projectId,
+              request.nodeId,
+              request.expectedGenerationId,
+            )
+            const note = await new ProjectVaultCustomNotes(sqlite).read(
+              request.projectId,
+              node.relativePath,
+            )
+            if (containsProjectVaultSecret(note.content)) {
+              return fail(
+                "secret-detected",
+                "Project vault node contains detected secret material.",
+              )
+            }
+            if (note.externallyModified) {
+              return fail("stale-target", "Project vault node changed outside Flapstack.")
+            }
+            return {
+              ok: true,
+              data: { ...nodeMetadata(node), ...note },
+            }
+          }
+          case "create_vault_node": {
+            const request = parsed.data as z.infer<typeof schemas.create_vault_node>
+            assertNoSecret(`${request.title}\n${request.body ?? ""}`)
+            const note = await new ProjectVaultCustomNotes(sqlite).create(request)
+            const graph = await new ProjectVaultGraphIndex(sqlite).rebuild(request.projectId)
+            return {
+              ok: true,
+              data: {
+                generationId: graph.generationId,
+                node: {
+                  stableId: note.identity!.id,
+                  relativePath: note.relativePath,
+                  version: note.version,
+                  contentHash: note.contentHash,
+                },
+              },
+            }
+          }
+          case "update_vault_node": {
+            const request = parsed.data as z.infer<typeof schemas.update_vault_node>
+            assertNoSecret(request.content)
+            const node = exactCustomNode(
+              sqlite,
+              request.projectId,
+              request.nodeId,
+              request.expectedGenerationId,
+            )
+            const note = await new ProjectVaultCustomNotes(sqlite).update({
+              projectId: request.projectId,
+              relativePath: node.relativePath,
+              expectedVersion: request.expectedVersion,
+              expectedHash: request.expectedHash,
+              content: request.content,
+            })
+            const graph = await new ProjectVaultGraphIndex(sqlite).rebuild(request.projectId)
+            return {
+              ok: true,
+              data: { generationId: graph.generationId, node: customNoteMetadata(note) },
+            }
+          }
+          case "move_vault_node": {
+            const request = parsed.data as z.infer<typeof schemas.move_vault_node>
+            const node = exactCustomNode(
+              sqlite,
+              request.projectId,
+              request.nodeId,
+              request.expectedGenerationId,
+            )
+            const note = await new ProjectVaultCustomNotes(sqlite).move({
+              projectId: request.projectId,
+              relativePath: node.relativePath,
+              destinationPath: request.destinationPath,
+              expectedVersion: request.expectedVersion,
+              expectedHash: request.expectedHash,
+            })
+            const graph = await new ProjectVaultGraphIndex(sqlite).rebuild(request.projectId)
+            return {
+              ok: true,
+              data: { generationId: graph.generationId, node: customNoteMetadata(note) },
+            }
+          }
+          case "link_vault_nodes": {
+            const request = parsed.data as z.infer<typeof schemas.link_vault_nodes>
+            const graph = exactGraph(sqlite, request.projectId, request.expectedGenerationId)
+            const source = graph.nodes.find((node) => node.nodeId === request.sourceNodeId)
+            const target = graph.nodes.find((node) => node.nodeId === request.targetNodeId)
+            if (!source || !target) throw new Error("Project vault graph node is missing.")
+            if (source.noteType !== "custom" || !source.stableId?.startsWith("custom:")) {
+              throw new Error("Only custom project vault nodes can be linked by this operation.")
+            }
+            const current = await new ProjectVaultCustomNotes(sqlite).read(
+              request.projectId,
+              source.relativePath,
+            )
+            const targetValue = target.relativePath.replace(/\.md$/i, "")
+            if (/[\]\r\n]/.test(targetValue)) {
+              throw new Error("Target note path cannot be represented as a safe Wikilink.")
+            }
+            const note = await new ProjectVaultCustomNotes(sqlite).update({
+              projectId: request.projectId,
+              relativePath: source.relativePath,
+              expectedVersion: request.expectedVersion,
+              expectedHash: request.expectedHash,
+              content: `${current.content.trimEnd()}\n\n[[${targetValue}]]\n`,
+            })
+            const rebuilt = await new ProjectVaultGraphIndex(sqlite).rebuild(request.projectId)
+            return {
+              ok: true,
+              data: { generationId: rebuilt.generationId, node: customNoteMetadata(note) },
+            }
+          }
+          case "preview_vault_context": {
+            const request = parsed.data as z.infer<typeof schemas.preview_vault_context>
+            const preview = await buildProjectVaultGraphContext(sqlite, {
+              ...request,
+              expansion: request.expansion
+                ? {
+                    ...request.expansion,
+                    direction: request.expansion.direction as ProjectVaultGraphExpansionDirection,
+                  }
+                : undefined,
+            })
+            return { ok: true, data: { manifest: preview.manifest } }
+          }
         }
         return fail("invalid-input", "Unsupported project vault operation.")
       } catch (error) {
-        if (error instanceof ProjectVaultConflictError) return fail("conflict", error.message)
+        if (
+          error instanceof ProjectVaultConflictError ||
+          error instanceof ProjectVaultNoteConflictError
+        ) {
+          return fail("conflict", error.message)
+        }
         const message = error instanceof Error ? error.message : "Project vault operation failed."
         if (message === "Caller chat is stale.") return fail("stale-caller", message)
         if (message === "Project is outside the caller scope.") return fail("out-of-scope", message)
@@ -289,6 +512,71 @@ function sectionMetadata(section: {
     version: section.version,
     contentHash: section.contentHash,
     byteLength: section.byteLength,
+  }
+}
+
+function exactGraph(sqlite: Database.Database, projectId: string, expectedGenerationId: string) {
+  const graph = currentProjectVaultGraph(sqlite, projectId)
+  if (graph.generationId !== expectedGenerationId) {
+    throw new Error("Project vault graph generation is stale.")
+  }
+  return graph
+}
+
+function exactCustomNode(
+  sqlite: Database.Database,
+  projectId: string,
+  targetNodeId: string,
+  expectedGenerationId: string,
+) {
+  const graph = exactGraph(sqlite, projectId, expectedGenerationId)
+  const node = graph.nodes.find((candidate) => candidate.nodeId === targetNodeId)
+  if (!node) throw new Error("Project vault graph node is missing.")
+  if (node.noteType !== "custom" || !node.stableId?.startsWith("custom:")) {
+    throw new Error("Only custom project vault nodes are available through this operation.")
+  }
+  return node
+}
+
+function nodeMetadata(node: {
+  nodeId: string
+  stableId: string | null
+  relativePath: string
+  title: string
+  noteType: string | null
+  contentHash: string
+  byteLength: number
+  aliases: string[]
+  tags: string[]
+}) {
+  return {
+    nodeId: node.nodeId,
+    stableId: node.stableId,
+    relativePath: node.relativePath,
+    title: node.title,
+    noteType: node.noteType,
+    contentHash: node.contentHash,
+    byteLength: node.byteLength,
+    aliases: node.aliases,
+    tags: node.tags,
+  }
+}
+
+function customNoteMetadata(note: {
+  identity: { id: string; type: string | null } | null
+  relativePath: string
+  version: number
+  contentHash: string
+  title: string
+}) {
+  return {
+    nodeId: note.identity!.id,
+    stableId: note.identity!.id,
+    noteType: note.identity!.type,
+    relativePath: note.relativePath,
+    version: note.version,
+    contentHash: note.contentHash,
+    title: note.title,
   }
 }
 

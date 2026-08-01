@@ -89,6 +89,7 @@ function toSttInfo(adapter: SttAdapter): SttAdapterInfo {
     kind: adapter.kind,
     supportsStreaming: adapter.supportsStreaming,
     offline: adapter.offline,
+    supportsVocabularyHints: adapter.supportsVocabularyHints,
   }
 }
 

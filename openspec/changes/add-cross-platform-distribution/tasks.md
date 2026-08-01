@@ -2,6 +2,7 @@
 
 ### S6-F10-T1 — Lock support matrix, release channels, artifacts, and credential ownership
 
+- Evidence class: `release-gate`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F10
 - Outcome: Public/Preview channels, target OS/architectures, artifact types, signing owners, hosts/runners, and stop/go rules are explicit.
@@ -15,6 +16,7 @@
 
 ### S6-F10-T2 — Add macOS signing, notarization, staple, and credential runbook
 
+- Evidence class: `release-gate`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F10
 - Outcome: macOS artifacts pass Developer ID signing and Apple notarization without exposing credentials.
@@ -28,6 +30,7 @@
 
 ### S6-F10-T3 — Prove macOS public install, first launch, upgrade, recovery, and uninstall
 
+- Evidence class: `release-gate`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F10
 - Outcome: Signed/notarized macOS DMG/ZIP behaves correctly on clean supported machines.
@@ -41,6 +44,7 @@
 
 ### S6-F10-T4 — Promote and re-prove native Windows distribution
 
+- Evidence class: `release-gate`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F10
 - Outcome: Accepted Stage 5 Windows artifacts gain production signing/publication evidence and every new/affected Stage 6 feature passes natively.
@@ -54,6 +58,7 @@
 
 ### S6-F10-T5 — Build and prove native Linux distribution
 
+- Evidence class: `release-gate`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F10
 - Outcome: Declared Linux packages install and run required shared/native features with honest desktop/service limitations.
@@ -67,6 +72,7 @@
 
 ### S6-F10-T6 — Add artifact integrity, dependency/SBOM, and release security gates
 
+- Evidence class: `release-gate`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F10
 - Outcome: Every candidate artifact is inspectable, attributable, architecture-correct, secret-free, and security-scanned.
@@ -80,6 +86,7 @@
 
 ### S6-F10-T7 — Write platform installation, support, diagnostics, and recovery docs
 
+- Evidence class: `release-gate`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F10
 - Outcome: Users can install, grant permissions, diagnose, back up, recover, upgrade, and uninstall without unsafe instructions.
@@ -93,6 +100,7 @@
 
 ### S6-F10-T8 — Close cross-platform distribution acceptance
 
+- Evidence class: `release-gate`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F10
 - Outcome: Every promoted target has signed/verified artifacts and observed native lifecycle/feature evidence.

@@ -33,6 +33,7 @@ import { ensureOperationWorkspaceInTransaction } from "../saved-workspaces/opera
 import { isBetaFeatureEnabled } from "../beta-features/settings"
 import { isProductMcpEnabledByDefault } from "../mcp-control/exposure"
 import { verifyFrozenAgentProfileRuntimeAuthority } from "../agent-profiles/runtime-authority"
+import { AgentProfileWorkflowBindingService } from "../agent-profiles/workflow-binding"
 import * as dbSchema from "../db/schema"
 import {
   UsageBudgetExceededError,
@@ -958,8 +959,46 @@ function addAgent(
   replacedAgentId: string | null = null,
   allowTerminalRecovery = false,
 ): OrchestrationAgentDto {
-  validateDefinitionPermissions(input.agent)
-  assertFrozenProfileAuthority(db, input.agent)
+  let effectiveInput = input
+  if (input.profileSelection) {
+    const parentAgentId = input.parentAgentId!
+    const id = directChildAgentId(input.taskId, parentAgentId, input.profileSelection.requestId)
+    const existing = db
+      .prepare("SELECT * FROM orchestration_agents WHERE id = ? AND task_id = ?")
+      .get(id, input.taskId) as Row | undefined
+    if (existing) {
+      const definition = parseDefinition(existing.definition)
+      if (
+        String(existing.parent_agent_id) !== parentAgentId ||
+        definition.profileRuntimeAuthority?.profile.profileId !==
+          input.profileSelection.profile.profileId ||
+        definition.profileRuntimeAuthority.profile.version !==
+          input.profileSelection.profile.version ||
+        definition.profileRuntimeAuthority.snapshotDigest !==
+          input.profileSelection.confirmedSnapshotDigest
+      ) {
+        throw new AgentOrchestrationError(
+          "conflict",
+          "Direct child request identity is already bound to a different exact profile snapshot.",
+        )
+      }
+      return toAgentDto(existing)
+    }
+    const materialized = new AgentProfileWorkflowBindingService(db).materializeDirectChild({
+      taskId: input.taskId,
+      parentAgentId,
+      agent: input.agent,
+      profile: input.profileSelection.profile,
+      overrides: input.profileSelection.overrides,
+      confirmedSnapshotDigest: input.profileSelection.confirmedSnapshotDigest,
+    })
+    effectiveInput = {
+      ...input,
+      agent: { ...materialized.definition, agentId: id },
+    }
+  }
+  validateDefinitionPermissions(effectiveInput.agent)
+  assertFrozenProfileAuthority(db, effectiveInput.agent)
   const orchestration = requireOrchestration(db, input.taskId)
   assertVersionedOrchestration(orchestration)
   if (
@@ -968,7 +1007,7 @@ function addAgent(
   ) {
     throw new AgentOrchestrationError("conflict", "Terminal orchestration cannot accept agents.")
   }
-  const dependencies = input.agent.dependencyAgentIds
+  const dependencies = effectiveInput.agent.dependencyAgentIds
   for (const dependency of dependencies) requireAgent(db, input.taskId, dependency)
 
   let depth = 1
@@ -993,7 +1032,7 @@ function addAgent(
         "Frozen Agent Profile descendant ceiling exceeded.",
       )
     }
-    const descendantAuthority = input.agent.profileRuntimeAuthority
+    const descendantAuthority = effectiveInput.agent.profileRuntimeAuthority
     if (
       authority &&
       (!descendantAuthority ||
@@ -1005,7 +1044,7 @@ function addAgent(
       )
     }
   }
-  const id = input.agent.agentId ?? randomUUID()
+  const id = effectiveInput.agent.agentId ?? randomUUID()
   if (ancestors.includes(id) || dependencies.includes(id)) {
     throw new AgentOrchestrationError("forbidden-loop", "Agent lineage would contain itself.")
   }
@@ -1013,7 +1052,7 @@ function addAgent(
   insertAgent(db, {
     id,
     taskId: input.taskId,
-    definition: input.agent,
+    definition: effectiveInput.agent,
     parentAgentId: input.parentAgentId ?? null,
     replacedAgentId,
     ancestorAgentIds: ancestors,
@@ -1021,6 +1060,14 @@ function addAgent(
     now,
   })
   return toAgentDto(requireAgent(db, input.taskId, id))
+}
+
+function directChildAgentId(taskId: string, parentAgentId: string, requestId: string): string {
+  const digest = createHash("sha256")
+    .update(`direct-profile-child\0${taskId}\0${parentAgentId}\0${requestId}`)
+    .digest("hex")
+    .slice(0, 32)
+  return `direct-profile-${digest}`
 }
 
 function assertFrozenProfileAuthority(db: Sqlite, definition: OrchestrationAgentDefinition): void {
@@ -1879,6 +1926,10 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
     harness: definition.harness,
     model: definition.model ?? null,
     permission: runtimePermissionSnapshot(definition.permissionMode, definition.customPermissions),
+    controls: {
+      modelEffort: definition.reasoningEffort ?? null,
+      serviceTier: definition.speedPreference === "fast" ? "fast" : null,
+    },
   })
   db.prepare(
     `INSERT INTO sub_chats (

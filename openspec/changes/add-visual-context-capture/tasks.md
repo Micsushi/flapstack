@@ -2,7 +2,8 @@
 
 ### S6-F5-T1 — Lock capture sources, privacy, retention, and agent authority
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F5
 - Outcome: Supported sources, consent, redaction, metadata, retention, and agent boundaries are explicit.
 - Scope: OS capability matrix; source/action catalog; visible consent; approval; original/derivative policy; metadata/redaction; secrets; retention; export; helper boundary; threat model.
@@ -15,7 +16,9 @@
 
 ### S6-F5-T2 — Implement platform-aware screen/window/region capture
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:native-capture-api-multidisplay`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:native-capture-api-multidisplay` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F5
 - Outcome: Supported platforms produce one bounded raw frame with explicit source identity.
 - Scope: Source enumeration; screen/window/application/region; macOS permission; Windows/Linux capability paths; cancellation; display scaling; multi-monitor; protected-content failures; no stale reuse.
@@ -28,7 +31,8 @@
 
 ### S6-F5-T3 — Build preview, crop, annotation, and irreversible redaction
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F5
 - Outcome: Users understand and sanitize the exact image before any downstream use.
 - Scope: Preview; crop; arrows/boxes/text; pixel/solid redaction; undo within editor; metadata stripping; derivative hash; accessibility; large-image performance.
@@ -41,7 +45,8 @@
 
 ### S6-F5-T4 — Integrate visual artifacts with chats, tasks, knowledge, and runs
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F5
 - Outcome: Confirmed images become normal scoped artifacts and exact optional run context.
 - Scope: Schema/provenance; attachment/task artifact; knowledge link; context selector; immutable run hash; thumbnail/viewer; move/copy; archive; search metadata; migration.
@@ -54,7 +59,8 @@
 
 ### S6-F5-T5 — Add approval-gated agent visual-context operations
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F5
 - Outcome: Approved agents request capture or read selected artifacts without hidden focus theft or expanded authority.
 - Scope: Read existing selected artifact; request new capture; caller/scope; approval; user source selection; compact MCP/tool contracts; audit; cancellation; invalidation.
@@ -67,7 +73,8 @@
 
 ### S6-F5-T6 — Add visual history, retention, cleanup, and export
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F5
 - Outcome: Users inspect provenance, remove captures, and export only selected secret-scanned derivatives.
 - Scope: History/filter; provenance details; retention settings; orphan cleanup; secure deletion best effort; export/import; missing files; quota/size diagnostics; audit.
@@ -80,20 +87,26 @@
 
 ### S6-F5-T7 — Extract the optional standalone capture helper
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Release evidence: `release-gate` remains uncertified for standalone-helper-package-lifecycle.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F5
 - Outcome: A minimal local helper opens the same capture/preview flow and returns artifacts to Flapstack safely.
 - Scope: In-app acceptance gate; helper packaging; single-instance/local authentication; hotkey/menu entry; capture service reuse; target selection; offline app state; uninstall; platform permissions.
 - Out of scope: Separate storage, sync, agent runtime, or hidden daemon capture.
 - Acceptance: Helper cannot bypass consent/redaction/scope; no second database; unavailable Flapstack state fails safely.
 - Verification: Contract-equivalence tests, install/start/capture/cancel/uninstall on supported platforms, security review.
-- Blocked by: S6-F5-T3, S6-F5-T4, S6-F5-T6, S6-F10-T1
+- Blocked by for T2-core: S6-F5-T3, S6-F5-T4, and S6-F5-T6.
+- Release certification remains blocked by: S6-F10-T1.
 - Blocks: S6-F5-T8
 - Context: shared capture service, protocol/deep-link, package config.
 
 ### S6-F5-T8 — Close visual-context acceptance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:native-capture-api-multidisplay`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:native-capture-api-multidisplay` remains uncertified.
+- [ ] Release evidence: `release-gate` remains uncertified for standalone-helper-native-artifact.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F5
 - Outcome: In-app and helper capture, redaction, artifacts, agent requests, lifecycle, and platform permissions pass one exact build.
 - Scope: Matrix S6-VC; real OS capture; multiple displays; accessibility; secrets/redaction; context truth; package/helper; docs; recovery.

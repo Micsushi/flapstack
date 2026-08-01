@@ -2,7 +2,8 @@
 
 ### S6-F4-T1 — Reconcile preserved mobile work and refresh the threat model
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F4
 - Outcome: Reviewed preserved code/contracts are mapped onto final Stage 4 identity, schema, Runtime, orchestration, approval, and audit authority.
 - Scope: Tree-equivalence inventory; migration renumbering; dependency drift; threat model; action catalog; DTOs; private-interface rules; rate/size limits; redaction; discard list.
@@ -15,7 +16,10 @@
 
 ### S6-F4-T2 — Integrate the default-off HTTPS bridge lifecycle
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:real-lan-mobile-host`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:real-lan-mobile-host` remains uncertified.
+- [ ] Release evidence: `release-gate` remains uncertified for native-desktop-package-bridge.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F4
 - Outcome: Desktop safely serves a companion endpoint only after explicit local opt-in.
 - Scope: Protected settings; certificate/fingerprint; interface selection; HTTPS/WebSocket; origin/host checks; limits; enable/disable/rebind; network-change stop; startup/quit cleanup; diagnostics.
@@ -28,7 +32,8 @@
 
 ### S6-F4-T3 — Integrate pairing, device identity, sessions, and revocation
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F4
 - Outcome: Each phone has a named replay-resistant identity that can be revoked immediately.
 - Scope: Rebased schema; QR; token expiry/use; fingerprint; public-key registration; challenge/nonce; expiry/rotation; device list/rename/revoke; active disconnect; audit.
@@ -41,7 +46,8 @@
 
 ### S6-F4-T4 — Integrate sequenced snapshots, events, scopes, and reconnect
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F4
 - Outcome: Authorized devices receive bounded current state and recover safely from gaps.
 - Scope: Scope grants; projections; sequence log; subscribe/resume; gap/resnapshot; freshness; paging; backpressure; redaction; permission/revoke invalidation; cleanup.
@@ -54,7 +60,9 @@
 
 ### S6-F4-T5 — Build the polished responsive companion PWA
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:ios-android-browser`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:ios-android-browser` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F4
 - Outcome: Paired phones navigate scoped work, attention items, runs, diffs, tests, artifacts, and status clearly.
 - Scope: PWA shell/manifest/service worker; pairing; inbox; project/task/chat/run/fleet views; diff/test/artifact review; freshness/offline UI; touch; install; accessibility.
@@ -67,7 +75,8 @@
 
 ### S6-F4-T6 — Add bounded steering and lifecycle actions
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F4
 - Outcome: Mobile answers, steers, pauses/resumes/cancels, and controls owned work through shared services.
 - Scope: Dispatcher; version preconditions; clarification; steer; run/orchestration/automation lifecycle; idempotency; scope/permission; partial results; audit; result events.
@@ -80,7 +89,9 @@
 
 ### S6-F4-T7 — Add mobile approvals and honest notifications
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:real-mobile-device`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:real-mobile-device` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F4
 - Outcome: Eligible approval cards show exact risk and attention signals never imply guaranteed delivery.
 - Scope: Eligibility registry; context/risk/expiry; WebAuthn step-up; desktop fallback; decide/timeout; notification permission; connected web notifications; unread inbox; limitation copy.
@@ -93,7 +104,10 @@
 
 ### S6-F4-T8 — Close real-device mobile acceptance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:real-mobile-device`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:real-mobile-device` remains uncertified.
+- [ ] Release evidence: `release-gate` remains uncertified for native-desktop-package-mobile-flow.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F4
 - Outcome: Pairing, monitoring, steering, approval, revoke, offline, and reconnect pass real-device evidence.
 - Scope: Matrix S6-MC; private/public network; iOS/Android-class browsers; QR/fingerprint; lifecycle; diff/artifact; offline/reconnect; revoke; security review; docs/package.

@@ -6,6 +6,7 @@ import {
   compactHistoryPoints,
   filterSupersededPersonalAccountRows,
   formatQuotaUsage,
+  providerFreshness,
   prepareUsageHistorySeries,
   quotaPercentRemaining,
   quotaPercentUsed,
@@ -277,6 +278,43 @@ describe("usage dashboard helpers", () => {
   it("labels blank account tags without hiding that they are the default", () => {
     expect(accountLabel("")).toBe("Default account")
     expect(accountLabel("workspace-1")).toBe("workspace-1")
+  })
+
+  it("distinguishes current, stale last-known, and unavailable provider data", () => {
+    const now = Date.parse("2026-07-10T12:00:00Z")
+    expect(
+      providerFreshness(
+        {
+          status: "ok",
+          lastSuccessAt: new Date(now - 30_000),
+          lastErrorAt: null,
+        },
+        now,
+        60,
+      ),
+    ).toEqual({ state: "current", label: "Current" })
+    expect(
+      providerFreshness(
+        {
+          status: "source-unavailable",
+          lastSuccessAt: new Date(now - 120_000),
+          lastErrorAt: new Date(now - 10_000),
+        },
+        now,
+        60,
+      ),
+    ).toEqual({ state: "stale", label: "Stale · last-known data" })
+    expect(
+      providerFreshness(
+        {
+          status: "source-unavailable",
+          lastSuccessAt: null,
+          lastErrorAt: new Date(now - 10_000),
+        },
+        now,
+        60,
+      ),
+    ).toEqual({ state: "unavailable", label: "Unavailable · no successful poll" })
   })
 
   it("formats quota units without exposing stored micro-dollar integers", () => {

@@ -86,7 +86,7 @@ import { useDesktopNotifications } from "../hooks/use-desktop-notifications"
 import { ProjectVaultView } from "../../project-vault/project-vault-view"
 import { SavedWorkspacesView } from "../../saved-workspaces"
 import { OrchestrationFleetView } from "../../orchestration-fleet/orchestration-fleet-view"
-import { getInitialWindowParams } from "../../../contexts/WindowContext"
+import { getInitialWindowParams, getWindowId } from "../../../contexts/WindowContext"
 import {
   AutomationsDetailView,
   AutomationsView,
@@ -99,6 +99,31 @@ import {
   getScopeChatContext,
   scopeChatTimestampMs,
 } from "../lib/scope-chat-card"
+import { ChatWorkbench } from "../workbench/chat-workbench"
+import {
+  loadChatWorkbenchLayout,
+  persistChatWorkbenchLayout,
+} from "../workbench/chat-workbench-storage"
+import {
+  createWorkbenchDraftReference,
+  createWorkbenchScrollAnchorReference,
+  restoreWorkbenchPresentationReferences,
+} from "../workbench/chat-workbench-presentation-state"
+import { emitDraftsChanged } from "../lib/drafts"
+import {
+  closeChatsInWorkbench,
+  collectChatGroups,
+  createChatWorkbenchLayout,
+  isEmptyChatWorkbenchLayout,
+  reduceChatWorkbench,
+  selectChatInWorkbench,
+  type ChatWorkbenchAction,
+} from "../../../../shared/chat-workbench"
+import {
+  showChatTransferWindowChoice,
+  showChatTransferWindowLimitChoice,
+} from "../../../lib/chat-transfer-window-limit"
+import { chatWorkbenchToSavedWorkspace } from "../../../../shared/workbench-saved-workspace-adapter"
 import { SelectRepoPage } from "../../onboarding"
 // Desktop mock
 const useIsAdmin = () => false
@@ -129,6 +154,27 @@ function AgentsContentInner() {
   const [openChatScrollbar, setOpenChatScrollbar] = useState({ left: 0, width: 0 })
   const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom)
   const [openChatIds, setOpenChatIds] = useAtom(openAgentChatIdsAtom)
+  const stableWindowId = useMemo(() => getWindowId(), [])
+  const [chatWorkbenchLayout, setChatWorkbenchLayout] = useState(() =>
+    loadChatWorkbenchLayout(localStorage, stableWindowId, openChatIds, selectedChatId),
+  )
+  const chatWorkbenchLayoutRef = useRef(chatWorkbenchLayout)
+  const chatWorkbenchRevisionRef = useRef(0)
+  const chatWorkbenchCompactRef = useRef(false)
+  const [editableWorkbenchChatIds, setEditableWorkbenchChatIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  )
+  const workbenchChatIds = useMemo(
+    () =>
+      isEmptyChatWorkbenchLayout(chatWorkbenchLayout)
+        ? []
+        : collectChatGroups(chatWorkbenchLayout.root).flatMap((group) => group.chatIds),
+    [chatWorkbenchLayout],
+  )
+  const readOnlyWorkbenchChatIds = useMemo(
+    () => new Set(workbenchChatIds.filter((chatId) => !editableWorkbenchChatIds.has(chatId))),
+    [editableWorkbenchChatIds, workbenchChatIds],
+  )
   const [desktopView, setDesktopView] = useAtom(desktopViewAtom)
   const betaFeatures = useBetaFeatures()
   const effectiveDesktopView =
@@ -145,6 +191,7 @@ function AgentsContentInner() {
   const [selectedChatIsRemote, setSelectedChatIsRemote] = useAtom(selectedChatIsRemoteAtom)
   const selectedChatScope = useAtomValue(selectedChatScopeAtom)
   const selectedProject = useAtomValue(selectedProjectAtom)
+  const createSavedWorkspace = trpc.savedWorkspaces.create.useMutation()
   const setChatSourceMode = useSetAtom(chatSourceModeAtom)
   const chatSourceMode = useAtomValue(chatSourceModeAtom)
   const selectedDraftId = useAtomValue(selectedDraftIdAtom)
@@ -308,6 +355,479 @@ function AgentsContentInner() {
     )
   }, [selectedChatId, selectedChatIsRemote, setOpenChatIds])
 
+  const persistWorkbenchPresentation = useCallback(
+    (layout: typeof chatWorkbenchLayout) => {
+      const chatIds = isEmptyChatWorkbenchLayout(layout)
+        ? []
+        : collectChatGroups(layout.root).flatMap((group) => group.chatIds)
+      void window.desktopApi?.updateWorkbenchSessionPresentation?.({
+        layout,
+        compact: chatWorkbenchCompactRef.current,
+        draftRefs: Object.fromEntries(
+          chatIds.map((chatId) => [chatId, createWorkbenchDraftReference(chatId)]),
+        ),
+        scrollAnchorRefs: Object.fromEntries(
+          chatIds.map((chatId) => [chatId, createWorkbenchScrollAnchorReference(chatId)]),
+        ),
+      })
+    },
+    [stableWindowId],
+  )
+
+  const closeWorkbenchChats = useCallback(
+    (chatIds: readonly string[]) => {
+      const current = chatWorkbenchLayoutRef.current
+      const next = closeChatsInWorkbench(current, chatIds)
+      if (next === current) return
+      chatWorkbenchRevisionRef.current += 1
+      chatWorkbenchLayoutRef.current = next
+      setChatWorkbenchLayout(next)
+      persistChatWorkbenchLayout(localStorage, stableWindowId, next)
+      persistWorkbenchPresentation(next)
+    },
+    [persistWorkbenchPresentation, stableWindowId],
+  )
+
+  useEffect(() => {
+    const revision = chatWorkbenchRevisionRef.current
+    void window.desktopApi?.getWorkbenchSession?.().then((session) => {
+      if (!session || chatWorkbenchRevisionRef.current !== revision) return
+      const restoredPresentation = restoreWorkbenchPresentationReferences(localStorage, session)
+      if (Object.keys(restoredPresentation.draftsByChat).length > 0) emitDraftsChanged()
+      chatWorkbenchCompactRef.current = session.compact
+      chatWorkbenchLayoutRef.current = session.layout
+      setChatWorkbenchLayout(session.layout)
+      persistChatWorkbenchLayout(localStorage, stableWindowId, session.layout)
+      const restoredGroups = collectChatGroups(session.layout.root)
+      const restoredEmpty = isEmptyChatWorkbenchLayout(session.layout)
+      setOpenChatIds(restoredEmpty ? [] : restoredGroups.flatMap((group) => group.chatIds))
+      const restoredActive =
+        restoredGroups.find((group) => group.id === session.layout.activeGroupId) ??
+        restoredGroups[0]
+      if (restoredActive && !restoredEmpty) {
+        setSelectedChatId(restoredActive.activeChatId)
+        setSelectedChatIsRemote(false)
+        setChatSourceMode("local")
+      } else if (restoredEmpty) {
+        setSelectedChatId(null)
+        setSelectedChatIsRemote(false)
+        setChatSourceMode("local")
+      }
+    })
+  }, [
+    setChatSourceMode,
+    setOpenChatIds,
+    setSelectedChatId,
+    setSelectedChatIsRemote,
+    stableWindowId,
+  ])
+
+  useEffect(() => {
+    const desktop = window.desktopApi
+    if (!desktop?.claimChat) return
+    let cancelled = false
+    const liveChatIds = new Set(workbenchChatIds)
+    setEditableWorkbenchChatIds((current) => {
+      const next = new Set([...current].filter((chatId) => liveChatIds.has(chatId)))
+      return next.size === current.size ? current : next
+    })
+    for (const chatId of workbenchChatIds) {
+      if (editableWorkbenchChatIds.has(chatId)) continue
+      void desktop.claimChat(chatId).then((result) => {
+        if (cancelled || !result.ok) return
+        setEditableWorkbenchChatIds((current) => new Set([...current, chatId]))
+      })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [editableWorkbenchChatIds, workbenchChatIds])
+
+  useEffect(() => {
+    const desktop = window.desktopApi
+    if (!desktop?.onWorkspaceOwnershipChanged) return
+    return desktop.onWorkspaceOwnershipChanged((event) => {
+      const visibleIds = new Set(
+        collectChatGroups(chatWorkbenchLayoutRef.current.root).flatMap((group) => group.chatIds),
+      )
+      const relevantIds = event.chatIds.filter((chatId) => visibleIds.has(chatId))
+      if (relevantIds.length === 0) return
+      setEditableWorkbenchChatIds((current) => {
+        const next = new Set(current)
+        for (const chatId of relevantIds) {
+          if (event.targetStableId === stableWindowId) next.add(chatId)
+          else next.delete(chatId)
+        }
+        return next
+      })
+    })
+  }, [stableWindowId])
+
+  useEffect(() => {
+    if (!selectedChatId || selectedChatIsRemote) return
+    const groups = collectChatGroups(chatWorkbenchLayout.root)
+    const owner = groups.find((group) => group.chatIds.includes(selectedChatId))
+    if (owner?.id === chatWorkbenchLayout.activeGroupId && owner.activeChatId === selectedChatId) {
+      return
+    }
+    const result = selectChatInWorkbench(chatWorkbenchLayout, selectedChatId)
+    if (!result.accepted) return
+    chatWorkbenchRevisionRef.current += 1
+    chatWorkbenchLayoutRef.current = result.layout
+    setChatWorkbenchLayout(result.layout)
+    persistChatWorkbenchLayout(localStorage, stableWindowId, result.layout)
+    persistWorkbenchPresentation(result.layout)
+  }, [
+    chatWorkbenchLayout,
+    persistWorkbenchPresentation,
+    selectedChatId,
+    selectedChatIsRemote,
+    stableWindowId,
+  ])
+
+  const handleChatWorkbenchChange = useCallback(
+    (layout: typeof chatWorkbenchLayout, action: ChatWorkbenchAction) => {
+      chatWorkbenchRevisionRef.current += 1
+      chatWorkbenchLayoutRef.current = layout
+      setChatWorkbenchLayout(layout)
+      persistChatWorkbenchLayout(localStorage, stableWindowId, layout)
+      persistWorkbenchPresentation(layout)
+      const groups = collectChatGroups(layout.root)
+      const emptyLayout = isEmptyChatWorkbenchLayout(layout)
+      const visibleChatIds = emptyLayout ? [] : groups.flatMap((group) => group.chatIds)
+      setOpenChatIds(visibleChatIds)
+      const activeGroup = groups.find((group) => group.id === layout.activeGroupId) ?? groups[0]
+      if (activeGroup && !emptyLayout) {
+        setSelectedChatId(activeGroup.activeChatId)
+        setSelectedChatIsRemote(false)
+        setChatSourceMode("local")
+      } else if (emptyLayout) {
+        setSelectedChatId(null)
+        setSelectedChatIsRemote(false)
+        setChatSourceMode("local")
+      }
+      if (action.type === "close-tab") window.desktopApi?.releaseChat?.(action.chatId)
+    },
+    [
+      persistWorkbenchPresentation,
+      setChatSourceMode,
+      setOpenChatIds,
+      setSelectedChatId,
+      setSelectedChatIsRemote,
+      stableWindowId,
+    ],
+  )
+
+  useEffect(() => {
+    type GridRequest = {
+      complete: (result: { expectedChatIds: string[]; visibleChatIds: string[] }) => void
+      fail: (message: string) => void
+    }
+    const configureGrid = (event: Event) => {
+      const request = (event as CustomEvent<GridRequest>).detail
+      const chatIds = appStore.get(openAgentChatIdsAtom).slice(-4)
+      if (chatIds.length < 4) {
+        request.fail("Electron grid setup requires four open product chats.")
+        return
+      }
+      const base = createChatWorkbenchLayout(chatIds, chatIds[3])
+      const result = reduceChatWorkbench(base, { type: "apply-preset", preset: "grid-2x2" })
+      if (!result.accepted) {
+        request.fail("Electron grid setup could not apply the product 2x2 layout.")
+        return
+      }
+      handleChatWorkbenchChange(result.layout, {
+        type: "apply-preset",
+        preset: "grid-2x2",
+      })
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          request.complete({
+            expectedChatIds: chatIds,
+            visibleChatIds: Array.from(
+              document.querySelectorAll<HTMLElement>(
+                "[data-chat-workbench] [data-chat-group][data-active-chat-id]",
+              ),
+            ).map((group) => group.dataset.activeChatId ?? ""),
+          })
+        }),
+      )
+    }
+    window.addEventListener("stage6-performance:configure-grid", configureGrid)
+    return () => window.removeEventListener("stage6-performance:configure-grid", configureGrid)
+  }, [handleChatWorkbenchChange])
+
+  useEffect(() => {
+    const desktop = window.desktopApi
+    if (!desktop?.onChatTransferOffer || !desktop.onChatTransferRemoveSource) return
+    const removeOffer = desktop.onChatTransferOffer(async ({ transfer, destination }) => {
+      if (destination.windowId !== stableWindowId) return
+      const layoutBeforeTransfer = chatWorkbenchLayoutRef.current
+      const destinationWasEmpty = isEmptyChatWorkbenchLayout(layoutBeforeTransfer)
+      const destinationGroup = collectChatGroups(layoutBeforeTransfer.root).find(
+        (group) => group.id === destination.groupId,
+      )
+      if (!destinationGroup) {
+        await desktop.abortChatTransfer(transfer.nonce)
+        return
+      }
+      const ready = await desktop.markChatTransferDestinationReady({
+        version: 1,
+        nonce: transfer.nonce,
+        destinationWindowId: stableWindowId,
+      })
+      if (ready.status !== "ready") {
+        await desktop.abortChatTransfer(transfer.nonce)
+        return
+      }
+      const ownership = await desktop.transferChatOwnership({
+        version: 1,
+        nonce: transfer.nonce,
+        windowId: stableWindowId,
+      })
+      if (ownership.status !== "ownership-transferred" && ownership.status !== "read-only") {
+        await desktop.abortChatTransfer(transfer.nonce)
+        return
+      }
+
+      let next = reduceChatWorkbench(layoutBeforeTransfer, {
+        type: "open-tab",
+        groupId: destinationGroup.id,
+        chatId: transfer.chatId,
+      })
+      if (next.accepted && destination.zone !== "tab" && !destinationWasEmpty) {
+        next = reduceChatWorkbench(next.layout, {
+          type: "split",
+          groupId: next.layout.activeGroupId,
+          chatId: transfer.chatId,
+          zone: destination.zone,
+        })
+      }
+      if (!next.accepted) {
+        await desktop.abortChatTransfer(transfer.nonce)
+        return
+      }
+      handleChatWorkbenchChange(next.layout, {
+        type: "open-tab",
+        groupId: next.layout.activeGroupId,
+        chatId: transfer.chatId,
+      })
+      if (transfer.operation === "read-only-copy") {
+        setEditableWorkbenchChatIds((current) => {
+          const nextEditable = new Set(current)
+          nextEditable.delete(transfer.chatId)
+          return nextEditable
+        })
+      }
+      const committed = await desktop.commitChatTransferDestination({
+        version: 1,
+        nonce: transfer.nonce,
+        windowId: stableWindowId,
+      })
+      if (committed.status !== "destination-committed") {
+        await desktop.abortChatTransfer(transfer.nonce)
+        const previousActive =
+          collectChatGroups(layoutBeforeTransfer.root).find(
+            (group) => group.id === layoutBeforeTransfer.activeGroupId,
+          ) ?? collectChatGroups(layoutBeforeTransfer.root)[0]
+        handleChatWorkbenchChange(layoutBeforeTransfer, {
+          type: "activate-tab",
+          groupId: previousActive.id,
+          chatId: previousActive.activeChatId,
+        })
+        setEditableWorkbenchChatIds((current) => {
+          const nextEditable = new Set(current)
+          nextEditable.delete(transfer.chatId)
+          return nextEditable
+        })
+        return
+      }
+      if (transfer.operation === "move") {
+        setEditableWorkbenchChatIds((current) => new Set([...current, transfer.chatId]))
+      }
+    })
+    const removeSource = desktop.onChatTransferRemoveSource(async (input) => {
+      if (input.sourceWindowId !== stableWindowId) return
+      const layoutBeforeRemoval = chatWorkbenchLayoutRef.current
+      const result = reduceChatWorkbench(layoutBeforeRemoval, {
+        type: "close-tab",
+        groupId: input.sourceGroupId,
+        chatId: input.chatId,
+      })
+      if (!result.accepted) {
+        await desktop.abortChatTransfer(input.nonce)
+        return
+      }
+      handleChatWorkbenchChange(result.layout, {
+        type: "close-tab",
+        groupId: input.sourceGroupId,
+        chatId: input.chatId,
+      })
+      const committed = await desktop.commitChatTransferSource({
+        version: 1,
+        nonce: input.nonce,
+        windowId: stableWindowId,
+      })
+      if (committed.status !== "completed") {
+        const previousActive =
+          collectChatGroups(layoutBeforeRemoval.root).find(
+            (group) => group.id === layoutBeforeRemoval.activeGroupId,
+          ) ?? collectChatGroups(layoutBeforeRemoval.root)[0]
+        handleChatWorkbenchChange(layoutBeforeRemoval, {
+          type: "activate-tab",
+          groupId: previousActive.id,
+          chatId: previousActive.activeChatId,
+        })
+        setEditableWorkbenchChatIds((current) => {
+          const nextEditable = new Set(current)
+          nextEditable.delete(input.chatId)
+          return nextEditable
+        })
+      }
+    })
+    return () => {
+      removeOffer()
+      removeSource()
+    }
+  }, [handleChatWorkbenchChange, stableWindowId])
+
+  const moveChatToNewWindow = useCallback(
+    async (chatId: string, sourceGroupId: string, operation: "move" | "read-only-copy") => {
+      const result = await window.desktopApi.openNewChatTransfer({
+        version: 1,
+        chatId,
+        sourceWindowId: stableWindowId,
+        sourceGroupId,
+        operation,
+        destinationGroupId: "chat-group-1",
+        zone: "tab",
+        ...(selectedProject?.id ? { projectId: selectedProject.id } : {}),
+      })
+      if (result.status === "offered") {
+        return operation === "move"
+          ? "Moving Chat to a new window"
+          : "Opening a read-only Chat copy"
+      }
+      if (result.status === "at-limit") {
+        showChatTransferWindowLimitChoice({
+          api: window.desktopApi,
+          context: {
+            chatId,
+            sourceWindowId: stableWindowId,
+            sourceGroupId,
+            operation,
+          },
+          destinations: result.destinations,
+        })
+        return "Four windows are open. Choose an existing destination, focus a window, or cancel."
+      }
+      return "Chat stayed in this window because the transfer could not start."
+    },
+    [selectedProject?.id, stableWindowId],
+  )
+
+  const moveChatToExistingWindow = useCallback(
+    async (chatId: string, sourceGroupId: string) => {
+      const destinations = await window.desktopApi.getChatTransferDestinations()
+      if (destinations.length === 0) return "No other workbench window is available."
+      showChatTransferWindowChoice({
+        api: window.desktopApi,
+        context: {
+          chatId,
+          sourceWindowId: stableWindowId,
+          sourceGroupId,
+          operation: "move",
+        },
+        destinations,
+      })
+      return "Choose the exact destination window and whether to add a tab or split right."
+    },
+    [stableWindowId],
+  )
+
+  const dropChatIntoCurrentWindow = useCallback(
+    async (
+      source: { chatId: string; groupId: string; sourceWindowId: string },
+      target: {
+        groupId: string
+        zone: "tab" | "left" | "right" | "top" | "bottom"
+      },
+    ) => {
+      const result = await window.desktopApi.dropChatTransferIntoCurrentWindow({
+        version: 1,
+        chatId: source.chatId,
+        sourceWindowId: source.sourceWindowId,
+        sourceGroupId: source.groupId,
+        operation: "move",
+        destinationWindowId: stableWindowId,
+        destinationGroupId: target.groupId,
+        zone: target.zone,
+      })
+      return result.status === "offered"
+        ? `Moving Chat into ${target.zone === "tab" ? "the selected tab group" : `the ${target.zone} pane`}`
+        : "Cross-window drop was rejected. The source Chat stayed unchanged."
+    },
+    [stableWindowId],
+  )
+
+  const dropChatOutside = useCallback(
+    async (
+      source: { chatId: string; groupId: string; sourceWindowId: string },
+      point: { screenX: number; screenY: number },
+    ) => {
+      const result = await window.desktopApi.dropChatTransferOutside({
+        version: 1,
+        chatId: source.chatId,
+        sourceWindowId: source.sourceWindowId,
+        sourceGroupId: source.groupId,
+        operation: "move",
+        destinationGroupId: "chat-group-1",
+        zone: "tab",
+        screenX: point.screenX,
+        screenY: point.screenY,
+        ...(selectedProject?.id ? { projectId: selectedProject.id } : {}),
+      })
+      if (result.status === "offered") return "Moving Chat into a new floating window."
+      if (result.status === "at-limit") {
+        showChatTransferWindowLimitChoice({
+          api: window.desktopApi,
+          context: {
+            chatId: source.chatId,
+            sourceWindowId: source.sourceWindowId,
+            sourceGroupId: source.groupId,
+            operation: "move",
+          },
+          destinations: result.destinations.filter(
+            (destination) => destination.stableId !== source.sourceWindowId,
+          ),
+        })
+        return "Four windows are open. Choose an existing destination or cancel."
+      }
+      return "Drag-out was cancelled. The source Chat stayed unchanged."
+    },
+    [selectedProject?.id],
+  )
+
+  const claimReadOnlyChat = useCallback(async (chatId: string) => {
+    const desktop = window.desktopApi
+    if (!desktop?.claimChat) return "Chat ownership controls are unavailable in this window."
+    const result = await desktop.claimChat(chatId)
+    if (result.ok) {
+      setEditableWorkbenchChatIds((current) => new Set([...current, chatId]))
+      return "Chat ownership moved here. Editing is enabled."
+    }
+    const moved = await desktop.takeChatOwnership?.(chatId, result.ownerStableId)
+    if (moved?.ok) {
+      setEditableWorkbenchChatIds((current) => new Set([...current, chatId]))
+      return "Chat ownership moved here. The former presentation is now read-only."
+    }
+    const focused = await desktop.focusChatOwner(chatId)
+    const ownerStableId = moved && !moved.ok ? moved.ownerStableId : result.ownerStableId
+    return focused
+      ? `Chat remains owned by ${ownerStableId ?? "another window"}. Focused the owner window.`
+      : `Chat remains owned by ${ownerStableId ?? "another window"}. The owner window could not be focused.`
+  }, [])
+
   const openChatTabs = useMemo(() => {
     return resolveVisibleOpenChatTabs({
       chats: agentChats,
@@ -318,6 +838,26 @@ function AgentsContentInner() {
       selectedChatIsRemote,
     })
   }, [agentChats, archivedChats, chatData, openChatIds, selectedChatId, selectedChatIsRemote])
+
+  const saveChatWorkbenchAsWorkspace = useCallback(async () => {
+    if (!selectedProject?.id) return "Select a project before saving this workspace."
+    const groups = collectChatGroups(chatWorkbenchLayoutRef.current.root)
+    const active = groups.find((group) => group.id === chatWorkbenchLayoutRef.current.activeGroupId)
+    const activeName =
+      openChatTabs.find((chat) => chat.id === active?.activeChatId)?.name?.trim() ||
+      "Chat workbench"
+    const requestedName = window.prompt("Workspace name", `${activeName} workspace`)
+    if (requestedName === null) return "Save as Workspace cancelled."
+    const name = requestedName.trim()
+    if (!name) return "Workspace name is required."
+    const result = await createSavedWorkspace.mutateAsync({
+      name,
+      scope: { type: "project", projectId: selectedProject.id },
+      layout: chatWorkbenchToSavedWorkspace(chatWorkbenchLayoutRef.current),
+    })
+    return `Saved as workspace ${result.workspace.name}`
+  }, [createSavedWorkspace, openChatTabs, selectedProject?.id])
+
   const openChatProjectColors = readStoredProjectColors()
 
   const updateOpenChatScrollbar = useCallback(() => {
@@ -398,6 +938,7 @@ function AgentsContentInner() {
   const handleCloseOpenChatTab = useCallback(
     (chatId: string) => {
       window.desktopApi?.releaseChat?.(chatId)
+      closeWorkbenchChats([chatId])
       const isClosingSelected = selectedChatId === chatId
       const closedIndex = openChatIds.indexOf(chatId)
       const next = openChatIds.filter((id) => id !== chatId)
@@ -418,6 +959,7 @@ function AgentsContentInner() {
     [
       openChatIds,
       selectedChatId,
+      closeWorkbenchChats,
       handleSelectOpenChatTab,
       setChatSourceMode,
       setOpenChatIds,
@@ -430,6 +972,7 @@ function AgentsContentInner() {
     (chatIds: string[], fallbackChatId?: string) => {
       const closingIds = new Set(chatIds)
       chatIds.forEach((chatId) => window.desktopApi?.releaseChat?.(chatId))
+      closeWorkbenchChats(chatIds)
       const next = openChatIds.filter((chatId) => !closingIds.has(chatId))
       setOpenChatIds(next)
 
@@ -449,6 +992,7 @@ function AgentsContentInner() {
     },
     [
       handleSelectOpenChatTab,
+      closeWorkbenchChats,
       openChatIds,
       selectedChatId,
       setChatSourceMode,
@@ -1329,7 +1873,7 @@ function AgentsContentInner() {
             />
           ) : selectedChatId ? (
             <div className="h-full flex flex-col relative overflow-hidden">
-              {!selectedChatIsRemote && openChatTabs.length > 0 && (
+              {selectedChatIsRemote && openChatTabs.length > 0 && (
                 <div
                   className="relative h-[43px] shrink-0 border-b-2 border-border bg-muted/30"
                   style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
@@ -1456,14 +2000,70 @@ function AgentsContentInner() {
                   )}
                 </div>
               )}
-              <ChatView
-                key={`${chatSourceMode}-${selectedChatId}`}
-                chatId={selectedChatId}
-                isSidebarOpen={sidebarOpen}
-                onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
-                selectedTeamName={selectedTeam?.name}
-                selectedTeamImageUrl={selectedTeam?.image_url}
-              />
+              {selectedChatIsRemote ? (
+                <ChatView
+                  key={`${chatSourceMode}-${selectedChatId}`}
+                  chatId={selectedChatId}
+                  isSidebarOpen={sidebarOpen}
+                  onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
+                  selectedTeamName={selectedTeam?.name}
+                  selectedTeamImageUrl={selectedTeam?.image_url}
+                />
+              ) : (
+                <ChatWorkbench
+                  chats={openChatTabs}
+                  layout={chatWorkbenchLayout}
+                  onLayoutChange={handleChatWorkbenchChange}
+                  onActiveChatChange={(chatId) => {
+                    if (readOnlyWorkbenchChatIds.has(chatId)) {
+                      setSelectedChatId(chatId)
+                      setSelectedChatIsRemote(false)
+                      setChatSourceMode("local")
+                      return
+                    }
+                    void handleSelectOpenChatTab(chatId)
+                  }}
+                  readOnlyChatIds={readOnlyWorkbenchChatIds}
+                  windowId={stableWindowId}
+                  onMoveToNewWindow={moveChatToNewWindow}
+                  onMoveToExistingWindow={moveChatToExistingWindow}
+                  onCrossWindowDrop={dropChatIntoCurrentWindow}
+                  onDragOutside={dropChatOutside}
+                  onClaimOwnership={claimReadOnlyChat}
+                  onSaveAsWorkspace={saveChatWorkbenchAsWorkspace}
+                  renderChat={(chatId, active) => {
+                    const readOnly = readOnlyWorkbenchChatIds.has(chatId)
+                    return (
+                      <div className="relative h-full">
+                        <div
+                          className="h-full"
+                          inert={readOnly ? true : undefined}
+                          aria-disabled={readOnly || undefined}
+                        >
+                          <ChatView
+                            key={`${chatSourceMode}-${chatId}`}
+                            chatId={chatId}
+                            workbenchActive={active}
+                            isSidebarOpen={sidebarOpen}
+                            onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
+                            selectedTeamName={selectedTeam?.name}
+                            selectedTeamImageUrl={selectedTeam?.image_url}
+                          />
+                        </div>
+                        {readOnly && (
+                          <div
+                            role="note"
+                            className="absolute inset-x-3 bottom-3 rounded-md border border-border bg-background/95 px-3 py-2 text-xs shadow"
+                          >
+                            Read-only in this window. Move Chat ownership here before sending or
+                            changing settings.
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }}
+                />
+              )}
             </div>
           ) : selectedDraftId || showNewChatForm ? (
             <div className="h-full flex flex-col relative overflow-hidden">

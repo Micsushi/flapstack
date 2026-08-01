@@ -81,6 +81,10 @@ import { ConfirmArchiveDialog } from "../../components/confirm-archive-dialog"
 import { trpc } from "../../lib/trpc"
 import { toast } from "sonner"
 import {
+  asWorkbenchWindowCreationFailure,
+  showWorkbenchWindowCreationFeedback,
+} from "../../lib/workbench-window-limit"
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -162,6 +166,7 @@ import { getModelChipMeta } from "../agents/constants"
 import { ProviderChipIcon } from "../agents/components/provider-chip-icon"
 import { focusScopedSearchResultAtom } from "../agents/search/chat-search-atoms"
 import { useBetaFeatures } from "../settings/use-beta-features"
+import { useFeatureVisibility } from "../settings/use-feature-visibility"
 import {
   buildChatMoveDestinations,
   chatMoveTargetKey,
@@ -1487,10 +1492,15 @@ const AgentChatItem = React.memo(function AgentChatItem({
                             onSelect={async () => {
                               const result = await window.desktopApi?.newWindow({ chatId })
                               if (result?.blocked) {
-                                toast.info("This chat is already open in another window", {
-                                  description: "Switching to the existing window.",
-                                  duration: 3000,
-                                })
+                                const creationFailure = asWorkbenchWindowCreationFailure(result)
+                                if (creationFailure) {
+                                  showWorkbenchWindowCreationFeedback(creationFailure)
+                                } else if (result.reason === "already-open") {
+                                  toast.info("This chat is already open in another window", {
+                                    description: "Switching to the existing window.",
+                                    duration: 3000,
+                                  })
+                                }
                               }
                             }}
                           >
@@ -1721,10 +1731,15 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 onClick={async () => {
                   const result = await window.desktopApi?.newWindow({ chatId })
                   if (result?.blocked) {
-                    toast.info("This chat is already open in another window", {
-                      description: "Switching to the existing window.",
-                      duration: 3000,
-                    })
+                    const creationFailure = asWorkbenchWindowCreationFailure(result)
+                    if (creationFailure) {
+                      showWorkbenchWindowCreationFeedback(creationFailure)
+                    } else if (result.reason === "already-open") {
+                      toast.info("This chat is already open in another window", {
+                        description: "Switching to the existing window.",
+                        duration: 3000,
+                      })
+                    }
                   }
                 }}
               >
@@ -3078,6 +3093,7 @@ export function AgentsSidebar({
   const [loadingSubChats] = useAtom(loadingSubChatsAtom)
   const pendingQuestions = useAtomValue(pendingUserQuestionsAtom)
   const betaFeatures = useBetaFeatures()
+  const featureVisibility = useFeatureVisibility()
   // Use ref instead of state to avoid re-renders on hover
   const isSidebarHoveredRef = useRef(false)
   const closeButtonRef = useRef<HTMLDivElement>(null)
@@ -6760,11 +6776,25 @@ export function AgentsSidebar({
   }
 
   const navigationVisibilityLabels = [
-    ...(betaFeatures.automations ? ["Automations", "Inbox"] : []),
-    ...(betaFeatures.orchestration ? ["Orchestration fleet"] : []),
-    ...(selectedProject && betaFeatures.planning ? ["Plan"] : []),
-    ...(selectedProject && betaFeatures.projectMemory ? ["Project knowledge"] : []),
-    ...(selectedProject && betaFeatures.savedWorkspaces ? ["Saved workspaces"] : []),
+    ...(betaFeatures.automations && featureVisibility.isVisible("automations")
+      ? ["Automations", "Inbox"]
+      : []),
+    ...(betaFeatures.orchestration && featureVisibility.isVisible("orchestration")
+      ? ["Orchestration fleet"]
+      : []),
+    ...(selectedProject && betaFeatures.planning && featureVisibility.isVisible("plan")
+      ? ["Plan"]
+      : []),
+    ...(selectedProject &&
+    betaFeatures.projectMemory &&
+    featureVisibility.isVisible("knowledge-graph")
+      ? ["Project knowledge"]
+      : []),
+    ...(selectedProject &&
+    betaFeatures.savedWorkspaces &&
+    featureVisibility.isVisible("saved-workspaces")
+      ? ["Saved workspaces"]
+      : []),
     ...(betaFeatures.planning ? ["Tasks"] : []),
   ].sort((a, b) => a.localeCompare(b))
   const hasVisibleNavigationItems = navigationVisibilityLabels.some(
@@ -6887,7 +6917,7 @@ export function AgentsSidebar({
             className={cn("flex-shrink-0 px-2", hasVisibleNavigationItems ? "min-h-7 pb-1" : "h-0")}
           >
             {[
-              ...(betaFeatures.automations
+              ...(betaFeatures.automations && featureVisibility.isVisible("automations")
                 ? [
                     {
                       label: "Automations",
@@ -6921,7 +6951,7 @@ export function AgentsSidebar({
                     },
                   ]
                 : []),
-              ...(betaFeatures.orchestration
+              ...(betaFeatures.orchestration && featureVisibility.isVisible("orchestration")
                 ? [
                     {
                       label: "Orchestration fleet",
@@ -6938,7 +6968,7 @@ export function AgentsSidebar({
                 : []),
               ...(selectedProject
                 ? [
-                    ...(betaFeatures.planning
+                    ...(betaFeatures.planning && featureVisibility.isVisible("plan")
                       ? [
                           {
                             label: "Plan",
@@ -6953,7 +6983,7 @@ export function AgentsSidebar({
                           },
                         ]
                       : []),
-                    ...(betaFeatures.projectMemory
+                    ...(betaFeatures.projectMemory && featureVisibility.isVisible("knowledge-graph")
                       ? [
                           {
                             label: "Project knowledge",
@@ -6967,7 +6997,8 @@ export function AgentsSidebar({
                           },
                         ]
                       : []),
-                    ...(betaFeatures.savedWorkspaces
+                    ...(betaFeatures.savedWorkspaces &&
+                    featureVisibility.isVisible("saved-workspaces")
                       ? [
                           {
                             label: "Saved workspaces",
@@ -7554,23 +7585,25 @@ export function AgentsSidebar({
                 </TooltipContent>
               </Tooltip>
 
-              {/* Usage Button */}
-              <Tooltip delayDuration={500}>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSettingsActiveTab("usage")
-                      setSettingsDialogOpen(true)
-                    }}
-                    className="flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.97] outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
-                    aria-label="Usage"
-                  >
-                    <Activity className="h-4 w-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>Usage</TooltipContent>
-              </Tooltip>
+              {/* Usage remains searchable in Settings when its shortcut is hidden. */}
+              {featureVisibility.isVisible("usage") && (
+                <Tooltip delayDuration={500}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSettingsActiveTab("usage")
+                        setSettingsDialogOpen(true)
+                      }}
+                      className="flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.97] outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                      aria-label="Usage"
+                    >
+                      <Activity className="h-4 w-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Usage</TooltipContent>
+                </Tooltip>
+              )}
 
               {/* Help Button - isolated component to prevent sidebar re-renders */}
               <HelpSection isMobile={isMobileFullscreen} />

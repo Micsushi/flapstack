@@ -212,7 +212,7 @@ export function resolveTestChatSelection(input: { chatId: string; subChatId: str
   if (!chat || chat.archivedAt) throw new Error("Active test chat not found")
   if (!chat.projectId) throw new Error("Test chat is not project-scoped")
   const subChat = getDatabase()
-    .select({ id: subChats.id, chatId: subChats.chatId })
+    .select({ id: subChats.id, chatId: subChats.chatId, messages: subChats.messages })
     .from(subChats)
     .where(eq(subChats.id, input.subChatId))
     .get()
@@ -225,5 +225,19 @@ export function resolveTestChatSelection(input: { chatId: string; subChatId: str
     .where(eq(projects.id, chat.projectId))
     .get()
   if (!project) throw new Error("Project not found")
-  return { chatId: chat.id, subChatId: subChat.id, project }
+  let persistedMessages: unknown[] = []
+  try {
+    const parsed = JSON.parse(subChat.messages || "[]")
+    if (!Array.isArray(parsed) || parsed.length > 200) {
+      throw new Error("Persisted test transcript must contain at most 200 messages")
+    }
+    persistedMessages = parsed
+  } catch (error) {
+    throw new Error(
+      error instanceof Error && error.message.includes("at most 200")
+        ? error.message
+        : "Persisted test transcript is invalid",
+    )
+  }
+  return { chatId: chat.id, subChatId: subChat.id, project, persistedMessages }
 }

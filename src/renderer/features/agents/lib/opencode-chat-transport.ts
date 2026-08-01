@@ -10,7 +10,7 @@ import { pendingAuthRetryMessageAtom, subChatReasoningEnabledAtomFamily } from "
 import { showProviderErrorToast } from "./error-toast"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
 import { normalizeChatMode } from "../../../../shared/chat-mode"
-import { useAgentSubChatStore } from "../stores/sub-chat-store"
+import { getAgentSubChatStore } from "../stores/sub-chat-store"
 import {
   bindAgentChatAbort,
   createAgentChatSubscriptionObserver,
@@ -150,7 +150,7 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
     const sessionId = (lastAssistant?.metadata as AgentMessageMetadata | undefined)?.sessionId
     const reasoningEnabled = appStore.get(subChatReasoningEnabledAtomFamily(this.config.subChatId))
     const mode = normalizeChatMode(
-      useAgentSubChatStore
+      getAgentSubChatStore(this.config.chatId)
         .getState()
         .allSubChats.find((subChat) => subChat.id === this.config.subChatId)?.mode,
     )

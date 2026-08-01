@@ -2,7 +2,8 @@
 
 ### S6-F2-T1 — Lock questionnaire, presets, and always-visible core
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F2
 - Outcome: Questions and Focused/Standard/Complete preset outputs are explicit and reviewable.
 - Scope: Question wording/options; scoring-free deterministic mapping; preset definitions; always-visible core; optional feature catalog; prerequisites; first-install and existing-user behavior.
@@ -15,7 +16,8 @@
 
 ### S6-F2-T2 — Build the authoritative feature visibility registry
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F2
 - Outcome: Navigation, onboarding, Settings, search, and help resolve visibility from one typed registry.
 - Scope: Stable IDs; labels/categories/descriptions; preset defaults; prerequisites; route/search ownership; always-discoverable flag; unknown-version behavior; dev-only exclusion.
@@ -28,7 +30,8 @@
 
 ### S6-F2-T3 — Persist visibility and migrate existing users safely
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F2
 - Outcome: Visibility survives restart/sync windows and existing users retain current UI until they opt in.
 - Scope: Schema/version; per-user local preferences; preserve-current migration; optimistic updates; multi-window invalidation; backup/export scope; unknown feature defaults; rollback.
@@ -41,7 +44,8 @@
 
 ### S6-F2-T4 — Build the first-run questionnaire and visibility setup flow
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F2
 - Outcome: New users answer bounded questions, review visibility, and enter the app without a wall of optional features.
 - Scope: Setup introduction; provider setup routing; questions; preset result; exact visibility review/customize; skip; completion; resume after interruption; keyboard/touch/reader behavior.
@@ -54,7 +58,8 @@
 
 ### S6-F2-T5 — Create reusable feature explanations and contextual help
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F2
 - Outcome: Every major feature has concise on-demand purpose, use, prerequisites, risk, and enable guidance.
 - Scope: Versioned content registry; questionnaire review copy; Settings descriptions; What is this popovers; empty-state links; copy review; help search keywords.
@@ -67,7 +72,8 @@
 
 ### S6-F2-T6 — Add Settings visibility controls and rerunnable setup
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F2
 - Outcome: Users inspect/toggle every optional surface and rerun setup with a safe preview.
 - Scope: Feature Visibility page; grouped controls; prerequisites; individual/bulk preset preview; Run setup guide again; reset; search/deep links; save conflict; multi-window refresh.
@@ -80,7 +86,8 @@
 
 ### S6-F2-T7 — Prove hidden-feature operation and safe discovery
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F2
 - Outcome: Hiding UI never disables valid data/API/MCP/background behavior or weakens control.
 - Scope: Cross-feature contract tests; direct links; Settings search; MCP/API calls; automation/daemon operation; notifications; prerequisites; re-enable navigation; security invariants.
@@ -93,7 +100,9 @@
 
 ### S6-F2-T8 — Close onboarding and visibility acceptance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Release evidence: `release-gate` remains uncertified for packaged-preview-onboarding.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F2
 - Outcome: Fresh, upgraded, focused, standard, complete, skipped, and rerun paths pass on one exact SHA.
 - Scope: Matrix S6-ON; migrations; accessibility; explanations; hidden operations; Settings; restart/multi-window; docs; package walkthrough.

@@ -109,6 +109,39 @@ describe("interactive Runtime launch bridge", () => {
     },
   )
 
+  it("freezes a staged knowledge-graph selection into a direct Runtime run", () => {
+    seedChat("codex", "auto", [])
+    materializeInteractiveRuntimeRun(database, {
+      runId: "graph-run",
+      chatId: "chat",
+      subChatId: "sub",
+      harness: "codex",
+      prompt: "Use the selected note",
+      model: "gpt-5.5",
+      mode: "write",
+      reasoningEffort: "high",
+      reasoningEnabled: true,
+      vaultContextGraphSelection: {
+        nodeIds: ["custom:note-1"],
+        expectedGenerationId: "generation-1",
+        expansion: { depth: 1, direction: "outgoing", maxNodes: 8 },
+      },
+    })
+
+    const stored = database
+      .prepare("SELECT vault_context_sections selection FROM agent_runs WHERE id = 'graph-run'")
+      .get() as { selection: string }
+    expect(JSON.parse(stored.selection)).toEqual({
+      schemaVersion: 2,
+      sectionIds: [],
+      graph: {
+        nodeIds: ["custom:note-1"],
+        expectedGenerationId: "generation-1",
+        expansion: { depth: 1, direction: "outgoing", maxNodes: 8 },
+      },
+    })
+  })
+
   it.each([
     ["codex", null, "codex", true],
     ["claude-code", null, "claude-code", true],

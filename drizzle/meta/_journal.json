@@ -309,6 +309,69 @@
       "when": 1785084475757,
       "tag": "0043_lovely_mauler",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1785116834038,
+      "tag": "0044_attachment-import-provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1785122694677,
+      "tag": "0045_project-vault-graph",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "6",
+      "when": 1785123925768,
+      "tag": "0046_visual-capture-artifacts",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1785124990288,
+      "tag": "0047_mobile_pairing_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1785125044745,
+      "tag": "0048_mobile_sequenced_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1785126044745,
+      "tag": "0049_agent_profile_chat_bindings",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1785126907519,
+      "tag": "0050_mobile_projection_families",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "6",
+      "when": 1785130500000,
+      "tag": "0051_runtime_composition_attempts",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "6",
+      "when": 1785436800000,
+      "tag": "0052_project-vault-custom-notes",
+      "breakpoints": true
     }
   ]
 }

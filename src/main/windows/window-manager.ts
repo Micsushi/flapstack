@@ -47,18 +47,25 @@ export class WindowManager {
     }
     this.windows.set(electronId, window)
     this.rendererAvailable.set(electronId, true)
+    if (this.mainWindowId === null) this.mainWindowId = electronId
 
     // Assign stable ID
     let stableId: string
     if (preferredStableId) {
       stableId = preferredStableId
-    } else if (this.mainWindowId === null) {
+      if (preferredStableId === "main") this.mainWindowId = electronId
+      const restoredSecondary = /^window-(\d+)$/.exec(preferredStableId)
+      if (restoredSecondary) {
+        this.nextSecondaryId = Math.max(this.nextSecondaryId, Number(restoredSecondary[1]) + 1)
+      }
+    } else if (this.windows.size === 1) {
       // First window ever registered becomes the "main" window
-      this.mainWindowId = electronId
       stableId = "main"
     } else {
       // Secondary windows get incrementing IDs
-      stableId = `window-${this.nextSecondaryId++}`
+      do {
+        stableId = `window-${this.nextSecondaryId++}`
+      } while (this.findRegisteredByStableId(stableId))
     }
     this.windowIdMap.set(electronId, stableId)
 
@@ -166,10 +173,18 @@ export class WindowManager {
    * Unregister a window
    */
   unregister(window: BrowserWindow): void {
-    this.windows.delete(window.id)
-    this.rendererAvailable.delete(window.id)
-    if (this.focusedWindowId === window.id) {
+    const electronId = window.id
+    cleanupWindowSubscriptions(electronId)
+    this.releaseAllWorkspacePanes(electronId)
+    this.releaseAllChats(electronId)
+    this.windows.delete(electronId)
+    this.windowIdMap.delete(electronId)
+    this.rendererAvailable.delete(electronId)
+    if (this.focusedWindowId === electronId) {
       this.focusedWindowId = null
+    }
+    if (this.mainWindowId === electronId) {
+      this.mainWindowId = this.windows.keys().next().value ?? null
     }
   }
 
@@ -217,6 +232,13 @@ export class WindowManager {
    */
   count(): number {
     return this.windows.size
+  }
+
+  getRegisteredStableIds(): string[] {
+    return [...this.windows.entries()]
+      .filter(([, window]) => !window.isDestroyed())
+      .map(([electronId]) => this.windowIdMap.get(electronId))
+      .filter((stableId): stableId is string => Boolean(stableId))
   }
 
   /**
@@ -326,6 +348,33 @@ export class WindowManager {
     if (this.isLive(ownerId)) return ownerId
     this.chatOwnership.delete(chatId)
     return undefined
+  }
+
+  compareAndTransferChat(
+    chatId: string,
+    expectedOwnerStableId: string,
+    nextOwnerStableId: string,
+  ): { ok: true } | { ok: false; ownerStableId: string | null } {
+    this.pruneStaleOwnership()
+    const expectedWindow = this.findByStableId(expectedOwnerStableId)
+    const nextWindow = this.findByStableId(nextOwnerStableId)
+    const currentOwner = this.chatOwnership.get(chatId)
+    if (!expectedWindow || !nextWindow || currentOwner !== expectedWindow.id) {
+      return {
+        ok: false,
+        ownerStableId: currentOwner === undefined ? null : this.stableIdFor(currentOwner),
+      }
+    }
+    if (expectedWindow.id === nextWindow.id) return { ok: true }
+    this.chatOwnership.set(chatId, nextWindow.id)
+    this.directChatOwnership.set(chatId, nextWindow.id)
+    this.broadcastOwnershipChange({
+      reason: "move",
+      chatIds: [chatId],
+      sourceStableId: expectedOwnerStableId,
+      targetStableId: nextOwnerStableId,
+    })
+    return { ok: true }
   }
 
   inspectWorkspacePaneClaim(

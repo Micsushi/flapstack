@@ -11,14 +11,25 @@ import { isDesktopApp } from "../../../lib/utils/platform"
 import type { SubChatMeta } from "../stores/sub-chat-store"
 import { exportChat, copyChat, type ExportFormat } from "../lib/export-chat"
 import { toast } from "sonner"
+import {
+  asWorkbenchWindowCreationFailure,
+  showWorkbenchWindowCreationFeedback,
+} from "../../../lib/workbench-window-limit"
 
 const openInNewWindow = async (chatId: string, subChatId: string) => {
   const result = await window.desktopApi?.newWindow({ chatId, subChatId })
   if (result?.blocked) {
-    toast.info("This workspace is already open in another window", {
-      description: "Switching to the existing window.",
-      duration: 3000,
-    })
+    const creationFailure = asWorkbenchWindowCreationFailure(result)
+    if (creationFailure) {
+      showWorkbenchWindowCreationFeedback(creationFailure)
+      return
+    }
+    if (result.reason === "already-open") {
+      toast.info("This chat is already open in another window", {
+        description: "Switching to the existing window.",
+        duration: 3000,
+      })
+    }
   }
 }
 

@@ -2,7 +2,8 @@
 
 ### S6-F3-T1 — Lock vocabulary, boundaries, and S4 migration behavior
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F3
 - Outcome: Agent Profile, Personality, and Starter Profile have one non-overlapping contract.
 - Scope: Canonical copy; capability/personality field ownership; preset removal; scopes; inheritance; versioning; launch precedence; inline S4 migration; trait schema; speed semantics; rollback.
@@ -15,7 +16,8 @@
 
 ### S6-F3-T2 — Add versioned Markdown personality contracts and storage
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F3
 - Outcome: Reusable personality files have stable identity, typed traits, immutable versions, trust, and safe local storage.
 - Scope: YAML frontmatter/body schema; IDs/versions/scopes/base; size/encoding; central/project paths; provenance; secret scan; parse errors; CRUD/archive/search; file/DB transaction; watchers; backup.
@@ -28,7 +30,8 @@
 
 ### S6-F3-T3 — Resolve personality references and migrate embedded presentation
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F3
 - Outcome: Profiles reference exact personality versions while all S4 profiles/history remain valid.
 - Scope: Schema/migration; nullable exact ref; inline legacy representation; conversion flow; resolver precedence/source preview; immutable combined snapshot/digest; current-policy revalidation; rollback.
@@ -41,7 +44,8 @@
 
 ### S6-F3-T4 — Extend Profile Studio with a reusable Personality Library
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F3
 - Outcome: Users create, preview, version, duplicate, import/export, archive, and select personalities separately from capability.
 - Scope: Personality list/editor; Markdown/traits preview; profile reference chooser; source/version diff; convert-inline action; compatibility; missing repair; accessibility; multi-window invalidation.
@@ -54,7 +58,8 @@
 
 ### S6-F3-T5 — Add Agent Profile selection to every new-chat flow
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F3
 - Outcome: A selected named profile preconfigures a new chat without repeated prompt context.
 - Scope: Global/project/task new chat; chooser/search/recent; exact profile/personality preview; model/runtime/skills/permission/effort/speed/worktree summary; compatibility; idle chat creation; provenance chip; change-before-first-run.
@@ -67,7 +72,9 @@
 
 ### S6-F3-T6 — Add exact profile selection to sub-agent and workflow creation
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:credentialed-provider-profile-launch`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:credentialed-provider-profile-launch` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F3
 - Outcome: Parents and workflow authors select named specialists such as Reviewer by stable allowed profile identity.
 - Scope: Spawn API/approval; direct child chooser; allowed descendants; workflow worker binding; exact versions; snapshot before durable child rows; context fork; limits/budgets; lineage/activity labels; retry/resume/fork.
@@ -80,7 +87,9 @@
 
 ### S6-F3-T7 — Add provider-supported speed preference independent of effort
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:provider-speed-semantics`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:provider-speed-semantics` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F3
 - Outcome: Profiles request speed/fast mode separately from reasoning effort with honest adapter compatibility.
 - Scope: Capability schema; adapter matrix; resolver/precedence; profile and launch overrides; preview; immutable snapshot; usage/activity labels; unavailable/changed capability repair.
@@ -93,7 +102,8 @@
 
 ### S6-F3-T8 — Extend starter profiles, trust, portability, and evaluation
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F3
 - Outcome: Small starter profiles and reusable personalities remain safe, portable, and honestly evaluated.
 - Scope: Planner/Implementer/Reviewer/Verifier conversion; optional shared starter personalities; user-copy flow; bundle versions; unresolved refs; prompt injection; cross-model/runtime/effort/speed evidence; no marketplace.
@@ -106,7 +116,10 @@
 
 ### S6-F3-T9 — Close profile and personality acceptance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:credentialed-provider-profile-evaluation`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:credentialed-provider-profile-evaluation` remains uncertified.
+- [ ] Release evidence: `release-gate` remains uncertified for native-distribution-profile-flow.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F3
 - Outcome: Custom, starter, new-chat, direct child, and workflow agents reuse exact personality/profile snapshots safely.
 - Scope: Matrix S6-AP; migration/rollback; Studio; new chat; child/workflow; speed/effort; import/export; restart; accessibility; package and provider evidence.

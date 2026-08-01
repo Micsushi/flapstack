@@ -12,7 +12,7 @@ import {
   trackWorkspaceCreated,
   trackWorkspaceDeleted,
 } from "../../analytics"
-import { agentRuns, chats, getDatabase, projects, subChats, tasks } from "../../db"
+import { agentRuns, chats, getDatabase, getDatabasePath, projects, subChats, tasks } from "../../db"
 import { restoreCheckpoint } from "../../checkpoints"
 import {
   createWorktreeForChat,
@@ -49,9 +49,17 @@ import { formatChatHandoff } from "../../chat-handoff"
 import { getPermissionPreferences } from "../../permissions"
 import { omitHiddenFileContentFromMessage } from "../../../../shared/chat-visible-content"
 import { agentRuntimePreferenceSchema } from "../../../../shared/agent-runtime"
+import { customPermissionCapabilitiesSchema } from "../../../../shared/permission-capabilities"
 import { createRuntimeChatLifecycleService } from "../../agent-runtime/chat-lifecycle"
+import { CrossProviderDelegationService } from "../../agent-runtime/cross-provider-delegation"
+import { getMainRuntimeLaunchService } from "../../main-run-launcher"
 import { CHAT_MODES } from "../../../../shared/chat-mode"
 import { mergeRuntimeMessages } from "../../agent-runtime/message-merge"
+import {
+  AGENT_PROFILE_LAUNCH_BLOCKING_CONFLICT_CODES,
+  agentProfileVersionRefSchema,
+} from "../../../../shared/agent-profiles"
+import { AgentProfileChatBindingService } from "../../agent-profiles/chat-binding"
 
 const newChatPermissionModeSchema = z.enum([
   "read-only",
@@ -59,6 +67,49 @@ const newChatPermissionModeSchema = z.enum([
   "auto-edit-project-only",
   "full-access",
 ])
+
+const runtimeDelegationInputSchema = z.object({
+  sourceChatId: z.string().trim().min(1).max(200),
+  targetHarness: z.enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt", "local"]),
+  targetModel: z.string().trim().min(1).max(240),
+  preference: agentRuntimePreferenceSchema,
+  requestId: z.string().trim().min(8).max(200),
+  name: z.string().trim().min(1).max(200).optional(),
+  objective: z.string().trim().min(1).max(100_000),
+  selectedMessageIds: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
+  selectedFileRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
+  selectedArtifactRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
+  requiredCapabilities: z.array(z.string().trim().min(1).max(512)).max(100).optional(),
+  outputSchema: z.record(z.unknown()).nullable().optional(),
+  priorAttemptId: z.string().trim().min(1).max(512).nullable().optional(),
+  deadline: z.string().datetime().nullable().optional(),
+  confirmedPreviewDigest: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
+  authorityRestrictions: z
+    .object({
+      permissionMode: z
+        .enum(["read-only", "ask-before-edits", "auto-edit-project-only", "full-access", "custom"])
+        .optional(),
+      customPermissions: customPermissionCapabilitiesSchema.nullable().optional(),
+      allowedToolTiers: z
+        .array(z.enum(["read", "project-write", "shell", "git", "network"]))
+        .max(5)
+        .optional(),
+      network: z.boolean().optional(),
+      maxDescendantDepth: z.number().int().min(0).max(64).optional(),
+      tokenBudget: z.number().int().positive().nullable().optional(),
+      costBudgetMicros: z.number().int().nonnegative().nullable().optional(),
+    })
+    .strict()
+    .optional(),
+})
+
+function runtimeDelegationService() {
+  const databasePath = getDatabasePath()
+  return new CrossProviderDelegationService(databasePath, getMainRuntimeLaunchService(databasePath))
+}
 
 type CheckoutRepairResult =
   | {
@@ -620,6 +671,11 @@ export const chatsRouter = router({
         branchType: z.enum(["local", "remote"]).optional(), // Whether baseBranch is local or remote
         useWorktree: z.boolean().default(true), // If false, work directly in project dir
         mode: z.enum(CHAT_MODES).default("write"),
+        agentProfile: agentProfileVersionRefSchema.optional(),
+        confirmedAgentProfileDigest: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -661,6 +717,45 @@ export const chatsRouter = router({
         (permissionPreferences.globalCustomPermissions
           ? JSON.stringify(permissionPreferences.globalCustomPermissions)
           : null)
+      let confirmedProfileDigest: string | null = null
+      let confirmedProfileWorktreeStrategy:
+        "inherit" | "task-primary" | "existing" | "attached-branch" | "none" | null = null
+      if (input.agentProfile || input.confirmedAgentProfileDigest) {
+        if (!input.agentProfile || !input.confirmedAgentProfileDigest) {
+          throw new Error(
+            "Agent Profile selection requires both an exact version and confirmed preview digest.",
+          )
+        }
+        const preview = new AgentProfileChatBindingService(db).previewForNewChat({
+          scope: input.scope,
+          projectId: project?.id,
+          taskId: task?.id,
+          permissionMode: input.permissionMode ?? inheritedMode,
+          runtimePreference: input.runtimePreference ?? "auto",
+          profile: input.agentProfile,
+        })
+        const blocker = preview.conflicts.find((conflict) =>
+          (AGENT_PROFILE_LAUNCH_BLOCKING_CONFLICT_CODES as readonly string[]).includes(
+            conflict.code,
+          ),
+        )
+        if (blocker) throw new Error(`${blocker.message} ${blocker.repair}`)
+        if (preview.unresolvedRequirements.length) {
+          throw new Error("The selected Agent Profile has unresolved requirements.")
+        }
+        if (preview.digest !== input.confirmedAgentProfileDigest) {
+          throw new Error(
+            "Agent Profile preview changed before Chat creation. Review and confirm it again.",
+          )
+        }
+        confirmedProfileDigest = preview.digest
+        confirmedProfileWorktreeStrategy = preview.capability.worktreeStrategy
+        if (confirmedProfileWorktreeStrategy === "task-primary" && !task) {
+          throw new Error(
+            "The selected Agent Profile requires a task-primary worktree. Create this Chat from a task.",
+          )
+        }
+      }
 
       // Create chat (fast path)
       const chat = db
@@ -727,6 +822,25 @@ export const chatsRouter = router({
         .returning()
         .get()
       console.log("[chats.create] created subChat:", subChat)
+      if (input.agentProfile) {
+        try {
+          const bound = new AgentProfileChatBindingService(db).bind({
+            chatId: chat.id,
+            profile: input.agentProfile,
+            expectedDigest: confirmedProfileDigest ?? undefined,
+          })
+          if (bound.digest !== confirmedProfileDigest) {
+            throw new Error("Agent Profile binding digest no longer matches the confirmed preview.")
+          }
+        } catch (error) {
+          db.delete(chats).where(eq(chats.id, chat.id)).run()
+          throw new Error(
+            `Agent Profile changed while creating the Chat. No Chat was retained; review it again. ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          )
+        }
+      }
 
       // Worktree creation result (will be set if useWorktree is true)
       let worktreeResult: {
@@ -735,14 +849,20 @@ export const chatsRouter = router({
         baseBranch?: string
       } = {}
 
-      // Only create worktree if useWorktree is true and the chat has a project.
+      const worktreeStrategy = confirmedProfileWorktreeStrategy ?? "inherit"
+      const useTaskPrimary =
+        worktreeStrategy === "task-primary" ||
+        (worktreeStrategy === "inherit" &&
+          input.scope === "task" &&
+          Boolean(input.useWorktree || task?.primaryWorktreePath))
+      const useManagedWorktree =
+        worktreeStrategy === "attached-branch" ||
+        (worktreeStrategy === "inherit" && input.useWorktree)
+
+      // Apply the exact profile worktree strategy before the Chat can launch.
       if (input.scope === "global") {
         console.log("[chats.create] global scope - no worktree")
-      } else if (
-        input.scope === "task" &&
-        task &&
-        (input.useWorktree || task.primaryWorktreePath)
-      ) {
+      } else if (useTaskPrimary && task) {
         const taskWithWorktree = task.primaryWorktreePath
           ? task
           : await ensureTaskPrimaryWorktree(task.id)
@@ -758,7 +878,7 @@ export const chatsRouter = router({
           worktreePath: taskWithWorktree.primaryWorktreePath ?? undefined,
           branch: taskWithWorktree.primaryBranch ?? undefined,
         }
-      } else if (input.useWorktree && project) {
+      } else if (useManagedWorktree && project) {
         console.log(
           "[chats.create] creating worktree with baseBranch:",
           input.baseBranch,
@@ -811,7 +931,7 @@ export const chatsRouter = router({
           db.update(chats).set({ worktreePath: project.path }).where(eq(chats.id, chat.id)).run()
           worktreeResult = { worktreePath: project.path }
         }
-      } else if (project) {
+      } else if (project && worktreeStrategy !== "none") {
         // Local mode: use project path directly, no branch info
         console.log("[chats.create] local mode - using project path directly")
         db.update(chats).set({ worktreePath: project.path }).where(eq(chats.id, chat.id)).run()
@@ -1201,18 +1321,70 @@ export const chatsRouter = router({
       createRuntimeChatLifecycleService(getDatabase()).setEmptyChatPreference(input),
     ),
 
+  previewRuntimeContinuation: publicProcedure
+    .input(
+      z.object({
+        sourceChatId: z.string().trim().min(1).max(200),
+        targetHarness: z
+          .enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt", "local"])
+          .optional(),
+        targetModel: z.string().trim().min(1).max(240).optional(),
+        preference: agentRuntimePreferenceSchema,
+        requestId: z.string().trim().min(8).max(200),
+        name: z.string().trim().min(1).max(200).optional(),
+        selectedMessageIds: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
+        selectedFileRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
+        selectedArtifactRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
+      }),
+    )
+    .query(({ input }) =>
+      createRuntimeChatLifecycleService(getDatabase()).previewContinuation(input),
+    ),
+
   continueWithRuntime: publicProcedure
     .input(
       z.object({
         sourceChatId: z.string().trim().min(1).max(200),
+        targetHarness: z
+          .enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt", "local"])
+          .optional(),
+        targetModel: z.string().trim().min(1).max(240).optional(),
         preference: agentRuntimePreferenceSchema,
         requestId: z.string().trim().min(8).max(200),
         name: z.string().trim().min(1).max(200).optional(),
+        selectedMessageIds: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
+        selectedFileRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
+        selectedArtifactRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
+        confirmedPreviewDigest: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
       }),
     )
     .mutation(({ input }) =>
       createRuntimeChatLifecycleService(getDatabase()).continueWithRuntime(input),
     ),
+
+  previewRuntimeDelegation: publicProcedure
+    .input(runtimeDelegationInputSchema.omit({ confirmedPreviewDigest: true }))
+    .query(({ input }) => runtimeDelegationService().preview(input)),
+
+  delegateToRuntime: publicProcedure
+    .input(runtimeDelegationInputSchema)
+    .mutation(({ input }) => runtimeDelegationService().delegate(input)),
+
+  reconcileRuntimeDelegation: publicProcedure
+    .input(z.object({ attemptId: z.string().trim().min(1).max(512) }))
+    .query(({ input }) => runtimeDelegationService().reconcile(input.attemptId)),
+
+  cancelRuntimeDelegation: publicProcedure
+    .input(
+      z.object({
+        attemptId: z.string().trim().min(1).max(512),
+        reason: z.string().trim().min(1).max(2_000),
+      }),
+    )
+    .mutation(({ input }) => runtimeDelegationService().cancel(input.attemptId, input.reason)),
 
   undoRuntimeContinuation: publicProcedure
     .input(

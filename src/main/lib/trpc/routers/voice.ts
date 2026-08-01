@@ -14,11 +14,22 @@ import { getCredentialService } from "../../credential-service"
 import { recordTranscription } from "../../speech/history"
 import { parakeetSidecar } from "../../speech/stt-parakeet-streaming"
 import { StreamingTranscriptState } from "../../../../shared/streaming-transcript"
+import {
+  buildSelectedSpeechVocabulary,
+  resolveSpeechVocabularyHints,
+} from "../../../../shared/speech-vocabulary"
 import { publicProcedure, router } from "../index"
 
 // Max audio size: 25MB (Whisper API limit)
 const MAX_AUDIO_SIZE = 25 * 1024 * 1024
 const MAX_STREAM_PCM_BYTES = 10 * 60 * 16_000 * 4
+const selectedSpeechContextSchema = z
+  .object({
+    project: z.string().max(128).nullable().optional(),
+    task: z.string().max(128).nullable().optional(),
+    chat: z.string().max(128).nullable().optional(),
+  })
+  .strict()
 
 type ActiveDictation = {
   sessionId: string
@@ -95,6 +106,8 @@ export const voiceRouter = router({
         originKind: z.enum(["chat", "new-chat"]).optional(),
         originId: z.string().optional(),
         originLabel: z.string().max(500).optional(),
+        selectedContext: selectedSpeechContextSchema.optional(),
+        allowCloudSelectedContext: z.boolean().default(false),
       }),
     )
     .mutation(async ({ input }) => {
@@ -119,6 +132,11 @@ export const voiceRouter = router({
         audioBuffer,
         format: input.format,
         language: input.language,
+        vocabularyHints: resolveSpeechVocabularyHints(
+          adapter,
+          buildSelectedSpeechVocabulary(input.selectedContext),
+          { allowCloudSelectedContext: input.allowCloudSelectedContext },
+        ),
       })
       console.log(
         `[Voice] ${result.adapterId} transcription completed (${result.text.length} chars)`,
@@ -156,6 +174,8 @@ export const voiceRouter = router({
         originKind: z.enum(["chat", "new-chat"]).optional(),
         originId: z.string().optional(),
         originLabel: z.string().max(500).optional(),
+        selectedContext: selectedSpeechContextSchema.optional(),
+        allowCloudSelectedContext: z.boolean().default(false),
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -169,6 +189,14 @@ export const voiceRouter = router({
           await parakeetSidecar.cancel()
         }
         try {
+          const adapter = sttAdapterImplementations.find(
+            (candidate) => candidate.id === "local-parakeet",
+          )!
+          const vocabularyHints = resolveSpeechVocabularyHints(
+            adapter,
+            buildSelectedSpeechVocabulary(input.selectedContext),
+            { allowCloudSelectedContext: input.allowCloudSelectedContext },
+          )
           await parakeetSidecar.start()
           if (pending.cancelled || pendingDictation !== pending) {
             await parakeetSidecar.cancel()
@@ -187,7 +215,11 @@ export const voiceRouter = router({
             originLabel: input.originLabel,
             transcript: new StreamingTranscriptState(),
           }
-          return { started: true as const, adapterId: "local-parakeet" }
+          return {
+            started: true as const,
+            adapterId: "local-parakeet",
+            vocabularyHintsAccepted: vocabularyHints,
+          }
         } finally {
           if (pendingDictation === pending) pendingDictation = null
         }

@@ -209,6 +209,30 @@ describe("direct Codex Runtime adapter", () => {
     expect(activity.flat().filter((event) => event.kind === "permission")).toHaveLength(2)
   })
 
+  it("sends a frozen fast service tier independently of reasoning effort", async () => {
+    const client = new FakeCodexProtocolClient()
+    const adapter = createCodexRuntimeAdapterFactory({
+      appendActivity: collectActivity().append,
+      resolveThreadParams: () => ({ cwd: "/worktree" }),
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.144.1",
+      createClient: () => client,
+    })()
+    const context = runtimeContext()
+    context.launch.controls.modelEffort = "low"
+    context.launch.controls.serviceTier = "fast"
+
+    const session = await adapter.startSession(context)
+    await adapter.startTurn(context, session, "PROMPT_FAST")
+
+    expect(
+      client.requests.find((request) => request.method === "thread/start")?.params,
+    ).toMatchObject({ serviceTier: "fast" })
+    expect(
+      client.requests.find((request) => request.method === "turn/start")?.params,
+    ).toMatchObject({ effort: "low", serviceTier: "fast" })
+  })
+
   it("rejects a terminal failed turn instead of projecting provider failure as success", async () => {
     const client = new FakeCodexProtocolClient()
     const activity = collectActivity()

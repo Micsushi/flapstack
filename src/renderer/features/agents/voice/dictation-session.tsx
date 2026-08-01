@@ -8,6 +8,7 @@ import { toast } from "sonner"
 import { Button } from "../../../components/ui/button"
 import { trpc } from "../../../lib/trpc"
 import { composeDictationDraft } from "../../../../shared/streaming-transcript"
+import type { SelectedSpeechContext } from "../../../../shared/speech-vocabulary"
 import {
   blobToBase64,
   float32ToBase64,
@@ -31,6 +32,8 @@ export type DictationTarget = {
   getText: () => string
   commitText: (text: string) => void
   showText: (text: string) => void
+  selectedContext?: SelectedSpeechContext
+  allowCloudSelectedContext?: boolean
 }
 
 type DictationSessionValue = {
@@ -169,6 +172,8 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
             originKind: target.chatId ? "chat" : "new-chat",
             originId: target.chatId ?? target.draftId,
             originLabel: `${target.projectLabel} / ${target.chatLabel}`,
+            selectedContext: target.selectedContext,
+            allowCloudSelectedContext: target.allowCloudSelectedContext ?? false,
           })
           if (result.text.trim())
             publish(composeDictationDraft(baseDraftRef.current, result.text.trim()))
@@ -231,6 +236,8 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
             originKind: target.chatId ? "chat" : "new-chat",
             originId: target.chatId ?? target.draftId,
             originLabel: `${target.projectLabel} / ${target.chatLabel}`,
+            selectedContext: target.selectedContext,
+            allowCloudSelectedContext: target.allowCloudSelectedContext ?? false,
           })
           streamStartRef.current = streamStart
           await Promise.all([streamStart, startRecording()])

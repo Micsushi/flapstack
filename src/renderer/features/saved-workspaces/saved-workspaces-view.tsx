@@ -18,6 +18,11 @@ import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import { trpc } from "../../lib/trpc"
 import {
+  asWorkbenchWindowCreationFailure,
+  describeWorkbenchWindowCreationFailure,
+  showWorkbenchWindowCreationFeedback,
+} from "../../lib/workbench-window-limit"
+import {
   createSingleChatWorkspaceLayout,
   enforceWorkspaceChatCap,
   getWorkspaceGroups,
@@ -619,54 +624,76 @@ export function SavedWorkspacesView({
 
   const popOutPane = async (pane: Parameters<typeof workspacePaneChatIds>[0]) => {
     if (!selectedWorkspaceId || !projectId) return
-    const result = await window.desktopApi?.openWorkspacePane?.({
-      projectId,
-      workspaceId: selectedWorkspaceId,
-      paneId: pane.id,
-      chatIds: workspacePaneChatIds(pane, operationOwnership.data),
-    })
-    setStatus(
-      result?.ok
-        ? result.state === "opened"
-          ? "Pane opened in a stable workspace window."
-          : "Focused the existing pane window."
-        : result?.reason === "recovering"
-          ? "Pane window is recovering. Try again after it reloads."
-          : `Pane remains owned by ${result?.ownerStableId ?? "another window"}.`,
-    )
+    try {
+      const result = await window.desktopApi?.openWorkspacePane?.({
+        projectId,
+        workspaceId: selectedWorkspaceId,
+        paneId: pane.id,
+        chatIds: workspacePaneChatIds(pane, operationOwnership.data),
+      })
+      const creationFailure = !result?.ok ? asWorkbenchWindowCreationFailure(result) : null
+      if (creationFailure) showWorkbenchWindowCreationFeedback(creationFailure)
+      setStatus(
+        result?.ok
+          ? result.state === "opened"
+            ? "Pane opened in a stable workspace window."
+            : "Focused the existing pane window."
+          : result?.reason === "recovering"
+            ? "Pane window is recovering. Try again after it reloads."
+            : creationFailure
+              ? describeWorkbenchWindowCreationFailure(creationFailure.reason).description
+              : `Pane remains owned by ${result?.ownerStableId ?? "another window"}.`,
+      )
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "The pane window could not be opened.")
+    }
   }
 
   const pullBackPane = async (pane: Parameters<typeof workspacePaneChatIds>[0]) => {
     if (!selectedWorkspaceId) return
-    const result = await window.desktopApi?.pullBackWorkspacePane?.(selectedWorkspaceId, pane.id)
-    setStatus(
-      result?.ok
-        ? "Pane returned to its workspace window."
-        : "No workspace window is available for pull-back.",
-    )
+    try {
+      const result = await window.desktopApi?.pullBackWorkspacePane?.(selectedWorkspaceId, pane.id)
+      setStatus(
+        result?.ok
+          ? "Pane returned to its workspace window."
+          : "No workspace window is available for pull-back.",
+      )
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "The pane could not be pulled back.")
+    }
   }
 
   const openWorkspaceWindow = async () => {
     if (!selectedWorkspaceId || !projectId || !layout) return
-    const result = await window.desktopApi?.openWorkspaceWindow?.({
-      projectId,
-      workspaceId: selectedWorkspaceId,
-      panes: getWorkspaceGroups(layout).flatMap((group) =>
-        group.panes.map((pane) => ({
-          paneId: pane.id,
-          chatIds: workspacePaneChatIds(pane, operationOwnership.data),
-        })),
-      ),
-    })
-    setStatus(
-      result?.ok
-        ? result.state === "opened"
-          ? "Workspace moved to a stable window."
-          : "Focused the existing workspace window."
-        : result?.reason === "recovering"
-          ? "Workspace window is recovering. Try again after it reloads."
-          : `Workspace remains owned by ${result?.ownerStableId ?? "another window"}.`,
-    )
+    try {
+      const result = await window.desktopApi?.openWorkspaceWindow?.({
+        projectId,
+        workspaceId: selectedWorkspaceId,
+        panes: getWorkspaceGroups(layout).flatMap((group) =>
+          group.panes.map((pane) => ({
+            paneId: pane.id,
+            chatIds: workspacePaneChatIds(pane, operationOwnership.data),
+          })),
+        ),
+      })
+      const creationFailure = !result?.ok ? asWorkbenchWindowCreationFailure(result) : null
+      if (creationFailure) showWorkbenchWindowCreationFeedback(creationFailure)
+      setStatus(
+        result?.ok
+          ? result.state === "opened"
+            ? "Workspace moved to a stable window."
+            : "Focused the existing workspace window."
+          : result?.reason === "recovering"
+            ? "Workspace window is recovering. Try again after it reloads."
+            : creationFailure
+              ? describeWorkbenchWindowCreationFailure(creationFailure.reason).description
+              : `Workspace remains owned by ${result?.ownerStableId ?? "another window"}.`,
+      )
+    } catch (error) {
+      setStatus(
+        error instanceof Error ? error.message : "The workspace window could not be opened.",
+      )
+    }
   }
 
   if (!projectId) {

@@ -72,11 +72,12 @@ describe("native ABI marker", () => {
   })
 
   it("probes real PTY launches instead of treating a lazy node-pty import as healthy", () => {
-    const calls: Array<{ runtime: string; args: string[] }> = []
+    const calls: Array<{ runtime: string; args: string[]; timeout: number }> = []
     const result = probeNativeModules("electron", {
       runtime: "electron-runtime",
-      spawn: (runtime: string, args: string[]) => {
-        calls.push({ runtime, args })
+      platform: "win32",
+      spawn: (runtime: string, args: string[], options: { timeout: number }) => {
+        calls.push({ runtime, args, timeout: options.timeout })
         return { status: 0, stdout: "140", stderr: "", signal: null }
       },
     })
@@ -88,6 +89,7 @@ describe("native ABI marker", () => {
     expect(calls[0].args[1]).toContain("runPtyProbe(true)")
     expect(calls[0].args[1]).toContain("runPtyProbe(false)")
     expect(calls[0].args[1]).toContain("process.exit(0)")
+    expect(calls[0].timeout).toBe(45_000)
   })
 
   it("changes when Electron or a native dependency changes", () => {

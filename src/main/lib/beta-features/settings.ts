@@ -103,6 +103,13 @@ export function betaFeatureForMcpTool(name: string): BetaFeatureId | null {
       "update_vault_section",
       "update_vault_handoff",
       "record_vault_decision",
+      "list_vault_nodes",
+      "read_vault_node",
+      "preview_vault_context",
+      "create_vault_node",
+      "update_vault_node",
+      "move_vault_node",
+      "link_vault_nodes",
     ].includes(name)
   ) {
     return "projectMemory"

@@ -101,20 +101,14 @@ describe("Windows product platform behavior", () => {
       const root = mkdtempSync(join(tmpdir(), "flapstack-cli-Unicode-雪-"))
       const executableDirectory = join(root, "app ü")
       const selectedDirectory = join(root, "project 雪 & spaces")
-      const executable = join(executableDirectory, "capture.vbs")
+      const executable = join(executableDirectory, "capture.cmd")
       const launcher = join(root, "flapstack.cmd")
       const marker = join(selectedDirectory, "launched.txt")
       mkdirSync(executableDirectory, { recursive: true })
       mkdirSync(selectedDirectory, { recursive: true })
       writeFileSync(
         executable,
-        [
-          'Set fso = CreateObject("Scripting.FileSystemObject")',
-          'Set marker = fso.CreateTextFile(fso.BuildPath(WScript.Arguments(0), "launched.txt"), True)',
-          'marker.WriteLine "launched"',
-          "marker.Close",
-          "",
-        ].join("\r\n"),
+        ["@echo off", '> "%~1\\launched.txt" echo launched', "exit /b 0", ""].join("\r\n"),
         "ascii",
       )
       const template = readFileSync(

@@ -6,7 +6,7 @@ import {
   extractChatMessageText,
 } from "./subscription-chat-transport"
 import { normalizeChatMode } from "../../../../shared/chat-mode"
-import { useAgentSubChatStore } from "../stores/sub-chat-store"
+import { getAgentSubChatStore } from "../stores/sub-chat-store"
 
 type UIMessageChunk = any
 
@@ -33,7 +33,7 @@ export class LocalModelChatTransport implements ChatTransport<UIMessage> {
     const lastUser = [...options.messages].reverse().find((message) => message.role === "user")
     const prompt = extractChatMessageText(lastUser)
     const mode = normalizeChatMode(
-      useAgentSubChatStore
+      getAgentSubChatStore(this.config.chatId)
         .getState()
         .allSubChats.find((subChat) => subChat.id === this.config.subChatId)?.mode,
     )

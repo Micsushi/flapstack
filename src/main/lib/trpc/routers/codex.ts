@@ -49,9 +49,11 @@ import {
   chats,
   getDatabase,
   getDatabasePath,
+  getSqliteDatabase,
   projects as projectsTable,
   subChats,
 } from "../../db"
+import { bindVisualCaptureImagesToRun } from "../../visual-capture/run-provenance"
 import { CODEX_TRANSPORT_DECISION } from "../../harness/codex-transport-decision"
 import {
   buildHarnessContextBundle,
@@ -96,12 +98,28 @@ import {
   ProjectVaultContextRejectedError,
 } from "../../project-vaults/run-context"
 import { isBetaFeatureEnabled } from "../../beta-features/settings"
-import { readDurableAgentProfileRuntimeAuthority } from "../../agent-profiles/runtime-authority"
+import {
+  isFrozenAgentProfileToolAllowed,
+  readDurableAgentProfileRuntimeAuthority,
+} from "../../agent-profiles/runtime-authority"
+import { AgentProfileChatBindingService } from "../../agent-profiles/chat-binding"
 
 const imageAttachmentSchema = z.object({
   base64Data: z.string(),
   mediaType: z.string(),
   filename: z.string().optional(),
+})
+
+const vaultContextGraphSelectionSchema = z.object({
+  nodeIds: z.array(z.string().trim().min(1).max(200)).max(24),
+  expectedGenerationId: z.string().trim().min(1).max(200),
+  expansion: z
+    .object({
+      depth: z.number().int().min(0).max(2),
+      direction: z.enum(["outgoing", "incoming", "both"]),
+      maxNodes: z.number().int().min(1).max(24),
+    })
+    .optional(),
 })
 
 function parseCustomPermissionTogglesJson(value: string | null) {
@@ -121,6 +139,7 @@ type CodexProviderSession = {
   extensionPolicyFingerprint: string
   reasoningEnabled: boolean
   reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" | null
+  serviceTier: "fast" | null
 }
 
 type CodexLoginSessionState = "running" | "success" | "error" | "cancelled"
@@ -1159,11 +1178,32 @@ async function createCodexRun(params: {
   customPermissions: string | null
   worktreePath: string | null
   promptMessageId?: string
+  images?: Array<{ base64Data: string; mediaType: string; filename?: string }>
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"
+  serviceTier?: "fast" | null
 }) {
   const db = getDatabase()
+  const bindVisualContext = async (runId: string) => {
+    try {
+      await bindVisualCaptureImagesToRun({
+        database: getSqliteDatabase(),
+        artifactRoot: join(app.getPath("userData"), "visual-artifacts"),
+        chatId: params.chatId,
+        runId,
+        images: params.images,
+      })
+    } catch (error) {
+      db.update(agentRuns)
+        .set({ status: "failure", completedAt: new Date() })
+        .where(and(eq(agentRuns.id, runId), eq(agentRuns.status, "running")))
+        .run()
+      throw error
+    }
+  }
   const existingRun = db.select().from(agentRuns).where(eq(agentRuns.id, params.runId)).get()
 
   if (existingRun) {
+    if (existingRun.status === "running") await bindVisualContext(existingRun.id)
     return existingRun
   }
 
@@ -1172,6 +1212,10 @@ async function createCodexRun(params: {
     harness: "codex",
     model: params.model,
     permission: runtimePermissionSnapshot(params.permissionMode, params.customPermissions),
+    controls: {
+      modelEffort: params.reasoningEffort ?? null,
+      serviceTier: params.serviceTier ?? null,
+    },
   })
   assertFlapstackNativeProviderRouter({ harness: "codex", snapshot: runtimeSnapshot })
 
@@ -1224,6 +1268,8 @@ async function createCodexRun(params: {
     .set({ harness: "codex", model: params.model })
     .where(eq(chats.id, params.chatId))
     .run()
+
+  await bindVisualContext(run.id)
 
   const before = await captureCheckpoint(run.id, params.worktreePath, "before")
   return db
@@ -1347,6 +1393,7 @@ function buildCodexProviderEnv(
   reasoningEnabled = true,
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh",
   extensionLaunchPolicy?: ExtensionLaunchPolicy,
+  serviceTier?: "fast" | null,
 ): Record<string, string> {
   // Prefer shell-derived values (notably PATH) so stdio MCP dependencies
   // like pipx/npx resolve the same way as in MCP tool probing.
@@ -1378,6 +1425,7 @@ function buildCodexProviderEnv(
     show_raw_agent_reasoning: reasoningEnabled,
     hide_agent_reasoning: !reasoningEnabled,
     ...(reasoningEffort ? { model_reasoning_effort: reasoningEffort } : {}),
+    ...(serviceTier ? { service_tier: serviceTier } : {}),
   }
   env.CODEX_CONFIG = JSON.stringify(
     extensionLaunchPolicy
@@ -1478,6 +1526,7 @@ function getOrCreateProvider(params: {
   }
   reasoningEnabled: boolean
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"
+  serviceTier?: "fast" | null
 }): ACPProvider {
   const authFingerprint = getAuthFingerprint(params.authConfig)
   const existing = providerSessions.get(params.subChatId)
@@ -1489,7 +1538,8 @@ function getOrCreateProvider(params: {
     existing.mcpFingerprint === params.mcpFingerprint &&
     existing.extensionPolicyFingerprint === params.extensionLaunchPolicy.fingerprint &&
     existing.reasoningEnabled === params.reasoningEnabled &&
-    existing.reasoningEffort === (params.reasoningEffort ?? null)
+    existing.reasoningEffort === (params.reasoningEffort ?? null) &&
+    existing.serviceTier === (params.serviceTier ?? null)
   ) {
     return existing.provider
   }
@@ -1511,6 +1561,7 @@ function getOrCreateProvider(params: {
       params.reasoningEnabled,
       params.reasoningEffort,
       params.extensionLaunchPolicy,
+      params.serviceTier,
     ),
     authMethodId: getCodexAuthMethodId(params.authConfig),
     permissionRequestHandler: async (request) => {
@@ -1533,6 +1584,7 @@ function getOrCreateProvider(params: {
     extensionPolicyFingerprint: params.extensionLaunchPolicy.fingerprint,
     reasoningEnabled: params.reasoningEnabled,
     reasoningEffort: params.reasoningEffort ?? null,
+    serviceTier: params.serviceTier ?? null,
   })
 
   return provider
@@ -1853,6 +1905,7 @@ export const codexRouter = router({
         reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
         images: z.array(imageAttachmentSchema).optional(),
         vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
+        vaultContextGraphSelection: vaultContextGraphSelectionSchema.optional(),
       }),
     )
     .subscription(({ input }) => {
@@ -1947,6 +2000,16 @@ export const codexRouter = router({
             const storedApiKey = getCredentialService().resolve("codex.api-key")
             const authConfig = storedApiKey ? { apiKey: storedApiKey } : undefined
             const db = getDatabase()
+            const chatProfile = new AgentProfileChatBindingService(db).materializeForRun({
+              chatId: input.chatId,
+              runId: input.runId,
+              expectedHarness: "codex",
+            })
+            if (chatProfile && chatProfile.launch.harness !== "codex") {
+              throw new Error(
+                `The frozen Agent Profile requires ${chatProfile.launch.harness}; this Chat opened codex.`,
+              )
+            }
 
             const existingSubChat = db
               .select()
@@ -2000,6 +2063,9 @@ export const codexRouter = router({
                   ...(input.vaultContextSectionIds
                     ? { runSectionIds: input.vaultContextSectionIds }
                     : {}),
+                  ...(input.vaultContextGraphSelection
+                    ? { runGraphSelection: input.vaultContextGraphSelection }
+                    : {}),
                 })
               } catch (error) {
                 if (error instanceof ProjectVaultContextRejectedError) {
@@ -2008,6 +2074,9 @@ export const codexRouter = router({
                     manifest: error.manifest,
                     ...(input.vaultContextSectionIds
                       ? { runSectionIds: input.vaultContextSectionIds }
+                      : {}),
+                    ...(input.vaultContextGraphSelection
+                      ? { runGraphSelection: input.vaultContextGraphSelection }
                       : {}),
                   })
                 }
@@ -2028,7 +2097,12 @@ export const codexRouter = router({
             }
             const promptForModel = prependFlapstackMcpGuidance(
               prependStartupContext(
-                applyChatModeInstruction(input.prompt, input.mode),
+                applyChatModeInstruction(
+                  chatProfile
+                    ? `${chatProfile.instructions}\n\nUser request:\n${input.prompt}`
+                    : input.prompt,
+                  input.mode,
+                ),
                 [contextBundle.context, vaultContext.context, extensionContext.context]
                   .filter(Boolean)
                   .join("\n\n"),
@@ -2038,7 +2112,8 @@ export const codexRouter = router({
             const fallbackModel = authConfig?.apiKey?.trim()
               ? DEFAULT_CODEX_MODEL
               : DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING
-            const requestedModelId = extractCodexModelId(input.model) || fallbackModel
+            const requestedModelId =
+              extractCodexModelId(chatProfile?.launch.model ?? input.model) || fallbackModel
             const selectedModelId = preprocessCodexModelName({
               modelId: requestedModelId,
               authConfig,
@@ -2055,6 +2130,7 @@ export const codexRouter = router({
               .where(eq(agentRuns.id, input.runId))
               .get()
             const requestedPermissionMode =
+              chatProfile?.launch.permissionMode ??
               parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
               resolveCodexPermissionMode({
                 subChatPermissionMode: existingSubChat.permissionMode,
@@ -2066,16 +2142,18 @@ export const codexRouter = router({
               cwd: input.cwd,
               customPermissions:
                 permissionMode === "custom"
-                  ? parseCustomPermissionTogglesJson(
+                  ? (chatProfile?.launch.customPermissions ??
+                    parseCustomPermissionTogglesJson(
                       persistedRunSnapshot?.customPermissions ?? existingChat.customPermissions,
-                    )
+                    ))
                   : null,
             })
             const customPermissions =
               permissionMode === "custom"
-                ? parseCustomPermissionTogglesJson(
+                ? (chatProfile?.launch.customPermissions ??
+                  parseCustomPermissionTogglesJson(
                     persistedRunSnapshot?.customPermissions ?? existingChat.customPermissions,
-                  )
+                  ))
                 : null
 
             const lastMessage = existingMessages[existingMessages.length - 1]
@@ -2170,12 +2248,18 @@ export const codexRouter = router({
               customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
               worktreePath: input.cwd || null,
               promptMessageId,
+              images: input.images,
+              reasoningEffort: chatProfile?.launch.reasoningEffort ?? input.reasoningEffort,
+              serviceTier: chatProfile?.launch.serviceTier,
             })
             persistProjectVaultContextManifest(db, {
               runId: input.runId,
               manifest: vaultContext.manifest,
               ...(input.vaultContextSectionIds
                 ? { runSectionIds: input.vaultContextSectionIds }
+                : {}),
+              ...(input.vaultContextGraphSelection
+                ? { runGraphSelection: input.vaultContextGraphSelection }
                 : {}),
             })
 
@@ -2227,6 +2311,15 @@ export const codexRouter = router({
             }
 
             const handleCodexPermissionRequest: CodexPermissionHandler = async (request) => {
+              if (
+                profileAuthority.kind === "authority" &&
+                !isFrozenAgentProfileToolAllowed(
+                  profileAuthority.authority,
+                  request.toolCall.title ?? "unknown",
+                )
+              ) {
+                return rejectCodexPermissionRequest(request)
+              }
               const providerMcpDecision = resolveProviderMcpPermission({
                 permissionMode,
                 correlationId: request.toolCall.toolCallId,
@@ -2301,7 +2394,8 @@ export const codexRouter = router({
               existingSessionId: ownedSessionId,
               authConfig,
               reasoningEnabled: input.reasoningEnabled,
-              reasoningEffort: input.reasoningEffort,
+              reasoningEffort: chatProfile?.launch.reasoningEffort ?? input.reasoningEffort,
+              serviceTier: chatProfile?.launch.serviceTier,
             })
 
             const startedAt = Date.now()

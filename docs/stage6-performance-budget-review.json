@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "budgetVersion": "s6-v7",
+  "reviewStatus": "accepted",
+  "reviewedAt": "2026-07-31",
+  "scope": "Stage 6 Tier 2 deterministic development budgets, fixture axes, observation windows, aggregation, variance, and declared support limits",
+  "budgetDefinitionSha256": "eed31a07e00168bd4644d0ed2343ea7fce161efe8f5755f67ae07640de055160",
+  "methodology": {
+    "clock": "monotonic",
+    "fixtureBinding": "sha256",
+    "warmupsExcluded": true,
+    "variance": "population coefficient of variation is diagnostic when the selected aggregation fails its absolute threshold",
+    "steadyStateCpuObservationWindowMs": 1000,
+    "minimumMeasuredRepeats": 5,
+    "requiredAxes": [
+      "scenario",
+      "dataset",
+      "hardwareClass",
+      "platform",
+      "buildType",
+      "temperature",
+      "metric",
+      "measurementMethod"
+    ]
+  },
+  "baselineEvidence": [
+    {
+      "kind": "bounded-development-regression",
+      "reportSha256": "4c2f91504c28c969ea43ffc65460c0b4f13e89f5a7e2a43a10ac70c6c160dcca",
+      "measuredAt": "2026-07-30T21:49:04.960Z",
+      "gitSha": "e2f786f36be5108931f20014f8859e27386431e2",
+      "worktreeDigest": "a1040010e01c1e9f2ff6e266dbbb5b0c36591630b40376f20df54c6fdd939490",
+      "dirty": true,
+      "resultCount": 7,
+      "omissionCount": 0,
+      "failedResultCount": 0,
+      "acceptanceUse": "methodology baseline only"
+    },
+    {
+      "kind": "full-development-diagnostic",
+      "reportSha256": "fd01ceb249f5da2ed70266fe80959240aa8eeb55019c70cca5b518c9a4394117",
+      "measuredAt": "2026-07-30T21:49:13.882Z",
+      "gitSha": "e2f786f36be5108931f20014f8859e27386431e2",
+      "worktreeDigest": "a1040010e01c1e9f2ff6e266dbbb5b0c36591630b40376f20df54c6fdd939490",
+      "dirty": true,
+      "resultCount": 35,
+      "omissionCount": 11,
+      "failedResultCount": 4,
+      "acceptanceUse": "diagnostic only; does not close Tier 2"
+    },
+    {
+      "kind": "full-development-diagnostic",
+      "reportSha256": "91bc5bf25c1e53760907e3cc85f0bbff0fc74d23967ab05e007b0591a621dd03",
+      "measuredAt": "2026-07-31T08:33:41.741Z",
+      "gitSha": "e2f786f36be5108931f20014f8859e27386431e2",
+      "worktreeDigest": "90e94635dfe3220cddc5dc6b8d9fdf758a0f8062c55bb8250d9d0bfe777be428",
+      "dirty": true,
+      "resultCount": 46,
+      "omissionCount": 0,
+      "failedResultCount": 18,
+      "acceptanceUse": "diagnostic only; justifies s6-v4 repair targets but does not close Tier 2"
+    },
+    {
+      "kind": "full-development-diagnostic",
+      "reportSha256": "87cc19cb60a11fb9a1d9f2912fa82f02978b2bad92e79a1346d6ab6453f085cf",
+      "measuredAt": "2026-07-31T09:53:48.976Z",
+      "gitSha": "e2f786f36be5108931f20014f8859e27386431e2",
+      "worktreeDigest": "5364b092c123cb8f0df5342edc526bcf164a4f97f0b71a8e4ad1a6e7ea98b863",
+      "dirty": true,
+      "resultCount": 46,
+      "omissionCount": 0,
+      "failedResultCount": 4,
+      "acceptanceUse": "diagnostic only; justifies s6-v5 aggregation and resource-accounting repairs but does not close Tier 2"
+    },
+    {
+      "kind": "full-development-diagnostic",
+      "reportSha256": "42fee8d528411c19f823e15790fcbed7ea71e63894d7909cb4ddecab63cbc10c",
+      "measuredAt": "2026-07-31T11:31:57.616Z",
+      "gitSha": "e2f786f36be5108931f20014f8859e27386431e2",
+      "worktreeDigest": "886b1cf60f17968ce1df76a79cace6688e2bb2be63d9a196f8f1691a0017df01",
+      "dirty": true,
+      "resultCount": 46,
+      "omissionCount": 0,
+      "failedResultCount": 1,
+      "acceptanceUse": "diagnostic only; justifies the s6-v6 steady-state CPU observation-window repair but does not close Tier 2"
+    },
+    {
+      "kind": "full-development-diagnostic",
+      "reportSha256": "1591e00eed5248a8cdc1a81f9906bf409ce0e4996635c1ca414f43a5186fdad6",
+      "measuredAt": "2026-07-31T12:26:03.516Z",
+      "gitSha": "e2f786f36be5108931f20014f8859e27386431e2",
+      "worktreeDigest": "fefebb01ddffea35dddecfc200d526b853e1e578eff5a1d101d5f0fc791718cb",
+      "dirty": true,
+      "resultCount": 46,
+      "omissionCount": 0,
+      "failedResultCount": 1,
+      "acceptanceUse": "diagnostic only; exposes the unowned global ProcessWrap ambiguity and justifies s6-v7 exact TerminalManager-owned PID liveness evidence"
+    },
+    {
+      "kind": "full-development-diagnostic",
+      "reportSha256": "8ac2c53a58aba4b5696b37d41fb11ee615cdf5c5fc6c03bca74b73d7172125ef",
+      "measuredAt": "2026-07-31T13:31:53.234Z",
+      "gitSha": "e2f786f36be5108931f20014f8859e27386431e2",
+      "worktreeDigest": "6aa2db65888990cdc0ae7dbd524936bca1401ac63ea53b120f11379ef3cb67e6",
+      "dirty": true,
+      "resultCount": 45,
+      "omissionCount": 1,
+      "failedResultCount": 0,
+      "acceptanceUse": "diagnostic only; confirms exact PID and CPU budget repairs while exposing the Windows FSWatcher close-event race and stale method-version prefix"
+    }
+  ],
+  "reviewDecision": "The s6-v7 authority retains the reviewed s6-v6 dataset scope, thresholds, CPU observation window, aggregation verdicts, and non-process resource accounting. Every method identifier uses the s6-v7 prefix. The process-delta and cleanup-process-delta budgets still require a maximum of zero, but now capture the public terminal shell PID plus guarded node-pty 1.1.0 winpty agent, inner, and console-process PIDs before teardown, await worker and socket release, and verify liveness only for that exact owned PID set after shutdown. A global Node ProcessWrap count is not valid PTY ownership evidence because unrelated child processes can cross the snapshot boundary while native winpty processes do not appear as ProcessWrap resources. For steady-state CPU, product preparation completes first, the process CPU baseline and wall-clock start are captured, the universal 1000 ms idle observation window runs, and the final CPU delta is calculated. Filesystem watcher cleanup awaits each close event before temporary evidence roots are removed, preventing Windows EBUSY omissions without changing any budget. The selected aggregation remains the budget verdict: coefficient of variation is recorded for every result and adds diagnostic context when that aggregation fails, but an isolated outlier outside p95 cannot independently fail a passing p95 budget. Total non-process resource accounting retains every active runtime handle plus process listeners, and the socket category counts only TCP and UDP handles. Package thresholds remain unchanged pending package evidence. Candidate results remain independently gated; this review does not waive aggregation threshold failures, omissions, dirty candidates, incomplete coverage, or untrusted provenance."
+}

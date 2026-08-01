@@ -10,6 +10,26 @@ import type {
   WorkspacePaneWindowTarget,
   WorkspaceWindowOpenTarget,
 } from "../shared/workspace-window-ownership"
+import type {
+  WorkbenchWindowCreationBlocked,
+  WorkbenchNewWindowResult,
+} from "../shared/workbench-window-budget"
+import type {
+  ChatTransferCommit,
+  ChatTransferDestinationReady,
+  ChatTransferDropExisting,
+  ChatTransferDropOutside,
+  ChatTransferOffer,
+  ChatTransferOpenNew,
+  ChatTransferOpenNewResult,
+  ChatTransferRemoveSource,
+  ChatTransferReserve,
+  ChatTransferResult,
+  ChatTransferStart,
+  ChatTransferStartResult,
+  ChatTransferWindowDestination,
+} from "../shared/chat-window-transfer"
+import type { ChatWorkbenchSessionPresentation } from "../shared/chat-workbench"
 
 export interface UpdateInfo {
   version: string
@@ -93,7 +113,12 @@ export interface DesktopApi {
   toggleDevTools: () => Promise<void>
 
   // Analytics
+  getAnalyticsConsent: () => Promise<boolean>
   setAnalyticsOptOut: (optedOut: boolean) => Promise<void>
+  captureAnalyticsEvent: (eventName: string, properties?: Record<string, unknown>) => Promise<void>
+  onAnalyticsConsentChanged: (callback: (consentGranted: boolean) => void) => () => void
+  onFeatureVisibilityChanged: (callback: () => void) => () => void
+  onAgentPersonalitiesChanged: (callback: () => void) => () => void
 
   // Native features
   setBadge: (count: number | null) => Promise<void>
@@ -116,12 +141,41 @@ export interface DesktopApi {
   newWindow: (options?: {
     chatId?: string
     subChatId?: string
-  }) => Promise<{ blocked: boolean } | void>
+  }) => Promise<WorkbenchNewWindowResult | void>
+  focusStableWindow: (stableId: string) => Promise<"focused" | "recovering" | "missing">
+  getWorkbenchSession: () => Promise<ChatWorkbenchSessionPresentation | null>
+  updateWorkbenchSessionPresentation: (input: ChatWorkbenchSessionPresentation) => Promise<boolean>
+  onWorkbenchWindowCreationBlocked: (
+    callback: (failure: WorkbenchWindowCreationBlocked) => void,
+  ) => () => void
 
   // Chat ownership - prevent same chat open in multiple windows
   claimChat: (chatId: string) => Promise<{ ok: true } | { ok: false; ownerStableId: string }>
+  takeChatOwnership: (
+    chatId: string,
+    expectedOwnerStableId: string,
+  ) => Promise<{ ok: true } | { ok: false; ownerStableId: string | null }>
   releaseChat: (chatId: string) => Promise<void>
   focusChatOwner: (chatId: string) => Promise<boolean>
+  startChatTransfer: (
+    input: ChatTransferStart,
+  ) => Promise<ChatTransferStartResult | ChatTransferResult>
+  reserveChatTransfer: (input: ChatTransferReserve) => Promise<ChatTransferResult>
+  getChatTransferDestinations: () => Promise<ChatTransferWindowDestination[]>
+  dropChatTransferIntoCurrentWindow: (
+    input: ChatTransferDropExisting,
+  ) => Promise<ChatTransferOpenNewResult>
+  dropChatTransferOutside: (input: ChatTransferDropOutside) => Promise<ChatTransferOpenNewResult>
+  openNewChatTransfer: (input: ChatTransferOpenNew) => Promise<ChatTransferOpenNewResult>
+  markChatTransferDestinationReady: (
+    input: ChatTransferDestinationReady,
+  ) => Promise<ChatTransferResult>
+  transferChatOwnership: (input: ChatTransferCommit) => Promise<ChatTransferResult>
+  commitChatTransferDestination: (input: ChatTransferCommit) => Promise<ChatTransferResult>
+  commitChatTransferSource: (input: ChatTransferCommit) => Promise<ChatTransferResult>
+  abortChatTransfer: (nonce: string) => Promise<ChatTransferResult>
+  onChatTransferOffer: (callback: (offer: ChatTransferOffer) => void) => () => void
+  onChatTransferRemoveSource: (callback: (input: ChatTransferRemoveSource) => void) => () => void
   openWorkspacePane: (target: WorkspacePaneWindowTarget) => Promise<WorkspacePaneOpenResult>
   openWorkspaceWindow: (target: WorkspaceWindowOpenTarget) => Promise<WorkspacePaneOpenResult>
   claimWorkspacePane: (

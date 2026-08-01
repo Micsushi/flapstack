@@ -1,6 +1,7 @@
 import { UsageProviderError, type UsageProviderId } from "../types"
 
 export const DEFAULT_PROVIDER_TIMEOUT_MS = 15_000
+export const DEFAULT_PROVIDER_MAX_ATTEMPTS = 3
 
 export async function fetchProviderResponse(params: {
   providerId: UsageProviderId
@@ -33,38 +34,70 @@ export async function getProviderJson<T>(params: {
   auth?: "bearer" | "x-api-key"
   headers?: Record<string, string>
   timeoutMs?: number
+  maxAttempts?: number
 }): Promise<T> {
+  return (await getProviderJsonResponse<T>(params)).payload
+}
+
+export async function getProviderJsonResponse<T>(params: {
+  providerId: UsageProviderId
+  url: string
+  apiKey: string
+  auth?: "bearer" | "x-api-key"
+  headers?: Record<string, string>
+  timeoutMs?: number
+  maxAttempts?: number
+}): Promise<{ payload: T; headers: Headers }> {
   const headers: Record<string, string> = { ...params.headers }
   if (params.auth === "x-api-key") headers["x-api-key"] = params.apiKey
   else headers.authorization = `Bearer ${params.apiKey}`
-  const response = await fetchProviderResponse({
-    providerId: params.providerId,
-    url: params.url,
-    init: { headers },
-    timeoutMs: params.timeoutMs,
-  })
-  if (response.status === 401 || response.status === 403) {
-    throw new UsageProviderError(
-      params.providerId,
-      "auth-failed",
-      "Provider rejected the configured credential",
-    )
+  const maxAttempts = Math.max(1, Math.min(params.maxAttempts ?? DEFAULT_PROVIDER_MAX_ATTEMPTS, 5))
+  let lastStatus = 0
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const response = await fetchProviderResponse({
+      providerId: params.providerId,
+      url: params.url,
+      init: { headers },
+      timeoutMs: params.timeoutMs,
+    })
+    lastStatus = response.status
+    if (response.status === 401 || response.status === 403) {
+      throw new UsageProviderError(
+        params.providerId,
+        "auth-failed",
+        "Provider rejected the configured credential",
+      )
+    }
+    if (response.status === 429 || response.status >= 500) {
+      if (attempt < maxAttempts) {
+        await retryDelay(response.headers.get("retry-after"), attempt)
+        continue
+      }
+      throw new UsageProviderError(
+        params.providerId,
+        response.status === 429 ? "rate-limited" : "source-unavailable",
+        response.status === 429
+          ? "Provider rate limited the usage request"
+          : `Provider usage endpoint returned HTTP ${response.status}`,
+      )
+    }
+    if (!response.ok) {
+      throw new UsageProviderError(
+        params.providerId,
+        "source-unavailable",
+        `Provider usage endpoint returned HTTP ${response.status}`,
+      )
+    }
+    return {
+      payload: await readProviderJson<T>(response, params.providerId, params.timeoutMs),
+      headers: response.headers,
+    }
   }
-  if (response.status === 429) {
-    throw new UsageProviderError(
-      params.providerId,
-      "rate-limited",
-      "Provider rate limited the usage request",
-    )
-  }
-  if (!response.ok) {
-    throw new UsageProviderError(
-      params.providerId,
-      "source-unavailable",
-      `Provider usage endpoint returned HTTP ${response.status}`,
-    )
-  }
-  return readProviderJson<T>(response, params.providerId, params.timeoutMs)
+  throw new UsageProviderError(
+    params.providerId,
+    "source-unavailable",
+    `Provider usage endpoint returned HTTP ${lastStatus}`,
+  )
 }
 
 /** Keep the deadline active through body consumption. A server can send
@@ -113,4 +146,13 @@ export function iso(value: Date): string {
 
 export function startOfUtcDay(value: Date): Date {
   return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()))
+}
+
+async function retryDelay(retryAfter: string | null, attempt: number): Promise<void> {
+  const seconds = retryAfter === null ? Number.NaN : Number(retryAfter)
+  const milliseconds = Number.isFinite(seconds)
+    ? Math.max(0, Math.min(seconds * 1_000, 5_000))
+    : Math.min(100 * 2 ** (attempt - 1), 1_000)
+  if (milliseconds === 0) return
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
 }

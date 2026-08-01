@@ -232,6 +232,8 @@ function loadDurableRun(
     runtimeLaunch.permission.mode !== durableDefinition.permissionMode ||
     canonicalJson(runtimeLaunch.permission.customPermissions) !==
       canonicalJson(durableDefinition.customPermissions ?? null) ||
+    (runtimeLaunch.controls.serviceTier ?? null) !==
+      (durableDefinition.speedPreference === "fast" ? "fast" : null) ||
     (durableDefinition.runtimePreference !== undefined &&
       runtimeLaunch.requestedPreference !== durableDefinition.runtimePreference)
   )

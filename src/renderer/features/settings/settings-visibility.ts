@@ -4,6 +4,22 @@ import {
   type BetaFeatureId,
   type BetaFeatureSettings,
 } from "../../../shared/beta-features"
+import { FEATURE_VISIBILITY_REGISTRY } from "../../../shared/feature-visibility"
+
+const FEATURE_VISIBILITY_SEARCH_KEYWORDS = FEATURE_VISIBILITY_REGISTRY.flatMap((feature) => [
+  feature.label,
+  ...feature.searchKeywords,
+])
+
+export const SETTINGS_PROVIDER_ORDER: readonly SettingsProviderScope[] = [
+  "claude",
+  "codex",
+  "cursor",
+  "opencode",
+  "openrouter",
+  "nanogpt",
+  "openai-voice",
+]
 
 export type SettingsTabMetadata = {
   id: SettingsTab
@@ -55,6 +71,14 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
     released: true,
   },
   {
+    id: "feature-visibility",
+    label: "Feature Visibility",
+    description: "Show or hide optional surfaces and rerun the setup guide",
+    keywords: ["onboarding", "focused", "standard", "complete", "hide", "show"],
+    section: "main",
+    released: true,
+  },
+  {
     id: "projects",
     label: "Projects",
     description: "Project paths, worktrees, setup commands, and removal",
@@ -83,6 +107,14 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
     label: "Local Models",
     description: "Connect Ollama and inspect local model capabilities and permissions",
     keywords: ["ollama", "offline", "loopback", "local ai", "no cloud"],
+    section: "advanced",
+    released: true,
+  },
+  {
+    id: "mobile-companion",
+    label: "Mobile Companion",
+    description: "Pairing, paired devices, private bridge, and bounded mobile authority",
+    keywords: ["mobile", "phone", "pwa", "qr", "pairing", "device", "private network"],
     section: "advanced",
     released: true,
   },
@@ -218,6 +250,58 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
 ] as const
 
 export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
+  control(
+    "mobile-companion-bridge",
+    "mobile-companion",
+    "Private mobile bridge",
+    "Select a private interface and explicitly enable or disable the local HTTPS bridge",
+    ["lan", "https", "interface", "network", "off", "bind"],
+  ),
+  control(
+    "mobile-companion-pairing",
+    "mobile-companion",
+    "QR pairing",
+    "Create a short-lived QR and confirm the exact certificate fingerprint",
+    ["qr", "token", "fingerprint", "pair phone"],
+  ),
+  control(
+    "mobile-companion-devices",
+    "mobile-companion",
+    "Paired devices",
+    "Rename or immediately revoke paired mobile browsers",
+    ["phone", "rename", "revoke", "session"],
+  ),
+  control(
+    "feature-visibility-presets",
+    "feature-visibility",
+    "Visibility presets and setup guide",
+    "Preview Focused, Standard, or Complete visibility and rerun the work-style guide",
+    ["onboarding", "questionnaire", "focused", "standard", "complete", "rerun"],
+  ),
+  control(
+    "feature-visibility-controls",
+    "feature-visibility",
+    "Optional feature visibility",
+    "Inspect and toggle every optional surface without changing capability or data",
+    FEATURE_VISIBILITY_SEARCH_KEYWORDS,
+  ),
+  ...FEATURE_VISIBILITY_REGISTRY.map((feature) =>
+    control(
+      `feature-visibility-${feature.id}`,
+      "feature-visibility",
+      feature.label,
+      feature.explanation.purpose,
+      [
+        ...feature.searchKeywords,
+        feature.explanation.why,
+        feature.explanation.prerequisites,
+        feature.explanation.authority,
+        "show",
+        "hide",
+        "re-enable",
+      ],
+    ),
+  ),
   control(
     "agent-profile-studio",
     "agent-profiles",
@@ -506,9 +590,29 @@ export function getVisibleSettingsTabs(
   )
   if (section === "main" && options.showDevelopment) {
     const debug = SETTINGS_TAB_REGISTRY.find((entry) => entry.id === "debug")
-    return debug ? [...tabs, debug] : tabs
+    if (debug) tabs.push(debug)
   }
-  return tabs
+  return tabs.sort(compareSettingsLabels)
+}
+
+export function compareSettingsProviders(
+  left: SettingsProviderScope,
+  right: SettingsProviderScope,
+): number {
+  const leftIndex = SETTINGS_PROVIDER_ORDER.indexOf(left)
+  const rightIndex = SETTINGS_PROVIDER_ORDER.indexOf(right)
+  return (
+    (leftIndex < 0 ? SETTINGS_PROVIDER_ORDER.length : leftIndex) -
+      (rightIndex < 0 ? SETTINGS_PROVIDER_ORDER.length : rightIndex) ||
+    left.localeCompare(right, "en")
+  )
+}
+
+function compareSettingsLabels(left: SettingsTabMetadata, right: SettingsTabMetadata): number {
+  return (
+    left.label.localeCompare(right.label, "en", { sensitivity: "base" }) ||
+    left.id.localeCompare(right.id)
+  )
 }
 
 export function isVisibleSettingsTab(

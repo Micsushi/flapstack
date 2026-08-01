@@ -1,18 +1,6 @@
 // Why Did You Render - MUST be first import (before React)
 import "./wdyr"
 
-// Only initialize Sentry when a DSN is configured; local packaged test builds
-// should not load Sentry's optional runtime modules at startup.
-if (import.meta.env.PROD && import.meta.env.VITE_SENTRY_DSN) {
-  import("@sentry/electron/renderer")
-    .then((Sentry) => {
-      Sentry.init({ dsn: import.meta.env.VITE_SENTRY_DSN })
-    })
-    .catch((error) => {
-      console.warn("[App] Failed to initialize renderer Sentry:", error)
-    })
-}
-
 import ReactDOM from "react-dom/client"
 import { App } from "./App"
 import "./styles/globals.css"

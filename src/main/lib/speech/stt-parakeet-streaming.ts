@@ -310,6 +310,7 @@ export const parakeetStreamingAdapter: SttAdapter = {
   kind: "local",
   supportsStreaming: true,
   offline: true,
+  supportsVocabularyHints: false,
   async isAvailable(): Promise<SpeechAdapterAvailability> {
     if (!findParakeetSidecar())
       return {

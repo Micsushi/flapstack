@@ -174,9 +174,10 @@ uncertified.
 - Candidate identity: final Stage 1-5 working tree on branch `main` in
   `C:\Users\sushi\Documents\Github\flapstack`, based on
   `0ef01efd182d82229757f9ab2e0e4a26f0db1381`, tested 2026-07-26 on Windows 11
-  x64 build `10.0.26100` with isolated profile `stage1-5-tier2-d`. The commit
-  containing this matrix is the durable candidate identity; no pre-commit SHA
-  is invented.
+  x64 build `10.0.26100` with isolated profile `stage1-5-tier2-d`, then
+  preserved without source changes in durable commit
+  `e2f786f36be5108931f20014f8859e27386431e2`. That commit is the exact Stage 5
+  implementation candidate; no pre-commit SHA is invented.
 - Toolchain: Node `22.23.1`, npm `10.9.8`, Python `3.11.9`, CMake `4.4.0`,
   Cargo/Rust `1.95.0`, MSBuild `17.14.40.60911`, Windows SDK
   `10.0.26100.0`, Git `2.53.0.windows.2`, and PowerShell `5.1.26100.7705`.
@@ -217,11 +218,11 @@ uncertified.
   the three-tier documentation and the 47-feature/130-task owner backlog
   hierarchy; owner execution remains separate Tier 3 status.
 
-Stage 5 has 38/40 `T2-core` rows accepted. S5-ND01 is the only independent core
-evidence gap; once a clean `npm ci --legacy-peer-deps` succeeds from an empty
-cache, S5-I08 can close if no P0/P1 defect is exposed. Unchecked capability and
-release rows still require only their separately named evidence. In particular,
-no clean-VM installer/portable lifecycle, signed release, approved malware
-scan, audio hardware, private remote, sleep/UAC/firewall failure matrix, macOS
-regression, external-provider capability, or hosted Windows CI run is claimed
-by this evidence.
+Stage 5 has 40/40 `T2-core` rows accepted. The clean
+`npm ci --legacy-peer-deps` run from an empty cache closed S5-ND01, and the
+independent closeout review closed S5-I08 with no unresolved P0/P1 defect.
+Unchecked capability and release rows still require only their separately named
+evidence. In particular, no clean-VM installer/portable lifecycle, signed
+release, approved malware scan, audio hardware, private remote,
+sleep/UAC/firewall failure matrix, macOS regression, external-provider
+capability, or hosted Windows CI run is claimed by this evidence.

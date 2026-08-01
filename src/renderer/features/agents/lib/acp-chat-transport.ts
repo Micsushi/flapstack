@@ -24,12 +24,16 @@ import {
   type CodexAuthSurface,
   type CodexReasoningLevel,
 } from "./models"
-import { useAgentSubChatStore } from "../stores/sub-chat-store"
+import { getAgentSubChatStore } from "../stores/sub-chat-store"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
 import { handleAgentInputChunk } from "./agent-input-transport"
 import type { ChatMode } from "../../../../shared/chat-mode"
 import { createDirectRuntimeStream, splitCodexRuntimeModel } from "./direct-runtime-chat-transport"
 import { resolveAgentHotlineEnabled } from "../../../../shared/agent-hotline"
+import {
+  clearProjectVaultGraphSelection,
+  readProjectVaultGraphSelection,
+} from "../../project-vault/pending-graph-context"
 
 type UIMessageChunk = any
 
@@ -38,6 +42,7 @@ type ACPChatTransportConfig = {
   subChatId: string
   cwd: string
   projectPath?: string
+  projectId?: string
   mode: ChatMode
   provider: "codex"
 }
@@ -145,7 +150,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
     const sessionId = metadata?.sessionId
 
     const currentMode =
-      useAgentSubChatStore
+      getAgentSubChatStore(this.config.chatId)
         .getState()
         .allSubChats.find((subChat) => subChat.id === this.config.subChatId)?.mode ||
       this.config.mode
@@ -158,6 +163,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
     const selectedModel = getSelectedCodexModel(this.config.subChatId, hasApiKey)
     const reasoningEnabled = appStore.get(subChatReasoningEnabledAtomFamily(this.config.subChatId))
     const directModel = splitCodexRuntimeModel(selectedModel)
+    const vaultContextGraphSelection = readProjectVaultGraphSelection(this.config.projectId)
     const directStream = await createDirectRuntimeStream({
       chatId: this.config.chatId,
       subChatId: this.config.subChatId,
@@ -170,9 +176,13 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
       reasoningEnabled,
       images,
       hotlineEnabled: resolveAgentHotlineEnabled(options.messages),
+      ...(vaultContextGraphSelection ? { vaultContextGraphSelection } : {}),
       abortSignal: options.abortSignal,
     })
-    if (directStream) return directStream
+    if (directStream) {
+      clearProjectVaultGraphSelection(this.config.projectId)
+      return directStream
+    }
 
     return new ReadableStream({
       start: (controller) => {
@@ -208,6 +218,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
             ...(sessionId ? { sessionId } : {}),
             ...(forceNewSession ? { forceNewSession: true } : {}),
             ...(images.length > 0 ? { images } : {}),
+            ...(vaultContextGraphSelection ? { vaultContextGraphSelection } : {}),
           },
           {
             onData: (chunk: UIMessageChunk) => {
@@ -376,6 +387,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
             },
           },
         )
+        clearProjectVaultGraphSelection(this.config.projectId)
 
         options.abortSignal?.addEventListener("abort", () => {
           // Start server-side cancellation first so the router still has

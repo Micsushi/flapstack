@@ -2,7 +2,9 @@
 
 ### S6-F9-T1 — Define datasets, hardware classes, metrics, and budgets
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:reference-mac-performance-host`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:reference-mac-performance-host` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F9
 - Outcome: Every release-critical workflow has a repeatable target and measurement method.
 - Scope: Small/medium/large/stress fixtures; macOS/Windows/Linux hardware classes; cold/warm/dev/package; startup/latency/query/stream/CPU/memory/process/cleanup metrics; variance; budgets; support limits.
@@ -15,7 +17,9 @@
 
 ### S6-F9-T2 — Build deterministic benchmark, trace, heap, and soak harnesses
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:cross-platform-performance-host-and-long-soak`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:cross-platform-performance-host-and-long-soak` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F9
 - Outcome: Engineers reproduce metrics locally and in bounded automated gates without user-content leakage.
 - Scope: Fixture generators; timers/traces; Electron/process metrics; SQLite stats; heap snapshots; resource counters; report schema; redaction; warmup/repeats; CI subset; long soak runner.
@@ -28,7 +32,9 @@
 
 ### S6-F9-T3 — Meet cold/warm startup and first-use budgets
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Release evidence: `release-gate` remains uncertified for native-package-startup.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F9
 - Outcome: App shell, database migration/open, services, first project, and first chat become usable within budgets.
 - Scope: Startup phases; lazy services; DB open/migrations; renderer boot; initial queries; provider probes; daemon/sidecar deferral; diagnostics; clean/upgrade/package.
@@ -41,10 +47,11 @@
 
 ### S6-F9-T4 — Meet renderer responsiveness and long-history budgets
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F9
 - Outcome: Navigation, typing, streaming, timeline, Settings, usage charts, and large chats remain responsive.
-- Scope: Render/query granularity; virtualization; message/activity lists; timeline; charts; React Query invalidation; search; input latency; window resize; 10k/100k fixtures.
+- Scope: Render/query granularity; virtualization; message/activity lists; timeline; charts; React Query invalidation; search; input latency; window resize; a 100-exchange paragraph-length long chat; and database-wide large fixtures.
 - Out of scope: Dropping history/activity.
 - Acceptance: Budgets pass at supported limits; input remains responsive during stream; scroll/search/timeline stay consistent.
 - Verification: Renderer benchmark, performance marks, React profiling, visual/behavior regression, memory after close.
@@ -54,7 +61,8 @@
 
 ### S6-F9-T5 — Meet database, search, migration, and history budgets
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F9
 - Outcome: Large local datasets query, migrate, maintain, back up, and recover within budgets.
 - Scope: Query/index plans; scoped search; usage/activity/history; migration time; WAL/checkpoint; maintenance; backup/export; concurrent readers/writers; cancellation; integrity.
@@ -67,7 +75,8 @@
 
 ### S6-F9-T6 — Meet agent, terminal, workspace, and orchestration scale budgets
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F9
 - Outcome: Supported concurrent agents, terminals, panes, and workflows stream and cancel without unbounded pressure.
 - Scope: Process/PTY limits; event backpressure; activity persistence; workspaces/grid; cancellation; scheduling; budgets; 1/2/5/10/50 agent tiers; output flood; cleanup.
@@ -80,7 +89,9 @@
 
 ### S6-F9-T7 — Meet background-service and lifecycle resource budgets
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:sleep-wake-network-change-and-24h-soak`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:sleep-wake-network-change-and-24h-soak` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F9
 - Outcome: Usage daemon, automation, mobile bridge, watchers, sidecars, notifications, and windows remain bounded over time.
 - Scope: Idle/active CPU; memory; timers; listeners; sockets; file watchers; sidecars; app close; sleep/wake; network change; 24h soak; leak diagnostics.
@@ -93,7 +104,10 @@
 
 ### S6-F9-T8 — Close performance and regression-gate acceptance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:long-host-observation`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:long-host-observation` remains uncertified.
+- [ ] Release evidence: `release-gate` remains uncertified for hosted-ci-native-package-performance.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F9
 - Outcome: Required budgets pass on documented hardware/platforms and bounded gates prevent silent regression.
 - Scope: Matrix S6-PF; consolidated report; CI/local subset; long soak; package; support limits; variance; documentation; approved exceptions.

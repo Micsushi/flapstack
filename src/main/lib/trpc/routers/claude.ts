@@ -49,10 +49,12 @@ import {
   claudeCodeCredentials,
   getDatabase,
   getDatabasePath,
+  getSqliteDatabase,
   projects as projectsTable,
   subChats,
   tasks as tasksTable,
 } from "../../db"
+import { bindVisualCaptureImagesToRun } from "../../visual-capture/run-provenance"
 import {
   buildMcpStdioRegistration,
   FLAPSTACK_MCP_SERVER_NAME,
@@ -130,6 +132,7 @@ import {
   isFrozenAgentProfileToolAllowed,
   readDurableAgentProfileRuntimeAuthority,
 } from "../../agent-profiles/runtime-authority"
+import { AgentProfileChatBindingService } from "../../agent-profiles/chat-binding"
 
 type RunCompletionStatus = "success" | "failure" | "cancelled"
 const HARNESS = "claude-code" as const
@@ -274,17 +277,44 @@ async function createClaudeAgentRun(input: {
   customPermissions?: string | null
   worktreePath?: string | null
   promptMessageId?: string
+  images?: ImageAttachment[]
+  reasoningEffort?: "low" | "medium" | "high" | "xhigh"
+  serviceTier?: string | null
 }) {
   const db = getDatabase()
+  const bindVisualContext = async (runId: string) => {
+    try {
+      await bindVisualCaptureImagesToRun({
+        database: getSqliteDatabase(),
+        artifactRoot: path.join(app.getPath("userData"), "visual-artifacts"),
+        chatId: input.chatId,
+        runId,
+        images: input.images,
+      })
+    } catch (error) {
+      db.update(agentRuns)
+        .set({ status: "failure", completedAt: new Date() })
+        .where(and(eq(agentRuns.id, runId), eq(agentRuns.status, "running")))
+        .run()
+      throw error
+    }
+  }
   if (input.runId) {
     const existing = db.select().from(agentRuns).where(eq(agentRuns.id, input.runId)).get()
-    if (existing) return existing
+    if (existing) {
+      if (existing.status === "running") await bindVisualContext(existing.id)
+      return existing
+    }
   }
   const runtimeSnapshot = constructRuntimeSnapshot(db, {
     chatId: input.chatId,
     harness: HARNESS,
     model: input.model,
     permission: runtimePermissionSnapshot(input.permissionMode, input.customPermissions ?? null),
+    controls: {
+      modelEffort: input.reasoningEffort ?? null,
+      serviceTier: input.serviceTier ?? null,
+    },
   })
   assertFlapstackNativeProviderRouter({ harness: HARNESS, snapshot: runtimeSnapshot })
   const run = db
@@ -321,6 +351,8 @@ async function createClaudeAgentRun(input: {
     .set({ harness: HARNESS, model: input.model ?? null })
     .where(eq(chats.id, input.chatId))
     .run()
+
+  await bindVisualContext(run.id)
 
   try {
     const before = await captureCheckpoint(run.id, input.worktreePath ?? null, "before")
@@ -594,6 +626,18 @@ const imageAttachmentSchema = z.object({
   base64Data: z.string(),
   mediaType: z.string(), // e.g. "image/png", "image/jpeg"
   filename: z.string().optional(),
+})
+
+const vaultContextGraphSelectionSchema = z.object({
+  nodeIds: z.array(z.string().trim().min(1).max(200)).max(24),
+  expectedGenerationId: z.string().trim().min(1).max(200),
+  expansion: z
+    .object({
+      depth: z.number().int().min(0).max(2),
+      direction: z.enum(["outgoing", "incoming", "both"]),
+      maxNodes: z.number().int().min(1).max(24),
+    })
+    .optional(),
 })
 
 export type ImageAttachment = z.infer<typeof imageAttachmentSchema>
@@ -1022,6 +1066,7 @@ export const claudeRouter = router({
         offlineModeEnabled: z.boolean().optional(), // Whether offline mode (Ollama) is enabled in settings
         enableTasks: z.boolean().optional(), // Enable task management tools (TodoWrite, Task agents)
         vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
+        vaultContextGraphSelection: vaultContextGraphSelectionSchema.optional(),
       }),
     )
     .subscription(({ input }) => {
@@ -1137,6 +1182,21 @@ export const claudeRouter = router({
         ;(async () => {
           try {
             const db = getDatabase()
+            const chatProfile = new AgentProfileChatBindingService(db).materializeForRun({
+              chatId: input.chatId,
+              runId: launchRunId,
+              expectedHarness: HARNESS,
+            })
+            if (chatProfile && chatProfile.launch.harness !== HARNESS) {
+              throw new Error(
+                `The frozen Agent Profile requires ${chatProfile.launch.harness}; this Chat opened ${HARNESS}.`,
+              )
+            }
+            if (chatProfile?.launch.reasoningEffort === "minimal") {
+              throw new Error(
+                "The frozen Agent Profile requests Minimal effort, which Claude Code does not support.",
+              )
+            }
 
             // 1. Get existing messages from DB
             const existing = db
@@ -1338,7 +1398,9 @@ export const claudeRouter = router({
             }
 
             // Build final prompt with skill instructions if needed
-            let finalPrompt = cleanedPrompt
+            let finalPrompt = chatProfile
+              ? `${chatProfile.instructions}\n\nUser request:\n${cleanedPrompt}`
+              : cleanedPrompt
 
             // Handle empty prompt when only mentions are present
             if (!finalPrompt.trim()) {
@@ -1386,6 +1448,9 @@ export const claudeRouter = router({
                   ...(input.vaultContextSectionIds
                     ? { runSectionIds: input.vaultContextSectionIds }
                     : {}),
+                  ...(input.vaultContextGraphSelection
+                    ? { runGraphSelection: input.vaultContextGraphSelection }
+                    : {}),
                 })
               } catch (error) {
                 if (error instanceof ProjectVaultContextRejectedError) {
@@ -1394,6 +1459,9 @@ export const claudeRouter = router({
                     manifest: error.manifest,
                     ...(input.vaultContextSectionIds
                       ? { runSectionIds: input.vaultContextSectionIds }
+                      : {}),
+                    ...(input.vaultContextGraphSelection
+                      ? { runGraphSelection: input.vaultContextGraphSelection }
                       : {}),
                   })
                 }
@@ -1841,7 +1909,8 @@ export const claudeRouter = router({
               }
             }
 
-            const resolvedModel = finalCustomConfig?.model || input.model
+            const resolvedModel =
+              chatProfile?.launch.model ?? finalCustomConfig?.model ?? input.model
             const persistedRunSnapshot = input.runId
               ? db
                   .select({
@@ -1853,6 +1922,7 @@ export const claudeRouter = router({
                   .get()
               : null
             const requestedPermissionMode =
+              chatProfile?.launch.permissionMode ??
               parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
               resolveClaudeRunPermission(input.chatId)
             const resolvedPermissionMode = resolveChatModePermission(
@@ -1866,9 +1936,10 @@ export const claudeRouter = router({
               .get()?.customPermissions
             const customPermissions =
               resolvedPermissionMode === "custom"
-                ? parseStoredCustomPermissions(
+                ? (chatProfile?.launch.customPermissions ??
+                  parseStoredCustomPermissions(
                     persistedRunSnapshot?.customPermissions ?? storedCustomPermissions,
-                  )
+                  ))
                 : null
             const sdkPermission = mapClaudeSdkPermissionMode(resolvedPermissionMode, input.mode)
             const permissionApplication = buildClaudePermissionApplication({
@@ -1888,6 +1959,9 @@ export const claudeRouter = router({
               worktreePath: input.cwd,
               promptMessageId: userMessage.id,
               customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
+              images: input.images,
+              reasoningEffort: chatProfile?.launch.reasoningEffort ?? undefined,
+              serviceTier: chatProfile?.launch.serviceTier,
             })
             agentRunId = run.id
             persistProjectVaultContextManifest(db, {
@@ -1895,6 +1969,9 @@ export const claudeRouter = router({
               manifest: vaultContext.manifest,
               ...(input.vaultContextSectionIds
                 ? { runSectionIds: input.vaultContextSectionIds }
+                : {}),
+              ...(input.vaultContextGraphSelection
+                ? { runGraphSelection: input.vaultContextGraphSelection }
                 : {}),
             })
             metadata = {
@@ -2370,7 +2447,9 @@ ${prompt}
                   isUsingOllama,
                 }),
                 ...(resolvedModel && { model: resolvedModel }),
-                ...(input.effort && { effort: input.effort }),
+                ...((chatProfile?.launch.reasoningEffort ?? input.effort)
+                  ? { effort: chatProfile?.launch.reasoningEffort ?? input.effort }
+                  : {}),
                 ...(!isUsingOllama && {
                   thinking: input.reasoningEnabled
                     ? { type: "adaptive" as const, display: "summarized" as const }
@@ -2911,28 +2990,6 @@ ${prompt}
                 ) {
                   errorContext = "Network error - check your connection"
                   errorCategory = "NETWORK_ERROR"
-                }
-
-                // Track error in Sentry (only if app is ready and Sentry is available)
-                if (app.isReady() && app.isPackaged) {
-                  try {
-                    const Sentry = await import("@sentry/electron/main")
-                    Sentry.captureException(err, {
-                      tags: {
-                        errorCategory,
-                        mode: input.mode,
-                      },
-                      extra: {
-                        context: errorContext,
-                        cwd: input.cwd,
-                        stderr: stderrOutput || "(no stderr captured)",
-                        chatId: input.chatId,
-                        subChatId: input.subChatId,
-                      },
-                    })
-                  } catch {
-                    // Sentry not available or failed to import - ignore
-                  }
                 }
 
                 // Send error with stderr output to frontend (only if not aborted by user)

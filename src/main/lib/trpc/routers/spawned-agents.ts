@@ -3,6 +3,7 @@ import { z } from "zod"
 import {
   addOrchestrationAgentInputSchema,
   createOrchestrationInputSchema,
+  directChildProfilePreviewInputSchema,
   orchestrationAgentDefinitionSchema,
   orchestrationControlActionSchema,
   orchestrationFleetQuerySchema,
@@ -10,15 +11,49 @@ import {
 } from "../../../../shared/agent-orchestration"
 import { chats, getDatabase, getDatabasePath } from "../../db"
 import { createAgentOrchestrationService } from "../../agent-orchestration/service"
+import { AgentProfileWorkflowBindingService } from "../../agent-profiles/workflow-binding"
 import {
   getCascadeControl,
   getRegisteredCoordinationEngineProbes,
+  getSwarmRuntimeControl,
 } from "../../agent-orchestration/operations-runtime"
+import { SwarmGroupControlService } from "../../agent-orchestration/swarm-group-control-service"
 import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 import { betaProcedure, publicProcedure, router } from "../index"
 
 const service = () => createAgentOrchestrationService(getDatabasePath())
 const orchestrationProcedure = betaProcedure("orchestration")
+const swarmActionSchema = z.enum(["pause", "resume", "cancel", "steer"])
+const swarmPreviewSchema = z
+  .object({
+    action: swarmActionSchema,
+    version: z.string().length(64),
+    selection: z.array(z.string().trim().min(1).max(200)).max(256),
+    capabilityIntersection: z.array(swarmActionSchema),
+    permissionIntersection: z.array(z.enum(["control", "steer"])),
+    approvalRequired: z.boolean(),
+    targets: z
+      .array(
+        z
+          .object({
+            agentId: z.string().trim().min(1).max(200),
+            runId: z.string().trim().min(1).max(512).nullable(),
+            version: z.number().int().nonnegative(),
+            supported: z.boolean(),
+            reason: z
+              .enum([
+                "missing-target",
+                "missing-run",
+                "unsupported-capability",
+                "permission-denied",
+              ])
+              .nullable(),
+          })
+          .strict(),
+      )
+      .max(256),
+  })
+  .strict()
 
 function publishOrchestrationChange(taskId: string, projectId?: string): void {
   publishLocalProductInvalidation({
@@ -90,6 +125,12 @@ export const spawnedAgentsRouter = router({
     return result
   }),
 
+  previewDirectChildProfile: orchestrationProcedure
+    .input(directChildProfilePreviewInputSchema)
+    .query(({ input }) =>
+      new AgentProfileWorkflowBindingService(getDatabase()).previewDirectChild(input),
+    ),
+
   getFleet: orchestrationProcedure
     .input(orchestrationFleetQuerySchema)
     .query(({ input }) => service().listFleet(input)),
@@ -97,6 +138,43 @@ export const spawnedAgentsRouter = router({
   getTaskOverview: orchestrationProcedure
     .input(z.object({ taskId: z.string() }))
     .query(({ input }) => service().getOverview(input.taskId)),
+
+  previewSwarmControl: orchestrationProcedure
+    .input(
+      z
+        .object({
+          taskId: z.string().trim().min(1).max(200),
+          action: swarmActionSchema,
+          selectedAgentIds: z.array(z.string().trim().min(1).max(200)).min(1).max(256),
+        })
+        .strict(),
+    )
+    .query(({ input }) =>
+      new SwarmGroupControlService(getDatabasePath(), getSwarmRuntimeControl()).preview(
+        input.taskId,
+        input.action,
+        input.selectedAgentIds,
+      ),
+    ),
+
+  executeSwarmControl: orchestrationProcedure
+    .input(
+      z
+        .object({
+          taskId: z.string().trim().min(1).max(200),
+          expectedPreview: swarmPreviewSchema,
+          steerMessage: z.string().max(10_000).default(""),
+        })
+        .strict(),
+    )
+    .mutation(async ({ input }) => {
+      const result = await new SwarmGroupControlService(
+        getDatabasePath(),
+        getSwarmRuntimeControl(),
+      ).execute(input.taskId, input.expectedPreview, input.steerMessage)
+      if (result.status !== "stale-selection") publishOrchestrationChange(input.taskId)
+      return result
+    }),
 
   getLineage: orchestrationProcedure
     .input(z.object({ taskId: z.string() }))

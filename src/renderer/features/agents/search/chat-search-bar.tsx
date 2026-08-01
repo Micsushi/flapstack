@@ -1,7 +1,7 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { ChevronDown, ChevronUp, X } from "lucide-react"
 import * as React from "react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { cn } from "../../../lib/utils"
 import {
@@ -33,6 +33,7 @@ export function ChatSearchBar({ messages, className, topOffset }: ChatSearchBarP
   const setCurrentIndex = useSetAtom(chatSearchCurrentIndexAtom)
   const [targetMessageId, setTargetMessageId] = useAtom(chatSearchTargetMessageIdAtom)
   const countInfo = useAtomValue(chatSearchCountInfoAtom)
+  const searchableText = useMemo(() => extractSearchableText(messages), [messages])
   const closeSearch = useSetAtom(closeSearchAtom)
   const goToNext = useSetAtom(goToNextMatchAtom)
   const goToPrev = useSetAtom(goToPrevMatchAtom)
@@ -40,8 +41,9 @@ export function ChatSearchBar({ messages, className, topOffset }: ChatSearchBarP
   const inputRef = useRef<HTMLInputElement>(null)
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Track if search has completed (to avoid showing "No results" while typing)
-  const [searchCompleted, setSearchCompleted] = useState(false)
+  // Record the exact query completed by the debounce callback. Deriving completion
+  // from the current input can briefly pair a new query with the previous result.
+  const [completedQuery, setCompletedQuery] = useState<string | null>(null)
 
   // Focus input when search opens
   useEffect(() => {
@@ -66,8 +68,7 @@ export function ChatSearchBar({ messages, className, topOffset }: ChatSearchBarP
 
   // Debounced search
   useEffect(() => {
-    // Mark search as not completed when input changes
-    setSearchCompleted(false)
+    setCompletedQuery(null)
 
     if (debounceTimeoutRef.current) {
       clearTimeout(debounceTimeoutRef.current)
@@ -79,13 +80,12 @@ export function ChatSearchBar({ messages, className, topOffset }: ChatSearchBarP
       if (!inputValue.trim()) {
         setMatches([])
         setCurrentIndex(0)
-        setSearchCompleted(true)
+        setCompletedQuery(inputValue)
         return
       }
 
       // Extract and search
-      const extracted = extractSearchableText(messages)
-      const matches = findMatches(extracted, inputValue)
+      const matches = findMatches(searchableText, inputValue)
 
       setMatches(matches)
       const targetIndex = targetMessageId
@@ -93,7 +93,7 @@ export function ChatSearchBar({ messages, className, topOffset }: ChatSearchBarP
         : -1
       setCurrentIndex(targetIndex >= 0 ? targetIndex : 0)
       if (targetIndex >= 0) setTargetMessageId(null)
-      setSearchCompleted(true)
+      setCompletedQuery(inputValue)
     }, 200)
 
     return () => {
@@ -103,7 +103,7 @@ export function ChatSearchBar({ messages, className, topOffset }: ChatSearchBarP
     }
   }, [
     inputValue,
-    messages,
+    searchableText,
     setSearchQuery,
     setMatches,
     setCurrentIndex,
@@ -151,6 +151,8 @@ export function ChatSearchBar({ messages, className, topOffset }: ChatSearchBarP
 
   return (
     <div
+      data-chat-search
+      data-chat-search-completed-query={completedQuery ?? undefined}
       className={cn(
         "absolute right-3 left-3 z-50",
         "flex items-center gap-1 px-2 py-1.5",
@@ -165,9 +167,11 @@ export function ChatSearchBar({ messages, className, topOffset }: ChatSearchBarP
       {/* Search input - grows to fill space, shrinks on narrow screens */}
       <input
         ref={inputRef}
+        data-chat-search-input
         type="text"
         value={inputValue}
         onChange={(e) => {
+          setCompletedQuery(null)
           setInputValue(e.target.value)
           setTargetMessageId(null)
         }}
@@ -216,7 +220,9 @@ export function ChatSearchBar({ messages, className, topOffset }: ChatSearchBarP
           </>
         ) : (
           inputValue.trim() &&
-          searchCompleted && <span className="text-xs text-muted-foreground">No results</span>
+          completedQuery === inputValue && (
+            <span className="text-xs text-muted-foreground">No results</span>
+          )
         )}
       </div>
 

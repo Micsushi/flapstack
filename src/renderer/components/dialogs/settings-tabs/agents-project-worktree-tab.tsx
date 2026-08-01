@@ -31,6 +31,10 @@ import {
 import { cn } from "../../../lib/utils"
 import { ResizableSidebar } from "../../ui/resizable-sidebar"
 import { settingsProjectsSidebarWidthAtom } from "../../../features/agents/atoms"
+import {
+  NewChatAgentProfileSelector,
+  type NewChatAgentProfileSelectionState,
+} from "../../../features/agent-profiles/new-chat-agent-profile-selector"
 
 // --- Detail Panel ---
 function ProjectDetail({ projectId }: { projectId: string }) {
@@ -144,6 +148,8 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const [unixCommands, setUnixCommands] = useState<string[]>([])
   const [windowsCommands, setWindowsCommands] = useState<string[]>([])
   const [showPlatformSpecific, setShowPlatformSpecific] = useState(false)
+  const [fillProfileSelection, setFillProfileSelection] =
+    useState<NewChatAgentProfileSelectionState>(null)
 
   // Ref to track last saved state for dirty checking
   const savedConfigRef = useRef<string>("")
@@ -446,29 +452,58 @@ function ProjectDetail({ projectId }: { projectId: string }) {
 
         {/* ── Worktree ── */}
         <div>
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-start justify-between gap-3 mb-2">
             <h4 className="text-sm font-medium text-foreground">Worktree</h4>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="gap-1.5 shrink-0"
-              onClick={() => {
-                const prompt = COMMAND_PROMPTS["worktree-setup"]
-                if (prompt && projectId) {
-                  createChatMutation.mutate({
-                    projectId,
-                    name: "Worktree Setup",
-                    initialMessageParts: [{ type: "text", text: prompt }],
-                    useWorktree: false,
-                    mode: "write",
-                  })
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <NewChatAgentProfileSelector
+                scope="project"
+                projectId={projectId}
+                permissionMode="ask-before-edits"
+                runtimePreference="auto"
+                onSelectionChange={setFillProfileSelection}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 shrink-0"
+                onClick={() => {
+                  const prompt = COMMAND_PROMPTS["worktree-setup"]
+                  if (prompt && projectId) {
+                    const profile =
+                      fillProfileSelection && !("invalid" in fillProfileSelection)
+                        ? fillProfileSelection
+                        : null
+                    createChatMutation.mutate({
+                      scope: "project",
+                      projectId,
+                      name: "Worktree Setup",
+                      initialMessageParts: [{ type: "text", text: prompt }],
+                      useWorktree: false,
+                      mode: "write",
+                      agentProfile: profile?.profile,
+                      confirmedAgentProfileDigest: profile?.digest,
+                      harness: profile?.harness,
+                      model: profile?.model ?? undefined,
+                      runtimePreference: profile?.runtimePreference,
+                      permissionMode: profile?.permissionMode as
+                        | "read-only"
+                        | "ask-before-edits"
+                        | "auto-edit-project-only"
+                        | "full-access"
+                        | undefined,
+                    })
+                  }
+                }}
+                disabled={
+                  !projectId ||
+                  createChatMutation.isPending ||
+                  (fillProfileSelection !== null && "invalid" in fillProfileSelection)
                 }
-              }}
-              disabled={!projectId || createChatMutation.isPending}
-            >
-              <AIPenIcon className="h-3.5 w-3.5" />
-              Fill with AI
-            </Button>
+              >
+                <AIPenIcon className="h-3.5 w-3.5" />
+                Fill with AI
+              </Button>
+            </div>
           </div>
           <div className="bg-background rounded-lg border border-border overflow-hidden">
             {/* Setup commands */}

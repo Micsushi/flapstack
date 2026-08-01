@@ -20,12 +20,16 @@ import {
   subChatClaudeEffortAtomFamily,
   subChatReasoningEnabledAtomFamily,
 } from "../atoms"
-import { useAgentSubChatStore } from "../stores/sub-chat-store"
+import { getAgentSubChatStore } from "../stores/sub-chat-store"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
 import { handleAgentInputChunk } from "./agent-input-transport"
 import type { ChatMode } from "../../../../shared/chat-mode"
 import { createDirectRuntimeStream } from "./direct-runtime-chat-transport"
 import { resolveAgentHotlineEnabled } from "../../../../shared/agent-hotline"
+import {
+  clearProjectVaultGraphSelection,
+  readProjectVaultGraphSelection,
+} from "../../project-vault/pending-graph-context"
 
 function openClaudeLoginModal() {
   appStore.set(claudeLoginModalConfigAtom, {
@@ -33,23 +37,6 @@ function openClaudeLoginModal() {
     autoStartAuth: true,
   })
   appStore.set(agentsLoginModalOpenAtom, true)
-}
-
-function captureTransportException(
-  error: unknown,
-  context: Parameters<(typeof import("@sentry/electron/renderer"))["captureException"]>[1],
-): void {
-  if (!import.meta.env.PROD || !import.meta.env.VITE_SENTRY_DSN) {
-    return
-  }
-
-  import("@sentry/electron/renderer")
-    .then((Sentry) => {
-      Sentry.captureException(error, context)
-    })
-    .catch(() => {
-      // Sentry is best-effort and must not break local test builds.
-    })
 }
 
 // Error categories and their user-friendly messages
@@ -136,6 +123,7 @@ type IPCChatTransportConfig = {
   subChatId: string
   cwd: string
   projectPath?: string // Original project path for MCP config lookup (when using worktrees)
+  projectId?: string
   mode: ChatMode
   model?: string
 }
@@ -185,10 +173,11 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
     const offlineModeEnabled = showOfflineFeatures && autoOfflineMode
 
     const currentMode =
-      useAgentSubChatStore
+      getAgentSubChatStore(this.config.chatId)
         .getState()
         .allSubChats.find((subChat) => subChat.id === this.config.subChatId)?.mode ||
       this.config.mode
+    const vaultContextGraphSelection = readProjectVaultGraphSelection(this.config.projectId)
 
     const directStream = await createDirectRuntimeStream({
       chatId: this.config.chatId,
@@ -202,9 +191,13 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
       reasoningEnabled: reasoningOutputEnabled,
       images,
       hotlineEnabled: resolveAgentHotlineEnabled(options.messages),
+      ...(vaultContextGraphSelection ? { vaultContextGraphSelection } : {}),
       abortSignal: options.abortSignal,
     })
-    if (directStream) return directStream
+    if (directStream) {
+      clearProjectVaultGraphSelection(this.config.projectId)
+      return directStream
+    }
 
     // Stream debug logging
     const subId = this.config.subChatId.slice(-8)
@@ -234,6 +227,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
             offlineModeEnabled,
             enableTasks,
             ...(images.length > 0 && { images }),
+            ...(vaultContextGraphSelection ? { vaultContextGraphSelection } : {}),
           },
           {
             onData: (chunk: UIMessageChunk) => {
@@ -339,20 +333,6 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
                 console.error(`[SDK ERROR] Full chunk:`, JSON.stringify(chunk, null, 2))
                 console.error(`[SDK ERROR] ========================================`)
 
-                // Track error in Sentry
-                captureTransportException(new Error(chunk.errorText || "Claude transport error"), {
-                  tags: {
-                    errorCategory: category,
-                    mode: currentMode,
-                  },
-                  extra: {
-                    debugInfo: chunk.debugInfo,
-                    cwd: this.config.cwd,
-                    chatId: this.config.chatId,
-                    subChatId: this.config.subChatId,
-                  },
-                })
-
                 // Build detailed error string for copying (available for ALL errors)
                 const errorDetails = [
                   `Error: ${chunk.errorText || "Unknown error"}`,
@@ -423,19 +403,6 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
               console.log(
                 `[SD] R:ERROR sub=${subId} n=${chunkCount} last=${lastChunkType} err=${err.message}`,
               )
-              // Track transport errors in Sentry
-              captureTransportException(err, {
-                tags: {
-                  errorCategory: "TRANSPORT_ERROR",
-                  mode: currentMode,
-                },
-                extra: {
-                  cwd: this.config.cwd,
-                  chatId: this.config.chatId,
-                  subChatId: this.config.subChatId,
-                },
-              })
-
               controller.error(err)
             },
             onComplete: () => {
@@ -451,6 +418,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
             },
           },
         )
+        clearProjectVaultGraphSelection(this.config.projectId)
 
         // Handle abort
         options.abortSignal?.addEventListener("abort", () => {

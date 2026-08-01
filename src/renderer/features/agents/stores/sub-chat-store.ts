@@ -1,4 +1,13 @@
-import { create } from "zustand"
+import {
+  createContext,
+  createElement,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react"
+import { useStore } from "zustand"
+import { createStore, type StateCreator, type StoreApi } from "zustand/vanilla"
 import { useMessageQueueStore } from "./message-queue-store"
 import { useStreamingStatusStore } from "./streaming-status-store"
 import { agentChatStore } from "./agent-chat-store"
@@ -19,7 +28,7 @@ export interface SubChatMeta {
   mode?: ChatMode
 }
 
-interface AgentSubChatStore {
+export interface AgentSubChatStore {
   // Current parent chat context
   chatId: string | null
 
@@ -148,7 +157,7 @@ const loadFromLS = <T>(
   }
 }
 
-export const useAgentSubChatStore = create<AgentSubChatStore>((set, get) => ({
+const createAgentSubChatState: StateCreator<AgentSubChatStore> = (set, get) => ({
   chatId: null,
   activeSubChatId: null,
   openSubChatIds: [],
@@ -457,4 +466,89 @@ export const useAgentSubChatStore = create<AgentSubChatStore>((set, get) => ({
       pendingNavigation: null,
     })
   },
-}))
+})
+
+export type AgentSubChatStoreApi = StoreApi<AgentSubChatStore>
+
+export function createAgentSubChatStore(): AgentSubChatStoreApi {
+  return createStore<AgentSubChatStore>()(createAgentSubChatState)
+}
+
+const globalAgentSubChatStore = createAgentSubChatStore()
+const initialGlobalAgentSubChatState = globalAgentSubChatStore.getState()
+let projectedAgentSubChatStore: AgentSubChatStoreApi | null = null
+const scopedAgentSubChatStores = new Map<string, AgentSubChatStoreApi>()
+const AgentSubChatStoreContext = createContext<AgentSubChatStoreApi | null>(null)
+
+export function AgentSubChatStoreScope({
+  chatId,
+  children,
+}: {
+  chatId: string
+  children: ReactNode
+}) {
+  const [store] = useState(() => {
+    const scoped = createAgentSubChatStore()
+    const pendingNavigation = globalAgentSubChatStore.getState().pendingNavigation
+    if (pendingNavigation?.chatId === chatId) {
+      scoped.setState({ pendingNavigation })
+    }
+    return scoped
+  })
+  useEffect(() => {
+    scopedAgentSubChatStores.set(chatId, store)
+    return () => {
+      if (scopedAgentSubChatStores.get(chatId) === store) {
+        scopedAgentSubChatStores.delete(chatId)
+      }
+    }
+  }, [chatId, store])
+  return createElement(AgentSubChatStoreContext.Provider, { value: store }, children)
+}
+
+export function useAgentSubChatStoreApi(): AgentSubChatStoreApi {
+  return useContext(AgentSubChatStoreContext) ?? globalAgentSubChatStore
+}
+
+export function getAgentSubChatStore(chatId?: string | null): AgentSubChatStoreApi {
+  return (chatId ? scopedAgentSubChatStores.get(chatId) : null) ?? globalAgentSubChatStore
+}
+
+export function getMountedAgentSubChatStore(chatId: string): AgentSubChatStoreApi | null {
+  return scopedAgentSubChatStores.get(chatId) ?? null
+}
+
+export function projectAgentSubChatStore(store: AgentSubChatStoreApi): void {
+  projectedAgentSubChatStore = store
+  globalAgentSubChatStore.setState(store.getState(), true)
+}
+
+export function clearAgentSubChatStoreProjection(store: AgentSubChatStoreApi): void {
+  if (projectedAgentSubChatStore !== store) return
+  projectedAgentSubChatStore = null
+  globalAgentSubChatStore.setState(initialGlobalAgentSubChatState, true)
+}
+
+type AgentSubChatStoreHook = {
+  (): AgentSubChatStore
+  <T>(selector: (state: AgentSubChatStore) => T): T
+  getState: AgentSubChatStoreApi["getState"]
+  setState: AgentSubChatStoreApi["setState"]
+  subscribe: AgentSubChatStoreApi["subscribe"]
+}
+
+export const useAgentSubChatStore = Object.assign(
+  function useAgentSubChatStoreSelector<T = AgentSubChatStore>(
+    selector?: (state: AgentSubChatStore) => T,
+  ): T {
+    return useStore(
+      useAgentSubChatStoreApi(),
+      selector ?? ((state: AgentSubChatStore) => state as T),
+    )
+  },
+  {
+    getState: globalAgentSubChatStore.getState,
+    setState: globalAgentSubChatStore.setState,
+    subscribe: globalAgentSubChatStore.subscribe,
+  },
+) as AgentSubChatStoreHook

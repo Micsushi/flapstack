@@ -81,6 +81,7 @@ const TEXT_EXTENSIONS = new Set([
   ".yml",
   ".csv",
 ])
+const SAFE_PROJECT_VAULT_ATTACHMENT_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"])
 
 export async function createPortableExport(
   input: CreatePortableExportInput,
@@ -141,13 +142,20 @@ export async function createPortableExport(
           throw new Error("Portable source root must be a non-symlink directory.")
         const allowed = source.include ? new Set(source.include) : null
         const relativePaths = (await listFiles(source.root)).filter(
-          (relativePath) => !allowed || allowed.has(relativePath),
+          (relativePath) =>
+            (!allowed || allowed.has(relativePath)) &&
+            (source.scopeId !== "project-vaults" || !isReservedProjectVaultPath(relativePath)),
         )
         for (const relativePath of relativePaths) {
           throwIfAborted(input.signal)
           if (fileCount >= PORTABILITY_LIMITS.checksumEntries - 8)
             throw new Error("Portable file count exceeds bundle limit.")
-          if (!TEXT_EXTENSIONS.has(extname(relativePath).toLowerCase())) {
+          const extension = extname(relativePath).toLowerCase()
+          const textFile = TEXT_EXTENSIONS.has(extension)
+          const attachmentCandidate =
+            source.scopeId === "project-vaults" &&
+            SAFE_PROJECT_VAULT_ATTACHMENT_EXTENSIONS.has(extension)
+          if (!textFile && !attachmentCandidate) {
             exclusions.push({
               scopeId: source.scopeId,
               category: "unsupported",
@@ -162,18 +170,29 @@ export async function createPortableExport(
             maxBytes: PORTABILITY_LIMITS.fileBytes,
             previewBytes: PORTABILITY_LIMITS.fileBytes,
           })
-          const raw = sourceSnapshot.preview.toString("utf8")
-          const redacted = redactText(raw, {
-            scopeId: source.scopeId,
-            path: `${scope.contentPath}/files/${sourceIndex}/${relativePath}`,
-            approvedFalsePositiveHashes: input.approvedFalsePositiveHashes,
-          })
-          exclusions.push(...redacted.exclusions)
           const bundlePath = `${scope.contentPath}/files/${sourceIndex}/${relativePath}`
           safeRelativeBundlePathSchema.parse(bundlePath)
           const destination = join(partial, bundlePath)
           await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
-          await writeFile(destination, redacted.value, { mode: 0o600 })
+          if (textFile) {
+            const redacted = redactText(sourceSnapshot.preview.toString("utf8"), {
+              scopeId: source.scopeId,
+              path: bundlePath,
+              approvedFalsePositiveHashes: input.approvedFalsePositiveHashes,
+            })
+            exclusions.push(...redacted.exclusions)
+            await writeFile(destination, redacted.value, { mode: 0o600 })
+          } else if (isSafeProjectVaultAttachment(extension, sourceSnapshot.preview)) {
+            await writeFile(destination, sourceSnapshot.preview, { mode: 0o600 })
+          } else {
+            exclusions.push({
+              scopeId: source.scopeId,
+              category: "unsupported",
+              sensitivity: "private",
+              reason: "Attachment signature did not match its supported image extension.",
+            })
+            continue
+          }
           const digest = await sha256File(destination)
           fileIndex.push({ bundlePath, relativePath, target: source.target, ...digest })
           fileCount += 1
@@ -239,6 +258,36 @@ export async function createPortableExport(
   } catch (error) {
     await rm(partial, { recursive: true, force: true })
     throw error
+  }
+}
+
+function isReservedProjectVaultPath(relativePath: string): boolean {
+  return relativePath
+    .split(/[\\/]/)
+    .some(
+      (part) =>
+        part === ".obsidian" || part === ".flapstack-trash" || part.startsWith(".flapstack-"),
+    )
+}
+
+function isSafeProjectVaultAttachment(extension: string, bytes: Buffer): boolean {
+  switch (extension) {
+    case ".png":
+      return bytes
+        .subarray(0, 8)
+        .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    case ".jpg":
+    case ".jpeg":
+      return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+    case ".gif":
+      return ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))
+    case ".webp":
+      return (
+        bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+        bytes.subarray(8, 12).toString("ascii") === "WEBP"
+      )
+    default:
+      return false
   }
 }
 

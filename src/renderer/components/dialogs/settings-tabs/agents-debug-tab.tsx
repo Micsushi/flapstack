@@ -4,7 +4,7 @@ import { Button } from "../../ui/button"
 import { Switch } from "../../ui/switch"
 import { trpc } from "../../../lib/trpc"
 import { toast } from "sonner"
-import { Copy, FolderOpen, RefreshCw, Terminal, Check, Scan, WifiOff, FileJson } from "lucide-react"
+import { Copy, FolderOpen, RefreshCw, Terminal, Check, WifiOff, FileJson } from "lucide-react"
 import { showMessageJsonAtom } from "../../../features/agents/atoms"
 
 // Hook to detect narrow screen
@@ -24,48 +24,13 @@ function useIsNarrowScreen(): boolean {
   return isNarrow
 }
 
-// React Scan state management (only available in dev mode)
-const REACT_SCAN_SCRIPT_ID = "react-scan-script"
-const REACT_SCAN_STORAGE_KEY = "react-scan-enabled"
-
-function loadReactScan(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (document.getElementById(REACT_SCAN_SCRIPT_ID)) {
-      resolve()
-      return
-    }
-
-    const script = document.createElement("script")
-    script.id = REACT_SCAN_SCRIPT_ID
-    script.src = "https://unpkg.com/react-scan/dist/auto.global.js"
-    script.async = true
-    script.onload = () => resolve()
-    script.onerror = () => reject(new Error("Failed to load React Scan"))
-    document.head.appendChild(script)
-  })
-}
-
-function unloadReactScan(): void {
-  const script = document.getElementById(REACT_SCAN_SCRIPT_ID)
-  if (script) {
-    script.remove()
-  }
-  // React Scan adds a toolbar element, try to remove it
-  const toolbar = document.querySelector("[data-react-scan]")
-  if (toolbar) {
-    toolbar.remove()
-  }
-}
-
 export function AgentsDebugTab() {
   const [copiedPath, setCopiedPath] = useState(false)
   const [copiedInfo, setCopiedInfo] = useState(false)
-  const [reactScanEnabled, setReactScanEnabled] = useState(false)
-  const [reactScanLoading, setReactScanLoading] = useState(false)
   const [showMessageJson, setShowMessageJson] = useAtom(showMessageJsonAtom)
   const isNarrowScreen = useIsNarrowScreen()
 
-  // Check if we're in dev mode (only show React Scan in dev)
+  // Keep destructive diagnostics out of packaged builds.
   const isDev = import.meta.env.DEV
 
   // Fetch system info
@@ -146,43 +111,6 @@ export function AgentsDebugTab() {
     window.desktopApi?.toggleDevTools()
   }
 
-  const handleReactScanToggle = async (enabled: boolean) => {
-    if (!isDev) return
-
-    setReactScanLoading(true)
-    try {
-      if (enabled) {
-        await loadReactScan()
-        localStorage.setItem(REACT_SCAN_STORAGE_KEY, "true")
-        setReactScanEnabled(true)
-        toast.success("React Scan enabled", {
-          description: "Reload the page to see re-render highlights",
-        })
-      } else {
-        unloadReactScan()
-        localStorage.removeItem(REACT_SCAN_STORAGE_KEY)
-        setReactScanEnabled(false)
-        toast.success("React Scan disabled", {
-          description: "Reload the page to fully remove it",
-        })
-      }
-    } catch (error) {
-      toast.error("Failed to toggle React Scan")
-      console.error(error)
-    } finally {
-      setReactScanLoading(false)
-    }
-  }
-
-  // Initialize React Scan state from localStorage (dev only)
-  useEffect(() => {
-    if (isDev && localStorage.getItem(REACT_SCAN_STORAGE_KEY) === "true") {
-      loadReactScan()
-        .then(() => setReactScanEnabled(true))
-        .catch(console.error)
-    }
-  }, [isDev])
-
   const isLoading = isLoadingSystem || isLoadingDb
 
   return (
@@ -261,20 +189,6 @@ export function AgentsDebugTab() {
             Developer Tools
           </h4>
           <div className="rounded-lg border bg-muted/30 divide-y">
-            <div className="flex items-center justify-between p-3">
-              <div className="flex items-center gap-2">
-                <Scan className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <span className="text-sm">React Scan</span>
-                  <p className="text-xs text-muted-foreground">Highlight component re-renders</p>
-                </div>
-              </div>
-              <Switch
-                checked={reactScanEnabled}
-                onCheckedChange={handleReactScanToggle}
-                disabled={reactScanLoading}
-              />
-            </div>
             <div className="flex items-center justify-between p-3">
               <div className="flex items-center gap-2">
                 <WifiOff className="h-4 w-4 text-muted-foreground" />

@@ -20,9 +20,22 @@ import {
   providerForHarness,
 } from "../../usage/budgets"
 import { projectVaultSectionIds } from "../../project-vaults/registry"
+import { serializeProjectVaultRunSelection } from "../../project-vaults/run-context"
 import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
+import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 
 const permissionModeSchema = z.enum(permissionModes)
+const vaultContextGraphSelectionSchema = z.object({
+  nodeIds: z.array(z.string().trim().min(1).max(200)).max(24),
+  expectedGenerationId: z.string().trim().min(1).max(200),
+  expansion: z
+    .object({
+      depth: z.number().int().min(0).max(2),
+      direction: z.enum(["outgoing", "incoming", "both"]),
+      maxNodes: z.number().int().min(1).max(24),
+    })
+    .optional(),
+})
 
 export const runsRouter = router({
   createRun: publicProcedure
@@ -37,6 +50,7 @@ export const runsRouter = router({
         promptMessageId: z.string().optional(),
         budgetOverrideToken: z.string().min(1).max(500).optional(),
         vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
+        vaultContextGraphSelection: vaultContextGraphSelectionSchema.optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -95,9 +109,15 @@ export const runsRouter = router({
           worktreePath: input.worktreePath ?? null,
           promptMessageId: input.promptMessageId,
           vaultContextSections:
-            input.vaultContextSectionIds === undefined
+            input.vaultContextSectionIds === undefined &&
+            input.vaultContextGraphSelection === undefined
               ? null
-              : JSON.stringify(input.vaultContextSectionIds),
+              : serializeProjectVaultRunSelection({
+                  sectionIds: input.vaultContextSectionIds ?? [],
+                  ...(input.vaultContextGraphSelection
+                    ? { graph: input.vaultContextGraphSelection }
+                    : {}),
+                }),
           status: "running",
         })
         .returning()
@@ -111,12 +131,14 @@ export const runsRouter = router({
       }
 
       const before = await captureCheckpoint(run.id, checkpointRoot, "before")
-      return db
+      const created = db
         .update(agentRuns)
         .set({ beforeCheckpointId: before.id })
         .where(eq(agentRuns.id, run.id))
         .returning()
         .get()
+      publishRunInvalidation(created.id, created.chatId)
+      return created
     }),
 
   completeRun: publicProcedure
@@ -137,7 +159,7 @@ export const runsRouter = router({
       const after = await captureCheckpoint(run.id, checkpointRoot, "after")
       await captureRunManifest(run.id)
 
-      return db
+      const completed = db
         .update(agentRuns)
         .set({
           status: input.status,
@@ -147,6 +169,8 @@ export const runsRouter = router({
         .where(eq(agentRuns.id, input.runId))
         .returning()
         .get()
+      publishRunInvalidation(completed.id, completed.chatId)
+      return completed
     }),
 
   listByChat: publicProcedure.input(z.object({ chatId: z.string() })).query(({ input }) => {
@@ -191,3 +215,13 @@ export const runsRouter = router({
     .input(z.object({ runId: z.string() }))
     .mutation(({ input }) => undoRunChangeSet(input.runId)),
 })
+
+function publishRunInvalidation(runId: string, chatId: string): void {
+  publishLocalProductInvalidation({
+    version: 1,
+    source: "product-mcp",
+    domains: ["runs", "chats"],
+    runIds: [runId],
+    chatIds: [chatId],
+  })
+}

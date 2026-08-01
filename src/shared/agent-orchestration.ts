@@ -1,11 +1,16 @@
 import { z } from "zod"
-import { agentProfileRuntimeAuthoritySchema } from "./agent-profiles"
+import {
+  agentProfileBoundedOverrideSchema,
+  agentProfileRuntimeAuthoritySchema,
+  agentProfileVersionRefSchema,
+} from "./agent-profiles"
 import {
   customPermissionCapabilitiesSchema,
   refineCustomPermissionMode,
 } from "./permission-capabilities"
 import { AGENT_HARNESSES } from "./harness-types"
-import { agentRuntimePreferenceSchema } from "./agent-runtime"
+import { agentRuntimePreferenceSchema, runtimeAdapterForPreference } from "./agent-runtime"
+import { agentProfileSpeedCompatibility } from "./agent-profile-speed"
 import {
   coordinationEngineSchema,
   type ResolvedCoordinationEngineSnapshot,
@@ -136,6 +141,7 @@ export const orchestrationAgentDefinitionSchema = z
     runtimePreference: agentRuntimePreferenceSchema.optional(),
     requiredLocalToolTiers: z.array(orchestrationLocalToolTierSchema).max(5).optional(),
     reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
+    speedPreference: z.enum(["standard", "fast"]).optional(),
     profileRuntimeAuthority: agentProfileRuntimeAuthoritySchema.optional(),
     permissionMode: orchestrationPermissionModeSchema,
     customPermissions: customPermissionCapabilitiesSchema.optional(),
@@ -148,6 +154,33 @@ export const orchestrationAgentDefinitionSchema = z
   .strict()
   .superRefine((value, context) => {
     refineCustomPermissionMode(value, context)
+    if (value.speedPreference === "fast") {
+      const resolvedRuntime =
+        runtimeAdapterForPreference(value.runtimePreference ?? "auto") ??
+        (value.harness === "codex"
+          ? "codex"
+          : value.harness === "claude-code"
+            ? "claude-code"
+            : "flapstack-native")
+      const speed = agentProfileSpeedCompatibility(
+        {
+          harness: value.harness,
+          modelPreference: value.model ?? null,
+          speedPreference: value.speedPreference,
+        },
+        {
+          preference: value.runtimePreference ?? resolvedRuntime,
+          resolvedRuntime,
+        },
+      )
+      if (!speed.compatible) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["speedPreference"],
+          message: `${speed.message} ${speed.repair}`,
+        })
+      }
+    }
     if (value.worktreeStrategy === "existing" && !value.worktreePath) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -249,6 +282,34 @@ export const addOrchestrationAgentInputSchema = z
     taskId: idSchema,
     parentAgentId: idSchema.optional(),
     agent: orchestrationAgentDefinitionSchema,
+    profileSelection: z
+      .object({
+        requestId: idSchema,
+        profile: agentProfileVersionRefSchema,
+        overrides: agentProfileBoundedOverrideSchema.nullable().default(null),
+        confirmedSnapshotDigest: z.string().regex(/^[0-9a-f]{64}$/),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.profileSelection && !value.parentAgentId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["parentAgentId"],
+        message: "Direct child profile selection requires one exact parent agent.",
+      })
+    }
+  })
+
+export const directChildProfilePreviewInputSchema = z
+  .object({
+    taskId: idSchema,
+    parentAgentId: idSchema,
+    agent: orchestrationAgentDefinitionSchema,
+    profile: agentProfileVersionRefSchema,
+    overrides: agentProfileBoundedOverrideSchema.nullable().default(null),
   })
   .strict()
 
@@ -295,6 +356,7 @@ export type OrchestrationStopConditions = z.infer<typeof orchestrationStopCondit
 export type OrchestrationAgentDefinition = z.infer<typeof orchestrationAgentDefinitionSchema>
 export type CreateOrchestrationInput = z.infer<typeof createOrchestrationInputSchema>
 export type AddOrchestrationAgentInput = z.infer<typeof addOrchestrationAgentInputSchema>
+export type DirectChildProfilePreviewInput = z.infer<typeof directChildProfilePreviewInputSchema>
 export type OrchestrationUsageUpdate = z.infer<typeof orchestrationUsageUpdateSchema>
 export type OrchestrationFleetQuery = z.infer<typeof orchestrationFleetQuerySchema>
 export type OrchestrationFleetState = z.infer<typeof orchestrationFleetStateSchema>

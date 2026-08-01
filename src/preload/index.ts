@@ -17,6 +17,10 @@ import {
   type DevRendererControlResponse,
 } from "../shared/dev-renderer-control"
 import { DEV_AGENT_INPUT_CHANNEL, type DevAgentInputPayload } from "../shared/dev-agent-input"
+import type {
+  WorkbenchWindowCreationBlocked,
+  WorkbenchNewWindowResult,
+} from "../shared/workbench-window-budget"
 import {
   DEV_TEST_CONTROL_VIEW_CHANNEL,
   type DevTestControlViewPayload,
@@ -29,13 +33,22 @@ import type {
   WorkspacePaneWindowTarget,
   WorkspaceWindowOpenTarget,
 } from "../shared/workspace-window-ownership"
-
-// Only initialize Sentry in production to avoid IPC errors in dev mode
-if (process.env.NODE_ENV === "production") {
-  import("@sentry/electron/renderer").then((Sentry) => {
-    Sentry.init()
-  })
-}
+import type {
+  ChatTransferCommit,
+  ChatTransferDestinationReady,
+  ChatTransferDropExisting,
+  ChatTransferDropOutside,
+  ChatTransferOffer,
+  ChatTransferOpenNew,
+  ChatTransferOpenNewResult,
+  ChatTransferRemoveSource,
+  ChatTransferReserve,
+  ChatTransferResult,
+  ChatTransferStart,
+  ChatTransferStartResult,
+  ChatTransferWindowDestination,
+} from "../shared/chat-window-transfer"
+import type { ChatWorkbenchSessionPresentation } from "../shared/chat-workbench"
 
 // Expose tRPC IPC bridge for type-safe communication
 exposeElectronTRPC()
@@ -93,7 +106,22 @@ contextBridge.exposeInMainWorld("desktopApi", {
 
   // Multi-window
   newWindow: (options?: { chatId?: string; subChatId?: string }) =>
-    ipcRenderer.invoke("window:new", options) as Promise<{ blocked: boolean } | void>,
+    ipcRenderer.invoke("window:new", options) as Promise<WorkbenchNewWindowResult | void>,
+  focusStableWindow: (stableId: string) =>
+    ipcRenderer.invoke("window:focus-stable", stableId) as Promise<
+      "focused" | "recovering" | "missing"
+    >,
+  getWorkbenchSession: () =>
+    ipcRenderer.invoke("workbench-session:get") as Promise<ChatWorkbenchSessionPresentation | null>,
+  updateWorkbenchSessionPresentation: (input: ChatWorkbenchSessionPresentation) =>
+    ipcRenderer.invoke("workbench-session:update-presentation", input) as Promise<boolean>,
+  onWorkbenchWindowCreationBlocked: (
+    callback: (failure: WorkbenchWindowCreationBlocked) => void,
+  ) => {
+    const handler = (_event: unknown, failure: WorkbenchWindowCreationBlocked) => callback(failure)
+    ipcRenderer.on("window:creation-blocked", handler)
+    return () => ipcRenderer.removeListener("window:creation-blocked", handler)
+  },
   setWindowTitle: (title: string) => ipcRenderer.invoke("window:set-title", title),
 
   // Chat ownership - prevent same chat open in multiple windows
@@ -101,9 +129,47 @@ contextBridge.exposeInMainWorld("desktopApi", {
     ipcRenderer.invoke("chat:claim", chatId) as Promise<
       { ok: true } | { ok: false; ownerStableId: string }
     >,
+  takeChatOwnership: (chatId: string, expectedOwnerStableId: string) =>
+    ipcRenderer.invoke("chat:take-ownership", chatId, expectedOwnerStableId) as Promise<
+      { ok: true } | { ok: false; ownerStableId: string | null }
+    >,
   releaseChat: (chatId: string) => ipcRenderer.invoke("chat:release", chatId) as Promise<void>,
   focusChatOwner: (chatId: string) =>
     ipcRenderer.invoke("chat:focus-owner", chatId) as Promise<boolean>,
+  startChatTransfer: (input: ChatTransferStart) =>
+    ipcRenderer.invoke("chat-transfer:start", input) as Promise<
+      ChatTransferStartResult | ChatTransferResult
+    >,
+  reserveChatTransfer: (input: ChatTransferReserve) =>
+    ipcRenderer.invoke("chat-transfer:reserve", input) as Promise<ChatTransferResult>,
+  getChatTransferDestinations: () =>
+    ipcRenderer.invoke("chat-transfer:destinations") as Promise<ChatTransferWindowDestination[]>,
+  dropChatTransferIntoCurrentWindow: (input: ChatTransferDropExisting) =>
+    ipcRenderer.invoke("chat-transfer:drop-existing", input) as Promise<ChatTransferOpenNewResult>,
+  dropChatTransferOutside: (input: ChatTransferDropOutside) =>
+    ipcRenderer.invoke("chat-transfer:drop-outside", input) as Promise<ChatTransferOpenNewResult>,
+  openNewChatTransfer: (input: ChatTransferOpenNew) =>
+    ipcRenderer.invoke("chat-transfer:open-new", input) as Promise<ChatTransferOpenNewResult>,
+  markChatTransferDestinationReady: (input: ChatTransferDestinationReady) =>
+    ipcRenderer.invoke("chat-transfer:destination-ready", input) as Promise<ChatTransferResult>,
+  transferChatOwnership: (input: ChatTransferCommit) =>
+    ipcRenderer.invoke("chat-transfer:transfer-ownership", input) as Promise<ChatTransferResult>,
+  commitChatTransferDestination: (input: ChatTransferCommit) =>
+    ipcRenderer.invoke("chat-transfer:commit-destination", input) as Promise<ChatTransferResult>,
+  commitChatTransferSource: (input: ChatTransferCommit) =>
+    ipcRenderer.invoke("chat-transfer:commit-source", input) as Promise<ChatTransferResult>,
+  abortChatTransfer: (nonce: string) =>
+    ipcRenderer.invoke("chat-transfer:abort", nonce) as Promise<ChatTransferResult>,
+  onChatTransferOffer: (callback: (offer: ChatTransferOffer) => void) => {
+    const handler = (_event: unknown, offer: ChatTransferOffer) => callback(offer)
+    ipcRenderer.on("chat-transfer:offer", handler)
+    return () => ipcRenderer.removeListener("chat-transfer:offer", handler)
+  },
+  onChatTransferRemoveSource: (callback: (input: ChatTransferRemoveSource) => void) => {
+    const handler = (_event: unknown, input: ChatTransferRemoveSource) => callback(input)
+    ipcRenderer.on("chat-transfer:remove-source", handler)
+    return () => ipcRenderer.removeListener("chat-transfer:remove-source", handler)
+  },
 
   openWorkspacePane: (target: WorkspacePaneWindowTarget) =>
     ipcRenderer.invoke("workspace-window:open-pane", target) as Promise<WorkspacePaneOpenResult>,
@@ -149,7 +215,25 @@ contextBridge.exposeInMainWorld("desktopApi", {
   unlockDevTools: () => ipcRenderer.invoke("window:unlock-devtools"),
 
   // Analytics
+  getAnalyticsConsent: () => ipcRenderer.invoke("analytics:get-consent") as Promise<boolean>,
   setAnalyticsOptOut: (optedOut: boolean) => ipcRenderer.invoke("analytics:set-opt-out", optedOut),
+  captureAnalyticsEvent: (eventName: string, properties?: Record<string, unknown>) =>
+    ipcRenderer.invoke("analytics:capture", eventName, properties) as Promise<void>,
+  onAnalyticsConsentChanged: (callback: (consentGranted: boolean) => void) => {
+    const handler = (_event: unknown, consentGranted: boolean) => callback(consentGranted === true)
+    ipcRenderer.on("analytics:consent-changed", handler)
+    return () => ipcRenderer.removeListener("analytics:consent-changed", handler)
+  },
+  onFeatureVisibilityChanged: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on("feature-visibility:changed", handler)
+    return () => ipcRenderer.removeListener("feature-visibility:changed", handler)
+  },
+  onAgentPersonalitiesChanged: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on("agent-personalities:changed", handler)
+    return () => ipcRenderer.removeListener("agent-personalities:changed", handler)
+  },
 
   // Native features
   setBadge: (count: number | null) => ipcRenderer.invoke("app:set-badge", count),
@@ -367,12 +451,41 @@ export interface DesktopApi {
   newWindow: (options?: {
     chatId?: string
     subChatId?: string
-  }) => Promise<{ blocked: boolean } | void>
+  }) => Promise<WorkbenchNewWindowResult | void>
+  focusStableWindow: (stableId: string) => Promise<"focused" | "recovering" | "missing">
+  getWorkbenchSession: () => Promise<ChatWorkbenchSessionPresentation | null>
+  updateWorkbenchSessionPresentation: (input: ChatWorkbenchSessionPresentation) => Promise<boolean>
+  onWorkbenchWindowCreationBlocked: (
+    callback: (failure: WorkbenchWindowCreationBlocked) => void,
+  ) => () => void
   setWindowTitle: (title: string) => Promise<void>
   // Chat ownership - prevent same chat open in multiple windows
   claimChat: (chatId: string) => Promise<{ ok: true } | { ok: false; ownerStableId: string }>
+  takeChatOwnership: (
+    chatId: string,
+    expectedOwnerStableId: string,
+  ) => Promise<{ ok: true } | { ok: false; ownerStableId: string | null }>
   releaseChat: (chatId: string) => Promise<void>
   focusChatOwner: (chatId: string) => Promise<boolean>
+  startChatTransfer: (
+    input: ChatTransferStart,
+  ) => Promise<ChatTransferStartResult | ChatTransferResult>
+  reserveChatTransfer: (input: ChatTransferReserve) => Promise<ChatTransferResult>
+  getChatTransferDestinations: () => Promise<ChatTransferWindowDestination[]>
+  dropChatTransferIntoCurrentWindow: (
+    input: ChatTransferDropExisting,
+  ) => Promise<ChatTransferOpenNewResult>
+  dropChatTransferOutside: (input: ChatTransferDropOutside) => Promise<ChatTransferOpenNewResult>
+  openNewChatTransfer: (input: ChatTransferOpenNew) => Promise<ChatTransferOpenNewResult>
+  markChatTransferDestinationReady: (
+    input: ChatTransferDestinationReady,
+  ) => Promise<ChatTransferResult>
+  transferChatOwnership: (input: ChatTransferCommit) => Promise<ChatTransferResult>
+  commitChatTransferDestination: (input: ChatTransferCommit) => Promise<ChatTransferResult>
+  commitChatTransferSource: (input: ChatTransferCommit) => Promise<ChatTransferResult>
+  abortChatTransfer: (nonce: string) => Promise<ChatTransferResult>
+  onChatTransferOffer: (callback: (offer: ChatTransferOffer) => void) => () => void
+  onChatTransferRemoveSource: (callback: (input: ChatTransferRemoveSource) => void) => () => void
   openWorkspacePane: (target: WorkspacePaneWindowTarget) => Promise<WorkspacePaneOpenResult>
   openWorkspaceWindow: (target: WorkspaceWindowOpenTarget) => Promise<WorkspacePaneOpenResult>
   claimWorkspacePane: (
@@ -392,7 +505,12 @@ export interface DesktopApi {
   ) => () => void
   toggleDevTools: () => Promise<void>
   unlockDevTools: () => Promise<void>
+  getAnalyticsConsent: () => Promise<boolean>
   setAnalyticsOptOut: (optedOut: boolean) => Promise<void>
+  captureAnalyticsEvent: (eventName: string, properties?: Record<string, unknown>) => Promise<void>
+  onAnalyticsConsentChanged: (callback: (consentGranted: boolean) => void) => () => void
+  onFeatureVisibilityChanged: (callback: () => void) => () => void
+  onAgentPersonalitiesChanged: (callback: () => void) => () => void
   setBadge: (count: number | null) => Promise<void>
   setBadgeIcon: (imageData: string | null) => Promise<void>
   showNotification: (options: {

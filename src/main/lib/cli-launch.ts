@@ -1,6 +1,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 import { CLI_OPEN_DIRECTORY_CHANNEL, type SingleInstanceLaunchData } from "../../shared/cli-launch"
+import type { WorkbenchWindowCreationFailure } from "../../shared/workbench-window-budget"
 
 type LaunchDirectoryOptions = {
   defaultApp: boolean
@@ -16,6 +17,16 @@ type LaunchWindow = {
   focus(): void
   webContents: { send(channel: string): void }
 }
+
+type LaunchWindowCreationResult = { ok: true } | ({ ok: false } & WorkbenchWindowCreationFailure)
+
+export type SecondInstanceLaunchResult =
+  | { directory: string | null; activated: boolean; blocked?: false }
+  | ({
+      directory: string | null
+      activated: false
+      blocked: true
+    } & WorkbenchWindowCreationFailure)
 
 const pendingLaunchDirectories: string[] = []
 
@@ -73,8 +84,9 @@ export function dispatchSecondInstanceLaunch(input: {
   workingDirectory?: string
   additionalData?: SingleInstanceLaunchData | null
   windows: readonly LaunchWindow[]
-  createWindow(): void
-}): { directory: string | null; activated: boolean } {
+  createWindow(): LaunchWindowCreationResult
+  notifyBlocked?(failure: WorkbenchWindowCreationFailure): void
+}): SecondInstanceLaunchResult {
   const directory = queueLaunchDirectoryFromArgv(input.commandLine, {
     defaultApp: input.defaultApp,
     cwd: input.workingDirectory,
@@ -92,8 +104,21 @@ export function dispatchSecondInstanceLaunch(input: {
     return { directory, activated: true }
   }
   if (!target && shouldActivate) {
-    input.createWindow()
-    return { directory, activated: true }
+    const creation = input.createWindow()
+    if (!creation.ok) {
+      const failure: WorkbenchWindowCreationFailure =
+        creation.reason === "window-limit"
+          ? { reason: creation.reason, destinations: creation.destinations }
+          : { reason: creation.reason }
+      input.notifyBlocked?.(failure)
+      return {
+        directory,
+        activated: false,
+        blocked: true,
+        ...failure,
+      }
+    }
+    return { directory, activated: true, blocked: false }
   }
   return { directory, activated: false }
 }

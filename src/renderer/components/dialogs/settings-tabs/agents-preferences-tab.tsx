@@ -15,6 +15,8 @@ import {
 } from "../../../lib/atoms"
 import { CHAT_MODES, CHAT_MODE_META } from "../../../../shared/chat-mode"
 import { APP_META, type ExternalApp } from "../../../../shared/external-apps"
+import { initAnalytics, shutdown as shutdownAnalytics } from "../../../lib/analytics"
+import { toast } from "sonner"
 
 // Editor icon imports
 import cursorIcon from "../../../assets/app-icons/cursor.svg"
@@ -176,6 +178,25 @@ export function AgentsPreferencesTab() {
       },
     })
 
+  useEffect(() => {
+    let mounted = true
+    const removeConsentListener = window.desktopApi?.onAnalyticsConsentChanged((consentGranted) => {
+      if (mounted) setAnalyticsOptOut(!consentGranted)
+    })
+    window.desktopApi
+      ?.getAnalyticsConsent()
+      .then((consentGranted) => {
+        if (mounted) setAnalyticsOptOut(!consentGranted)
+      })
+      .catch(() => {
+        if (mounted) setAnalyticsOptOut(true)
+      })
+    return () => {
+      mounted = false
+      removeConsentListener?.()
+    }
+  }, [setAnalyticsOptOut])
+
   // Co-authored-by setting from Claude settings.json
   const { data: includeCoAuthoredBy, refetch: refetchCoAuthoredBy } =
     trpc.claudeSettings.getIncludeCoAuthoredBy.useQuery()
@@ -192,10 +213,23 @@ export function AgentsPreferencesTab() {
   // Sync opt-out status to main process
   const handleAnalyticsToggle = async (optedOut: boolean) => {
     setAnalyticsOptOut(optedOut)
-    // Notify main process
+    if (optedOut) await shutdownAnalytics()
+
     try {
       await window.desktopApi?.setAnalyticsOptOut(optedOut)
+      if (!optedOut) await initAnalytics()
     } catch (error) {
+      const consentGranted = await window.desktopApi?.getAnalyticsConsent().catch(() => false)
+      setAnalyticsOptOut(consentGranted !== true)
+      if (consentGranted === true) {
+        await initAnalytics()
+      } else {
+        await shutdownAnalytics()
+      }
+      toast.error("Could not save analytics preference", {
+        description:
+          "The switch reflects the current session. Retry before restarting to save this choice.",
+      })
       console.error("Failed to sync analytics opt-out to main process:", error)
     }
   }
@@ -574,9 +608,9 @@ export function AgentsPreferencesTab() {
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Share Usage Analytics</span>
             <span className="text-xs text-muted-foreground">
-              Help us improve Agents by sharing anonymous usage data. We only track feature usage
-              and app performance - never your code, prompts, or messages. No AI training on your
-              data.
+              Help us improve Flapstack by sharing optional product usage and app performance data.
+              We never send your code, prompts, or messages, and do not use this data for AI
+              training.
             </span>
           </div>
           <Switch

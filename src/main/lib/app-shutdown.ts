@@ -13,6 +13,9 @@ export type AppShutdownSteps = {
   stopAutomationScheduler(): void | Promise<void>
   stopDevMcpServer(): void | Promise<void>
   stopProductMcpBridge(): void | Promise<void>
+  stopMobileBridge(): void | Promise<void>
+  closeProjectVaultWatchers(): void | Promise<void>
+  purgePendingVisualCaptures?(): void | Promise<void>
   cleanupGitWatchers(): void | Promise<void>
   shutdownAnalytics(): void | Promise<void>
   closeDatabase(): void | Promise<void>
@@ -70,6 +73,9 @@ export async function runAppShutdown(steps: AppShutdownSteps): Promise<void> {
   await run(steps.stopAutomationScheduler)
   await run(steps.stopDevMcpServer)
   await run(steps.stopProductMcpBridge)
+  await run(steps.stopMobileBridge)
+  await run(steps.closeProjectVaultWatchers)
+  await run(steps.purgePendingVisualCaptures ?? (() => undefined))
   await run(steps.cleanupGitWatchers)
   await run(steps.shutdownAnalytics)
   await run(steps.closeDatabase)

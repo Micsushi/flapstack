@@ -96,6 +96,7 @@ export function probeNativeModules(target, options = {}) {
   const runtime =
     options.runtime ?? (target === "electron" ? require("electron") : process.execPath)
   const runner = options.spawn ?? spawnSync
+  const platform = options.platform ?? process.platform
   const env = {
     ...process.env,
     ...(target === "electron" ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
@@ -105,7 +106,7 @@ export function probeNativeModules(target, options = {}) {
     cwd: options.cwd ?? root,
     env,
     encoding: "utf8",
-    timeout: options.timeout ?? 15_000,
+    timeout: options.timeout ?? (target === "electron" && platform === "win32" ? 45_000 : 15_000),
   })
   return {
     ok: !result.error && result.status === 0,

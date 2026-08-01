@@ -141,6 +141,11 @@ import {
   type CodexReasoningLevel,
 } from "../lib/models"
 import { getSelectableRunPermissionModes, RUN_PERMISSION_MODE_LABELS } from "../constants"
+import {
+  NewChatAgentProfileSelector,
+  type NewChatAgentProfileSelectionState,
+} from "../../agent-profiles/new-chat-agent-profile-selector"
+import { useFeatureVisibility } from "../../settings/use-feature-visibility"
 // import type { PlanType } from "@/lib/config/subscription-plans"
 type PlanType = string
 type ChatScope = "global" | "project" | "task"
@@ -280,6 +285,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   // Note: defaultAgentMode is initialized synchronously via atomWithStorage with getOnInit: true
   const defaultAgentMode = useAtomValue(defaultAgentModeAtom)
   const [agentMode, setAgentMode] = useState<AgentMode>(() => defaultAgentMode)
+  const featureVisibility = useFeatureVisibility()
   const [runtimePreference, setRuntimePreference] = useState<AgentRuntimePreference>("auto")
   const [permissionModeOverride, setPermissionModeOverride] =
     useState<NewChatPermissionMode | null>(null)
@@ -295,6 +301,8 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   )
   const selectedPermissionMode = permissionModeOverride ?? inheritedPermissionMode
   const effectivePermissionMode = resolveChatModePermission(agentMode, selectedPermissionMode)
+  const [agentProfileSelection, setAgentProfileSelection] =
+    useState<NewChatAgentProfileSelectionState>(null)
   // Toggle mode helper
   const toggleMode = useCallback(() => {
     setAgentMode(getNextMode)
@@ -1263,7 +1271,11 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const handleSend = useCallback(async () => {
     await finishVoiceBeforeSend()
 
-    if (selectedAgent.id === "local" && !localModelPicker.canLaunch) {
+    if (agentProfileSelection && "invalid" in agentProfileSelection) {
+      toast.error("Resolve the selected Agent Profile error before starting this Chat.")
+      return
+    }
+    if (!agentProfileSelection && selectedAgent.id === "local" && !localModelPicker.canLaunch) {
       toast.error("Choose a refreshed, chat-capable local model before launch.")
       setSettingsActiveTab("local-models")
       setSettingsDialogOpen(true)
@@ -1390,10 +1402,15 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       taskId: chatScope === "task" ? selectedTask?.id : undefined,
       scope: chatScope,
       name: message.trim().slice(0, 50), // Use first 50 chars as chat name
-      harness: selectedAgent.id,
-      model: selectedChatModel,
-      runtimePreference,
-      permissionMode: permissionModeOverride ?? undefined,
+      harness: agentProfileSelection?.harness ?? selectedAgent.id,
+      model: agentProfileSelection?.model ?? selectedChatModel,
+      runtimePreference: agentProfileSelection?.runtimePreference ?? runtimePreference,
+      permissionMode:
+        (agentProfileSelection?.permissionMode as NewChatPermissionMode | undefined) ??
+        permissionModeOverride ??
+        undefined,
+      agentProfile: agentProfileSelection?.profile,
+      confirmedAgentProfileDigest: agentProfileSelection?.digest,
       initialMessageParts: parts.length > 0 ? parts : undefined,
       baseBranch:
         chatScope === "project" && workMode === "worktree"
@@ -1427,6 +1444,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     trpcUtils,
     finishVoiceBeforeSend,
     localModelPicker.canLaunch,
+    agentProfileSelection,
     setSettingsActiveTab,
     setSettingsDialogOpen,
   ])
@@ -2148,6 +2166,16 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                   />
                 )}
               </div>
+              {featureVisibility.isVisible("agent-profiles") && (
+                <NewChatAgentProfileSelector
+                  scope={chatScope}
+                  projectId={chatScope === "global" ? undefined : validatedProject?.id}
+                  taskId={chatScope === "task" ? selectedTask?.id : undefined}
+                  permissionMode={effectivePermissionMode}
+                  runtimePreference={runtimePreference}
+                  onSelectionChange={setAgentProfileSelection}
+                />
+              )}
               <PromptInput
                 className={cn(
                   "border bg-input-background relative z-10 p-2 rounded-xl transition-[border-color,box-shadow] duration-150",
@@ -2373,16 +2401,18 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                         <AttachIcon className="h-4 w-4" />
                       </Button>
                     )}
-                    <AgentVoiceButton
-                      isRecording={isVoiceRecording}
-                      isStarting={isVoiceStarting}
-                      isTranscribing={isTranscribing}
-                      voiceInputReady={isVoiceReady}
-                      voiceStatusLabel={voiceStatusLabel}
-                      onUnavailableClick={showVoiceSetup}
-                      onStart={() => void handleVoiceMouseDown()}
-                      onStop={() => void handleVoiceMouseUp()}
-                    />
+                    {featureVisibility.isVisible("voice") && (
+                      <AgentVoiceButton
+                        isRecording={isVoiceRecording}
+                        isStarting={isVoiceStarting}
+                        isTranscribing={isTranscribing}
+                        voiceInputReady={isVoiceReady}
+                        voiceStatusLabel={voiceStatusLabel}
+                        onUnavailableClick={showVoiceSetup}
+                        onStart={() => void handleVoiceMouseDown()}
+                        onStop={() => void handleVoiceMouseUp()}
+                      />
+                    )}
                     <div className="ml-0.5">
                       <AgentSendButton
                         isStreaming={false}
@@ -2411,13 +2441,15 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
               ) : null}
 
               <div className="mt-1.5 ml-[5px] flex flex-wrap items-center gap-2 md:mt-2">
-                <RuntimeSelector
-                  harness={selectedAgent.id}
-                  value={runtimePreference}
-                  automaticPreference={resolvedRuntimePreference}
-                  onChange={setRuntimePreference}
-                  disabled={createChatMutation.isPending}
-                />
+                {featureVisibility.isVisible("runtimes") && (
+                  <RuntimeSelector
+                    harness={selectedAgent.id}
+                    value={runtimePreference}
+                    automaticPreference={resolvedRuntimePreference}
+                    onChange={setRuntimePreference}
+                    disabled={createChatMutation.isPending}
+                  />
+                )}
                 <PermissionSelector
                   harness={selectedAgent.id}
                   value={effectivePermissionMode}

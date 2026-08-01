@@ -298,8 +298,12 @@ function createTestSchema() {
       kind text NOT NULL,
       name text NOT NULL,
       source_path text,
+      source_kind text,
       stored_path text,
       content_text text,
+      byte_length integer,
+      mime_type text,
+      sha256 text,
       created_at integer
     )`,
     "CREATE INDEX attachments_chat_id_idx ON attachments(chat_id)",

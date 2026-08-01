@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
-import { mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { spawnSync } from "node:child_process"
+import { mkdir, readFile, readdir, rename, symlink, writeFile } from "node:fs/promises"
+import { join, resolve } from "node:path"
 import { describe, expect, it } from "vitest"
 import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import { createPortableExport } from "../src/main/lib/portability/exporter"
@@ -176,6 +177,93 @@ describe("portability-import-apply", () => {
       "Local",
     )
     database.close()
+  })
+
+  it("recovers a process crash after the durable database-committed phase", async () => {
+    const root = await tempRoot()
+    const sourcePath = join(root, "source.db")
+    createTestDatabase(sourcePath, "Incoming")
+    const configRoot = await createConfigRoot(root, "incoming")
+    const bundlePath = join(root, "committed-crash.flapstack-export")
+    await createPortableExport({
+      outputPath: bundlePath,
+      databasePath: sourcePath,
+      appVersion: "1",
+      selection: [{ id: "projects" }, { id: "settings" }],
+      fileSources: [{ scopeId: "settings", root: configRoot, target: { kind: "config" } }],
+    })
+    const targetPath = join(root, "target.db")
+    createTestDatabase(targetPath, "Local")
+    const targetConfig = join(root, "target-config")
+    await mkdir(targetConfig)
+    const targetFile = join(targetConfig, "usage-settings.json")
+    await writeFile(targetFile, "local")
+    const stateRoot = join(root, "state")
+    const targetRoots = { config: targetConfig }
+    const plan = await createPortableImportPlan({
+      bundlePath,
+      databasePath: targetPath,
+      stateRoot,
+      targetRoots,
+    })
+    const resolutions = Object.fromEntries(
+      [...plan.database, ...plan.files]
+        .filter((entry) => entry.kind === "conflict")
+        .map((entry) => [entry.id, "use-incoming" as const]),
+    )
+    const confirmation = await createPortableImportConfirmation({
+      stateRoot,
+      planId: plan.id,
+      resolutions,
+    })
+    const inputPath = join(root, "committed-crash-input.json")
+    await writeFile(
+      inputPath,
+      JSON.stringify({
+        crashAt: "after-database-committed",
+        planId: plan.id,
+        expectedFingerprint: plan.bundleFingerprint,
+        expectedConfirmationHash: confirmation.confirmationHash,
+        databasePath: targetPath,
+        stateRoot,
+        targetRoots,
+        resolutions,
+      }),
+    )
+
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        resolve("tests", "fixtures", "portability-import-crash-child.ts"),
+        inputPath,
+      ],
+      { cwd: process.cwd(), encoding: "utf8", timeout: 30_000, windowsHide: true },
+    )
+    expect(child.status, child.stderr).toBe(93)
+    const journalFiles = await readdir(join(stateRoot, "journals"))
+    expect(journalFiles).toHaveLength(1)
+    const journal = JSON.parse(
+      await readFile(join(stateRoot, "journals", journalFiles[0]), "utf8"),
+    ) as { phase: string }
+    expect(journal.phase).toBe("database-committed")
+    expect(await readFile(targetFile, "utf8")).toContain('"label":"incoming"')
+    const committed = new Database(targetPath, { readonly: true })
+    expect(committed.prepare("SELECT name FROM projects WHERE id = 'p1'").pluck().get()).toBe(
+      "Incoming",
+    )
+    committed.close()
+
+    await expect(recoverInterruptedImports(stateRoot, targetPath)).resolves.toEqual([
+      { operationId: journalFiles[0].replace(/\.json$/, ""), action: "rolled-back" },
+    ])
+    expect(await readFile(targetFile, "utf8")).toBe("local")
+    const recovered = new Database(targetPath, { readonly: true })
+    expect(recovered.prepare("SELECT name FROM projects WHERE id = 'p1'").pluck().get()).toBe(
+      "Local",
+    )
+    recovered.close()
   })
 
   it("keeps a locked restore pending and recovers the committed journal on retry", async () => {

@@ -9,6 +9,11 @@ import {
   customPermissionCapabilitiesSchema,
   refineCustomPermissionMode,
 } from "./permission-capabilities"
+import {
+  agentPersonalityVersionRefSchema,
+  type AgentPersonalityMetadata,
+  type AgentPersonalityVersionRef,
+} from "./agent-personalities"
 
 const idSchema = z.string().trim().min(1).max(200)
 const boundedText = (max: number) => z.string().trim().max(max)
@@ -23,6 +28,7 @@ export const AGENT_PROFILE_LAUNCH_BLOCKING_CONFLICT_CODES = [
   "adapter-disabled",
   "evaluation-required",
   "evaluation-failed",
+  "speed-unsupported",
 ] as const
 export const AGENT_PROFILE_BUNDLE_VERSION = 1 as const
 
@@ -62,6 +68,7 @@ export const agentCapabilityProfileSchema = z
     runtimePreference: agentRuntimePreferenceSchema,
     modelPreference: z.string().trim().min(1).max(200).nullable(),
     reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable(),
+    speedPreference: z.enum(["standard", "fast"]).nullable().default(null),
     tools: z.array(idSchema).max(128),
     skills: z.array(idSchema).max(128),
     permissionMode: agentProfilePermissionModeSchema,
@@ -110,6 +117,7 @@ export const agentProfileBaseRefSchema = agentProfileVersionRefSchema.nullable()
 export const agentProfileVersionInputSchema = z
   .object({
     base: agentProfileBaseRefSchema,
+    personality: agentPersonalityVersionRefSchema.nullable().default(null),
     capability: agentCapabilityProfileSchema,
     presentation: agentPresentationStyleSchema,
     inheritCapabilityFields: z
@@ -121,6 +129,7 @@ export const agentProfileVersionInputSchema = z
           "runtimePreference",
           "modelPreference",
           "reasoningEffort",
+          "speedPreference",
           "tools",
           "skills",
           "permissionMode",
@@ -211,6 +220,7 @@ export const agentProfileBoundedOverrideSchema = z
     instructionAppend: boundedText(20_000).nullable(),
     modelPreference: z.string().trim().min(1).max(200).nullable(),
     reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).nullable(),
+    speedPreference: z.enum(["standard", "fast"]).nullable().default(null),
     presentation: agentPresentationStyleSchema.partial().nullable(),
   })
   .strict()
@@ -421,6 +431,13 @@ type ResolvedAgentProfileSnapshotBody = {
   resolvedAt: string
   capability: AgentCapabilityProfile
   presentation: AgentPresentationStyle
+  personality: {
+    ref: AgentPersonalityVersionRef
+    metadata: AgentPersonalityMetadata
+    body: string
+    digest: string
+    chain?: Array<{ ref: AgentPersonalityVersionRef; digest: string }>
+  } | null
   sources: Record<string, AgentProfileResolvedFieldSource>
   conflicts: Array<{ code: string; field: string; message: string; repair: string }>
   unresolvedRequirements: Array<{ kind: string; id: string; reason: string }>
@@ -454,6 +471,7 @@ export const DEFAULT_AGENT_CAPABILITY: AgentCapabilityProfile = {
   runtimePreference: "claude-code",
   modelPreference: null,
   reasoningEffort: null,
+  speedPreference: null,
   tools: [],
   skills: [],
   permissionMode: "read-only",

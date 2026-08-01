@@ -17,6 +17,8 @@ export type RootedWriteOptions = {
   beforeCommit?: (targetPath: string) => void | Promise<void>
   /** Runs after the atomic rename; failure restores the exact prior file state. */
   afterCommit?: (targetPath: string) => void | Promise<void>
+  /** Test seam for deterministic replacement races before failed-write cleanup. */
+  beforeFailureCleanup?: (targetPath: string) => void | Promise<void>
 }
 
 export type RootedMutationOptions = {
@@ -166,9 +168,11 @@ export async function writeFileInsideRoot(
         targetPath,
         createdIdentity,
       )
+      await options.afterCommit?.(targetPath)
       return { targetPath, byteLength: size }
     } catch (error) {
       await handle.close().catch(() => undefined)
+      await options.beforeFailureCleanup?.(targetPath)
       await removeIfStillOwned(targetPath, parentPath, parentIdentity, createdIdentity)
       throw error
     }
@@ -210,6 +214,7 @@ export async function writeFileInsideRoot(
     return { targetPath, byteLength: size }
   } catch (error) {
     await handle.close().catch(() => undefined)
+    await options.beforeFailureCleanup?.(targetPath)
     if (!committed) {
       await removeIfStillOwned(temporaryPath, parentPath, parentIdentity, temporaryIdentity)
     } else {

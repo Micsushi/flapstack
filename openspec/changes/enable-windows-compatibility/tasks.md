@@ -53,7 +53,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F1-T4 - Add one Windows prerequisite and bootstrap command
 
 - Evidence class: `T2-core`.
-- [ ] Completion: root bootstrap entrypoint and Windows setup guide reproduce clean setup
+- [x] Completion: root bootstrap entrypoint and Windows setup guide reproduce clean setup
 - Outcome: Developer gets deterministic preflight, install order, binary preparation, and next commands from one documented entrypoint.
 - Scope: Read-only preflight by default; explicit optional setup helpers; install, binary downloads, ABI preparation; reboot/shell refresh guidance.
 - Acceptance: Fresh user follows guide without manual source patch, WSL, Git Bash, or hidden global environment edits.
@@ -64,7 +64,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F1-T5 - Normalize environment discovery and sanitized diagnostics
 
 - Evidence class: `T2-core`.
-- [ ] Completion: one platform-aware environment report exists
+- [x] Completion: one platform-aware environment report exists
 - Outcome: Tool resolution failures can be diagnosed without exposing credentials, usernames, private paths, or full environment dumps.
 - Scope: PATH segments, executable resolution, architecture, shell, repo root, temp/cache/output availability, redaction rules.
 - Acceptance: Report explains conflicting/missing tools and path precedence; secret-like values and user-specific path prefixes are redacted.
@@ -75,7 +75,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F1-T6 - Prove spaces, Unicode, long paths, and restricted directories
 
 - Evidence class: `T2-core`.
-- [ ] Completion: path-variant toolchain suite passes
+- [x] Completion: path-variant toolchain suite passes
 - Outcome: Supported setup does not assume simple ASCII paths or writable global directories.
 - Scope: Repo/userData/temp/cache paths; spaces, Unicode, long paths; standard user; read-only/global-write denial.
 - Acceptance: Bootstrap and preflight either pass or give safe actionable limitation without corrupting state.
@@ -86,7 +86,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F1-T7 - Close toolchain acceptance and operator docs
 
 - Evidence class: `T2-core`.
-- [ ] Completion: S5-TC matrix rows pass and docs match observed setup
+- [x] Completion: S5-TC matrix rows pass and docs match observed setup
 - Outcome: Supported Windows developer environment is reproducible and maintainable.
 - Scope: Prerequisite table, install order, verification commands, common failures, repair, upgrades, evidence links.
 - Acceptance: Independent user provisions clean host and reaches green preflight using docs only.
@@ -99,7 +99,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F2-T1 - Create cross-platform executable resolver and process runner
 
 - Evidence class: `T2-core`.
-- [ ] Completion: shared runner has unit tests and replaces ad hoc critical spawns
+- [x] Completion: shared runner has unit tests and replaces ad hoc critical spawns
 - Outcome: Node, npm/npx, Python, CMake, Cargo, and helper binaries resolve correctly on Windows `.cmd`/`.exe` and POSIX hosts.
 - Scope: Argument arrays, `shell: false` default, Windows shim discovery, cwd/env, stdio, exit/signal propagation, redacted diagnostics.
 - Acceptance: No command-string interpolation; spaces/Unicode/special characters survive unchanged; missing executable gives actionable error.
@@ -135,7 +135,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F2-T4 - Make heavy-job and UI locks Windows-safe
 
 - Evidence class: `T2-core`.
-- [ ] Completion: lock acquisition, contention, stale recovery, and cleanup pass on Windows
+- [x] Completion: lock acquisition, contention, stale recovery, and cleanup pass on Windows
 - Outcome: Lint/style/check/build/package serialization launches npm shims reliably and never deadlocks after crash.
 - Scope: Atomic lock files, PID ownership, process liveness, timeout, Ctrl+C, stale lock, path normalization.
 - Acceptance: Concurrent jobs serialize; killed owner releases/reclaims safely; unrelated process cannot lose its lock.
@@ -147,7 +147,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F2-T5 - Harden Windows quoting and path argument handling
 
 - Evidence class: `T2-core`.
-- [ ] Completion: command/path corpus passes every script runner
+- [x] Completion: command/path corpus passes every script runner
 - Outcome: Spaces, Unicode, parentheses, ampersands, percent signs, quotes, and long paths cannot alter command meaning.
 - Scope: Download, rebuild, package, inspect, dev, verify, and helper-launch arguments.
 - Acceptance: Arguments arrive byte-for-byte/character-for-character at fixture executable; no shell injection or truncation.
@@ -158,7 +158,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F2-T6 - Port package, download, and native preparation entrypoints
 
 - Evidence class: `T2-core`.
-- [ ] Completion: critical scripts use shared runner and platform-aware paths
+- [x] Completion: critical scripts use shared runner and platform-aware paths
 - Outcome: Package resource preparation and Claude/Codex/native dependency commands work from PowerShell.
 - Scope: `scripts/package-app.mjs`, `prepare-package-resources.mjs`, download scripts, ABI scripts, staging/cleanup.
 - Acceptance: No Unix executable-name, quoting, separator, permission-bit, or path-layout assumption remains in required Windows lane.
@@ -169,7 +169,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F2-T7 - Remove required POSIX shell and command dependencies
 
 - Evidence class: `T2-core`.
-- [ ] Completion: required-command audit contains no Windows-blocking dependency
+- [x] Completion: required-command audit contains no Windows-blocking dependency
 - Outcome: `sh`, `bash`, `/bin/zsh`, `open -a`, `which`, POSIX env assignment, and Unix-only utilities do not gate Windows workflows.
 - Scope: npm scripts, Node scripts, Electron main process, speech credentials, docs, CI, tests.
 - Acceptance: Each occurrence is ported, isolated to guarded non-Windows branch, or documented as non-required platform code.
@@ -180,7 +180,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F2-T8 - Preserve exit, cancellation, and log semantics
 
 - Evidence class: `T2-core`.
-- [ ] Completion: process contract suite passes on Windows
+- [x] Completion: process contract suite passes on Windows
 - Outcome: Ctrl+C, child failure, timeout, signal emulation, and output streaming behave consistently across wrapper layers.
 - Scope: Process tree ownership, graceful timeout, forced fallback, exit code mapping, stdout/stderr, redaction.
 - Acceptance: Failure never reports success; cancellation does not leave lock/child; sensitive arguments never print.
@@ -192,7 +192,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 
 - Evidence classes: `T2-core` for S5-PS01 through S5-PS06;
   `T2-capability:macos-shared-scripts` for S5-PS07.
-- [ ] Completion: S5-PS01 through S5-PS06 pass on Windows
+- [x] Completion: S5-PS01 through S5-PS06 pass on Windows
 - Separate certification: S5-PS07 records the macOS shared-script regression.
 - Outcome: Root workflows have one trustworthy cross-platform command contract.
 - Scope: Install helpers, lint, style, typecheck, test, build, check, dev, verify, package preparation.
@@ -208,7 +208,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F3-T1 - Define install and ABI dependency graph
 
 - Evidence class: `T2-core`.
-- [ ] Completion: install phases and ownership are explicit and tested
+- [x] Completion: install phases and ownership are explicit and tested
 - Outcome: npm install, binary download, Node native ABI, Electron native ABI, speech build, and package preparation run in deterministic order.
 - Scope: `preinstall`/`postinstall`, npm lifecycle, cache, success markers, recovery, package invalidation.
 - Acceptance: No consumer runs before prerequisite; repeated install is idempotent; partial failure resumes safely.
@@ -219,7 +219,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F3-T2 - Fix Windows native rebuild command resolution
 
 - Evidence class: `T2-core`.
-- [ ] Completion: native rebuild tools launch through resolved Windows executables
+- [x] Completion: native rebuild tools launch through resolved Windows executables
 - Outcome: `npm ci` no longer fails because rebuild scripts invoke Unix-style npm/npx/electron-rebuild names.
 - Scope: npm/npx `.cmd`, local `node_modules/.bin`, electron-builder rebuild, cwd/env, error output.
 - Acceptance: Clean install resolves repository-local tools first and never depends on shell command lookup.
@@ -231,7 +231,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 
 - Evidence classes: `T2-core` for ABI preparation and `better-sqlite3`;
   `T2-capability:windows-terminal` for real `node-pty` terminal behavior.
-- [ ] Completion: ABI preparation and `better-sqlite3` pass real Node load/use probes
+- [x] Completion: ABI preparation and `better-sqlite3` pass real Node load/use probes
 - Separate certification: Windows terminal rows own the real `node-pty` behavior.
 - Outcome: Development/test tooling gets architecture-correct native modules for Node 22.
 - Scope: Rebuild inputs, MSVC/Python selection, SQLite open/query, PTY spawn/resize/exit.
@@ -244,7 +244,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 
 - Evidence classes: `T2-core` for ABI preparation and `better-sqlite3`;
   `T2-capability:windows-terminal` for real `node-pty` terminal behavior.
-- [ ] Completion: ABI preparation and `better-sqlite3` load under the required Electron version
+- [x] Completion: ABI preparation and `better-sqlite3` load under the required Electron version
 - Separate certification: Windows terminal rows own real `node-pty` operation.
 - Outcome: Dev and package no longer rely on stale Node-targeted binaries.
 - Scope: Electron ABI rebuild, better-sqlite3 query, node-pty PowerShell session, architecture verification.
@@ -256,7 +256,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F3-T5 - Harden ABI marker, cache, and repair state
 
 - Evidence class: `T2-core`.
-- [ ] Completion: marker reflects verified content, not attempted command
+- [x] Completion: marker reflects verified content, not attempted command
 - Outcome: Interrupted or partial rebuild cannot poison later development/package runs.
 - Scope: ABI key, toolchain/version inputs, architecture, artifact hashes, atomic marker, lock, invalidation, repair.
 - Acceptance: Marker writes only after probes; stale/corrupt state is detected; concurrent repair serializes safely.
@@ -268,7 +268,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F3-T6 - Make Claude/Codex binary preparation deterministic
 
 - Evidence class: `T2-core`.
-- [ ] Completion: Windows x64 downloads validate, cache, retry, and package correctly
+- [x] Completion: Windows x64 downloads validate, cache, retry, and package correctly
 - Outcome: Supported provider binaries are exact-version, architecture-correct, and never accepted from partial/corrupt downloads.
 - Scope: URLs/assets, checksum/signature metadata, atomic download, executable naming, cache, offline/error state, staging.
 - Acceptance: Clean and cached runs pass; wrong platform/hash/partial file fails safely; package contains expected versions.
@@ -292,7 +292,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 
 - Evidence classes: `T2-core` for S5-ND01 through S5-ND03 and S5-ND05
   through S5-ND07; `T2-capability:windows-terminal` for S5-ND04.
-- [ ] Completion: the `T2-core` S5-ND rows pass from a clean checkout and empty cache
+- [x] Completion: the `T2-core` S5-ND rows pass from a clean checkout and empty cache
 - Separate certification: S5-ND04 records real Windows terminal capability.
 - Outcome: `npm ci --legacy-peer-deps` and all required preparation finish without manual rebuild toggle or patch.
 - Scope: The `T2-core` scope covers clean/cached/offline retry,
@@ -349,7 +349,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F4-T4 - Make root development command own complete Windows stack
 
 - Evidence class: `T2-core`.
-- [ ] Completion: one root command starts renderer, Electron main, helpers, and required development services
+- [x] Completion: one root command starts renderer, Electron main, helpers, and required development services
 - Outcome: Windows users never manually launch frontend/backend/helper pieces or stale packaged executables.
 - Scope: `scripts/dev.mjs`, startup order, port/profile/protocol identity, logs, readiness, shutdown.
 - Acceptance: One command reaches ready window; child failure stops startup; Ctrl+C closes only owned process tree.
@@ -360,7 +360,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F4-T5 - Extend exact-checkout and profile verification to Windows
 
 - Evidence class: `T2-core`.
-- [ ] Completion: `dev:verify` proves active Windows renderer/main/profile ownership
+- [x] Completion: `dev:verify` proves active Windows renderer/main/profile ownership
 - Outcome: Agent/user cannot mistake packaged, stale, or another checkout instance for current source changes.
 - Scope: PID/executable path, checkout root, Dev data profile, renderer origin, protocol, helper/service ownership, package conflict.
 - Acceptance: Correct instance passes; stale/packaged/wrong-checkout/wrong-profile cases fail with exact repair command.
@@ -372,7 +372,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F4-T6 - Add Windows-owned process restart and cleanup
 
 - Evidence class: `T2-core`.
-- [ ] Completion: restart/stop commands terminate only recorded Flapstack process trees
+- [x] Completion: restart/stop commands terminate only recorded Flapstack process trees
 - Outcome: Stale Electron/helper/terminal/provider children do not block new run, while unrelated Node/PowerShell/provider sessions survive.
 - Scope: PID records, creation identity, descendants, graceful shutdown, timeout, force fallback, locks, ports, scheduled helpers.
 - Acceptance: Owned tree fully exits; PID reuse and unrelated matching names are never killed; cleanup is idempotent.
@@ -384,7 +384,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 
 - Evidence classes: `T2-core` for stale locks, ports, crashes, and abrupt
   shutdown; `T2-capability:windows-power-network` for real sleep/wake recovery.
-- [ ] Completion: stale-lock, port, crash, and abrupt-shutdown recovery returns Windows Dev to one healthy instance
+- [x] Completion: stale-lock, port, crash, and abrupt-shutdown recovery returns Windows Dev to one healthy instance
 - Separate certification: S5-WI07 owns real sleep/wake behavior.
 - Outcome: Common interruption cannot require task-manager hunting or machine reboot.
 - Scope: Stale lock/PID, occupied port, renderer/main/helper crash, power transition, terminal close, forced process kill.
@@ -396,7 +396,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F4-T8 - Close Windows CI and dev lifecycle acceptance
 
 - Evidence classes: `T2-core` for S5-DV; `release-gate` for hosted S5-CI.
-- [ ] Completion: all S5-DV rows pass
+- [x] Completion: all S5-DV rows pass
 - Separate certification: S5-CI01 through S5-CI03 own hosted-CI release evidence.
 - Outcome: Windows failures reproduce in CI or through one verified local lifecycle.
 - Scope: The `T2-core` scope covers native Windows
@@ -417,7 +417,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F5-T1 - Replace macOS-only open-path and external launch behavior
 
 - Evidence class: `T2-core`.
-- [ ] Completion: files, folders, URLs, and app targets use platform-native guarded adapters
+- [x] Completion: files, folders, URLs, and app targets use platform-native guarded adapters
 - Outcome: Windows never executes `open -a` or another macOS/POSIX-only command.
 - Scope: `src/main/lib/open-external.ts`, open-in UI, Explorer/default app/browser, path validation, errors.
 - Acceptance: Existing file/folder and allowed URL open correctly; invalid/unsafe targets fail without shell injection.
@@ -440,7 +440,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F5-T3 - Prove DPAPI credential lifecycle and migration
 
 - Evidence class: `T2-core`.
-- [ ] Completion: create/read/update/delete/restart/migration paths pass native Windows
+- [x] Completion: create/read/update/delete/restart/migration paths pass native Windows
 - Outcome: Provider and speech secrets remain encrypted and recoverable without plaintext or POSIX shell fallback.
 - Scope: Credential service, Claude storage, migrations, corruption/unavailable account, delete, diagnostics redaction.
 - Acceptance: Same user/app reads after restart; other context/corrupt ciphertext fails safely; no secret enters logs/export.
@@ -452,7 +452,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F5-T4 - Prove Windows scheduled and background task lifecycle
 
 - Evidence class: `T2-core`.
-- [ ] Completion: owned task create/run/disable/repair/remove flows pass
+- [x] Completion: owned task create/run/disable/repair/remove flows pass
 - Outcome: Automations and background polling survive restart without stale or invisible scheduled work.
 - Scope: Task Scheduler adapter, quoting, user/session context, executable/profile path, history, cancellation, uninstall cleanup.
 - Acceptance: Task targets exact installed/Dev identity, exposes status/failure, obeys disable/kill, and never runs after removal.
@@ -464,7 +464,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F5-T5 - Separate protocols, deep links, identities, and data profiles
 
 - Evidence class: `T2-core`.
-- [ ] Completion: Dev, Preview, and product deep links route to correct instance/profile
+- [x] Completion: Dev, Preview, and product deep links route to correct instance/profile
 - Outcome: Windows protocol activation cannot cross profiles, steal focus unexpectedly, or spawn duplicate conflicting windows.
 - Scope: Protocol registration, command-line parsing, single-instance lock, pending link queue, validation, uninstall cleanup.
 - Acceptance: Cold/warm links reach intended object once; malformed/unsafe link rejected; each channel remains isolated.
@@ -476,7 +476,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F5-T6 - Unify owned process and app lifecycle behavior
 
 - Evidence class: `T2-core`.
-- [ ] Completion: main, renderer, terminal, agent, speech, and background children share ownership rules
+- [x] Completion: main, renderer, terminal, agent, speech, and background children share ownership rules
 - Outcome: Quit/restart/crash/cancel stops appropriate descendants without broad process-name killing.
 - Scope: Ownership registry, shutdown order, timeout/force policy, single-instance behavior, logs, recovery.
 - Acceptance: Normal/forced exits leave no owned child; unrelated process survives; repeated lifecycle is stable.
@@ -487,7 +487,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F5-T7 - Normalize Windows data, cache, temp, export, and worktree paths
 
 - Evidence class: `T2-core`.
-- [ ] Completion: all owned filesystem roots use Windows platform APIs and safety checks
+- [x] Completion: all owned filesystem roots use Windows platform APIs and safety checks
 - Outcome: App works under standard user with spaces, Unicode, long paths, locked files, and multiple drives.
 - Scope: userData, logs, cache, downloads, models, temp, attachments, exports, repo/worktrees, diagnostics.
 - Acceptance: No hard-coded POSIX path; traversal/UNC/device/drive boundary policy explicit; cleanup touches only owned paths.
@@ -501,7 +501,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 - Evidence classes: `T2-core` for simulated file-lock/restart behavior;
   `T2-capability:windows-power-network` and
   `T2-capability:windows-security-environment` for real OS conditions.
-- [ ] Completion: simulated file-lock/restart failures recover safely or produce an actionable limit
+- [x] Completion: simulated file-lock/restart failures recover safely or produce an actionable limit
 - Separate certifications: S5-WI07 owns power/network behavior; S5-WI08 owns
   firewall, antivirus, and UAC behavior.
 - Outcome: Common Windows host behavior cannot silently lose state or leave app permanently wedged.
@@ -515,7 +515,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 
 - Evidence classes: `T2-core` for S5-WI01 through S5-WI06 and S5-WI09;
   named Windows environment capabilities for S5-WI07 and S5-WI08.
-- [ ] Completion: all `T2-core` S5-WI rows pass in Dev/Preview
+- [x] Completion: all `T2-core` S5-WI rows pass in Dev/Preview
 - Separate certifications: S5-WI07 and S5-WI08 retain independent capability status.
 - Outcome: Windows platform services meet one documented runtime contract.
 - Scope: Open actions, terminal, credentials, tasks, protocols, paths, process ownership, power/network/security interruptions.
@@ -636,7 +636,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F7-T2 - Remove POSIX speech credential fallback
 
 - Evidence class: `T2-core`.
-- [ ] Completion: speech credentials use platform-aware secure service only
+- [x] Completion: speech credentials use platform-aware secure service only
 - Outcome: Windows voice path never invokes `/bin/zsh` or reads plaintext shell configuration.
 - Scope: Cloud STT/TTS keys, provider credential migration, DPAPI, missing/denied/corrupt credential, diagnostics.
 - Acceptance: Secure lookup survives restart; missing credential offers repair; no secret or shell command appears in logs.
@@ -693,7 +693,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 - Evidence classes: `T2-core` for history/temp/owned-process cleanup;
   `T2-capability:local-stt` and `T2-capability:kokoro` for real model/process
   recovery.
-- [ ] Completion: voice history, temporary files, and owned-process records clean safely
+- [x] Completion: voice history, temporary files, and owned-process records clean safely
 - Separate certifications: real STT/Kokoro download and crash recovery remain
   with their named capability rows.
 - Outcome: Large models, recordings, generated audio, and sidecars stay bounded, verified, private, and removable.
@@ -710,7 +710,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 - Evidence classes: `T2-core` for S5-VO02 and S5-VO07; all named speech
   capabilities for the other S5-VO rows; `release-gate` for installed-package
   composition.
-- [ ] Completion: S5-VO02 and S5-VO07 pass in Dev/Preview
+- [x] Completion: S5-VO02 and S5-VO07 pass in Dev/Preview
 - Separate certifications: Each speech capability retains independent status;
   installed-package composition remains a release gate.
 - Outcome: The Windows voice foundation keeps credentials, history, temporary
@@ -751,7 +751,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F8-T2 - Make package staging atomic and ABI-aware
 
 - Evidence class: `T2-core`.
-- [ ] Completion: fresh allowlisted staging tree is built only after Electron ABI verification
+- [x] Completion: fresh allowlisted staging tree is built only after Electron ABI verification
 - Outcome: Package cannot reuse stale binaries/resources or leak development/local artifacts.
 - Scope: ABI invalidation/repair, resource allowlist, atomic replace, output cleanup, concurrent package lock, failure recovery.
 - Acceptance: Staging starts clean; wrong ABI or unexpected file fails; interrupted package leaves prior valid artifact distinguishable.
@@ -763,7 +763,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F8-T3 - Extend packaged binary and resource inspection for Windows
 
 - Evidence class: `T2-core`.
-- [ ] Completion: inspector validates every required Windows executable, DLL, native module, and sidecar
+- [x] Completion: inspector validates every required Windows executable, DLL, native module, and sidecar
 - Outcome: Wrong/missing architecture, version, resource, license, or unexpected binary blocks candidate.
 - Scope: PE architecture, better-sqlite3, node-pty, Claude/Codex, STT/TTS sidecars, ASAR/resources, manifest, executable load/smoke.
 - Acceptance: Expected allowlist and versions match; tampered/wrong-arch/missing/extra fixtures fail with exact path/reason.
@@ -778,7 +778,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F8-T4 - Prove Windows Preview package runtime
 
 - Evidence class: `T2-core`.
-- [ ] Completion: unpacked Preview launches and passes core package smoke
+- [x] Completion: unpacked Preview launches and passes core package smoke
 - Outcome: Packaged resource/layout/profile behavior is tested before installer lifecycle.
 - Scope: Preview identity/userData/protocol, native module loads, window, terminal, credentials, agents, voice, logs, shutdown.
 - Acceptance: Preview stays isolated from Dev/product, uses no repo runtime files, and leaves no owned process after quit.
@@ -845,7 +845,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 
 - Evidence classes: `T2-core` for S5-PK01 and S5-PK03; `release-gate` for the
   other S5-PK rows.
-- [ ] Completion: S5-PK01 and S5-PK03 pass on the exact Preview artifact
+- [x] Completion: S5-PK01 and S5-PK03 pass on the exact Preview artifact
 - Separate certification: S5-PK02 and S5-PK04 through S5-PK09 retain release-gate status.
 - Outcome: The unpacked Preview build and inspector have truthful native
   Windows behavior. Installer, portable, signing, malware, and lifecycle
@@ -871,7 +871,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 
 - Evidence classes: `T2-core` for exact source/profile identity; `release-gate`
   for the immutable distributable artifact set.
-- [ ] Completion: one exact source state and profile identity own Stage 5 implementation acceptance
+- [x] Completion: one exact source state and profile identity own Stage 5 implementation acceptance
 - Separate certification: immutable artifact hashes own release acceptance.
 - Outcome: Task, matrix, command, VM, credential class, package hash, and defect evidence cannot drift across builds.
 - Scope: Source SHA/branch, clean checkout, CI runs, artifact manifest, Windows builds/VM snapshots, account classes, timestamps, redacted evidence links.
@@ -883,7 +883,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F9-T2 - Reconcile every task, spec, router, and matrix row
 
 - Evidence class: `T2-core`.
-- [ ] Completion: Stage 5 crosswalk has no missing, duplicate, stale, or contradictory authority
+- [x] Completion: Stage 5 crosswalk has no missing, duplicate, stale, or contradictory authority
 - Outcome: 76 task IDs, feature routers, capability spec, execution waves,
   Tier 2 matrix rows, and the separate Tier 3 owner backlog agree.
 - Scope: S5-F1 through F9, dependencies, counts, links, completion status, Stage 4 entry and Stage 6 exit boundary.
@@ -898,7 +898,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 
 - Evidence classes: `T2-core` for the exact-source local gate; `release-gate`
   for hosted Windows CI and retained artifacts.
-- [ ] Completion: the full exact-source local Windows gate passes
+- [x] Completion: the full exact-source local Windows gate passes
 - Separate certification: Hosted Windows CI and artifact retention remain release gates.
 - Outcome: Style, lint, typecheck, tests, build, OpenSpec, native probes,
   unpacked Preview, inspection, and smoke share one source state. Hosted CI and
@@ -914,7 +914,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F9-T4 - Run integrated verified-Dev Windows workflow
 
 - Evidence class: `T2-core`.
-- [ ] Completion: one native Dev session exercises the complete `T2-core`
+- [x] Completion: one native Dev session exercises the complete `T2-core`
       Windows workflow
 - Outcome: Tooling, lifecycle, core OS integration, credentials, protocols,
   worktrees, restart, and recovery compose correctly. Provider and speech
@@ -984,7 +984,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F9-T8 - Prove shared contracts and Stage 6 handoff
 
 - Evidence class: `T2-core`.
-- [ ] Completion: platform-neutral contract gates pass and Stage 6 consumes the
+- [x] Completion: platform-neutral contract gates pass and Stage 6 consumes the
       accepted Stage 5 implementation baseline
 - Outcome: Windows portability changes preserve shared contracts; the
   renumbered roadmap has one dependency chain. macOS certification remains a
@@ -1002,7 +1002,7 @@ implementation. Pure capability/release tasks are excluded from that count.
 ### S5-F9-T9 - Record exact-source Stage 5 implementation decision
 
 - Evidence class: `T2-core`.
-- [ ] Completion: the `T2-core` matrix closes with an explicit implementation
+- [x] Completion: the `T2-core` matrix closes with an explicit implementation
       go/no-go and separately listed capability/release blockers
 - Outcome: The Windows implementation claim is tied to one reviewed source
   state and can be reproduced or withdrawn.

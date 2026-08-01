@@ -160,7 +160,10 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     this.assertContext(context)
     const state = await this.createState(context)
     try {
-      const params = await this.options.resolveThreadParams(context, "start")
+      const params = withServiceTier(
+        await this.options.resolveThreadParams(context, "start"),
+        context.launch.controls.serviceTier,
+      )
       const response = record(await state.client.request("thread/start", params))
       this.captureThread(state, response, "thread/start")
       return sessionFromState(state)
@@ -178,7 +181,10 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     const threadId = requiredThreadId(session, "resume")
     const state = await this.createState(context)
     try {
-      const params = await this.options.resolveThreadParams(context, "resume")
+      const params = withServiceTier(
+        await this.options.resolveThreadParams(context, "resume"),
+        context.launch.controls.serviceTier,
+      )
       const response = record(await state.client.request("thread/resume", { ...params, threadId }))
       this.captureThread(state, response, "thread/resume")
       return sessionFromState(state)
@@ -250,6 +256,9 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
           input,
           model: context.launch.model,
           effort: context.launch.controls.modelEffort,
+          ...(context.launch.controls.serviceTier
+            ? { serviceTier: context.launch.controls.serviceTier }
+            : {}),
         }),
       )
       const turn = record(response.turn)
@@ -594,6 +603,13 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
   private now(): Date {
     return (this.options.now ?? (() => new Date()))()
   }
+}
+
+function withServiceTier(
+  params: Record<string, unknown>,
+  serviceTier: string | null | undefined,
+): Record<string, unknown> {
+  return serviceTier ? { ...params, serviceTier } : params
 }
 
 async function initialize(client: CodexProtocolClient): Promise<void> {

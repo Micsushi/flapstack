@@ -60,6 +60,7 @@ export const cloudWhisperAdapter: SttAdapter = {
   kind: "cloud",
   supportsStreaming: false,
   offline: false,
+  supportsVocabularyHints: true,
 
   async isAvailable() {
     return getOpenAIApiKey()
@@ -77,7 +78,12 @@ export const cloudWhisperAdapter: SttAdapter = {
   },
 }
 
-async function transcribeWithWhisper({ audioBuffer, format, language }: SttInput): Promise<string> {
+async function transcribeWithWhisper({
+  audioBuffer,
+  format,
+  language,
+  vocabularyHints,
+}: SttInput): Promise<string> {
   const key = getOpenAIApiKey()
   if (!key) throw new Error("OpenAI API key not configured.")
   if (audioBuffer.length > MAX_AUDIO_SIZE) {
@@ -95,6 +101,7 @@ async function transcribeWithWhisper({ audioBuffer, format, language }: SttInput
   formData.append("model", "whisper-1")
   formData.append("response_format", "text")
   if (language) formData.append("language", language)
+  if (vocabularyHints?.length) formData.append("prompt", vocabularyHints.join(", "))
 
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS)

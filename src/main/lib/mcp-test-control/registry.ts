@@ -112,6 +112,21 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
     status: "implemented",
   },
   {
+    name: "control_electron_performance_measurement",
+    description:
+      "Control fixed internally timed Stage 6 Electron performance markers without accepting caller samples.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
+  {
+    name: "provision_stage6_performance_fixture",
+    description: "Provision an isolated Stage 6 product transcript fixture.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
+  {
     name: "get_shortcut_state",
     description:
       "Inspect live resolved shortcut bindings and diagnostics without renderer secrets.",
@@ -739,6 +754,8 @@ export const devMcpExposedToolNames = [
   "select_test_chat",
   "copy_test_chat_history",
   "get_renderer_orchestration_state",
+  "control_electron_performance_measurement",
+  "provision_stage6_performance_fixture",
   "get_shortcut_state",
   "mutate_shortcut_binding",
   "list_provider_extensions",

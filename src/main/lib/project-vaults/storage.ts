@@ -24,8 +24,10 @@ import {
   getDefaultCentralVaultPath,
   getDefaultProjectOwnedVaultPath,
   getOrCreateProjectVaultPolicy,
+  getProjectVaultPolicy,
   type ProjectVaultPolicy,
 } from "./policy"
+import { ensureProjectVaultGitExclusion } from "./git-exclusion"
 import {
   getProjectVaultSectionDefinition,
   PROJECT_VAULT_SCHEMA_VERSION,
@@ -112,6 +114,7 @@ async function scaffoldProjectVaultUnlocked(
   }
 
   const policy = getOrCreateProjectVaultPolicy(database, input)
+  ensureUntrackedProjectVaultWriteAllowed(policy)
   const plan = bindVaultContainer(database, policy)
   if (await pathExists(policy.vaultPath)) {
     throw new Error("Project vault path already exists and cannot be adopted implicitly.")
@@ -241,6 +244,7 @@ export async function createProjectVaultSection(
       byteLength: bytes.byteLength,
     }
 
+    ensureUntrackedProjectVaultWriteAllowed(getProjectVaultPolicy(database, input.projectId))
     await writeFileInsideRoot(root.canonicalPath, definition.fileName, { data: bytes })
     try {
       return database.transaction((tx) => {
@@ -318,6 +322,7 @@ export async function writeProjectVaultSection(
     }
     const nextHash = sha256(next)
     const backupRelativePath = `.backups/${section.sectionId}/v${section.version}-${previousHash}.md`
+    ensureUntrackedProjectVaultWriteAllowed(getProjectVaultPolicy(database, input.projectId))
     await writeFileInsideRoot(
       root.canonicalPath,
       backupRelativePath,
@@ -495,6 +500,7 @@ export async function restoreProjectVaultSectionBackup(
 
     const restored = Buffer.from(backup.content, "utf8")
     const restoredHash = sha256(restored)
+    ensureUntrackedProjectVaultWriteAllowed(getProjectVaultPolicy(database, input.projectId))
     await writeFileInsideRoot(
       root.canonicalPath,
       section.relativePath,
@@ -732,6 +738,11 @@ function getVaultOrThrow(database: Database, projectId: string): VaultRow {
     .get()
   if (!vault) throw new Error("Project vault is not scaffolded.")
   return vault
+}
+
+function ensureUntrackedProjectVaultWriteAllowed(policy: ProjectVaultPolicy): void {
+  if (policy.locationMode !== "project-owned" || policy.gitTrackingEnabled) return
+  ensureProjectVaultGitExclusion(dirname(dirname(policy.vaultPath)))
 }
 
 function bindVaultContainer(

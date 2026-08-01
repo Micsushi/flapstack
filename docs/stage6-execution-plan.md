@@ -12,6 +12,33 @@ Deliver an approachable, polished, personalized, cross-device, performant, and
 cross-platform Flapstack release with an Obsidian-compatible project knowledge
 graph, without duplicating Stage 4 services or hiding unsupported evidence.
 
+## Acceptance authority
+
+Stage 6 has 86 independently classifiable matrix rows:
+
+- 60 `[T2-core]` rows are implementation-gating and must pass against one exact
+  source candidate before Stage 6 Tier 2 can close.
+- 10 `[capability-evidence]` rows require optional live providers, devices,
+  native assistive technology, Obsidian, capture APIs, or long host observation.
+- 16 `[release-evidence]` rows require promoted native distribution artifacts,
+  signing credentials, hosted CI, or release review.
+
+Capability and release rows stay visible and open when their prerequisites are
+unavailable. They do not become core failures and cannot be checked from fixture
+or cross-build evidence. The detailed owner-only journey lives in
+`docs/owner-manual-testing-backlog.md`; Tier 3 never blocks Tier 2 completion.
+
+## Current entry state
+
+- Stage 5 source baseline:
+  `e2f786f36be5108931f20014f8859e27386431e2`.
+- Stage 5 authority is reconciled at 50/50 implementation-gating tasks and
+  40/40 `T2-core` matrix rows.
+- The 25 still-open Stage 5 task rows are capability or distributable-release
+  certification and remain explicit constraints.
+- Preserved mobile work is an implementation reference only. Stage 6 ports it
+  by reviewed tree equivalence rather than merging unrelated branch history.
+
 ## Dependency waves
 
 ### Wave 0 — Entry and evidence baseline

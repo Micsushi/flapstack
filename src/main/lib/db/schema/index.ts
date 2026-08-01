@@ -200,6 +200,145 @@ export const projectVaultBackupsRelations = relations(projectVaultBackups, ({ on
   }),
 }))
 
+// Rebuildable Obsidian-compatible graph indexes. Markdown files remain the
+// authority; readers select exactly one committed immutable generation.
+export const projectVaultGraphGenerations = sqliteTable(
+  "project_vault_graph_generations",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projectVaults.projectId, { onDelete: "cascade" }),
+    state: text("state").notNull(),
+    sourceFingerprint: text("source_fingerprint").notNull(),
+    noteCount: integer("note_count").notNull(),
+    edgeCount: integer("edge_count").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    committedAt: integer("committed_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    index("project_vault_graph_generations_project_idx").on(table.projectId, table.createdAt),
+    check(
+      "project_vault_graph_generations_state_check",
+      sql`${table.state} in ('building', 'committed', 'failed')`,
+    ),
+    check(
+      "project_vault_graph_generations_counts_check",
+      sql`${table.noteCount} >= 0 and ${table.edgeCount} >= 0`,
+    ),
+  ],
+)
+
+export const projectVaultGraphState = sqliteTable("project_vault_graph_state", {
+  projectId: text("project_id")
+    .primaryKey()
+    .references(() => projectVaults.projectId, { onDelete: "cascade" }),
+  currentGenerationId: text("current_generation_id").references(
+    () => projectVaultGraphGenerations.id,
+    { onDelete: "set null" },
+  ),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+})
+
+export const projectVaultGraphNodes = sqliteTable(
+  "project_vault_graph_nodes",
+  {
+    generationId: text("generation_id")
+      .notNull()
+      .references(() => projectVaultGraphGenerations.id, { onDelete: "cascade" }),
+    nodeId: text("node_id").notNull(),
+    projectId: text("project_id").notNull(),
+    stableId: text("stable_id"),
+    relativePath: text("relative_path").notNull(),
+    normalizedPath: text("normalized_path").notNull(),
+    title: text("title").notNull(),
+    noteType: text("note_type"),
+    contentHash: text("content_hash").notNull(),
+    byteLength: integer("byte_length").notNull(),
+    aliasesJson: text("aliases_json").notNull(),
+    tagsJson: text("tags_json").notNull(),
+    diagnosticsJson: text("diagnostics_json").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.generationId, table.nodeId] }),
+    uniqueIndex("project_vault_graph_nodes_generation_path_idx").on(
+      table.generationId,
+      table.normalizedPath,
+    ),
+    index("project_vault_graph_nodes_project_generation_idx").on(
+      table.projectId,
+      table.generationId,
+    ),
+    index("project_vault_graph_nodes_stable_idx").on(table.projectId, table.stableId),
+    check("project_vault_graph_nodes_bytes_check", sql`${table.byteLength} >= 0`),
+  ],
+)
+
+export const projectVaultGraphEdges = sqliteTable(
+  "project_vault_graph_edges",
+  {
+    generationId: text("generation_id")
+      .notNull()
+      .references(() => projectVaultGraphGenerations.id, { onDelete: "cascade" }),
+    sourceNodeId: text("source_node_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    kind: text("kind").notNull(),
+    targetRaw: text("target_raw").notNull(),
+    targetNormalized: text("target_normalized").notNull(),
+    targetNodeId: text("target_node_id"),
+    heading: text("heading"),
+    blockId: text("block_id"),
+    status: text("status").notNull(),
+    line: integer("line").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.generationId, table.sourceNodeId, table.ordinal] }),
+    index("project_vault_graph_edges_target_idx").on(table.generationId, table.targetNodeId),
+    check(
+      "project_vault_graph_edges_kind_check",
+      sql`${table.kind} in ('wikilink', 'embed', 'markdown')`,
+    ),
+    check(
+      "project_vault_graph_edges_status_check",
+      sql`${table.status} in ('resolved', 'unresolved', 'ambiguous')`,
+    ),
+    check(
+      "project_vault_graph_edges_ordinal_line_check",
+      sql`${table.ordinal} >= 0 and ${table.line} >= 1`,
+    ),
+    foreignKey({
+      columns: [table.generationId, table.sourceNodeId],
+      foreignColumns: [projectVaultGraphNodes.generationId, projectVaultGraphNodes.nodeId],
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.generationId, table.targetNodeId],
+      foreignColumns: [projectVaultGraphNodes.generationId, projectVaultGraphNodes.nodeId],
+    }).onDelete("cascade"),
+  ],
+)
+
+export const projectVaultCustomNotes = sqliteTable(
+  "project_vault_custom_notes",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projectVaults.projectId, { onDelete: "cascade" }),
+    stableId: text("stable_id").notNull(),
+    relativePath: text("relative_path").notNull(),
+    version: integer("version").notNull(),
+    contentHash: text("content_hash").notNull(),
+    trashId: text("trash_id"),
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.stableId] }),
+    uniqueIndex("project_vault_custom_notes_path_idx").on(table.projectId, table.relativePath),
+    uniqueIndex("project_vault_custom_notes_trash_idx").on(table.projectId, table.trashId),
+    check("project_vault_custom_notes_version_check", sql`${table.version} >= 1`),
+  ],
+)
+
 // Durable filesystem identity for project and worktree roots. The pathname is
 // only the lookup key; security decisions also require the canonical path and,
 // where the platform exposes them, the device/inode pair captured at binding.
@@ -1451,6 +1590,109 @@ export const agentRuns = sqliteTable(
   (table) => [index("agent_runs_chat_id_idx").on(table.chatId)],
 )
 
+export const agentProfileChatBindings = sqliteTable(
+  "agent_profile_chat_bindings",
+  {
+    chatId: text("chat_id")
+      .primaryKey()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    profileId: text("profile_id").notNull(),
+    profileVersion: integer("profile_version").notNull(),
+    snapshotId: text("snapshot_id").notNull(),
+    boundAt: integer("bound_at", { mode: "timestamp" }).notNull(),
+    frozenAt: integer("frozen_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.profileId, table.profileVersion],
+      foreignColumns: [agentProfileVersions.profileId, agentProfileVersions.version],
+      name: "agent_profile_chat_bindings_version_fk",
+    }),
+    foreignKey({
+      columns: [table.snapshotId],
+      foreignColumns: [agentProfileSnapshots.id],
+      name: "agent_profile_chat_bindings_snapshot_fk",
+    }),
+    index("agent_profile_chat_bindings_profile_idx").on(table.profileId, table.profileVersion),
+    check("agent_profile_chat_bindings_version_check", sql`${table.profileVersion} >= 1`),
+  ],
+)
+
+// Provider routers reserve run IDs before agent_runs exists, so run_id cannot
+// be an FK. The exact Chat and snapshot provenance still fail closed.
+export const agentProfileRunBindings = sqliteTable(
+  "agent_profile_run_bindings",
+  {
+    runId: text("run_id").primaryKey(),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    snapshotId: text("snapshot_id")
+      .notNull()
+      .references(() => agentProfileSnapshots.id),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [index("agent_profile_run_bindings_chat_idx").on(table.chatId, table.createdAt)],
+)
+
+export const runtimeCompositionAttempts = sqliteTable(
+  "runtime_composition_attempts",
+  {
+    attemptId: text("attempt_id").primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    priorAttemptId: text("prior_attempt_id"),
+    attemptNumber: integer("attempt_number").notNull(),
+    mode: text("mode").notNull(),
+    sourceChatId: text("source_chat_id").notNull(),
+    childChatId: text("child_chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    childSubChatId: text("child_sub_chat_id")
+      .notNull()
+      .references(() => subChats.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    previewDigest: text("preview_digest").notNull(),
+    targetSnapshot: text("target_snapshot").notNull(),
+    taskEnvelope: text("task_envelope").notNull(),
+    resultEnvelope: text("result_envelope"),
+    worktreePath: text("worktree_path"),
+    worktreeLeaseId: text("worktree_lease_id"),
+    status: text("status").notNull(),
+    cancellationRequestedAt: integer("cancellation_requested_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+    terminalAt: integer("terminal_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    uniqueIndex("runtime_composition_attempts_idempotency_idx").on(table.idempotencyKey),
+    uniqueIndex("runtime_composition_attempts_run_idx").on(table.runId),
+    index("runtime_composition_attempts_source_idx").on(table.sourceChatId, table.createdAt),
+    index("runtime_composition_attempts_child_idx").on(table.childChatId, table.createdAt),
+    uniqueIndex("runtime_composition_attempts_active_worktree_idx")
+      .on(table.worktreePath)
+      .where(sql`${table.worktreePath} is not null and ${table.status} = 'running'`),
+    check("runtime_composition_attempts_attempt_check", sql`${table.attemptNumber} >= 1`),
+    check(
+      "runtime_composition_attempts_mode_check",
+      sql`${table.mode} in ('continue', 'delegate')`,
+    ),
+    check(
+      "runtime_composition_attempts_status_check",
+      sql`${table.status} in ('running', 'success', 'failure', 'cancelled', 'uncertain')`,
+    ),
+    check(
+      "runtime_composition_attempts_task_json_check",
+      sql`json_valid(${table.taskEnvelope}) = 1`,
+    ),
+    check(
+      "runtime_composition_attempts_result_json_check",
+      sql`${table.resultEnvelope} is null or json_valid(${table.resultEnvelope}) = 1`,
+    ),
+  ],
+)
+
 export const agentRunsRelations = relations(agentRuns, ({ one, many }) => ({
   chat: one(chats, {
     fields: [agentRuns.chatId],
@@ -2043,6 +2285,296 @@ export const mcpAuditRecords = sqliteTable(
   ],
 )
 
+// ============ MOBILE DEVICE IDENTITY ============
+// Pairing and session secrets are stored only as hashes. Public-key material is
+// intentionally the only device credential persisted by the desktop.
+export const mobilePairingTokens = sqliteTable(
+  "mobile_pairing_tokens",
+  {
+    id: text("id").primaryKey(),
+    tokenHash: text("token_hash").notNull(),
+    certificateFingerprint: text("certificate_fingerprint").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    consumedAt: integer("consumed_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    uniqueIndex("mobile_pairing_tokens_hash_idx").on(table.tokenHash),
+    index("mobile_pairing_tokens_expiry_idx").on(table.expiresAt),
+    check("mobile_pairing_tokens_expiry_check", sql`${table.expiresAt} > ${table.createdAt}`),
+  ],
+)
+
+export const mobileDevices = sqliteTable(
+  "mobile_devices",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    publicKeyAlgorithm: text("public_key_algorithm").notNull(),
+    publicKey: text("public_key").notNull(),
+    publicKeyFingerprint: text("public_key_fingerprint").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp" }),
+    revocationReason: text("revocation_reason"),
+    scopeVersion: integer("scope_version").notNull().default(1),
+  },
+  (table) => [
+    uniqueIndex("mobile_devices_public_key_idx").on(table.publicKeyFingerprint),
+    index("mobile_devices_revoked_idx").on(table.revokedAt),
+    check(
+      "mobile_devices_algorithm_check",
+      sql`${table.publicKeyAlgorithm} in ('Ed25519', 'P-256')`,
+    ),
+    check("mobile_devices_scope_version_check", sql`${table.scopeVersion} >= 1`),
+  ],
+)
+
+export const mobileAuthChallenges = sqliteTable(
+  "mobile_auth_challenges",
+  {
+    id: text("id").primaryKey(),
+    deviceId: text("device_id")
+      .notNull()
+      .references(() => mobileDevices.id, { onDelete: "cascade" }),
+    challengeHash: text("challenge_hash").notNull(),
+    issuedAt: integer("issued_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    consumedAt: integer("consumed_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    uniqueIndex("mobile_auth_challenges_hash_idx").on(table.challengeHash),
+    index("mobile_auth_challenges_device_idx").on(table.deviceId, table.expiresAt),
+    check("mobile_auth_challenges_expiry_check", sql`${table.expiresAt} > ${table.issuedAt}`),
+  ],
+)
+
+export const mobileDeviceSessions = sqliteTable(
+  "mobile_device_sessions",
+  {
+    id: text("id").primaryKey(),
+    deviceId: text("device_id")
+      .notNull()
+      .references(() => mobileDevices.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    issuedAt: integer("issued_at", { mode: "timestamp" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+    idleExpiresAt: integer("idle_expires_at", { mode: "timestamp" }).notNull(),
+    absoluteExpiresAt: integer("absolute_expires_at", { mode: "timestamp" }).notNull(),
+    scopeVersion: integer("scope_version").notNull(),
+    rotation: integer("rotation").notNull().default(0),
+    revokedAt: integer("revoked_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    uniqueIndex("mobile_device_sessions_token_idx").on(table.tokenHash),
+    index("mobile_device_sessions_device_idx").on(table.deviceId, table.revokedAt),
+    index("mobile_device_sessions_expiry_idx").on(table.idleExpiresAt, table.absoluteExpiresAt),
+    check("mobile_device_sessions_scope_version_check", sql`${table.scopeVersion} >= 1`),
+    check("mobile_device_sessions_rotation_check", sql`${table.rotation} >= 0`),
+    check(
+      "mobile_device_sessions_expiry_check",
+      sql`${table.idleExpiresAt} > ${table.lastSeenAt} and ${table.absoluteExpiresAt} > ${table.issuedAt} and ${table.idleExpiresAt} <= ${table.absoluteExpiresAt}`,
+    ),
+  ],
+)
+
+export const mobileSessionNonces = sqliteTable(
+  "mobile_session_nonces",
+  {
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => mobileDeviceSessions.id, { onDelete: "cascade" }),
+    nonceHash: text("nonce_hash").notNull(),
+    usedAt: integer("used_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.sessionId, table.nonceHash] }),
+    index("mobile_session_nonces_used_idx").on(table.usedAt),
+  ],
+)
+
+// Deliberately no foreign key: device audit survives later device cleanup.
+export const mobileDeviceAuditRecords = sqliteTable(
+  "mobile_device_audit_records",
+  {
+    id: text("id").primaryKey(),
+    deviceId: text("device_id"),
+    event: text("event").notNull(),
+    outcome: text("outcome").notNull(),
+    summary: text("summary").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    index("mobile_device_audit_created_idx").on(table.createdAt),
+    index("mobile_device_audit_device_idx").on(table.deviceId, table.createdAt),
+    check(
+      "mobile_device_audit_outcome_check",
+      sql`${table.outcome} in ('allowed', 'denied', 'failed')`,
+    ),
+  ],
+)
+
+export const mobileDevicesRelations = relations(mobileDevices, ({ many }) => ({
+  challenges: many(mobileAuthChallenges),
+  sessions: many(mobileDeviceSessions),
+}))
+
+export const mobileAuthChallengesRelations = relations(mobileAuthChallenges, ({ one }) => ({
+  device: one(mobileDevices, {
+    fields: [mobileAuthChallenges.deviceId],
+    references: [mobileDevices.id],
+  }),
+}))
+
+export const mobileDeviceSessionsRelations = relations(mobileDeviceSessions, ({ one, many }) => ({
+  device: one(mobileDevices, {
+    fields: [mobileDeviceSessions.deviceId],
+    references: [mobileDevices.id],
+  }),
+  nonces: many(mobileSessionNonces),
+}))
+
+export const mobileSessionNoncesRelations = relations(mobileSessionNonces, ({ one }) => ({
+  session: one(mobileDeviceSessions, {
+    fields: [mobileSessionNonces.sessionId],
+    references: [mobileDeviceSessions.id],
+  }),
+}))
+
+// ============ MOBILE READ AUTHORITY AND EVENT STREAMS ============
+// Grants contain only the narrow, validated mobile contract projection. Event
+// rows store resource references, never provider payloads, prompts, or secrets.
+export const mobileAuthorityGrants = sqliteTable(
+  "mobile_authority_grants",
+  {
+    id: text("id").primaryKey(),
+    deviceId: text("device_id")
+      .notNull()
+      .references(() => mobileDevices.id, { onDelete: "cascade" }),
+    authority: text("authority").notNull(),
+    capabilities: text("capabilities").notNull(),
+    resources: text("resources").notNull(),
+    issuedAt: integer("issued_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp" }),
+    scopeVersion: integer("scope_version").notNull(),
+  },
+  (table) => [
+    index("mobile_authority_grants_device_idx").on(
+      table.deviceId,
+      table.revokedAt,
+      table.expiresAt,
+    ),
+    check("mobile_authority_grants_scope_version_check", sql`${table.scopeVersion} >= 1`),
+    check(
+      "mobile_authority_grants_expiry_check",
+      sql`${table.expiresAt} is null or ${table.expiresAt} > ${table.issuedAt}`,
+    ),
+  ],
+)
+
+export const mobileEventStreams = sqliteTable(
+  "mobile_event_streams",
+  {
+    grantId: text("grant_id")
+      .primaryKey()
+      .references(() => mobileAuthorityGrants.id, { onDelete: "cascade" }),
+    lastSequence: integer("last_sequence").notNull().default(0),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    check(
+      "mobile_event_streams_sequence_check",
+      sql`${table.lastSequence} >= 0 and ${table.lastSequence} <= 9007199254740991`,
+    ),
+  ],
+)
+
+export const mobileEventLog = sqliteTable(
+  "mobile_event_log",
+  {
+    grantId: text("grant_id")
+      .notNull()
+      .references(() => mobileAuthorityGrants.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    eventId: text("event_id").notNull(),
+    resourceKind: text("resource_kind"),
+    resourceId: text("resource_id"),
+    occurredAt: integer("occurred_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.grantId, table.sequence] }),
+    uniqueIndex("mobile_event_log_event_id_idx").on(table.eventId),
+    index("mobile_event_log_occurred_idx").on(table.occurredAt),
+    check(
+      "mobile_event_log_sequence_check",
+      sql`${table.sequence} >= 1 and ${table.sequence} <= 9007199254740991`,
+    ),
+    check(
+      "mobile_event_log_resource_check",
+      sql`(${table.resourceKind} is null and ${table.resourceId} is null) or (${table.resourceKind} in ('project', 'task', 'chat', 'run', 'orchestration', 'automation', 'approval', 'artifact', 'diff', 'check') and length(trim(${table.resourceId})) between 1 and 200)`,
+    ),
+  ],
+)
+
+export const mobileProjectedResources = sqliteTable(
+  "mobile_projected_resources",
+  {
+    grantId: text("grant_id")
+      .notNull()
+      .references(() => mobileAuthorityGrants.id, { onDelete: "cascade" }),
+    resourceKind: text("resource_kind").notNull(),
+    resourceId: text("resource_id").notNull(),
+    projectedAt: integer("projected_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.grantId, table.resourceKind, table.resourceId] }),
+    index("mobile_projected_resources_time_idx").on(table.projectedAt),
+    check(
+      "mobile_projected_resources_kind_check",
+      sql`${table.resourceKind} in ('project', 'task', 'chat', 'run', 'orchestration', 'automation', 'approval', 'artifact', 'diff', 'check', 'agent-input')`,
+    ),
+    check(
+      "mobile_projected_resources_id_check",
+      sql`length(trim(${table.resourceId})) between 1 and 200`,
+    ),
+  ],
+)
+
+export const mobileAuthorityGrantsRelations = relations(mobileAuthorityGrants, ({ one, many }) => ({
+  device: one(mobileDevices, {
+    fields: [mobileAuthorityGrants.deviceId],
+    references: [mobileDevices.id],
+  }),
+  events: many(mobileEventLog),
+  projectedResources: many(mobileProjectedResources),
+  stream: one(mobileEventStreams, {
+    fields: [mobileAuthorityGrants.id],
+    references: [mobileEventStreams.grantId],
+  }),
+}))
+
+export const mobileEventStreamsRelations = relations(mobileEventStreams, ({ one }) => ({
+  grant: one(mobileAuthorityGrants, {
+    fields: [mobileEventStreams.grantId],
+    references: [mobileAuthorityGrants.id],
+  }),
+}))
+
+export const mobileEventLogRelations = relations(mobileEventLog, ({ one }) => ({
+  grant: one(mobileAuthorityGrants, {
+    fields: [mobileEventLog.grantId],
+    references: [mobileAuthorityGrants.id],
+  }),
+}))
+
+export const mobileProjectedResourcesRelations = relations(mobileProjectedResources, ({ one }) => ({
+  grant: one(mobileAuthorityGrants, {
+    fields: [mobileProjectedResources.grantId],
+    references: [mobileAuthorityGrants.id],
+  }),
+}))
+
 // ============ MCP APPROVAL REQUESTS ============
 // Cross-process coordination only. The harness-owned MCP child keeps grants in
 // memory; this table lets the renderer see and resolve one pending decision.
@@ -2135,13 +2667,77 @@ export const attachments = sqliteTable(
     kind: text("kind").notNull(),
     name: text("name").notNull(),
     sourcePath: text("source_path"),
+    sourceKind: text("source_kind"),
     storedPath: text("stored_path"),
     contentText: text("content_text"),
+    byteLength: integer("byte_length"),
+    mimeType: text("mime_type"),
+    sha256: text("sha256"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
   (table) => [
     index("attachments_chat_id_idx").on(table.chatId),
     index("attachments_task_id_idx").on(table.taskId),
+    check(
+      "attachments_upload_provenance_check",
+      sql`
+        (
+          (
+            ${table.sourceKind} is null
+            and ${table.byteLength} is null
+            and ${table.mimeType} is null
+            and ${table.sha256} is null
+          )
+          or
+          (
+            ${table.sourceKind} is 'upload'
+            and ${table.kind} in ('file', 'image')
+            and ${table.storedPath} is not null
+            and ${table.contentText} is null
+            and typeof(${table.byteLength}) = 'integer'
+            and ${table.byteLength} between 0 and 16777216
+            and ${table.mimeType} is not null
+            and (
+              (
+                ${table.kind} = 'image'
+                and ${table.mimeType} in ('image/gif', 'image/jpeg', 'image/png', 'image/webp')
+              )
+              or
+              (
+                ${table.kind} = 'file'
+                and ${table.mimeType} in (
+                  'application/gzip',
+                  'application/octet-stream',
+                  'application/pdf',
+                  'application/wasm',
+                  'application/x-7z-compressed',
+                  'application/x-tar',
+                  'application/zip',
+                  'application/vnd.ms-excel',
+                  'application/vnd.ms-powerpoint',
+                  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                  'text/calendar',
+                  'text/csv',
+                  'text/css',
+                  'text/html',
+                  'text/javascript',
+                  'text/markdown',
+                  'text/plain',
+                  'text/tab-separated-values',
+                  'text/typescript',
+                  'text/xml'
+                )
+              )
+            )
+            and ${table.sha256} is not null
+            and length(${table.sha256}) = 64
+            and ${table.sha256} not glob '*[^0-9a-f]*'
+          )
+        )
+      `,
+    ),
   ],
 )
 
@@ -2155,6 +2751,124 @@ export const attachmentsRelations = relations(attachments, ({ one }) => ({
     references: [tasks.id],
   }),
 }))
+
+// ============ VISUAL CAPTURE ARTIFACTS ============
+// Only the user-confirmed, metadata-stripped derivative is stored by default.
+// Source labels and window titles are intentionally absent from this schema.
+export const visualArtifacts = sqliteTable(
+  "visual_artifacts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    chatId: text("chat_id").references(() => chats.id, { onDelete: "set null" }),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    sourceClass: text("source_class").notNull(),
+    storedPath: text("stored_path").notNull(),
+    mimeType: text("mime_type").notNull().default("image/png"),
+    byteLength: integer("byte_length").notNull(),
+    originalSha256: text("original_sha256").notNull(),
+    derivativeSha256: text("derivative_sha256").notNull(),
+    previewSha256: text("preview_sha256").notNull(),
+    actorKind: text("actor_kind").notNull(),
+    actorId: text("actor_id").notNull(),
+    approvalId: text("approval_id"),
+    capturedAt: integer("captured_at").notNull(),
+    confirmedAt: integer("confirmed_at").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    scaleFactor: integer("scale_factor").notNull(),
+    redactionState: text("redaction_state").notNull(),
+    redactionCount: integer("redaction_count").notNull().default(0),
+    annotationCount: integer("annotation_count").notNull().default(0),
+    retainedUntil: integer("retained_until"),
+    archivedAt: integer("archived_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("visual_artifacts_project_created_idx").on(table.projectId, table.createdAt),
+    index("visual_artifacts_chat_created_idx").on(table.chatId, table.createdAt),
+    index("visual_artifacts_task_created_idx").on(table.taskId, table.createdAt),
+    check(
+      "visual_artifacts_contract_check",
+      sql`
+        ${table.sourceClass} in ('screen', 'window', 'application-window', 'region')
+        and ${table.mimeType} = 'image/png'
+        and ${table.byteLength} between 1 and 33554432
+        and length(${table.originalSha256}) = 64
+        and length(${table.derivativeSha256}) = 64
+        and ${table.previewSha256} = ${table.derivativeSha256}
+        and ${table.actorKind} in ('user', 'agent')
+        and (${table.actorKind} = 'user' or ${table.approvalId} is not null)
+        and ${table.width} between 1 and 20000
+        and ${table.height} between 1 and 20000
+        and ${table.width} * ${table.height} <= 16000000
+        and ${table.scaleFactor} between 1 and 8000
+        and ${table.redactionState} in ('none', 'redacted')
+        and ${table.redactionCount} between 0 and 100
+        and ${table.annotationCount} between 0 and 100
+      `,
+    ),
+  ],
+)
+
+export const visualArtifactLinks = sqliteTable(
+  "visual_artifact_links",
+  {
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => visualArtifacts.id, { onDelete: "cascade" }),
+    consumerKind: text("consumer_kind").notNull(),
+    consumerId: text("consumer_id").notNull(),
+    contextSha256: text("context_sha256").notNull(),
+    selectedAt: integer("selected_at").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.artifactId, table.consumerKind, table.consumerId],
+    }),
+    index("visual_artifact_links_consumer_idx").on(table.consumerKind, table.consumerId),
+    check(
+      "visual_artifact_links_contract_check",
+      sql`
+        ${table.consumerKind} in ('chat', 'task', 'knowledge', 'run')
+        and length(${table.consumerId}) between 1 and 200
+        and length(${table.contextSha256}) = 64
+      `,
+    ),
+  ],
+)
+
+export const visualCaptureAudit = sqliteTable(
+  "visual_capture_audit",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    artifactId: text("artifact_id").references(() => visualArtifacts.id, {
+      onDelete: "set null",
+    }),
+    requestId: text("request_id"),
+    action: text("action").notNull(),
+    actorKind: text("actor_kind").notNull(),
+    actorId: text("actor_id").notNull(),
+    projectId: text("project_id").notNull(),
+    outcome: text("outcome").notNull(),
+    occurredAt: integer("occurred_at").notNull(),
+  },
+  (table) => [
+    index("visual_capture_audit_project_occurred_idx").on(table.projectId, table.occurredAt),
+    check(
+      "visual_capture_audit_contract_check",
+      sql`
+        ${table.action} in ('request', 'select', 'confirm', 'read', 'link', 'export', 'delete')
+        and ${table.actorKind} in ('user', 'agent', 'system')
+        and ${table.outcome} in ('allowed', 'denied', 'cancelled', 'failed')
+      `,
+    ),
+  ],
+)
 
 // ============ VOICE HISTORY ============
 // Speech metadata remains queryable in SQLite while generated TTS audio stays
@@ -2616,6 +3330,8 @@ export type SubChat = typeof subChats.$inferSelect
 export type NewSubChat = typeof subChats.$inferInsert
 export type AgentRun = typeof agentRuns.$inferSelect
 export type NewAgentRun = typeof agentRuns.$inferInsert
+export type RuntimeCompositionAttempt = typeof runtimeCompositionAttempts.$inferSelect
+export type NewRuntimeCompositionAttempt = typeof runtimeCompositionAttempts.$inferInsert
 export type Automation = typeof automations.$inferSelect
 export type NewAutomation = typeof automations.$inferInsert
 export type AutomationTrigger = typeof automationTriggers.$inferSelect

@@ -98,11 +98,21 @@ describe("approved MCP project vault operations", () => {
       tier: 0,
       status: "implemented",
     })
+    for (const name of ["list_vault_nodes", "read_vault_node", "preview_vault_context"]) {
+      expect(getMcpControlTool(name)).toMatchObject({
+        tier: 0,
+        status: "implemented",
+      })
+    }
     for (const name of [
       "create_vault_section",
       "update_vault_section",
       "update_vault_handoff",
       "record_vault_decision",
+      "create_vault_node",
+      "update_vault_node",
+      "move_vault_node",
+      "link_vault_nodes",
     ]) {
       expect(getMcpControlTool(name)).toMatchObject({
         tier: 2,
@@ -110,6 +120,115 @@ describe("approved MCP project vault operations", () => {
         status: "implemented",
       })
     }
+  })
+
+  it("provides typed, generation-bound custom-node and context operations", async () => {
+    const service = createMcpProjectVaultService(databasePath)
+    const caller = { chatId: "project-caller", permissionMode: "full-access" as const }
+    const created = await service.invoke("create_vault_node", caller, {
+      projectId: "project-1",
+      relativePath: "Research/Agent API.md",
+      title: "Agent API",
+      body: "Initial.",
+    })
+    expect(created).toMatchObject({
+      ok: true,
+      data: {
+        node: {
+          stableId: expect.stringMatching(/^custom:/),
+          relativePath: "Research/Agent API.md",
+          version: 1,
+        },
+        generationId: expect.any(String),
+      },
+    })
+    if (!created.ok) throw new Error("Custom node creation failed.")
+    const createdData = created.data as {
+      generationId: string
+      node: { stableId: string; version: number; contentHash: string }
+    }
+
+    await expect(
+      service.invoke("list_vault_nodes", caller, {
+        projectId: "project-1",
+        expectedGenerationId: createdData.generationId,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      data: {
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            nodeId: createdData.node.stableId,
+            relativePath: "Research/Agent API.md",
+          }),
+        ]),
+      },
+    })
+    const read = await service.invoke("read_vault_node", caller, {
+      projectId: "project-1",
+      nodeId: createdData.node.stableId,
+      expectedGenerationId: createdData.generationId,
+    })
+    expect(read).toMatchObject({
+      ok: true,
+      data: { content: expect.stringContaining("Initial."), version: 1 },
+    })
+    if (!read.ok) throw new Error("Custom node read failed.")
+    const readData = read.data as { content: string; version: number; contentHash: string }
+
+    const updated = await service.invoke("update_vault_node", caller, {
+      projectId: "project-1",
+      nodeId: createdData.node.stableId,
+      expectedGenerationId: createdData.generationId,
+      expectedVersion: readData.version,
+      expectedHash: readData.contentHash,
+      content: `${readData.content}\nUpdated.\n`,
+    })
+    expect(updated).toMatchObject({
+      ok: true,
+      data: { node: { version: 2 }, generationId: expect.any(String) },
+    })
+    if (!updated.ok) throw new Error("Custom node update failed.")
+    const updatedData = updated.data as {
+      generationId: string
+      node: { version: number; contentHash: string }
+    }
+
+    const moved = await service.invoke("move_vault_node", caller, {
+      projectId: "project-1",
+      nodeId: createdData.node.stableId,
+      expectedGenerationId: updatedData.generationId,
+      destinationPath: "Archive/Agent API.md",
+      expectedVersion: updatedData.node.version,
+      expectedHash: updatedData.node.contentHash,
+    })
+    expect(moved).toMatchObject({
+      ok: true,
+      data: {
+        node: { stableId: createdData.node.stableId, relativePath: "Archive/Agent API.md" },
+      },
+    })
+
+    const movedData = moved.ok
+      ? (moved.data as { generationId: string; node: { nodeId: string } })
+      : undefined
+    await expect(
+      service.invoke("preview_vault_context", caller, {
+        projectId: "project-1",
+        nodeIds: [createdData.node.stableId],
+        expectedGenerationId: movedData!.generationId,
+        expansion: { depth: 0, direction: "outgoing", maxNodes: 1 },
+        budget: { maxBytes: 2_000, maxEstimatedTokens: 500 },
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      data: {
+        manifest: {
+          selectedNodeIds: [createdData.node.stableId],
+          entries: [{ nodeId: createdData.node.stableId, reason: "selected" }],
+        },
+      },
+    })
   })
 
   it("limits reads to caller scope and never accepts filesystem targets", async () => {

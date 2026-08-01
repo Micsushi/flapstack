@@ -1,3 +1,5 @@
+import type { WorkbenchWindowCreationFailure } from "./workbench-window-budget"
+
 export type WorkspacePaneWindowTarget = {
   workspaceId: string
   paneId: string
@@ -39,8 +41,13 @@ export type WorkspacePaneOpenResult =
       ok: false
       ownerStableId: string
       conflicts: WorkspaceOwnershipConflict[]
-      reason?: "recovering"
+      reason?: undefined
     }
+  | ({
+      ok: false
+      ownerStableId: string
+      conflicts: WorkspaceOwnershipConflict[]
+    } & ({ reason: "recovering" } | WorkbenchWindowCreationFailure))
 
 export type WorkspaceOwnershipInvalidation = {
   revision: number

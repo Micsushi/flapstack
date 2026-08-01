@@ -1,4 +1,6 @@
 import { observable } from "@trpc/server/observable"
+import { app } from "electron"
+import { join } from "node:path"
 import { z } from "zod"
 import { CHAT_MODES } from "../../../../shared/chat-mode"
 import { openAppDatabase } from "../../db/access"
@@ -15,10 +17,22 @@ import {
 import { requireRuntimeLaunchAuthority } from "../../agent-runtime/launch-access"
 import { agentInputLifecycle } from "../../agent-input/service"
 import { getResolvedWorktreeStatus } from "../../worktree-resolver"
+import { bindVisualCaptureImagesToRun } from "../../visual-capture/run-provenance"
 import { publicProcedure, router } from "../index"
 
 const harnessSchema = z.enum(["codex", "claude-code"])
 const effortSchema = z.enum(["minimal", "none", "low", "medium", "high", "xhigh", "max", "ultra"])
+const vaultContextGraphSelectionSchema = z.object({
+  nodeIds: z.array(z.string().trim().min(1).max(200)).max(24),
+  expectedGenerationId: z.string().trim().min(1).max(200),
+  expansion: z
+    .object({
+      depth: z.number().int().min(0).max(2),
+      direction: z.enum(["outgoing", "incoming", "both"]),
+      maxNodes: z.number().int().min(1).max(24),
+    })
+    .optional(),
+})
 
 const resolveInputSchema = z.object({
   chatId: z.string().trim().min(1).max(512),
@@ -34,6 +48,7 @@ const launchInputSchema = resolveInputSchema.extend({
   runId: z.string().trim().min(1).max(512),
   prompt: z.string().min(1).max(2_000_000),
   promptMessageId: z.string().trim().min(1).max(512).optional(),
+  vaultContextGraphSelection: vaultContextGraphSelectionSchema.optional(),
   images: z
     .array(
       z.object({
@@ -124,6 +139,24 @@ export const agentRuntimeChatRouter = router({
           run = materializeInteractiveRuntimeRun(database, input, {
             [preliminary.resolvedRuntime]: probe,
           })
+          try {
+            await bindVisualCaptureImagesToRun({
+              database,
+              artifactRoot: join(app.getPath("userData"), "visual-artifacts"),
+              chatId: input.chatId,
+              runId: input.runId,
+              images: input.images,
+            })
+          } catch (error) {
+            database
+              .prepare(
+                `UPDATE agent_runs
+                    SET status = 'failure', completed_at = unixepoch()
+                  WHERE id = ?`,
+              )
+              .run(input.runId)
+            throw error
+          }
         } finally {
           database.close()
         }

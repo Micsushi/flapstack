@@ -143,6 +143,27 @@ export const mcpControlTools: McpControlTool[] = [
     status: "implemented",
   },
   {
+    name: "list_vault_nodes",
+    description: "List one exact generation of caller-visible project vault graph nodes.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "read_vault_node",
+    description: "Read one exact custom project vault node by stable identity and generation.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "preview_vault_context",
+    description: "Preview bounded exact project vault graph context provenance without content.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
     name: "create_vault_section",
     description: "Create one approved typed project vault section from expected version zero.",
     tier: 2,
@@ -166,6 +187,34 @@ export const mcpControlTools: McpControlTool[] = [
   {
     name: "record_vault_decision",
     description: "Append one bounded decision entry using the decision section's current version.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
+    status: "implemented",
+  },
+  {
+    name: "create_vault_node",
+    description: "Create one bounded custom Markdown node in the caller-visible project vault.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
+    status: "implemented",
+  },
+  {
+    name: "update_vault_node",
+    description: "Update one custom vault node with exact generation, version, and hash CAS.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
+    status: "implemented",
+  },
+  {
+    name: "move_vault_node",
+    description: "Move one custom vault node while preserving its stable identity.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
+    status: "implemented",
+  },
+  {
+    name: "link_vault_nodes",
+    description: "Add one explicit Wikilink between exact caller-visible vault nodes.",
     tier: 2,
     requiredCapabilities: ["projectWrite"],
     status: "implemented",
@@ -238,6 +287,21 @@ export const mcpControlTools: McpControlTool[] = [
     description: "Add a text attachment to a chat.",
     tier: 1,
     requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "request_visual_capture",
+    description:
+      "Request one approval-gated visual capture; the user must still choose the exact visible source and confirm its derivative.",
+    tier: 3,
+    requiredCapabilities: ["productMcpTier3"],
+    status: "implemented",
+  },
+  {
+    name: "read_visual_context",
+    description: "Read one exact visual artifact already selected for the caller's chat or run.",
+    tier: 2,
+    requiredCapabilities: ["productMcpRead"],
     status: "implemented",
   },
   {
@@ -840,7 +904,7 @@ function executeImplementedTool(
 
   if (mcpControlTools.some((tool) => tool.name === name && tool.tier > 0)) {
     return mutations
-      ? mutations.invoke(name, caller, input)
+      ? mutations.invoke(name, caller, input, context)
       : {
           ok: false,
           error: { code: "tool-unavailable", message: "Mutation service is unavailable." },

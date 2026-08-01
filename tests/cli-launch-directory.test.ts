@@ -147,4 +147,77 @@ describe("CLI launch-directory handling", () => {
     expect(window.restore).not.toHaveBeenCalled()
     expect(window.focus).not.toHaveBeenCalled()
   })
+
+  it("returns a typed blocked outcome when renderer loss hides every counted window", () => {
+    const blocked = {
+      ok: false as const,
+      reason: "window-limit" as const,
+      destinations: [
+        {
+          stableId: "main",
+          label: "Main window",
+          kind: "main" as const,
+          state: "recovering" as const,
+          hasProject: false,
+          hasChat: false,
+          actions: ["cancel"] as const,
+        },
+      ],
+    }
+    const notifyBlocked = vi.fn()
+
+    expect(
+      dispatchSecondInstanceLaunch({
+        commandLine: ["Flapstack.exe"],
+        defaultApp: false,
+        additionalData: {},
+        windows: [],
+        createWindow: () => blocked,
+        notifyBlocked,
+      }),
+    ).toEqual({
+      directory: null,
+      activated: false,
+      blocked: true,
+      reason: "window-limit",
+      destinations: blocked.destinations,
+    })
+    expect(notifyBlocked).toHaveBeenCalledWith({
+      reason: "window-limit",
+      destinations: blocked.destinations,
+    })
+  })
+
+  it("does not attach focus destinations to a construction failure", () => {
+    const notifyBlocked = vi.fn()
+
+    expect(
+      dispatchSecondInstanceLaunch({
+        commandLine: ["Flapstack.exe"],
+        defaultApp: false,
+        additionalData: {},
+        windows: [],
+        createWindow: () => ({ ok: false as const, reason: "creation-failed" as const }),
+        notifyBlocked,
+      }),
+    ).toEqual({
+      directory: null,
+      activated: false,
+      blocked: true,
+      reason: "creation-failed",
+    })
+    expect(notifyBlocked).toHaveBeenCalledWith({ reason: "creation-failed" })
+  })
+
+  it("reports successful typed window creation when no live renderer exists", () => {
+    expect(
+      dispatchSecondInstanceLaunch({
+        commandLine: ["Flapstack.exe"],
+        defaultApp: false,
+        additionalData: {},
+        windows: [],
+        createWindow: () => ({ ok: true as const }),
+      }),
+    ).toMatchObject({ directory: null, activated: true, blocked: false })
+  })
 })

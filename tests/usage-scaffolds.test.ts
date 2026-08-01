@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
-import { readFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
 import { getUsageProviders, getUsageProvider } from "../src/main/lib/usage/registry"
 import { USAGE_PROVIDER_IDS } from "../src/main/lib/usage/types"
 import {
@@ -12,7 +13,11 @@ import {
 import { estimateCostUsd, upsertModelPricing } from "../src/main/lib/usage/pricing"
 import { evaluateSample, type AlertArmState } from "../src/main/lib/usage/alerts"
 import { sendDiscordAlert } from "../src/main/lib/usage/discord"
-import { normalizeUsageSettings, resolveCadenceSeconds } from "../src/main/lib/usage/settings"
+import {
+  normalizeUsageSettings,
+  resolveCadenceSeconds,
+  setUsageSettings,
+} from "../src/main/lib/usage/settings"
 import {
   buildLaunchAgentPlist,
   buildSystemdUserUnit,
@@ -38,10 +43,19 @@ function commandError(message: string, status: number): Error & { status: number
   return Object.assign(new Error(message), { status })
 }
 
+let configDirectory = ""
+
+beforeEach(() => {
+  configDirectory = mkdtempSync(join(tmpdir(), "flapstack-usage-scaffolds-"))
+  vi.stubEnv("FLAPSTACK_CONFIG_DIR", configDirectory)
+  vi.stubEnv("FLAPSTACK_DISABLE_LOCAL_USAGE_CREDENTIALS", "1")
+})
+
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
+  rmSync(configDirectory, { recursive: true, force: true })
 })
 
 describe("usage Track B scaffolds", () => {
@@ -68,6 +82,7 @@ describe("usage Track B scaffolds", () => {
   })
 
   it("normalizes OpenAI organization cost buckets", async () => {
+    setValidatedOpenAiBinding("sk-admin-test")
     vi.stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string) =>
@@ -80,7 +95,7 @@ describe("usage Track B scaffolds", () => {
                       {
                         start_time: 1_783_000_000,
                         end_time: 1_783_086_400,
-                        results: [{ amount: { value: 1.25 } }],
+                        results: [{ amount: { value: 1.25, currency: "usd" } }],
                       },
                     ],
                   }
@@ -94,6 +109,7 @@ describe("usage Track B scaffolds", () => {
                     ],
                   },
             ),
+            { headers: { "openai-organization": "org-test" } },
           ),
         ),
       ),
@@ -109,11 +125,12 @@ describe("usage Track B scaffolds", () => {
       15,
     )
     expect(new Set(samples.map((sample) => sample.accountTag))).toEqual(
-      new Set([credentialAccountTag("openai", "sk-admin-test")]),
+      new Set(["openai-org:org-test:project:default"]),
     )
   })
 
   it("keeps valid OpenAI usage when the cost endpoint fails", async () => {
+    setValidatedOpenAiBinding("key-a")
     vi.stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string) =>
@@ -130,6 +147,7 @@ describe("usage Track B scaffolds", () => {
                     },
                   ],
                 }),
+                { headers: { "openai-organization": "org-test" } },
               ),
         ),
       ),
@@ -157,7 +175,7 @@ describe("usage Track B scaffolds", () => {
   })
 
   it("uses Anthropic x-api-key auth, pagination, cents, and token usage", async () => {
-    vi.stubEnv("FLAPSTACK_DISABLE_LOCAL_USAGE_CREDENTIALS", "1")
+    setValidatedAnthropicBinding("sk-ant-admin-test")
     const fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       const parsed = new URL(url)
       const secondPage = parsed.searchParams.get("page") === "next"
@@ -170,7 +188,14 @@ describe("usage Track B scaffolds", () => {
                   {
                     starting_at: "2026-07-10T00:00:00Z",
                     ending_at: "2026-07-11T00:00:00Z",
-                    results: [{ amount: "123.45", cost_usd: "999" }],
+                    results: [
+                      {
+                        amount: "123.45",
+                        currency: "USD",
+                        workspace_id: "workspace-test",
+                        cost_usd: "999",
+                      },
+                    ],
                   },
                 ],
             has_more: !secondPage,
@@ -189,6 +214,7 @@ describe("usage Track B scaffolds", () => {
                         cache_read_input_tokens: 5,
                         cache_creation: { ephemeral_1h_input_tokens: 2 },
                         output_tokens: 3,
+                        workspace_id: "workspace-test",
                       },
                     ],
                   },
@@ -1085,3 +1111,47 @@ describe("usage Track B scaffolds", () => {
     ])
   })
 })
+
+function setValidatedOpenAiBinding(secret: string): void {
+  setUsageSettings({
+    organization: {
+      openai: {
+        organizationId: "org-test",
+        projectIds: [],
+        validatedBinding: {
+          organizationId: "org-test",
+          credentialTag: credentialAccountTag("openai", secret),
+          validatedAt: "2026-07-10T11:59:00.000Z",
+          coverage: { selection: "all-projects", projectIds: [] },
+        },
+      },
+      anthropic: {
+        organizationId: null,
+        workspaceIds: [],
+        validatedBinding: null,
+      },
+    },
+  })
+}
+
+function setValidatedAnthropicBinding(secret: string): void {
+  setUsageSettings({
+    organization: {
+      openai: {
+        organizationId: null,
+        projectIds: [],
+        validatedBinding: null,
+      },
+      anthropic: {
+        organizationId: "org-test",
+        workspaceIds: [],
+        validatedBinding: {
+          organizationId: "org-test",
+          credentialTag: credentialAccountTag("anthropic", secret),
+          validatedAt: "2026-07-10T11:59:00.000Z",
+          coverage: { selection: "all-workspaces", workspaceIds: [] },
+        },
+      },
+    },
+  })
+}

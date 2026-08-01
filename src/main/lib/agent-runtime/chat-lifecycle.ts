@@ -4,10 +4,27 @@ import {
   runtimeAdapterForPreference,
   type AgentRuntimePreference,
 } from "../../../shared/agent-runtime"
-import { formatChatHandoff, type HandoffMessage } from "../chat-handoff"
+import type { RunPermissionMode } from "../../../shared/harness-types"
+import {
+  parseCustomPermissionCapabilities,
+  type CustomPermissionCapabilities,
+} from "../../../shared/permission-capabilities"
+import {
+  executionTargetSchema,
+  type DelegationAuthorityCeiling,
+  type ExecutionTarget,
+  type RuntimeCompositionPreview,
+} from "../../../shared/runtime-composition"
+import type { HandoffMessage } from "../chat-handoff"
 import { millisecondsToEpochSeconds } from "../db/timestamps"
 import { isProductMcpEnabledByDefault } from "../mcp-control/exposure"
 import { checkRuntimeCompatibility, productRuntimeForHarness } from "./compatibility"
+import {
+  buildVisibleContextManifest,
+  canonicalJson,
+  createRuntimeCompositionPreview,
+  sha256,
+} from "./context-manifest"
 
 type Sqlite = Database.Database
 type DatabaseLike = Sqlite | object
@@ -23,6 +40,7 @@ export class RuntimeChatLifecycleError extends Error {
       | "chat-empty"
       | "runtime-incompatible"
       | "continuation-conflict"
+      | "preview-mismatch"
       | "history-too-large",
     message: string,
   ) {
@@ -41,9 +59,35 @@ export type RuntimeContinuationResult = {
     kind: "runtime-continuation"
     sourceChatId: string
     targetChatId: string
+    targetHarness: string
+    targetModel: string | null
     runtimePreference: AgentRuntimePreference
     visibleMessageCount: number
+    contextManifestDigest: string
+    previewDigest: string
   }
+}
+
+export type RuntimeContinuationInput = {
+  sourceChatId: string
+  targetHarness?: string
+  targetModel?: string
+  preference: AgentRuntimePreference
+  requestId: string
+  name?: string | null
+  selectedMessageIds?: string[]
+  selectedFileRefs?: string[]
+  selectedArtifactRefs?: string[]
+  confirmedPreviewDigest?: string
+  mode?: "continue" | "delegate"
+  objective?: string
+  requiredCapabilities?: string[]
+  outputSchema?: Record<string, unknown> | null
+}
+
+export type RuntimeContinuationPreview = RuntimeCompositionPreview & {
+  contextText: string
+  visibleMessageCount: number
 }
 
 export class RuntimeChatLifecycleService {
@@ -76,12 +120,56 @@ export class RuntimeChatLifecycleService {
       .immediate()
   }
 
-  continueWithRuntime(input: {
-    sourceChatId: string
-    preference: AgentRuntimePreference
-    requestId: string
-    name?: string | null
-  }): RuntimeContinuationResult {
+  previewContinuation(input: RuntimeContinuationInput): RuntimeContinuationPreview {
+    const source = this.requireChat(input.sourceChatId)
+    this.assertNoActiveRun(input.sourceChatId)
+    if (!this.hasProviderIntent(input.sourceChatId)) {
+      throw new RuntimeChatLifecycleError(
+        "chat-empty",
+        "This chat has no provider turn. Change its Runtime in place instead.",
+      )
+    }
+    const sourceHarness = String(source.harness ?? "generic")
+    const targetHarness = input.targetHarness?.trim() || sourceHarness
+    assertCompatible(targetHarness, input.preference)
+    const targetModel =
+      input.targetModel?.trim() ||
+      (targetHarness === sourceHarness ? stringOrNull(source.model) : null)
+    const conversations = this.sourceConversations(input.sourceChatId)
+    const exported = buildVisibleContextManifest({
+      sourceChatId: input.sourceChatId,
+      sourceRunId: latestRunId(this.sqlite, input.sourceChatId),
+      conversations,
+      selection: {
+        messageIds: input.selectedMessageIds,
+        fileRefs: input.selectedFileRefs,
+        artifactRefs: input.selectedArtifactRefs,
+      },
+    })
+    const targetSnapshot = executionTarget(this.sqlite, source, {
+      targetHarness,
+      targetModel,
+      preference: input.preference,
+    })
+    const preview = createRuntimeCompositionPreview({
+      mode: input.mode,
+      objective: input.objective,
+      requiredCapabilities: input.requiredCapabilities,
+      outputSchema: input.outputSchema,
+      targetSnapshot,
+      visibleContextManifest: exported.manifest,
+      authorityCeiling: authorityCeiling(this.sqlite, source, targetSnapshot),
+      worktreeLease: worktreeLease(source),
+      availability: worktreeAvailability(this.sqlite, source),
+    })
+    return {
+      ...preview,
+      contextText: exported.contextText,
+      visibleMessageCount: exported.manifest.selected.length,
+    }
+  }
+
+  continueWithRuntime(input: RuntimeContinuationInput): RuntimeContinuationResult {
     return this.sqlite
       .transaction(() => {
         const source = this.requireChat(input.sourceChatId)
@@ -92,12 +180,54 @@ export class RuntimeChatLifecycleService {
             "This chat has no provider turn. Change its Runtime in place instead.",
           )
         }
-        const harness = String(source.harness ?? "generic")
-        assertCompatible(harness, input.preference)
+        const sourceHarness = String(source.harness ?? "generic")
+        const targetHarness = input.targetHarness?.trim() || sourceHarness
+        assertCompatible(targetHarness, input.preference)
+        const targetModel =
+          input.targetModel?.trim() ||
+          (targetHarness === sourceHarness ? stringOrNull(source.model) : null)
+        const preview = this.previewContinuation({
+          ...input,
+          targetHarness,
+          ...(targetModel ? { targetModel } : {}),
+        })
+        const crossesProviderBoundary = sourceHarness !== targetHarness
+        if (
+          crossesProviderBoundary &&
+          (!input.confirmedPreviewDigest || input.confirmedPreviewDigest !== preview.digest)
+        ) {
+          throw new RuntimeChatLifecycleError(
+            "preview-mismatch",
+            "Cross-provider continuation requires confirmation of the exact current preview.",
+          )
+        }
+        if (input.confirmedPreviewDigest && input.confirmedPreviewDigest !== preview.digest) {
+          throw new RuntimeChatLifecycleError(
+            "preview-mismatch",
+            "Runtime continuation preview changed. Review the exact target and context again.",
+          )
+        }
+        if (preview.availability.state !== "available") {
+          throw new RuntimeChatLifecycleError(
+            "preview-mismatch",
+            preview.availability.reason ?? "Runtime continuation target is unavailable.",
+          )
+        }
         const ids = continuationIds(input.sourceChatId, input.requestId)
         const existing = this.sqlite.prepare("SELECT * FROM chats WHERE id = ?").get(ids.chatId) as
           Row | undefined
-        if (existing) return this.existingContinuation(existing, ids.subChatId, input)
+        if (existing) {
+          return this.existingContinuation(
+            existing,
+            ids.subChatId,
+            {
+              ...input,
+              targetHarness,
+              targetModel: targetModel ?? undefined,
+            },
+            preview,
+          )
+        }
 
         const sourceConversations = this.sqlite
           .prepare("SELECT * FROM sub_chats WHERE chat_id = ? ORDER BY created_at, id")
@@ -106,24 +236,7 @@ export class RuntimeChatLifecycleService {
         if (!sourceConversation) {
           throw new RuntimeChatLifecycleError("chat-empty", "Source conversation is missing.")
         }
-        const conversations = sourceConversations.map((conversation) => ({
-          subChatId: String(conversation.id),
-          subChatName: stringOrNull(conversation.name),
-          messages: parseMessages(conversation.messages),
-        }))
-        const visibleMessageCount = conversations.reduce(
-          (count, conversation) => count + conversation.messages.length,
-          0,
-        )
-        const visibleHistory = formatChatHandoff({
-          chat: {
-            id: input.sourceChatId,
-            name: stringOrNull(source.name),
-            branch: stringOrNull(source.branch),
-          },
-          conversations,
-        })
-        if (Buffer.byteLength(visibleHistory) > 1_000_000) {
+        if (Buffer.byteLength(preview.contextText) > 1_000_000) {
           throw new RuntimeChatLifecycleError(
             "history-too-large",
             "Visible history exceeds the one-megabyte continuation limit.",
@@ -157,9 +270,9 @@ export class RuntimeChatLifecycleService {
             source.scope,
             source.permission_mode,
             source.custom_permissions ?? null,
-            isProductMcpEnabledByDefault(source.harness) ? 1 : 0,
-            source.harness ?? null,
-            source.model ?? null,
+            isProductMcpEnabledByDefault(targetHarness) ? 1 : 0,
+            targetHarness,
+            targetModel,
             input.preference,
             input.sourceChatId,
             source.initiator_chat_id ?? input.sourceChatId,
@@ -177,13 +290,17 @@ export class RuntimeChatLifecycleService {
           parts: [
             {
               type: "text",
-              text: `Imported visible history context from ${input.sourceChatId}. Hidden provider state was not transferred.\n\n${visibleHistory}`,
+              text: preview.contextText,
             },
           ],
           metadata: {
             kind: "runtime-continuation-context",
             sourceChatId: input.sourceChatId,
+            targetHarness,
             runtimePreference: input.preference,
+            executionTarget: preview.targetSnapshot,
+            visibleContextManifest: preview.visibleContextManifest,
+            previewDigest: preview.digest,
           },
         }
         this.sqlite
@@ -198,15 +315,21 @@ export class RuntimeChatLifecycleService {
             ids.chatId,
             name,
             sourceConversation.mode ?? "write",
-            sourceConversation.harness ?? source.harness ?? null,
-            sourceConversation.model ?? source.model ?? null,
+            targetHarness,
+            targetModel,
             sourceConversation.permission_mode ?? source.permission_mode,
             sourceConversation.worktree_path ?? source.worktree_path ?? null,
             JSON.stringify([contextMessage]),
             now,
             now,
           )
-        return result(ids.chatId, ids.subChatId, input, visibleMessageCount, true)
+        return result(
+          ids.chatId,
+          ids.subChatId,
+          { ...input, targetHarness, targetModel: targetModel ?? undefined },
+          preview,
+          true,
+        )
       })
       .immediate()
   }
@@ -281,10 +404,20 @@ export class RuntimeChatLifecycleService {
   private existingContinuation(
     existing: Row,
     subChatId: string,
-    input: { sourceChatId: string; preference: AgentRuntimePreference },
+    input: {
+      sourceChatId: string
+      targetHarness?: string
+      targetModel?: string
+      preference: AgentRuntimePreference
+    },
+    preview: RuntimeContinuationPreview,
   ): RuntimeContinuationResult {
     if (
       existing.parent_chat_id !== input.sourceChatId ||
+      String(existing.harness ?? "generic") !==
+        (input.targetHarness?.trim() || String(existing.harness ?? "generic")) ||
+      stringOrNull(existing.model) !==
+        (input.targetModel?.trim() || stringOrNull(existing.model)) ||
       existing.runtime_preference !== input.preference ||
       existing.archived_at !== null
     ) {
@@ -302,13 +435,37 @@ export class RuntimeChatLifecycleService {
         "Continuation transaction is incomplete.",
       )
     }
+    const contextMetadata = continuationContextMetadata(messages.messages)
+    if (!contextMetadata || contextMetadata.previewDigest !== preview.digest) {
+      throw new RuntimeChatLifecycleError(
+        "continuation-conflict",
+        "Continuation request identity is already bound to a different target or context manifest.",
+      )
+    }
     return result(
       String(existing.id),
       subChatId,
-      input,
-      visibleMessageCountForChat(this.sqlite, input.sourceChatId),
+      {
+        ...input,
+        targetHarness: input.targetHarness?.trim() || String(existing.harness ?? "generic"),
+      },
+      preview,
       false,
     )
+  }
+
+  private sourceConversations(chatId: string) {
+    const rows = this.sqlite
+      .prepare("SELECT * FROM sub_chats WHERE chat_id = ? ORDER BY created_at, id")
+      .all(chatId) as Row[]
+    if (rows.length === 0) {
+      throw new RuntimeChatLifecycleError("chat-empty", "Source conversation is missing.")
+    }
+    return rows.map((conversation) => ({
+      subChatId: String(conversation.id),
+      subChatName: stringOrNull(conversation.name),
+      messages: parseMessages(conversation.messages),
+    }))
   }
 }
 
@@ -344,13 +501,6 @@ function latestRunId(sqlite: Sqlite, chatId: string): string | null {
   return row?.id ?? null
 }
 
-function visibleMessageCountForChat(sqlite: Sqlite, chatId: string): number {
-  const rows = sqlite
-    .prepare("SELECT messages FROM sub_chats WHERE chat_id = ?")
-    .all(chatId) as Row[]
-  return rows.reduce((count, row) => count + parseMessages(row.messages).length, 0)
-}
-
 function parseMessages(value: unknown): HandoffMessage[] {
   if (typeof value !== "string") return []
   try {
@@ -380,8 +530,13 @@ function parseIds(value: unknown): string[] {
 function result(
   chatId: string,
   subChatId: string,
-  input: { sourceChatId: string; preference: AgentRuntimePreference },
-  visibleMessageCount: number,
+  input: {
+    sourceChatId: string
+    targetHarness?: string
+    targetModel?: string
+    preference: AgentRuntimePreference
+  },
+  preview: RuntimeContinuationPreview,
   created: boolean,
 ): RuntimeContinuationResult {
   return {
@@ -394,9 +549,214 @@ function result(
       kind: "runtime-continuation",
       sourceChatId: input.sourceChatId,
       targetChatId: chatId,
+      targetHarness: input.targetHarness?.trim() || "generic",
+      targetModel: input.targetModel?.trim() || null,
       runtimePreference: input.preference,
-      visibleMessageCount,
+      visibleMessageCount: preview.visibleMessageCount,
+      contextManifestDigest: preview.visibleContextManifest.digest,
+      previewDigest: preview.digest,
     },
+  }
+}
+
+function continuationContextMetadata(value: unknown): { previewDigest: string } | null {
+  const messages = parseMessages(value)
+  for (const message of messages) {
+    if (message.metadata?.kind !== "runtime-continuation-context") continue
+    const previewDigest = message.metadata.previewDigest
+    return typeof previewDigest === "string" ? { previewDigest } : null
+  }
+  return null
+}
+
+function executionTarget(
+  sqlite: Sqlite,
+  source: Row,
+  input: {
+    targetHarness: string
+    targetModel: string | null
+    preference: AgentRuntimePreference
+  },
+): ExecutionTarget {
+  const runtime =
+    runtimeAdapterForPreference(input.preference) ?? productRuntimeForHarness(input.targetHarness)
+  const runtimeMode =
+    runtime === "flapstack-native"
+      ? "flapstack-native"
+      : input.preference.endsWith("-enhanced")
+        ? "enhanced"
+        : "native"
+  const profile =
+    input.targetHarness === String(source.harness)
+      ? readAgentProfileBinding(sqlite, String(source.id))
+      : null
+  const capabilities = {
+    schemaVersion: 1 as const,
+    capabilities: {
+      continuation: "available" as const,
+      delegation: "available" as const,
+      structuredOutput: "available" as const,
+      cancellation: "available" as const,
+    },
+  }
+  const permissionMode = String(source.permission_mode) as RunPermissionMode
+  const customPermissions =
+    permissionMode === "custom" ? parseStoredCustomPermissions(source.custom_permissions) : null
+  return executionTargetSchema.parse({
+    schemaVersion: 1,
+    harness: input.targetHarness,
+    runtime,
+    runtimeMode,
+    adapterChain: [],
+    provider: providerForHarness(input.targetHarness),
+    model: input.targetModel,
+    accountId: null,
+    agentProfile: profile,
+    permission: {
+      mode: permissionMode,
+      customPermissions,
+    },
+    workspace: {
+      projectId: stringOrNull(source.project_id),
+      rootPath: projectPath(sqlite, source.project_id),
+      worktreePath: stringOrNull(source.worktree_path),
+      branch: stringOrNull(source.branch),
+    },
+    capabilities: {
+      ...capabilities,
+      fingerprint: sha256(canonicalJson(capabilities)),
+    },
+    losses: [],
+  })
+}
+
+function authorityCeiling(
+  sqlite: Sqlite,
+  source: Row,
+  target: ExecutionTarget,
+): DelegationAuthorityCeiling {
+  const permissionMode = String(source.permission_mode) as RunPermissionMode
+  const customPermissions =
+    permissionMode === "custom" ? parseStoredCustomPermissions(source.custom_permissions) : null
+  const allowedToolTiers: DelegationAuthorityCeiling["allowedToolTiers"] =
+    permissionMode === "read-only"
+      ? ["read"]
+      : permissionMode === "auto-edit-project-only"
+        ? ["read", "project-write"]
+        : permissionMode === "custom"
+          ? [
+              "read" as const,
+              ...(customPermissions?.projectWrite ? (["project-write"] as const) : []),
+              ...(customPermissions?.shell ? (["shell"] as const) : []),
+              ...(customPermissions?.git ? (["git"] as const) : []),
+              ...(customPermissions?.network ? (["network"] as const) : []),
+            ]
+          : ["read", "project-write", "shell", "git", "network"]
+  return {
+    schemaVersion: 1,
+    permissionMode,
+    customPermissions,
+    allowedToolTiers,
+    network:
+      permissionMode === "full-access" ||
+      permissionMode === "ask-before-edits" ||
+      Boolean(customPermissions?.network),
+    maxDescendantDepth: 0,
+    tokenBudget: null,
+    costBudgetMicros: null,
+    providerAccountId: target.accountId,
+    allowedProfileSnapshotIds: target.agentProfile ? [target.agentProfile.snapshotId] : [],
+    workspaceRoot: projectPath(sqlite, source.project_id),
+    worktreePath: stringOrNull(source.worktree_path),
+    worktreeLeaseId: worktreeLease(source).leaseId,
+  }
+}
+
+function worktreeLease(source: Row) {
+  const path = stringOrNull(source.worktree_path)
+  const branch = stringOrNull(source.branch)
+  const leaseBase = {
+    sourceChatId: String(source.id),
+    path,
+    branch,
+  }
+  return {
+    leaseId: path ? `runtime-lease-${sha256(canonicalJson(leaseBase)).slice(0, 32)}` : null,
+    path,
+    branch,
+    fingerprint: sha256(canonicalJson({ path, branch })),
+  }
+}
+
+function worktreeAvailability(
+  sqlite: Sqlite,
+  source: Row,
+): {
+  state: "available" | "blocked" | "repair-required"
+  reason: string | null
+  repair: string | null
+} {
+  const path = stringOrNull(source.worktree_path)
+  if (!path) return { state: "available", reason: null, repair: null }
+  const conflict = sqlite
+    .prepare(
+      `SELECT r.id FROM agent_runs r
+       JOIN chats c ON c.id = r.chat_id
+      WHERE c.worktree_path = ? AND r.chat_id <> ?
+         AND r.status IN ('pending', 'running') AND c.archived_at IS NULL
+       LIMIT 1`,
+    )
+    .get(path, source.id)
+  return conflict
+    ? {
+        state: "blocked",
+        reason: "Another active Runtime run already holds this exact worktree.",
+        repair: "Wait for the active run to finish or choose an isolated worktree.",
+      }
+    : { state: "available", reason: null, repair: null }
+}
+
+function readAgentProfileBinding(sqlite: Sqlite, chatId: string) {
+  if (!tableExists(sqlite, "agent_profile_chat_bindings")) return null
+  const row = sqlite
+    .prepare(
+      "SELECT profile_id, profile_version, snapshot_id FROM agent_profile_chat_bindings WHERE chat_id = ?",
+    )
+    .get(chatId) as Row | undefined
+  return row
+    ? {
+        id: String(row.profile_id),
+        version: Number(row.profile_version),
+        snapshotId: String(row.snapshot_id),
+      }
+    : null
+}
+
+function projectPath(sqlite: Sqlite, projectId: unknown): string | null {
+  if (typeof projectId !== "string" || !tableExists(sqlite, "projects")) return null
+  const row = sqlite.prepare("SELECT path FROM projects WHERE id = ?").get(projectId) as
+    { path: string } | undefined
+  return row?.path ?? null
+}
+
+function tableExists(sqlite: Sqlite, name: string): boolean {
+  return Boolean(
+    sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name),
+  )
+}
+
+function providerForHarness(harness: string): string {
+  if (harness === "codex") return "openai"
+  if (harness === "claude-code") return "anthropic"
+  return harness
+}
+
+function parseStoredCustomPermissions(value: unknown): CustomPermissionCapabilities | null {
+  if (typeof value !== "string") return null
+  try {
+    return parseCustomPermissionCapabilities(JSON.parse(value) as unknown)
+  } catch {
+    return null
   }
 }
 

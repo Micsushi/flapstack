@@ -34,7 +34,11 @@ import {
 } from "../../../components/ui/icons"
 import { Button } from "../../../components/ui/button"
 import { cn } from "../../../lib/utils"
-import { useAgentSubChatStore, type SubChatMeta } from "../stores/sub-chat-store"
+import {
+  useAgentSubChatStore,
+  useAgentSubChatStoreApi,
+  type SubChatMeta,
+} from "../stores/sub-chat-store"
 import { useShallow } from "zustand/react/shallow"
 import { PopoverTrigger } from "../../../components/ui/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip"
@@ -204,6 +208,7 @@ export function SubChatSelector({
   isTerminalOpen = false,
   chatId,
 }: SubChatSelectorProps) {
+  const subChatStore = useAgentSubChatStoreApi()
   // Use shallow comparison to prevent re-renders when arrays have same content
   const {
     activeSubChatId,
@@ -340,7 +345,7 @@ export function SubChatSelector({
 
   const onSwitch = useCallback(
     (subChatId: string) => {
-      const store = useAgentSubChatStore.getState()
+      const store = subChatStore.getState()
       store.setActiveSubChat(subChatId)
 
       // Clear unseen indicator for this sub-chat
@@ -357,7 +362,7 @@ export function SubChatSelector({
   )
 
   const onSwitchFromHistory = useCallback((subChatId: string) => {
-    const state = useAgentSubChatStore.getState()
+    const state = subChatStore.getState()
     const isAlreadyOpen = state.openSubChatIds.includes(subChatId)
 
     if (!isAlreadyOpen) {
@@ -367,11 +372,11 @@ export function SubChatSelector({
   }, [])
 
   const onCloseTab = useCallback((subChatId: string) => {
-    useAgentSubChatStore.getState().removeFromOpenSubChats(subChatId)
+    subChatStore.getState().removeFromOpenSubChats(subChatId)
   }, [])
 
   const onCloseOtherTabs = useCallback((subChatId: string) => {
-    const state = useAgentSubChatStore.getState()
+    const state = subChatStore.getState()
     const idsToClose = state.openSubChatIds.filter((id) => id !== subChatId)
     idsToClose.forEach((id) => state.removeFromOpenSubChats(id))
     state.setActiveSubChat(subChatId)
@@ -379,7 +384,7 @@ export function SubChatSelector({
 
   const onCloseTabsToRight = useCallback(
     (subChatId: string, visualIndex: number) => {
-      const state = useAgentSubChatStore.getState()
+      const state = subChatStore.getState()
 
       // Use visual order from sorted openSubChats, not storage order
       const idsToClose = openSubChats.slice(visualIndex + 1).map((sc) => sc.id)
@@ -395,7 +400,7 @@ export function SubChatSelector({
   const renameMutation = api.agents.renameSubChat.useMutation({
     onSuccess: (_, variables) => {
       // Update local store
-      useAgentSubChatStore.getState().updateSubChatName(variables.subChatId, variables.name)
+      subChatStore.getState().updateSubChatName(variables.subChatId, variables.name)
     },
     onError: (error) => {
       // Show helpful error message (like Canvas)
@@ -434,7 +439,7 @@ export function SubChatSelector({
       const oldName = subChat.name
 
       // Optimistic update
-      useAgentSubChatStore.getState().updateSubChatName(subChat.id, trimmedName)
+      subChatStore.getState().updateSubChatName(subChat.id, trimmedName)
 
       setEditLoading(true)
       setEditingSubChatId(null)
@@ -447,7 +452,7 @@ export function SubChatSelector({
         })
       } catch {
         // Revert on error (like Canvas)
-        useAgentSubChatStore.getState().updateSubChatName(subChat.id, oldName || "New Chat")
+        subChatStore.getState().updateSubChatName(subChat.id, oldName || "New Chat")
       } finally {
         setEditLoading(false)
       }

@@ -102,6 +102,13 @@ export interface ProviderStatus {
   supportsHistorical: boolean
 }
 
+export interface UsageSourceFailure {
+  source: "admin" | "personal"
+  accountTag: string
+  status: Extract<ProviderStatusKind, "auth-failed" | "rate-limited" | "source-unavailable">
+  detail: string
+}
+
 /** Context passed to provider methods. Providers read credentials/settings via
  * the resolver rather than reaching into Electron directly, so the daemon works. */
 export interface UsageProviderContext {
@@ -122,6 +129,9 @@ export interface UsageProviderContext {
   ): Promise<void>
   /** Structured logger; must never receive raw secrets. */
   log: (level: "info" | "warn" | "error", message: string, meta?: Record<string, unknown>) => void
+  /** Reports one optional source failure without discarding successful samples
+   * from another source under the same provider. */
+  reportSourceFailure?: (failure: UsageSourceFailure) => void
 }
 
 /**

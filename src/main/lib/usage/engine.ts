@@ -30,6 +30,7 @@ import {
   type UsageProvider,
   type UsageProviderContext,
   type UsageProviderId,
+  type UsageSourceFailure,
 } from "./types"
 import { evaluateUsageBudgetAlerts } from "./budgets"
 
@@ -67,7 +68,10 @@ export class UsageEngine {
     return this.mode === "daemon" ? "daemon-poll" : "app-poll"
   }
 
-  private makeContext(source: SampleSource): UsageProviderContext {
+  private makeContext(
+    source: SampleSource,
+    reportSourceFailure?: (failure: UsageSourceFailure) => void,
+  ): UsageProviderContext {
     return {
       now: new Date(),
       source,
@@ -77,6 +81,7 @@ export class UsageEngine {
       markGenerationReconciliation: (providerId, generationId, state, detail) =>
         markGenerationReconciliation(this.deps.db, providerId, generationId, state, detail),
       log: this.deps.log ?? noopLog,
+      reportSourceFailure,
     }
   }
 
@@ -114,7 +119,13 @@ export class UsageEngine {
     settings: UsageSettings,
   ): Promise<ProviderRunResult> {
     const source = this.sourceFor(intent)
-    const ctx = this.makeContext(source)
+    const sourceFailures: UsageSourceFailure[] = []
+    const ctx = this.makeContext(source, (failure) => {
+      sourceFailures.push({
+        ...failure,
+        detail: redactUsageDiagnostic(failure.detail),
+      })
+    })
     let knownStatus: Awaited<ReturnType<UsageProvider["getStatus"]>> | null = null
     try {
       const providerStatus = await provider.getStatus(ctx)
@@ -155,6 +166,16 @@ export class UsageEngine {
           samples,
         })
       }
+      if (sourceFailures.length > 0) {
+        await this.recordSourceFailures(provider, sourceFailures)
+        const failure = sourceFailures[0]!
+        return {
+          providerId: provider.id,
+          status: failure.status,
+          inserted,
+          error: failure.detail,
+        }
+      }
       // A source that was previously unverified is healthy after a successful
       // poll, even when it legitimately returns no new samples.
       await upsertProviderState(
@@ -189,6 +210,9 @@ export class UsageEngine {
         },
         { kind: "error", message },
       ).catch(() => {})
+      if (sourceFailures.length > 0) {
+        await this.recordSourceFailures(provider, sourceFailures).catch(() => {})
+      }
       this.deps.log?.("warn", `usage provider ${provider.id} failed`, {
         scaffold: isScaffold,
         message,
@@ -199,6 +223,27 @@ export class UsageEngine {
         inserted: 0,
         error: message,
       }
+    }
+  }
+
+  private async recordSourceFailures(
+    provider: UsageProvider,
+    failures: UsageSourceFailure[],
+  ): Promise<void> {
+    for (const failure of failures) {
+      await upsertProviderState(
+        this.deps.db,
+        {
+          providerId: provider.id,
+          accountTag: failure.accountTag,
+          status: failure.status,
+          detail: failure.detail,
+          configured: false,
+          supportsDaemon: provider.supportsDaemon(),
+          supportsHistorical: provider.supportsHistorical(),
+        },
+        { kind: "error", message: failure.detail },
+      )
     }
   }
 }

@@ -4,7 +4,13 @@ import {
   normalizeSettingsSearchText,
   searchSettings,
 } from "../src/renderer/features/settings/settings-search"
-import { SETTINGS_CONTROL_REGISTRY } from "../src/renderer/features/settings/settings-visibility"
+import {
+  SETTINGS_CONTROL_REGISTRY,
+  SETTINGS_PROVIDER_ORDER,
+  compareSettingsProviders,
+  getVisibleSettingsTabs,
+} from "../src/renderer/features/settings/settings-visibility"
+import { FEATURE_VISIBILITY_REGISTRY } from "../src/shared/feature-visibility"
 
 describe("Settings search", () => {
   it("matches from the first typed character", () => {
@@ -118,5 +124,35 @@ describe("Settings search", () => {
       providerScope: ["claude", "opencode"],
       targetId: "provider-extensions",
     })
+  })
+
+  it("sorts top-level categories by displayed English label", () => {
+    for (const section of ["main", "advanced"] as const) {
+      const labels = getVisibleSettingsTabs(section, { showDevelopment: true }).map(
+        (entry) => entry.label,
+      )
+      expect(labels).toEqual(
+        [...labels].sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base" })),
+      )
+    }
+  })
+
+  it("keeps provider subgroups in one documented deterministic order", () => {
+    expect([...SETTINGS_PROVIDER_ORDER].sort(compareSettingsProviders)).toEqual(
+      SETTINGS_PROVIDER_ORDER,
+    )
+    expect(compareSettingsProviders("openrouter", "nanogpt")).toBeLessThan(0)
+  })
+
+  it("deep-links every optional feature to its exact visibility control", () => {
+    for (const feature of FEATURE_VISIBILITY_REGISTRY) {
+      const result = searchSettings(feature.label, { showDevelopment: false }).find(
+        (entry) => entry.id === `feature-visibility-${feature.id}`,
+      )
+      expect(result).toMatchObject({
+        tab: "feature-visibility",
+        targetId: `feature-visibility-${feature.id}`,
+      })
+    }
   })
 })

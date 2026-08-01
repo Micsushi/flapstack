@@ -1,14 +1,90 @@
 import { EventEmitter } from "node:events"
+import { randomUUID } from "node:crypto"
+import { win32 as windowsPath } from "node:path"
 import { FALLBACK_SHELL, SHELL_CRASH_THRESHOLD_MS } from "./env"
 import { portManager } from "./port-manager"
-import { createSession, setupInitialCommands } from "./session"
-import type { CreateSessionParams, SessionResult, TerminalSession } from "./types"
+import {
+  captureTerminalPtyOwnedProcesses,
+  createSession,
+  initiateWindowsPtyConoutWorkerRelease,
+  releaseWindowsPtyConoutWorker,
+  setupInitialCommands,
+  terminateUnreadyWindowsPty,
+  waitForWindowsPtyReady,
+  waitForTerminalProcessesToExit,
+} from "./session"
+import type {
+  CreateSessionParams,
+  InternalCreateSessionParams,
+  SessionResult,
+  TerminalSession,
+} from "./types"
+import {
+  terminateMatchingWindowsProcesses,
+  type WindowsProcessIdentity,
+} from "./windows-process-identity"
 
 export class TerminalManager extends EventEmitter {
   private sessions = new Map<string, TerminalSession>()
   private pendingSessions = new Map<string, Promise<SessionResult>>()
+  private inFlightCreations = new Set<Promise<SessionResult>>()
+  private cleanupOwnedProcessIds = new Set<number>()
+  private cleanupWindowsProcessIdentities = new Map<number, WindowsProcessIdentity>()
+  private cleanupOwnershipIssues: string[] = []
+  private shuttingDown = false
+  private cleanupPromise: Promise<TerminalCleanupResult> | undefined
+
+  constructor(
+    private readonly cleanupOptions?: {
+      waitForOwnedProcesses?: (processIds: readonly number[]) => Promise<number[]>
+      terminateMatchingOwnedProcesses?: (
+        identities: readonly WindowsProcessIdentity[],
+      ) => Promise<number[]>
+    },
+  ) {
+    super()
+  }
 
   async createOrAttach(params: CreateSessionParams): Promise<SessionResult> {
+    return this.createOrAttachInternal(params)
+  }
+
+  /** Use the product PTY path with the stable fallback shell for bounded test controls. */
+  async createPerformanceTestControl(params: CreateSessionParams): Promise<SessionResult> {
+    const result = await this.createOrAttachInternal({
+      ...params,
+      useFallbackShell: true,
+      performanceOwnershipToken: randomUUID(),
+    })
+    const session = this.sessions.get(params.paneId)
+    if (session && !(await waitForWindowsPtyReady(session.pty))) {
+      this.captureCleanupProcessOwnership(session)
+      const ownedProcessIds = [...this.cleanupOwnedProcessIds]
+      const terminated = await terminateUnreadyWindowsPty(session.pty)
+      session.isAlive = false
+      const waitForOwnedProcesses =
+        this.cleanupOptions?.waitForOwnedProcesses ?? waitForTerminalProcessesToExit
+      const survivingProcessIds = await waitForOwnedProcesses(ownedProcessIds)
+      if (!terminated || survivingProcessIds.length > 0) {
+        throw new Error(
+          `Performance terminal ${params.paneId} readiness teardown failed for owned processes: ${
+            survivingProcessIds.join(", ") || "guard unavailable"
+          }.`,
+        )
+      }
+      throw new Error(
+        `Performance terminal ${params.paneId} did not become ready for owned teardown.`,
+      )
+    }
+    return result
+  }
+
+  private async createOrAttachInternal(
+    params: InternalCreateSessionParams,
+  ): Promise<SessionResult> {
+    if (this.shuttingDown) {
+      throw new Error("Terminal manager is shutting down.")
+    }
     const { paneId, cols, rows } = params
 
     // Deduplicate concurrent calls (prevents race in React Strict Mode)
@@ -41,15 +117,32 @@ export class TerminalManager extends EventEmitter {
     }
   }
 
-  private async doCreateSession(
-    params: CreateSessionParams & { useFallbackShell?: boolean },
+  private doCreateSession(params: InternalCreateSessionParams): Promise<SessionResult> {
+    const creation = this.createSessionImplementation(params)
+    this.inFlightCreations.add(creation)
+    void creation.then(
+      () => this.inFlightCreations.delete(creation),
+      () => this.inFlightCreations.delete(creation),
+    )
+    return creation
+  }
+
+  private async createSessionImplementation(
+    params: InternalCreateSessionParams,
   ): Promise<SessionResult> {
+    if (this.shuttingDown) {
+      throw new Error("Terminal manager is shutting down.")
+    }
     const { paneId, workspaceId, initialCommands } = params
 
     // Create the session
     const session = await createSession(params, (id, data) => {
       this.emit(`data:${id}`, data)
     })
+    if (this.shuttingDown) {
+      await this.releaseUnstoredSession(session)
+      throw new Error("Terminal manager is shutting down.")
+    }
 
     // Set up initial commands (only for new sessions)
     setupInitialCommands(session, initialCommands)
@@ -67,37 +160,56 @@ export class TerminalManager extends EventEmitter {
     }
   }
 
-  private setupExitHandler(
-    session: TerminalSession,
-    params: CreateSessionParams & { useFallbackShell?: boolean },
-  ): void {
+  private setupExitHandler(session: TerminalSession, params: InternalCreateSessionParams): void {
     const { paneId } = params
 
-    session.pty.onExit(async ({ exitCode, signal }) => {
-      session.isAlive = false
+    session.pty.onExit(({ exitCode, signal }) => {
+      void this.handleSessionExit(session, params, exitCode, signal).catch((error) => {
+        console.error("[TerminalManager] Terminal exit handling failed:", error)
+        this.finishSessionExit(paneId, exitCode, signal)
+      })
+    })
+  }
 
-      // Check if shell crashed quickly - try fallback
-      const sessionDuration = Date.now() - session.startTime
-      const crashedQuickly = sessionDuration < SHELL_CRASH_THRESHOLD_MS && exitCode !== 0
+  private async handleSessionExit(
+    session: TerminalSession,
+    params: InternalCreateSessionParams,
+    exitCode: number,
+    signal?: number,
+  ): Promise<void> {
+    const { paneId } = params
+    session.isAlive = false
+    initiateWindowsPtyConoutWorkerRelease(session.pty)
 
-      if (crashedQuickly && !session.usedFallback) {
-        console.warn(
-          `[TerminalManager] Shell "${session.shell}" exited with code ${exitCode} after ${sessionDuration}ms, retrying with fallback shell "${FALLBACK_SHELL}"`,
-        )
+    // Check if shell crashed quickly - try fallback
+    const sessionDuration = Date.now() - session.startTime
+    const crashedQuickly = sessionDuration < SHELL_CRASH_THRESHOLD_MS && exitCode !== 0
 
-        this.sessions.delete(paneId)
+    if (crashedQuickly && !session.usedFallback && !this.shuttingDown) {
+      console.warn(
+        `[TerminalManager] Shell "${session.shell}" exited with code ${exitCode} after ${sessionDuration}ms, retrying with fallback shell "${FALLBACK_SHELL}"`,
+      )
 
-        try {
-          await this.doCreateSession({
-            ...params,
-            useFallbackShell: true,
-          })
-          return // Recovered - don't emit exit
-        } catch (fallbackError) {
+      this.sessions.delete(paneId)
+
+      try {
+        await this.doCreateSession({
+          ...params,
+          useFallbackShell: true,
+        })
+        if (!this.shuttingDown) return // Recovered - don't emit exit
+      } catch (fallbackError) {
+        if (!this.shuttingDown) {
           console.error("[TerminalManager] Fallback shell also failed:", fallbackError)
         }
       }
+    }
 
+    this.finishSessionExit(paneId, exitCode, signal)
+  }
+
+  private finishSessionExit(paneId: string, exitCode: number, signal?: number): void {
+    try {
       // Unregister from port manager (also removes detected ports)
       portManager.unregisterSession(paneId)
 
@@ -108,7 +220,21 @@ export class TerminalManager extends EventEmitter {
         this.sessions.delete(paneId)
       }, 5000)
       timeout.unref()
-    })
+    } catch (error) {
+      console.error("[TerminalManager] Failed to finalize terminal exit:", error)
+      this.sessions.delete(paneId)
+    }
+  }
+
+  private async releaseUnstoredSession(session: TerminalSession): Promise<void> {
+    this.captureCleanupProcessOwnership(session)
+    session.isAlive = false
+    try {
+      session.pty.kill()
+    } catch {
+      // Continue through the guarded resource release.
+    }
+    await releaseWindowsPtyConoutWorker(session.pty)
   }
 
   write(params: { paneId: string; data: string }): void {
@@ -243,7 +369,10 @@ export class TerminalManager extends EventEmitter {
 
   private async killSessionWithTimeout(paneId: string, session: TerminalSession): Promise<boolean> {
     if (!session.isAlive) {
-      this.sessions.delete(paneId)
+      await releaseWindowsPtyConoutWorker(session.pty)
+      if (this.sessions.get(paneId) === session) {
+        this.sessions.delete(paneId)
+      }
       return true
     }
 
@@ -252,13 +381,23 @@ export class TerminalManager extends EventEmitter {
       let sigtermTimeout: ReturnType<typeof setTimeout> | undefined
       let sigkillTimeout: ReturnType<typeof setTimeout> | undefined
 
-      const cleanup = (success: boolean) => {
+      const cleanup = (success: boolean): void => {
         if (resolved) return
         resolved = true
         this.off(`exit:${paneId}`, exitHandler)
         if (sigtermTimeout) clearTimeout(sigtermTimeout)
         if (sigkillTimeout) clearTimeout(sigkillTimeout)
-        resolve(success)
+        void (async () => {
+          try {
+            await releaseWindowsPtyConoutWorker(session.pty)
+          } catch (error) {
+            console.error(`Failed to release terminal ${paneId} resources:`, error)
+          }
+          if (this.sessions.get(paneId) === session) {
+            this.sessions.delete(paneId)
+          }
+          resolve(success)
+        })()
       }
 
       const exitHandler = () => cleanup(true)
@@ -280,7 +419,6 @@ export class TerminalManager extends EventEmitter {
           if (session.isAlive) {
             console.error(`Terminal ${paneId} did not exit after SIGKILL, forcing cleanup`)
             session.isAlive = false
-            this.sessions.delete(paneId)
           }
           cleanup(false)
         }, 500)
@@ -294,7 +432,6 @@ export class TerminalManager extends EventEmitter {
       } catch (error) {
         console.error(`Failed to send SIGTERM to terminal ${paneId}:`, error)
         session.isAlive = false
-        this.sessions.delete(paneId)
         cleanup(false)
       }
     })
@@ -347,7 +484,26 @@ export class TerminalManager extends EventEmitter {
     }
   }
 
-  async cleanup(): Promise<void> {
+  cleanup(): Promise<void> {
+    return this.cleanupWithResult().then((result) => {
+      if (result.survivingProcessIds.length > 0) {
+        throw new Error(
+          `Terminal cleanup left owned processes running: ${result.survivingProcessIds.join(", ")}`,
+        )
+      }
+    })
+  }
+
+  cleanupWithResult(): Promise<TerminalCleanupResult> {
+    this.shuttingDown = true
+    this.cleanupPromise ??= this.performCleanup()
+    return this.cleanupPromise
+  }
+
+  private async performCleanup(): Promise<TerminalCleanupResult> {
+    for (const session of this.sessions.values()) {
+      this.captureCleanupProcessOwnership(session)
+    }
     const exitPromises: Promise<void>[] = []
 
     for (const [paneId, session] of this.sessions.entries()) {
@@ -371,14 +527,75 @@ export class TerminalManager extends EventEmitter {
         })
 
         exitPromises.push(exitPromise)
-        session.pty.kill()
+        try {
+          session.pty.kill()
+        } catch (error) {
+          console.error(`Failed to kill terminal ${paneId} during cleanup:`, error)
+        }
       }
     }
 
     await Promise.all(exitPromises)
+    while (this.inFlightCreations.size > 0) {
+      await Promise.allSettled(Array.from(this.inFlightCreations))
+    }
+    await Promise.all(
+      Array.from(this.sessions.values(), (session) => releaseWindowsPtyConoutWorker(session.pty)),
+    )
     this.sessions.clear()
     this.removeAllListeners()
+    const ownedProcessIds = [...this.cleanupOwnedProcessIds]
+    const waitForOwnedProcesses =
+      this.cleanupOptions?.waitForOwnedProcesses ?? waitForTerminalProcessesToExit
+    let survivingProcessIds = await waitForOwnedProcesses(ownedProcessIds)
+    const windowsProcessIdentities = [...this.cleanupWindowsProcessIdentities.values()]
+    if (survivingProcessIds.length > 0 && windowsProcessIdentities.length > 0) {
+      const surviving = new Set(survivingProcessIds)
+      try {
+        const terminateOwnedProcesses =
+          this.cleanupOptions?.terminateMatchingOwnedProcesses ?? terminateMatchingWindowsProcesses
+        await terminateOwnedProcesses(
+          windowsProcessIdentities.filter((identity) => surviving.has(identity.processId)),
+        )
+      } catch (error) {
+        this.cleanupOwnershipIssues.push(
+          `Windows process identity termination failed: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+      survivingProcessIds = await waitForOwnedProcesses(survivingProcessIds)
+    }
+    return {
+      ownedProcessIds,
+      survivingProcessIds,
+      ownershipComplete: this.cleanupOwnershipIssues.length === 0,
+      ownershipIssues: [...this.cleanupOwnershipIssues],
+    }
   }
+
+  private captureCleanupProcessOwnership(session: TerminalSession): number[] {
+    const capture = captureTerminalPtyOwnedProcesses(session.pty)
+    for (const processId of capture.processIds) {
+      this.cleanupOwnedProcessIds.add(processId)
+      if (session.performanceOwnershipToken && processId === session.pty.pid) {
+        this.cleanupWindowsProcessIdentities.set(processId, {
+          processId,
+          ownershipToken: session.performanceOwnershipToken,
+          executableName: windowsPath.basename(session.shell).toLowerCase(),
+        })
+      }
+    }
+    if (!capture.complete) {
+      this.cleanupOwnershipIssues.push(`${session.paneId}: ${capture.reason ?? "unknown reason"}`)
+    }
+    return capture.processIds
+  }
+}
+
+export interface TerminalCleanupResult {
+  ownedProcessIds: number[]
+  survivingProcessIds: number[]
+  ownershipComplete: boolean
+  ownershipIssues: string[]
 }
 
 /** Singleton terminal manager instance */

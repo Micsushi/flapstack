@@ -6,6 +6,7 @@ import { app, BrowserWindow, ipcMain } from "electron"
 import { sleep } from "../../../shared/sleep"
 import { orchestrationTemplateDefinitionSchema } from "../../../shared/orchestration-operations"
 import {
+  createReadStream,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -62,6 +63,11 @@ import {
   parseDevRendererControlResponse,
   type DevRendererControlCommand,
 } from "../../../shared/dev-renderer-control"
+import {
+  getStage6ElectronMeasurementContract,
+  type Stage6ElectronMeasurementAction,
+  type Stage6ElectronMeasurementOperation,
+} from "../../../shared/stage6-electron-performance-control"
 import {
   discoverProviderExtensions,
   mutateProviderExtension,
@@ -154,6 +160,7 @@ export {
   STAGE4_OPERATIONAL_ACTIONS,
 } from "./stage4-operations"
 import { registerStage4TestProject } from "./stage4-operations"
+import { createElectronPerformanceBuildIdentity } from "../performance/electron-control"
 
 export function getStage4RuntimeState(input: {
   fixtureHandle: string
@@ -688,19 +695,45 @@ function getDevRendererWindow() {
   return window
 }
 
+const MAX_DEV_RENDERER_CONTROL_TIMEOUT_MS = 180_000
+
+export function resolveDevRendererControlTimeoutMs(
+  timeoutMs: number | undefined,
+  platform = process.platform,
+): number {
+  if (timeoutMs === undefined) return platform === "win32" ? 15_000 : 5_000
+  if (
+    !Number.isInteger(timeoutMs) ||
+    timeoutMs <= 0 ||
+    timeoutMs > MAX_DEV_RENDERER_CONTROL_TIMEOUT_MS
+  ) {
+    throw new Error(
+      `Live renderer control timeout must be between 1 and ${MAX_DEV_RENDERER_CONTROL_TIMEOUT_MS} milliseconds.`,
+    )
+  }
+  return timeoutMs
+}
+
+export function stage6PerformanceRendererSelectionTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number | undefined {
+  return env.FLAPSTACK_STAGE6_PERFORMANCE_PROFILE === "1"
+    ? MAX_DEV_RENDERER_CONTROL_TIMEOUT_MS
+    : undefined
+}
+
 function requestDevRendererControlForWindow(
   input: DevRendererControlCommand,
   window: Electron.BrowserWindow,
+  options: { timeoutMs?: number } = {},
 ) {
   const requestId = randomUUID()
+  const timeoutMs = resolveDevRendererControlTimeoutMs(options.timeoutMs)
   return new Promise<unknown>((resolve, reject) => {
-    const timeout = setTimeout(
-      () => {
-        ipcMain.removeListener(DEV_RENDERER_CONTROL_RESPONSE_CHANNEL, handleResponse)
-        reject(new Error("Live renderer control timed out"))
-      },
-      process.platform === "win32" ? 15_000 : 5_000,
-    )
+    const timeout = setTimeout(() => {
+      ipcMain.removeListener(DEV_RENDERER_CONTROL_RESPONSE_CHANNEL, handleResponse)
+      reject(new Error("Live renderer control timed out"))
+    }, timeoutMs)
     const handleResponse = (event: Electron.IpcMainEvent, raw: unknown) => {
       if (event.sender.id !== window.webContents.id) return
       const response = parseDevRendererControlResponse(raw)
@@ -715,8 +748,133 @@ function requestDevRendererControlForWindow(
   })
 }
 
-export async function requestDevRendererControl(input: DevRendererControlCommand) {
-  return requestDevRendererControlForWindow(input, getDevRendererWindow())
+export async function requestDevRendererControl(
+  input: DevRendererControlCommand,
+  options: { timeoutMs?: number } = {},
+) {
+  return requestDevRendererControlForWindow(input, getDevRendererWindow(), options)
+}
+
+let electronExecutableSha256: Promise<string> | undefined
+
+export async function controlElectronPerformanceMeasurement(input: {
+  budgetId: string
+  action: Stage6ElectronMeasurementAction
+  operation: Stage6ElectronMeasurementOperation
+}) {
+  const contract = getStage6ElectronMeasurementContract(input.budgetId)
+  const buildType = app.isPackaged ? "package" : "dev"
+  if (contract.buildType !== buildType) {
+    throw new Error(
+      `Electron performance budget ${input.budgetId} does not match running ${buildType} build.`,
+    )
+  }
+  if (input.action !== contract.action) {
+    throw new Error("Stage 6 Electron performance action does not match its budget.")
+  }
+  const window = getDevRendererWindow()
+  electronExecutableSha256 ??= sha256File(process.execPath)
+  const [state, executableSha256, applicationSha256] = await Promise.all([
+    requestDevRendererControlForWindow({ command: "performance.measure", ...input }, window, {
+      timeoutMs: stage6PerformanceRendererSelectionTimeoutMs(),
+    }),
+    electronExecutableSha256,
+    runningApplicationManifestSha256(),
+  ])
+  const electronVersion = process.versions.electron
+  if (!electronVersion) throw new Error("Electron version is unavailable in the main process.")
+  return {
+    state,
+    buildIdentity: createElectronPerformanceBuildIdentity({
+      appVersion: app.getVersion(),
+      electronVersion,
+      buildType,
+      executableSha256,
+      applicationSha256,
+      rendererProcessId: window.webContents.getOSProcessId(),
+    }),
+  }
+}
+
+async function runningApplicationManifestSha256(): Promise<string> {
+  if (app.isPackaged) {
+    const candidates = [join(process.resourcesPath, "app.asar"), app.getAppPath()]
+    const artifact = candidates.find((entry) => {
+      try {
+        return existsSync(entry) && statSync(entry).isFile()
+      } catch {
+        return false
+      }
+    })
+    if (!artifact) {
+      throw new Error("Running Electron application artifact is unavailable for identity capture.")
+    }
+    return sha256File(artifact)
+  }
+
+  const root = app.getAppPath()
+  const rendererManifestRoot = process.env.ELECTRON_RENDERER_URL ? "src/renderer" : "out/renderer"
+  const manifestRoots = [
+    "out/main",
+    "out/preload",
+    rendererManifestRoot,
+    "src/shared",
+    "electron.vite.config.ts",
+    "package-lock.json",
+  ]
+  const files = manifestRoots
+    .flatMap((relativePath) => collectApplicationManifestFiles(root, relativePath))
+    .sort((left, right) => left.localeCompare(right))
+  if (files.length === 0 || files.length > 50_000) {
+    throw new Error("Running Electron development manifest has an invalid file count.")
+  }
+  let byteLength = 0
+  const hash = createHash("sha256")
+  hash.update("stage6-electron-dev-build-v1\0")
+  for (const relativePath of files) {
+    const absolutePath = join(root, ...relativePath.split("/"))
+    const bytes = readFileSync(absolutePath)
+    byteLength += bytes.byteLength
+    if (byteLength > 256 * 1024 * 1024) {
+      throw new Error("Running Electron development manifest exceeds 256 MiB.")
+    }
+    hash.update(relativePath)
+    hash.update("\0")
+    hash.update(String(bytes.byteLength))
+    hash.update("\0")
+    hash.update(createHash("sha256").update(bytes).digest("hex"))
+    hash.update("\0")
+  }
+  return hash.digest("hex")
+}
+
+function collectApplicationManifestFiles(root: string, relativePath: string): string[] {
+  const normalized = relativePath.replaceAll("\\", "/")
+  const absolutePath = join(root, ...normalized.split("/"))
+  const stat = statSync(absolutePath)
+  if (stat.isFile()) return [normalized]
+  if (!stat.isDirectory()) return []
+  return readdirSync(absolutePath, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isSymbolicLink()) {
+      throw new Error("Running Electron development manifest cannot contain symbolic links.")
+    }
+    const child = `${normalized}/${entry.name}`
+    return entry.isDirectory()
+      ? collectApplicationManifestFiles(root, child)
+      : entry.isFile()
+        ? [child]
+        : []
+  })
+}
+
+function sha256File(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("sha256")
+    const stream = createReadStream(filePath)
+    stream.on("error", reject)
+    stream.on("data", (chunk) => hash.update(chunk))
+    stream.on("end", () => resolve(hash.digest("hex")))
+  })
 }
 
 export async function getLiveSettingsState() {
@@ -2132,6 +2290,70 @@ export function createTestChat(input: {
     model: input.model,
     permissionMode,
     worktreePath: project.path,
+  }
+}
+
+export function buildStage6PerformanceMessages(messageCount: 1 | 200) {
+  return Array.from({ length: messageCount }, (_, index) => ({
+    id: `stage6-performance-${index}`,
+    role: index % 2 === 0 ? "user" : "assistant",
+    parts: [
+      {
+        type: "text",
+        text: `${
+          index % 2 === 0
+            ? `Stage 6 user request ${index}: Please review the current project state, explain the important behavior in plain language, and identify the next useful action. Keep the response grounded in the visible evidence, preserve relevant context, and call out any limitation that changes the decision.`
+            : `Stage 6 assistant response ${index}: I reviewed the available project evidence and summarized the important behavior, current result, and next useful action. The response keeps the relevant context visible, distinguishes verified facts from limitations, and avoids dropping details that would change the user's decision.`
+        }${
+          index === messageCount - 1
+            ? ` This final paragraph contains the deterministic search anchor stage6-target-${index}.`
+            : ""
+        }`,
+      },
+    ],
+  }))
+}
+
+export function provisionStage6PerformanceFixture(input: {
+  messageCount: 1 | 200
+  paneCount: 1 | 4
+}) {
+  if (process.env.FLAPSTACK_STAGE6_PERFORMANCE_PROFILE !== "1") {
+    throw new Error("Stage 6 performance fixtures require an isolated performance profile.")
+  }
+  const project = ensureTestProject({ name: "Stage 6 Performance Fixture" })
+  const messages = buildStage6PerformanceMessages(input.messageCount)
+  const serializedMessages = JSON.stringify(messages)
+  const createdFixtures = Array.from({ length: input.paneCount }, (_, paneIndex) => {
+    const created = createTestChat({
+      projectId: project.project.id,
+      name:
+        input.messageCount === 200
+          ? "Stage 6 100-Exchange Transcript"
+          : `Stage 6 Grid Transcript ${paneIndex + 1}`,
+      provider: "cursor-agent",
+      model: "stage6-fixture",
+    })
+    getDatabase()
+      .update(subChats)
+      .set({ messages: serializedMessages, updatedAt: new Date() })
+      .where(eq(subChats.id, created.subChatId))
+      .run()
+    return created
+  })
+  const created = createdFixtures[0]!
+  notifyTestControlView({
+    action: "chat-opened",
+    chatId: created.chatId,
+    subChatId: created.subChatId,
+  })
+  return {
+    ...created,
+    messageCount: messages.length,
+    paneCount: input.paneCount,
+    chatIds: createdFixtures.map((entry) => entry.chatId),
+    subChatIds: createdFixtures.map((entry) => entry.subChatId),
+    targetMessageId: `stage6-performance-${input.messageCount - 1}`,
   }
 }
 

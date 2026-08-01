@@ -22,6 +22,10 @@ import {
   runtimePermissionSnapshot,
   runtimeSnapshotSqlValues,
 } from "./snapshot"
+import {
+  serializeProjectVaultRunSelection,
+  type ProjectVaultGraphContextSelection,
+} from "../project-vaults/run-context"
 
 type InteractiveHarness = Extract<AgentHarness, "codex" | "claude-code">
 
@@ -32,6 +36,7 @@ export type InteractiveRuntimeInput = {
   harness: InteractiveHarness
   prompt: string
   images?: Array<{ base64Data: string; mediaType: string; filename?: string }>
+  vaultContextGraphSelection?: ProjectVaultGraphContextSelection
   promptMessageId?: string
   model: string | null
   mode: ChatMode
@@ -204,11 +209,12 @@ export function materializeInteractiveRuntimeRun(
         .prepare(
           `INSERT INTO agent_runs (
              id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
-             worktree_path, prompt_message_id, initial_prompt, runtime_snapshot_version,
+             worktree_path, prompt_message_id, initial_prompt, vault_context_sections,
+             runtime_snapshot_version,
              runtime_preference, runtime_preference_source, resolved_runtime,
              runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
              runtime_control_snapshot, status, started_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`,
         )
         .run(
           input.runId,
@@ -221,6 +227,12 @@ export function materializeInteractiveRuntimeRun(
           worktreePath,
           promptMessageId,
           prompt,
+          input.vaultContextGraphSelection
+            ? serializeProjectVaultRunSelection({
+                sectionIds: [],
+                graph: input.vaultContextGraphSelection,
+              })
+            : null,
           ...runtimeSnapshotSqlValues(snapshot),
           now,
         )

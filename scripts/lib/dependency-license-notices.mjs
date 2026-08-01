@@ -106,7 +106,7 @@ export function prepareDependencyLicenseNotices(options = {}) {
     let sourceFiles = notice
       ? [{ name: notice, sourceKind: "declared-notice" }]
       : readdirSync(packageRoot)
-          .filter((entry) => /^(?:licen[cs]e|copying|notice)(?:\..*)?$/i.test(entry))
+          .filter((entry) => /^(?:licen[cs]e|copying|notice)(?:[-_.].*)?$/i.test(entry))
           .sort()
           .map((entry) => ({ name: entry, sourceKind: "package-license" }))
     const files = []

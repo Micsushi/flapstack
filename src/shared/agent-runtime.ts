@@ -99,6 +99,8 @@ export type RuntimeVersionSnapshot = {
 export type RuntimeLaunchControls = {
   schemaVersion: 1
   modelEffort: string | null
+  /** Provider service-tier id. Optional only for legacy schema-v1 snapshots. */
+  serviceTier?: string | null
   modelThinking: boolean | null
   reasoningDisplay: boolean
   subagentActivity: boolean
@@ -223,6 +225,7 @@ export const runtimeDefaultDeleteInputSchema = z.object({
 export const DEFAULT_RUNTIME_CONTROLS: RuntimeLaunchControls = {
   schemaVersion: 1,
   modelEffort: null,
+  serviceTier: null,
   modelThinking: null,
   reasoningDisplay: true,
   subagentActivity: true,

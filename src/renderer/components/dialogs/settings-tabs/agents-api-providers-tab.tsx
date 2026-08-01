@@ -23,6 +23,7 @@ import { Button } from "../../ui/button"
 import { Input } from "../../ui/input"
 import { Label } from "../../ui/label"
 import { CredentialManagement } from "./credential-management"
+import { compareSettingsProviders } from "../../../features/settings/settings-visibility"
 
 function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) {
   const setLastSelectedAgentId = useSetAtom(lastSelectedAgentIdAtom)
@@ -377,8 +378,11 @@ export function AgentsApiProvidersTab() {
         </div>
       )}
 
-      <ProviderCard providerId="openrouter" />
-      <ProviderCard providerId="nanogpt" />
+      {[...(["openrouter", "nanogpt"] as const)]
+        .sort(compareSettingsProviders)
+        .map((providerId) => (
+          <ProviderCard key={providerId} providerId={providerId} />
+        ))}
     </div>
   )
 }

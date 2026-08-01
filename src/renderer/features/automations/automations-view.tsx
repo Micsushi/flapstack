@@ -6,6 +6,7 @@ import { useAtom, useSetAtom } from "jotai"
 import { AlignJustify, Inbox, Plus } from "lucide-react"
 import { trpc } from "../../lib/trpc"
 import { useIsMobile } from "../../lib/hooks/use-mobile"
+import { FeatureExplanationSummary, FeatureHelpPopover } from "../../components/feature-explanation"
 import {
   agentsMobileViewModeAtom,
   agentsSidebarOpenAtom,
@@ -93,6 +94,7 @@ export function AutomationsView() {
                 Runs locally only while the Flapstack desktop app is open. At startup, each schedule
                 catches up at most once.
               </p>
+              <FeatureHelpPopover featureId="automations" />
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -161,7 +163,10 @@ export function AutomationsView() {
         ) : filtered.length === 0 ? (
           <div className="mt-6 rounded-lg border border-dashed p-10 text-center">
             <p className="text-sm font-medium">No matching local automations</p>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <div className="mx-auto mt-2 max-w-lg">
+              <FeatureExplanationSummary featureId="automations" />
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
               Create a disabled draft, inspect its exact authority and budget, then approve it.
             </p>
           </div>

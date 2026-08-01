@@ -51,7 +51,10 @@ describe("permission UI contract", () => {
       )
     }
     expect(newChat).toContain("Target selectors - directly above input")
-    expect(newChat).toContain("permissionMode: permissionModeOverride ?? undefined")
+    expect(newChat).toContain(
+      "(agentProfileSelection?.permissionMode as NewChatPermissionMode | undefined) ??",
+    )
+    expect(newChat).toContain("permissionModeOverride ??")
     expect(chatsRouter).toContain("permissionMode: newChatPermissionModeSchema.optional()")
     expect(chatsRouter).toContain("permissionMode: input.permissionMode ?? inheritedMode")
   })

@@ -66,7 +66,12 @@ export type McpControlErrorCode =
   | "internal-error"
 
 export type McpMutationService = {
-  invoke(name: string, caller: McpCallerIdentity, input: unknown): Promise<McpControlResponse>
+  invoke(
+    name: string,
+    caller: McpCallerIdentity,
+    input: unknown,
+    context?: { invocationId: string; approved: boolean },
+  ): Promise<McpControlResponse>
 }
 
 export type McpControlResponse<T = unknown> =

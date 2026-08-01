@@ -172,11 +172,13 @@ export const clearSubChatSelectionAtom = atom(null, (_get, set) => {
 export type SettingsTab =
   | "profile"
   | "appearance"
+  | "feature-visibility"
   | "preferences"
   | "permissions"
   | "models"
   | "runtimes"
   | "local-models"
+  | "mobile-companion"
   | "coordination"
   | "agent-profiles"
   | "api-providers"
@@ -196,6 +198,7 @@ export type SettingsTab =
 export const agentsSettingsDialogActiveTabAtom = atom<SettingsTab>("preferences")
 export const settingsSearchQueryAtom = atom("")
 export const settingsSearchTargetAtom = atom<string | null>(null)
+export const featureVisibilityGuideRerunAtom = atom(false)
 // Derived atom: maps settings open/close to desktopView navigation
 export const agentsSettingsDialogOpenAtom = atom(
   (get) => get(_desktopViewAtom) === "settings",
@@ -393,12 +396,7 @@ export const useNativeFrameAtom = atomWithStorage<boolean>(
 
 // Preferences - Analytics Opt-out
 // When true, user has opted out of analytics tracking
-export const analyticsOptOutAtom = atomWithStorage<boolean>(
-  "preferences:analytics-opt-out",
-  false, // Default to opt-in (false means not opted out)
-  undefined,
-  { getOnInit: true },
-)
+export const analyticsOptOutAtom = atom<boolean>(true)
 
 // Beta: Enable git features in diff sidebar (commit, staging, file selection)
 // When enabled, shows checkboxes for file selection and commit UI in diff sidebar

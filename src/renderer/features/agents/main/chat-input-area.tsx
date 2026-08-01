@@ -1,7 +1,7 @@
 "use client"
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { AlertTriangle, ChevronDown, RefreshCw } from "lucide-react"
+import { AlertTriangle, Camera, ChevronDown, RefreshCw } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { Button } from "../../../components/ui/button"
@@ -70,7 +70,7 @@ import {
   resolvedRuntimeAdapter,
   runtimePreferenceLabel,
 } from "../runtime-settings"
-import { useAgentSubChatStore } from "../stores/sub-chat-store"
+import { useAgentSubChatStoreApi } from "../stores/sub-chat-store"
 import { agentChatStore } from "../stores/agent-chat-store"
 import { AgentsSlashCommand, type SlashCommandOption } from "../commands"
 import {
@@ -112,6 +112,7 @@ import { AgentImageItem } from "../ui/agent-image-item"
 import { AgentPastedTextItem } from "../ui/agent-pasted-text-item"
 import { AgentTextContextItem } from "../ui/agent-text-context-item"
 import { VoiceWaveIndicator } from "../ui/voice-wave-indicator"
+import { VisualCaptureDialog } from "../ui/visual-capture-dialog"
 import { McpStatusDot } from "../../../components/dialogs/settings-tabs/agents-mcp-tab"
 import { handlePasteEvent } from "../utils/paste-text"
 import type { PastedTextFile } from "../hooks/use-pasted-text-files"
@@ -134,6 +135,10 @@ import {
   getSelectableRunPermissionModes,
   RUN_PERMISSION_MODE_LABELS,
 } from "../constants"
+import { ChatAgentProfileControl } from "../../agent-profiles/chat-agent-profile-control"
+import { buildSelectedSpeechVocabulary } from "../../../../shared/speech-vocabulary"
+import { SpeechVocabularyPopover } from "../voice/speech-vocabulary-popover"
+import { useFeatureVisibility } from "../../settings/use-feature-visibility"
 
 const CUSTOM_PERMISSION_LABELS: Record<(typeof customPermissionCapabilityKeys)[number], string> = {
   projectWrite: "Project edits",
@@ -211,7 +216,9 @@ export interface ChatInputAreaProps {
   // Callback to switch provider for brand new (empty) sub-chats
   onProviderChange?: (provider: AgentProviderId) => void
   // Callback to continue chat with a different provider (creates new sub-chat with history)
-  onContinueWithProvider?: (provider: AgentProviderId) => void
+  onContinueWithProvider?: (provider: AgentProviderId, targetModel: string) => void
+  // Callback to delegate a bounded task to a distinct provider child Chat.
+  onDelegateWithProvider?: (provider: AgentProviderId, targetModel: string) => void
   // Whether this sub-chat tab is the active/visible one (prevents window-level hotkeys in background tabs)
   isActive?: boolean
 }
@@ -232,6 +239,8 @@ function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaPr
     prevProps.targetWorktreePath !== nextProps.targetWorktreePath ||
     prevProps.teamId !== nextProps.teamId ||
     prevProps.repository !== nextProps.repository ||
+    prevProps.chatName !== nextProps.chatName ||
+    prevProps.projectLabel !== nextProps.projectLabel ||
     prevProps.sandboxId !== nextProps.sandboxId ||
     prevProps.projectPath !== nextProps.projectPath ||
     prevProps.isMobile !== nextProps.isMobile ||
@@ -269,6 +278,7 @@ function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaPr
     prevProps.onSubmitWithQuestionAnswer !== nextProps.onSubmitWithQuestionAnswer ||
     prevProps.onProviderChange !== nextProps.onProviderChange ||
     prevProps.onContinueWithProvider !== nextProps.onContinueWithProvider ||
+    prevProps.onDelegateWithProvider !== nextProps.onDelegateWithProvider ||
     prevProps.onTargetWorktreePathChange !== nextProps.onTargetWorktreePathChange ||
     prevProps.onSendFromQueue !== nextProps.onSendFromQueue
   ) {
@@ -425,14 +435,35 @@ export const ChatInputArea = memo(function ChatInputArea({
   onSubmitWithQuestionAnswer,
   onProviderChange,
   onContinueWithProvider,
+  onDelegateWithProvider,
   isActive = true,
 }: ChatInputAreaProps) {
+  const subChatStore = useAgentSubChatStoreApi()
   // Local state - changes here don't re-render parent
   const [hasContent, setHasContent] = useState(false)
   const [isFocused, setIsFocused] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   const { data: runtimeChat } = trpc.chats.get.useQuery({ id: parentChatId })
+  const { data: runtimeTask } = trpc.tasks.get.useQuery(
+    { id: runtimeChat?.taskId ?? "" },
+    { enabled: Boolean(runtimeChat?.taskId) },
+  )
+  const featureVisibility = useFeatureVisibility()
+  const [visualCaptureOpen, setVisualCaptureOpen] = useState(false)
+  const selectedSpeechContext = useMemo(
+    () => ({
+      project:
+        projectLabel || repository || projectPath?.split(/[\\/]/).filter(Boolean).pop() || null,
+      task: runtimeTask?.name ?? null,
+      chat: chatName || `Chat ${parentChatId.slice(0, 8)}`,
+    }),
+    [chatName, parentChatId, projectLabel, projectPath, repository, runtimeTask?.name],
+  )
+  const speechVocabulary = useMemo(
+    () => buildSelectedSpeechVocabulary(selectedSpeechContext),
+    [selectedSpeechContext],
+  )
   const { data: runtimeReleases = [] } = trpc.agentRuntimeDefaults.capabilities.useQuery()
   const { data: runtimeDefaults = [] } = trpc.agentRuntimeDefaults.list.useQuery()
   const runtimePreference = (runtimeChat?.runtimePreference ?? "auto") as AgentRuntimePreference
@@ -1363,7 +1394,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         return
       }
       setSubChatMode(newMode)
-      useAgentSubChatStore.getState().updateSubChatMode(subChatId, newMode)
+      subChatStore.getState().updateSubChatMode(subChatId, newMode)
     },
     [onModeChange, setSubChatMode, subChatId],
   )
@@ -1467,6 +1498,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         currentDraftTextRef.current = text
         editorRef.current?.setValue(text)
       },
+      selectedContext: selectedSpeechContext,
     })
   }, [
     dictation,
@@ -1482,6 +1514,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     repository,
     chatName,
     showVoiceSetup,
+    selectedSpeechContext,
     subChatId,
   ])
 
@@ -2155,6 +2188,9 @@ export const ChatInputArea = memo(function ChatInputArea({
                       onContinueWithProvider={
                         !canSwitchProvider ? onContinueWithProvider : undefined
                       }
+                      onDelegateWithProvider={
+                        !canSwitchProvider ? onDelegateWithProvider : undefined
+                      }
                       selectedModelLabel={selectedModelLabel}
                       onOpenModelsSettings={() => {
                         setSettingsTab("models")
@@ -2310,13 +2346,15 @@ export const ChatInputArea = memo(function ChatInputArea({
                   </div>
 
                   <div className="absolute left-0 top-[calc(100%+18px)] flex max-w-[calc(100vw-5rem)] items-center gap-1 overflow-hidden text-xs">
-                    <RuntimeSelector
-                      harness={provider}
-                      value={runtimePreference}
-                      automaticPreference={resolvedRuntimePreference}
-                      onChange={(preference) => void handleRuntimeChange(preference)}
-                      disabled={isStreaming || setRuntimePreferenceMutation.isPending}
-                    />
+                    {featureVisibility.isVisible("runtimes") && (
+                      <RuntimeSelector
+                        harness={provider}
+                        value={runtimePreference}
+                        automaticPreference={resolvedRuntimePreference}
+                        onChange={(preference) => void handleRuntimeChange(preference)}
+                        disabled={isStreaming || setRuntimePreferenceMutation.isPending}
+                      />
+                    )}
                     <PermissionSelector
                       harness={provider}
                       value={effectivePermissionMode}
@@ -2334,6 +2372,9 @@ export const ChatInputArea = memo(function ChatInputArea({
                       customHint="New custom mode starts with every capability disabled until configured."
                     />
                     <AgentModeSelector value={subChatMode} onChange={updateMode} />
+                    {featureVisibility.isVisible("agent-profiles") && (
+                      <ChatAgentProfileControl chatId={parentChatId} />
+                    )}
 
                     {permissionPreview?.degraded && (
                       <Popover>
@@ -2755,19 +2796,46 @@ export const ChatInputArea = memo(function ChatInputArea({
                       >
                         <AttachIcon className="h-4 w-4" />
                       </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 rounded-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                        hidden={!featureVisibility.isVisible("visual-context")}
+                        onClick={() => setVisualCaptureOpen(true)}
+                        disabled={!runtimeChat?.projectId}
+                        aria-label="Capture screen or window"
+                        title="Add visual context"
+                      >
+                        <Camera className="h-4 w-4" />
+                      </Button>
+                      {featureVisibility.isVisible("visual-context") && runtimeChat?.projectId && (
+                        <VisualCaptureDialog
+                          open={visualCaptureOpen}
+                          onOpenChange={setVisualCaptureOpen}
+                          projectId={runtimeChat.projectId}
+                          chatId={parentChatId}
+                          taskId={runtimeChat.taskId ?? undefined}
+                          onAddAttachments={onAddAttachments}
+                        />
+                      )}
                     </>
                   )}
 
-                  <AgentVoiceButton
-                    isRecording={isVoiceRecording}
-                    isStarting={isVoiceStarting}
-                    isTranscribing={isTranscribing}
-                    voiceInputReady={isVoiceReady}
-                    voiceStatusLabel={voiceStatusLabel}
-                    onUnavailableClick={showVoiceSetup}
-                    onStart={() => void handleVoiceMouseDown()}
-                    onStop={() => void handleVoiceMouseUp()}
-                  />
+                  {featureVisibility.isVisible("voice") && (
+                    <AgentVoiceButton
+                      isRecording={isVoiceRecording}
+                      isStarting={isVoiceStarting}
+                      isTranscribing={isTranscribing}
+                      voiceInputReady={isVoiceReady}
+                      voiceStatusLabel={voiceStatusLabel}
+                      onUnavailableClick={showVoiceSetup}
+                      onStart={() => void handleVoiceMouseDown()}
+                      onStop={() => void handleVoiceMouseUp()}
+                    />
+                  )}
+                  {featureVisibility.isVisible("voice") && (
+                    <SpeechVocabularyPopover terms={speechVocabulary} />
+                  )}
 
                   {/* Send/Stop button */}
                   <div className="ml-0.5">

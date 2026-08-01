@@ -16,6 +16,8 @@ export type DevMcpToolName =
   | "select_test_chat"
   | "copy_test_chat_history"
   | "get_renderer_orchestration_state"
+  | "control_electron_performance_measurement"
+  | "provision_stage6_performance_fixture"
   | "get_shortcut_state"
   | "mutate_shortcut_binding"
   | "list_provider_extensions"

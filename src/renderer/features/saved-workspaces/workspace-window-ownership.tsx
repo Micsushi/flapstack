@@ -3,6 +3,11 @@ import { Button } from "../../components/ui/button"
 import type { SavedWorkspaceOperationProjection } from "../../../shared/saved-workspaces"
 import type { WorkspacePaneClaimResult } from "../../../shared/workspace-window-ownership"
 import type { SavedWorkspacePane } from "./layout-reducer"
+import {
+  asWorkbenchWindowCreationFailure,
+  describeWorkbenchWindowCreationFailure,
+  showWorkbenchWindowCreationFeedback,
+} from "../../lib/workbench-window-limit"
 
 export function workspacePaneChatIds(
   pane: SavedWorkspacePane,
@@ -167,25 +172,41 @@ export function WorkspacePaneOwnershipBoundary({
 
   if (claim && !claim.ok) {
     const focusOwner = async () => {
-      const focused = await window.desktopApi?.focusWorkspacePaneOwner?.(workspaceId, pane.id)
-      if (!focused && target.chatIds[0]) {
-        await window.desktopApi?.focusChatOwner?.(target.chatIds[0])
+      try {
+        const focused = await window.desktopApi?.focusWorkspacePaneOwner?.(workspaceId, pane.id)
+        if (!focused && target.chatIds[0]) {
+          await window.desktopApi?.focusChatOwner?.(target.chatIds[0])
+        }
+        setStatus(
+          focused
+            ? `Focused ${claim.ownerStableId}.`
+            : `${claim.ownerStableId} could not be focused.`,
+        )
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "The owner window could not be focused.")
       }
-      setStatus(`Focused ${claim.ownerStableId}.`)
     }
     const openRemainder = async () => {
-      const result = await window.desktopApi?.openWorkspaceRemainder?.({
-        projectId,
-        workspaceId,
-        skipPaneId: pane.id,
-      })
-      setStatus(
-        result?.ok
-          ? "Opened remaining workspace in another window."
-          : result?.reason === "recovering"
-            ? "The remaining workspace window is recovering."
-            : "Could not open another window.",
-      )
+      try {
+        const result = await window.desktopApi?.openWorkspaceRemainder?.({
+          projectId,
+          workspaceId,
+          skipPaneId: pane.id,
+        })
+        const creationFailure = !result?.ok ? asWorkbenchWindowCreationFailure(result) : null
+        if (creationFailure) showWorkbenchWindowCreationFeedback(creationFailure)
+        setStatus(
+          result?.ok
+            ? "Opened remaining workspace in another window."
+            : result?.reason === "recovering"
+              ? "The remaining workspace window is recovering."
+              : creationFailure
+                ? describeWorkbenchWindowCreationFailure(creationFailure.reason).description
+                : "Could not open another window.",
+        )
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Could not open another window.")
+      }
     }
     return (
       <OwnershipNotice

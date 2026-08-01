@@ -46,8 +46,11 @@ import {
 import {
   cleanupAllTestRendererCaptures,
   archiveTestTask,
+  buildStage6PerformanceMessages,
   listAgentInputRequests,
   replyAgentInputRequest,
+  resolveDevRendererControlTimeoutMs,
+  stage6PerformanceRendererSelectionTimeoutMs,
 } from "../src/main/lib/mcp-test-control/service"
 import { STAGE4_OPERATIONAL_ACTIONS } from "../src/main/lib/mcp-test-control/stage4-operations"
 import {
@@ -80,6 +83,50 @@ import {
   requireVoiceUiFixture,
   undoRunChange,
 } from "../src/main/lib/mcp-test-control/carryover-controls"
+
+describe("dev renderer control timeouts", () => {
+  it("keeps platform defaults unchanged without an explicit timeout", () => {
+    expect(resolveDevRendererControlTimeoutMs(undefined, "win32")).toBe(15_000)
+    expect(resolveDevRendererControlTimeoutMs(undefined, "linux")).toBe(5_000)
+  })
+
+  it("extends selection only inside the isolated Stage 6 performance profile", () => {
+    expect(stage6PerformanceRendererSelectionTimeoutMs({})).toBeUndefined()
+    expect(
+      stage6PerformanceRendererSelectionTimeoutMs({
+        FLAPSTACK_STAGE6_PERFORMANCE_PROFILE: "0",
+      }),
+    ).toBeUndefined()
+    expect(
+      stage6PerformanceRendererSelectionTimeoutMs({
+        FLAPSTACK_STAGE6_PERFORMANCE_PROFILE: "1",
+      }),
+    ).toBe(180_000)
+  })
+
+  it("fails closed above the renderer control timeout ceiling", () => {
+    expect(resolveDevRendererControlTimeoutMs(180_000, "win32")).toBe(180_000)
+    expect(() => resolveDevRendererControlTimeoutMs(180_001, "win32")).toThrow(/between 1 and/)
+    expect(() => resolveDevRendererControlTimeoutMs(0, "win32")).toThrow(/between 1 and/)
+  })
+})
+
+describe("Stage 6 long-chat fixture", () => {
+  it("builds 100 paragraph-like back-and-forth exchanges", () => {
+    const messages = buildStage6PerformanceMessages(200)
+
+    expect(messages).toHaveLength(200)
+    expect(messages.filter((message) => message.role === "user")).toHaveLength(100)
+    expect(messages.filter((message) => message.role === "assistant")).toHaveLength(100)
+    expect(
+      messages.every(
+        (message) =>
+          message.parts[0]?.type === "text" && (message.parts[0].text?.length ?? 0) >= 200,
+      ),
+    ).toBe(true)
+    expect(messages.at(-1)?.parts[0]?.text).toContain("stage6-target-199")
+  })
+})
 
 describe("dev MCP test-control registry", () => {
   it("serializes Stage 4 failures without raw path-bearing messages", () => {
@@ -124,6 +171,8 @@ describe("dev MCP test-control registry", () => {
       "select_test_chat",
       "copy_test_chat_history",
       "get_renderer_orchestration_state",
+      "control_electron_performance_measurement",
+      "provision_stage6_performance_fixture",
       "get_shortcut_state",
       "get_product_mcp_renderer_state",
       "cancel_product_mcp_child_run",
@@ -352,14 +401,41 @@ describe("dev renderer Settings control boundary", () => {
         chatId: "chat-1",
         subChatId: "sub-chat-1",
         project: { id: "project-1", name: "Project", path: "/registered/project" },
+        persistedMessages: [
+          { id: "message-1", role: "user", parts: [{ type: "text", text: "Hi" }] },
+        ],
+        prepareStage6PerformanceProfile: true,
         showOrchestration: true,
       }),
     ).toMatchObject({
       command: "chat.select",
       chatId: "chat-1",
       subChatId: "sub-chat-1",
+      persistedMessages: expect.arrayContaining([expect.objectContaining({ id: "message-1" })]),
+      prepareStage6PerformanceProfile: true,
       showOrchestration: true,
     })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "chat.select",
+        chatId: "chat-1",
+        subChatId: "sub-chat-1",
+        project: { id: "project-1", name: "Project", path: "/registered/project" },
+        persistedMessages: [],
+        prepareStage6PerformanceProfile: false,
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "chat.select",
+        chatId: "chat-1",
+        subChatId: "sub-chat-1",
+        project: { id: "project-1", name: "Project", path: "/registered/project" },
+        persistedMessages: Array.from({ length: 201 }, (_, index) => ({ id: String(index) })),
+      }),
+    ).toBeNull()
     expect(
       parseDevRendererControlRequest({
         requestId: "request-id-long-enough",

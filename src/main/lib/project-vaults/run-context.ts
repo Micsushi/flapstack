@@ -8,6 +8,12 @@ import {
 } from "./registry"
 import { readProjectVaultSection } from "./storage"
 import { containsProjectVaultSecret } from "./content-safety"
+import {
+  buildProjectVaultGraphContext,
+  ProjectVaultGraphContextRejectedError,
+  type ProjectVaultGraphContextManifest,
+  type ProjectVaultGraphExpansionDirection,
+} from "./graph-context"
 
 type Database = ReturnType<typeof getDatabase>
 
@@ -22,8 +28,18 @@ export const PROJECT_VAULT_CONTEXT_POLICY = {
 export type ProjectVaultContextHarness = "codex" | "claude-code"
 export type ProjectVaultContextSelectionSource = "run" | "task" | "project" | "fixed-default"
 
+export type ProjectVaultGraphContextSelection = {
+  nodeIds: string[]
+  expectedGenerationId: string
+  expansion?: {
+    depth: number
+    direction: ProjectVaultGraphExpansionDirection
+    maxNodes: number
+  }
+}
+
 export type ProjectVaultContextManifest = {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
   status: "included" | "empty" | "rejected"
   harness: ProjectVaultContextHarness
   projectId: string | null
@@ -44,9 +60,12 @@ export type ProjectVaultContextManifest = {
     includedBytes: number
     reason: "byte-budget" | "token-budget" | "byte-and-token-budget"
   }>
+  graphContext?: ProjectVaultGraphContextManifest
   rejection?: {
-    sectionId: ProjectVaultSectionId
-    reason: "secret-detected" | "content-changed"
+    sectionId?: ProjectVaultSectionId
+    nodeId?: string
+    reason:
+      "secret-detected" | "content-changed" | "stale-generation" | "node-not-found" | "unsafe-path"
   }
 }
 
@@ -111,14 +130,15 @@ export async function buildProjectVaultRunContext(
     runId?: string | null
     harness: ProjectVaultContextHarness
     runSectionIds?: readonly ProjectVaultSectionId[]
+    runGraphSelection?: ProjectVaultGraphContextSelection
     budget?: { maxBytes: number; maxEstimatedTokens: number }
   },
 ): Promise<ProjectVaultRunContext> {
   const scope = resolveContextScope(database, input)
   const budget = normalizeBudget(input.budget)
   const baseManifest: ProjectVaultContextManifest = {
-    schemaVersion: 1,
-    status: scope.sectionIds.length > 0 ? "included" : "empty",
+    schemaVersion: scope.graphSelection ? 2 : 1,
+    status: scope.sectionIds.length > 0 || scope.graphSelection ? "included" : "empty",
     harness: input.harness,
     projectId: scope.projectId,
     taskId: scope.taskId,
@@ -133,7 +153,9 @@ export async function buildProjectVaultRunContext(
     entries: [],
     truncations: [],
   }
-  if (scope.sectionIds.length === 0) return { context: "", manifest: baseManifest }
+  if (scope.sectionIds.length === 0 && !scope.graphSelection) {
+    return { context: "", manifest: baseManifest }
+  }
   if (!scope.projectId) throw new Error("Vault context requires a project-scoped chat.")
 
   const loaded = [] as Array<{
@@ -210,10 +232,46 @@ export async function buildProjectVaultRunContext(
     blocks.push(formatSectionBlock(section, included, truncated))
   }
 
+  const contexts: string[] = []
+  if (blocks.length > 0) {
+    contexts.push(
+      `--- FLAPSTACK SELECTED PROJECT VAULT CONTEXT (DO NOT QUOTE) ---\n${blocks.join(
+        "\n\n",
+      )}\n--- END FLAPSTACK SELECTED PROJECT VAULT CONTEXT ---`,
+    )
+  }
+  if (scope.graphSelection) {
+    try {
+      const graph = await buildProjectVaultGraphContext(database, {
+        projectId: scope.projectId,
+        ...scope.graphSelection,
+        budget: {
+          maxBytes: remainingBytes,
+          maxEstimatedTokens: remainingTokens,
+        },
+      })
+      baseManifest.schemaVersion = 2
+      baseManifest.graphContext = graph.manifest
+      baseManifest.budget.includedBytes += graph.manifest.budget.includedBytes
+      baseManifest.budget.estimatedTokens += graph.manifest.budget.estimatedTokens
+      if (graph.context) contexts.push(graph.context)
+    } catch (error) {
+      if (error instanceof ProjectVaultGraphContextRejectedError) {
+        baseManifest.schemaVersion = 2
+        baseManifest.status = "rejected"
+        baseManifest.graphContext = error.manifest
+        baseManifest.rejection = {
+          ...(error.manifest.rejection?.nodeId ? { nodeId: error.manifest.rejection.nodeId } : {}),
+          reason: error.manifest.rejection?.reason ?? "content-changed",
+        }
+        throw new ProjectVaultContextRejectedError(error.message, baseManifest)
+      }
+      throw error
+    }
+  }
+
   return {
-    context: `--- FLAPSTACK SELECTED PROJECT VAULT CONTEXT (DO NOT QUOTE) ---\n${blocks.join(
-      "\n\n",
-    )}\n--- END FLAPSTACK SELECTED PROJECT VAULT CONTEXT ---`,
+    context: contexts.join("\n\n"),
     manifest: baseManifest,
   }
 }
@@ -224,13 +282,17 @@ export function persistProjectVaultContextManifest(
     runId: string
     manifest: ProjectVaultContextManifest
     runSectionIds?: readonly ProjectVaultSectionId[]
+    runGraphSelection?: ProjectVaultGraphContextSelection
   },
 ): void {
   const update: { vaultContextManifest: string; vaultContextSections?: string } = {
     vaultContextManifest: JSON.stringify(input.manifest),
   }
-  if (input.runSectionIds !== undefined) {
-    update.vaultContextSections = JSON.stringify(uniqueSectionIds(input.runSectionIds))
+  if (input.runSectionIds !== undefined || input.runGraphSelection !== undefined) {
+    update.vaultContextSections = serializeProjectVaultRunSelection({
+      sectionIds: input.runSectionIds ?? [],
+      ...(input.runGraphSelection ? { graph: input.runGraphSelection } : {}),
+    })
   }
   database.update(agentRuns).set(update).where(eq(agentRuns.id, input.runId)).run()
 }
@@ -300,17 +362,32 @@ export function updateProjectVaultContextSelection(
   return getProjectVaultContextSelection(database, input)
 }
 
+export function serializeProjectVaultRunSelection(input: {
+  sectionIds: readonly ProjectVaultSectionId[]
+  graph?: ProjectVaultGraphContextSelection
+}): string {
+  const sectionIds = uniqueSectionIds(input.sectionIds)
+  if (!input.graph) return JSON.stringify(sectionIds)
+  return JSON.stringify({
+    schemaVersion: 2,
+    sectionIds,
+    graph: normalizeGraphSelection(input.graph),
+  })
+}
+
 function resolveContextScope(
   database: Database,
   input: {
     chatId: string
     runId?: string | null
     runSectionIds?: readonly ProjectVaultSectionId[]
+    runGraphSelection?: ProjectVaultGraphContextSelection
   },
 ): {
   projectId: string | null
   taskId: string | null
   sectionIds: ProjectVaultSectionId[]
+  graphSelection: ProjectVaultGraphContextSelection | null
   source: ProjectVaultContextSelectionSource
 } {
   const chat = database
@@ -326,14 +403,28 @@ function resolveContextScope(
         .where(and(eq(agentRuns.id, input.runId), eq(agentRuns.chatId, input.chatId)))
         .get()
     : null
-  const storedRunSectionIds = storedRun ? parseStoredSelection(storedRun.sectionIds) : null
-  const runSectionIds =
-    storedRunSectionIds ??
-    (input.runSectionIds === undefined ? null : uniqueSectionIds(input.runSectionIds))
-  if (runSectionIds !== null) {
-    return { ...chat, sectionIds: runSectionIds, source: "run" }
+  const storedRunSelection = storedRun ? parseStoredRunSelection(storedRun.sectionIds) : null
+  const suppliedRunSelection =
+    input.runSectionIds !== undefined || input.runGraphSelection !== undefined
+      ? {
+          sectionIds: uniqueSectionIds(input.runSectionIds ?? []),
+          graphSelection: input.runGraphSelection
+            ? normalizeGraphSelection(input.runGraphSelection)
+            : null,
+        }
+      : null
+  const runSelection = storedRunSelection ?? suppliedRunSelection
+  if (runSelection !== null) {
+    return {
+      ...chat,
+      sectionIds: runSelection.sectionIds,
+      graphSelection: runSelection.graphSelection,
+      source: "run",
+    }
   }
-  if (!chat.projectId) return { ...chat, sectionIds: [], source: "fixed-default" }
+  if (!chat.projectId) {
+    return { ...chat, sectionIds: [], graphSelection: null, source: "fixed-default" }
+  }
   const selection = getProjectVaultContextSelection(database, {
     projectId: chat.projectId,
     ...(chat.taskId ? { taskId: chat.taskId } : {}),
@@ -341,6 +432,7 @@ function resolveContextScope(
   return {
     ...chat,
     sectionIds: selection.effectiveSectionIds,
+    graphSelection: null,
     source: selection.source,
   }
 }
@@ -373,6 +465,90 @@ function parseStoredSelection(value: string | null): ProjectVaultSectionId[] | n
       return sectionId as ProjectVaultSectionId
     }),
   )
+}
+
+function parseStoredRunSelection(value: string | null): {
+  sectionIds: ProjectVaultSectionId[]
+  graphSelection: ProjectVaultGraphContextSelection | null
+} | null {
+  if (value === null) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new Error("Stored project vault context selection is invalid.")
+  }
+  if (Array.isArray(parsed)) {
+    return {
+      sectionIds: parseStoredSelection(value) ?? [],
+      graphSelection: null,
+    }
+  }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    (parsed as { schemaVersion?: unknown }).schemaVersion !== 2
+  ) {
+    throw new Error("Stored project vault context selection is invalid.")
+  }
+  const object = parsed as { sectionIds?: unknown; graph?: unknown }
+  if (!Array.isArray(object.sectionIds)) {
+    throw new Error("Stored project vault context selection is invalid.")
+  }
+  const sectionIds = uniqueSectionIds(
+    object.sectionIds.map((sectionId) => {
+      if (!projectVaultSectionIds.includes(sectionId as ProjectVaultSectionId)) {
+        throw new Error("Stored project vault context selection is invalid.")
+      }
+      return sectionId as ProjectVaultSectionId
+    }),
+  )
+  if (!object.graph || typeof object.graph !== "object") {
+    throw new Error("Stored project vault context selection is invalid.")
+  }
+  return {
+    sectionIds,
+    graphSelection: normalizeGraphSelection(object.graph as ProjectVaultGraphContextSelection),
+  }
+}
+
+function normalizeGraphSelection(
+  input: ProjectVaultGraphContextSelection,
+): ProjectVaultGraphContextSelection {
+  if (
+    !Array.isArray(input.nodeIds) ||
+    input.nodeIds.some((nodeId) => typeof nodeId !== "string") ||
+    typeof input.expectedGenerationId !== "string" ||
+    input.expectedGenerationId.trim().length === 0
+  ) {
+    throw new Error("Project vault graph context selection is invalid.")
+  }
+  const nodeIds = input.nodeIds.map((nodeId) => nodeId.trim())
+  if (
+    nodeIds.some((nodeId) => !nodeId || nodeId.length > 200) ||
+    new Set(nodeIds).size !== nodeIds.length
+  ) {
+    throw new Error("Project vault graph context selection is invalid.")
+  }
+  if (input.expansion) {
+    const { depth, direction, maxNodes } = input.expansion
+    if (
+      !Number.isInteger(depth) ||
+      depth < 0 ||
+      depth > 2 ||
+      !["outgoing", "incoming", "both"].includes(direction) ||
+      !Number.isInteger(maxNodes) ||
+      maxNodes < nodeIds.length ||
+      maxNodes > 24
+    ) {
+      throw new Error("Project vault graph context selection is invalid.")
+    }
+  }
+  return {
+    nodeIds,
+    expectedGenerationId: input.expectedGenerationId.trim(),
+    ...(input.expansion ? { expansion: { ...input.expansion } } : {}),
+  }
 }
 
 function normalizeBudget(input?: { maxBytes: number; maxEstimatedTokens: number }) {

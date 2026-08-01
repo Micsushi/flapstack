@@ -20,6 +20,9 @@ import { trpc, trpcClient } from "../../../lib/trpc"
 import { Button } from "../../ui/button"
 import { Input } from "../../ui/input"
 import { Textarea } from "../../ui/textarea"
+import { AgentPersonalityLibrary } from "../../../features/agent-profiles/agent-personality-library"
+import { agentProfileFastModeSupported } from "../../../../shared/agent-profile-speed"
+import { handleListboxKeyDown } from "../../../lib/listbox-keyboard"
 
 const PROFILE_CHANNEL = "flapstack-agent-profiles-v1"
 const allCapabilityFields = [
@@ -29,6 +32,7 @@ const allCapabilityFields = [
   "runtimePreference",
   "modelPreference",
   "reasoningEffort",
+  "speedPreference",
   "tools",
   "skills",
   "permissionMode",
@@ -61,11 +65,15 @@ export function AgentsProfilesStudioTab() {
   const utils = trpc.useUtils()
   const projects = trpc.projects.list.useQuery()
   const [projectId, setProjectId] = useState("")
+  const [studioMode, setStudioMode] = useState<"profiles" | "personalities">("profiles")
   const [query, setQuery] = useState("")
   const profiles = trpc.agentProfiles.list.useQuery({
     projectId: projectId || undefined,
     query: query || undefined,
     includeArchived: true,
+  })
+  const personalities = trpc.agentPersonalities.list.useQuery({
+    projectId: projectId || undefined,
   })
   const diagnostics = trpc.agentProfiles.diagnostics.useQuery()
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -85,6 +93,7 @@ export function AgentsProfilesStudioTab() {
     unresolved: Array<{ kind: string; id: string; reason: string }>
   } | null>(null)
   const [launchDigest, setLaunchDigest] = useState<string | null>(null)
+  const [conversionDigest, setConversionDigest] = useState<string | null>(null)
   const [workflowRunId, setWorkflowRunId] = useState("")
   const [workflowStepId, setWorkflowStepId] = useState("")
   const [workflowReference, setWorkflowReference] = useState("")
@@ -120,6 +129,7 @@ export function AgentsProfilesStudioTab() {
     setIsNew(false)
     setResolved(null)
     setLaunchDigest(null)
+    setConversionDigest(null)
   }, [details.data, projectId])
 
   useEffect(() => {
@@ -152,6 +162,17 @@ export function AgentsProfilesStudioTab() {
     onSuccess: async (result) => {
       setStatus(`Saved ${result.profile.name} v${result.profile.currentVersion}.`)
       await refresh(result.profile)
+    },
+    onError: (error) => setStatus(error.message),
+  })
+  const convertInline = trpc.agentPersonalities.confirmInlineConversion.useMutation({
+    onSuccess: async (result) => {
+      setConversionDigest(null)
+      setStatus(
+        `Converted inline presentation to ${result.personality.metadata.name} and Agent Profile v${result.profile.profile.currentVersion}.`,
+      )
+      await refresh(result.profile.profile)
+      await utils.agentPersonalities.list.invalidate()
     },
     onError: (error) => setStatus(error.message),
   })
@@ -325,29 +346,40 @@ export function AgentsProfilesStudioTab() {
     }
   }
 
+  if (studioMode === "personalities") {
+    return (
+      <AgentPersonalityLibrary projectId={projectId} onBack={() => setStudioMode("profiles")} />
+    )
+  }
+
   return (
     <div
-      className="grid h-full min-h-0 grid-cols-[minmax(240px,0.75fr)_minmax(460px,1.5fr)]"
+      className="grid h-full min-h-0 grid-cols-1 grid-rows-[minmax(12rem,0.65fr)_minmax(0,1.35fr)] lg:grid-cols-[minmax(240px,0.75fr)_minmax(460px,1.5fr)] lg:grid-rows-1"
       data-settings-id="agent-profile-studio"
     >
       <aside
-        className="min-h-0 overflow-y-auto border-r border-border p-4"
+        className="min-h-0 overflow-y-auto border-b border-border p-4 lg:border-b-0 lg:border-r"
         aria-label="Agent Profile list"
       >
         <div className="mb-3 flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold">Profile Studio</h2>
-          <Button
-            variant="outline"
-            onClick={() => {
-              setSelectedId(null)
-              setDraft(blankDraft(projectId))
-              setIsNew(true)
-              setResolved(null)
-              setLaunchDigest(null)
-            }}
-          >
-            New
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => setStudioMode("personalities")}>
+              Personalities
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSelectedId(null)
+                setDraft(blankDraft(projectId))
+                setIsNew(true)
+                setResolved(null)
+                setLaunchDigest(null)
+              }}
+            >
+              New
+            </Button>
+          </div>
         </div>
         <label className="mb-3 block text-xs font-medium">
           Project scope
@@ -371,13 +403,20 @@ export function AgentsProfilesStudioTab() {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <div className="mt-3 space-y-1" role="listbox" aria-label="Agent Profiles">
-          {profiles.data?.map((profile) => (
+        <div
+          className="mt-3 space-y-1"
+          role="listbox"
+          aria-label="Agent Profiles"
+          aria-orientation="vertical"
+          onKeyDown={handleListboxKeyDown}
+        >
+          {profiles.data?.map((profile, index) => (
             <button
               key={profile.id}
               type="button"
               role="option"
               aria-selected={selectedId === profile.id}
+              tabIndex={selectedId === profile.id || (!selectedId && index === 0) ? 0 : -1}
               onClick={() => setSelectedId(profile.id)}
               className={`w-full rounded-md border px-3 py-2 text-left text-sm ${
                 selectedId === profile.id
@@ -481,6 +520,106 @@ export function AgentsProfilesStudioTab() {
           </section>
 
           <CapabilityEditor draft={draft} setDraft={setDraft} />
+          <section
+            className="space-y-3 rounded-lg border-2 border-violet-500/25 p-4"
+            aria-labelledby="profile-personality-reference-heading"
+          >
+            <div>
+              <h4 id="profile-personality-reference-heading" className="text-sm font-semibold">
+                Reusable Personality
+              </h4>
+              <p className="text-xs text-muted-foreground">
+                Select one exact immutable Markdown style version. It cannot change this
+                profile&apos;s model, Runtime, skills, tools, permissions, worktree, or descendants.
+              </p>
+            </div>
+            <select
+              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+              value={
+                draft.definition.personality
+                  ? `${draft.definition.personality.personalityId}@${draft.definition.personality.version}`
+                  : ""
+              }
+              onChange={(event) => {
+                const selectedPersonality = personalities.data?.find(
+                  (item) => `${item.personalityId}@${item.currentVersion}` === event.target.value,
+                )
+                patchDefinition(setDraft, {
+                  personality: selectedPersonality
+                    ? {
+                        personalityId: selectedPersonality.personalityId,
+                        version: selectedPersonality.currentVersion,
+                      }
+                    : null,
+                })
+              }}
+            >
+              <option value="">Inline legacy presentation</option>
+              {personalities.data
+                ?.filter((personality) => !personality.archivedAt)
+                .map((personality) => (
+                  <option
+                    key={personality.personalityId}
+                    value={`${personality.personalityId}@${personality.currentVersion}`}
+                  >
+                    {personality.name} v{personality.currentVersion} · {personality.scope.type}
+                  </option>
+                ))}
+            </select>
+            {draft.definition.personality && (
+              <p className="break-all font-mono text-[10px] text-muted-foreground">
+                {draft.definition.personality.personalityId}@{draft.definition.personality.version}
+              </p>
+            )}
+            {!isNew && selected && !draft.definition.personality && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      const preview =
+                        await trpcClient.agentPersonalities.previewInlineConversion.query({
+                          profile: {
+                            profileId: selected.id,
+                            version: selected.currentVersion,
+                          },
+                        })
+                      setConversionDigest(preview.digest)
+                      setStatus(
+                        `Previewed ${preview.name}. Confirm to create one immutable Personality and Agent Profile v${selected.currentVersion + 1}.`,
+                      )
+                    } catch (error) {
+                      setStatus(error instanceof Error ? error.message : String(error))
+                    }
+                  }}
+                >
+                  Preview inline conversion
+                </Button>
+                <Button
+                  type="button"
+                  disabled={!conversionDigest || convertInline.isPending}
+                  onClick={() =>
+                    conversionDigest &&
+                    convertInline.mutate({
+                      profile: {
+                        profileId: selected.id,
+                        version: selected.currentVersion,
+                      },
+                      expectedDigest: conversionDigest,
+                    })
+                  }
+                >
+                  Confirm conversion
+                </Button>
+                {conversionDigest && (
+                  <code className="break-all text-[10px] text-muted-foreground">
+                    {conversionDigest}
+                  </code>
+                )}
+              </div>
+            )}
+          </section>
           <PersonalityEditor draft={draft} setDraft={setDraft} />
 
           <section
@@ -912,8 +1051,68 @@ function CapabilityEditor({
         <Input
           value={capability.modelPreference ?? ""}
           placeholder="Unpinned"
-          onChange={(event) => patch({ modelPreference: event.target.value.trim() || null })}
+          onChange={(event) => {
+            const modelPreference = event.target.value.trim() || null
+            patch({
+              modelPreference,
+              speedPreference: agentProfileFastModeSupported({
+                harness: capability.harness,
+                modelPreference,
+              })
+                ? capability.speedPreference
+                : null,
+            })
+          }}
         />
+      </Field>
+      <Field label="Reasoning effort">
+        <select
+          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+          value={capability.reasoningEffort ?? ""}
+          onChange={(event) =>
+            patch({
+              reasoningEffort: (event.target.value || null) as typeof capability.reasoningEffort,
+            })
+          }
+        >
+          <option value="">Provider default</option>
+          <option value="minimal">Minimal</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="xhigh">Extra high</option>
+        </select>
+      </Field>
+      <Field label="Speed">
+        <select
+          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+          value={capability.speedPreference ?? ""}
+          onChange={(event) =>
+            patch({
+              speedPreference: (event.target.value || null) as typeof capability.speedPreference,
+            })
+          }
+        >
+          <option value="">Provider default</option>
+          <option value="standard">Standard</option>
+          <option
+            value="fast"
+            disabled={
+              !agentProfileFastModeSupported({
+                harness: capability.harness,
+                modelPreference: capability.modelPreference,
+              })
+            }
+          >
+            Fast (supported Codex models only)
+          </option>
+        </select>
+        {capability.speedPreference === "fast" && (
+          <span className="text-xs text-muted-foreground">
+            Fast is snapshotted independently; reasoning effort remains{" "}
+            {capability.reasoningEffort ?? "provider default"}.
+          </span>
+        )}
       </Field>
       <Field label="Permission ceiling">
         <select
@@ -1082,6 +1281,20 @@ function ResolvedPreview({ value }: { value: ResolvedAgentProfileSnapshot }) {
         <Fact label="Runtime" value={value.evaluation.runtime} />
         <Fact label="Evaluation" value={value.evaluation.state} />
       </div>
+      {value.personality && (
+        <details className="rounded border border-violet-500/25 p-3">
+          <summary className="cursor-pointer font-medium">
+            Personality {value.personality.metadata.name} · {value.personality.ref.personalityId}@
+            {value.personality.ref.version}
+          </summary>
+          <p className="mt-2 break-all font-mono text-[10px] text-muted-foreground">
+            {value.personality.digest}
+          </p>
+          <pre className="mt-2 whitespace-pre-wrap font-sans text-xs leading-5">
+            {value.personality.body}
+          </pre>
+        </details>
+      )}
       {value.conflicts.length > 0 && (
         <ul className="space-y-1 text-amber-700 dark:text-amber-300">
           {value.conflicts.map((conflict) => (
@@ -1157,6 +1370,7 @@ function blankDraft(projectId: string): Draft {
     projectId,
     definition: {
       base: null,
+      personality: null,
       capability: structuredClone(DEFAULT_AGENT_CAPABILITY),
       presentation: structuredClone(DEFAULT_AGENT_PRESENTATION),
       inheritCapabilityFields: [],

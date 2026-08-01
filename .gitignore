@@ -36,12 +36,12 @@ resources/bin/
 native/**/target/
 /artifacts/
 /build/generated/
+/.local-evidence/
 
-# AI/agent instruction docs stay local (vault holds the canonical copies).
+# Local agent instructions stay outside the product repository.
 AGENTS.md
 CLAUDE.md
 openspec/AGENTS.md
-ui-design.md
 STAGE2-*.md
 CLAUDE.local.md
 AGENTS.local.md

@@ -132,6 +132,156 @@ describe("usage rollup queries", () => {
     }
   })
 
+  it("does not infer that an unscoped run belongs to an organization total", async () => {
+    const { sqlite, db } = database()
+    try {
+      seedRunGraph(sqlite)
+      sqlite
+        .prepare(
+          `INSERT INTO agent_runs (id, chat_id, harness, permission_mode, status)
+           VALUES (?, 'chat-1', 'codex', 'ask-before-edits', 'completed')`,
+        )
+        .run("run-contained")
+      const windowStart = new Date("2026-07-01T00:00:00.000Z")
+      const windowEnd = new Date("2026-07-02T00:00:00.000Z")
+      await insertSamples(db, [
+        {
+          providerId: "codex",
+          accountTag: "openai-org:org-a:project:project-a",
+          source: "daemon-poll",
+          sourceTag: "organization-cost",
+          metricKey: "cost",
+          costQuality: "provider-reported",
+          costUsd: 10,
+          capturedAt: new Date("2026-07-02T01:00:00.000Z"),
+          windowStart,
+          windowEnd,
+          dedupeKey: "org-total",
+        },
+        {
+          providerId: "codex",
+          accountTag: "legacy-run-identity",
+          source: "flapstack-run",
+          sourceTag: "runtime",
+          costQuality: "exact",
+          costUsd: 3,
+          capturedAt: new Date("2026-07-01T10:00:00.000Z"),
+          windowStart: new Date("2026-07-01T09:59:00.000Z"),
+          windowEnd: new Date("2026-07-01T10:01:00.000Z"),
+          runId: "run-contained",
+          dedupeKey: "contained-run",
+        },
+      ])
+
+      const combined = queryUsageRollups(db, {
+        scope: { type: "global" },
+        providerIds: ["codex"],
+      })
+      expect(combined.totals.metrics.costUsdMicros).toBe(13_000_000)
+      expect(combined.reconciliation.suppressedMetricCount).toBe(0)
+
+      const runs = queryUsageRollups(db, {
+        scope: { type: "global" },
+        providerIds: ["codex"],
+        sourceClasses: ["flapstack-run"],
+      })
+      expect(runs.totals.metrics.costUsdMicros).toBe(3_000_000)
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("suppresses an organization-contained run only with the same exact account scope", async () => {
+    const { sqlite, db } = database()
+    try {
+      seedRunGraph(sqlite)
+      const accountTag = "openai-org:org-a:project:project-a"
+      const windowStart = new Date("2026-07-01T00:00:00.000Z")
+      const windowEnd = new Date("2026-07-02T00:00:00.000Z")
+      await insertSamples(db, [
+        {
+          providerId: "codex",
+          accountTag,
+          source: "daemon-poll",
+          sourceTag: "organization-cost",
+          costQuality: "provider-reported",
+          costUsd: 10,
+          capturedAt: new Date("2026-07-02T01:00:00.000Z"),
+          windowStart,
+          windowEnd,
+          dedupeKey: "org-total",
+        },
+        {
+          providerId: "codex",
+          accountTag,
+          source: "flapstack-run",
+          sourceTag: "runtime",
+          costQuality: "exact",
+          costUsd: 3,
+          capturedAt: new Date("2026-07-01T10:00:00.000Z"),
+          windowStart: new Date("2026-07-01T09:59:00.000Z"),
+          windowEnd: new Date("2026-07-01T10:01:00.000Z"),
+          runId: "run-1",
+          dedupeKey: "contained-run",
+        },
+      ])
+
+      const combined = queryUsageRollups(db, {
+        scope: { type: "global" },
+        providerIds: ["codex"],
+      })
+      expect(combined.totals.metrics.costUsdMicros).toBe(10_000_000)
+      expect(combined.reconciliation.suppressedMetricCount).toBe(1)
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("does not mix explicit organization boundaries during reconciliation", async () => {
+    const { sqlite, db } = database()
+    try {
+      seedRunGraph(sqlite)
+      const windowStart = new Date("2026-07-01T00:00:00.000Z")
+      const windowEnd = new Date("2026-07-02T00:00:00.000Z")
+      await insertSamples(db, [
+        {
+          providerId: "codex",
+          accountTag: "openai-org:org-a:project:project-a",
+          source: "daemon-poll",
+          sourceTag: "organization-cost",
+          costQuality: "provider-reported",
+          costUsd: 10,
+          capturedAt: new Date("2026-07-02T01:00:00.000Z"),
+          windowStart,
+          windowEnd,
+          dedupeKey: "org-a-total",
+        },
+        {
+          providerId: "codex",
+          accountTag: "openai-org:org-b:project:project-b",
+          source: "flapstack-run",
+          sourceTag: "runtime",
+          costQuality: "exact",
+          costUsd: 4,
+          capturedAt: new Date("2026-07-01T10:00:00.000Z"),
+          windowStart: new Date("2026-07-01T09:59:00.000Z"),
+          windowEnd: new Date("2026-07-01T10:01:00.000Z"),
+          runId: "run-1",
+          dedupeKey: "org-b-run",
+        },
+      ])
+
+      const combined = queryUsageRollups(db, {
+        scope: { type: "global" },
+        providerIds: ["codex"],
+      })
+      expect(combined.totals.metrics.costUsdMicros).toBe(14_000_000)
+      expect(combined.reconciliation.suppressedMetricCount).toBe(0)
+    } finally {
+      sqlite.close()
+    }
+  })
+
   it("keeps only the latest cumulative fact in one overlap group", async () => {
     const { sqlite, db } = database()
     try {

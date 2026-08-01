@@ -4,6 +4,7 @@ import { resolve } from "node:path"
 import {
   isDevTestControlEnabled,
   isPreviewExecutable,
+  isStage6PerformanceProfile,
   resolveFlapstackProtocol,
   resolvePreviewUserDataName,
 } from "../src/main/lib/mcp-test-control/lifecycle"
@@ -20,6 +21,11 @@ describe("test-control lifecycle", () => {
     expect(isDevTestControlEnabled(false, false, { FLAPSTACK_ENABLE_DEV_TEST_CONTROL: "1" })).toBe(
       false,
     )
+    expect(
+      isDevTestControlEnabled(false, false, { FLAPSTACK_STAGE6_PERFORMANCE_PROFILE: "1" }),
+    ).toBe(false)
+    expect(isStage6PerformanceProfile({ FLAPSTACK_STAGE6_PERFORMANCE_PROFILE: "1" })).toBe(true)
+    expect(isStage6PerformanceProfile({ FLAPSTACK_STAGE6_PERFORMANCE_PROFILE: "true" })).toBe(false)
     expect(isDevTestControlEnabled(true, false, {})).toBe(true)
   })
 
@@ -38,7 +44,13 @@ describe("test-control lifecycle", () => {
     expect(resolveFlapstackProtocol(false, true)).toBe("flapstack-preview")
     expect(resolveFlapstackProtocol(false, false)).toBe("flapstack")
     expect(readFileSync("src/main/index.ts", "utf8")).toContain(
-      "resolveFlapstackProtocol(IS_DEV, IS_PREVIEW)",
+      "resolveFlapstackProtocol(IS_CONTROL_DEV, IS_PREVIEW)",
+    )
+    expect(readFileSync("src/main/index.ts", "utf8")).toContain(
+      "const IS_STAGE6_PERFORMANCE = !app.isPackaged && isStage6PerformanceProfile()",
+    )
+    expect(readFileSync("src/main/index.ts", "utf8")).toContain(
+      "enabled: isDevTestControlEnabled(IS_CONTROL_DEV, IS_PREVIEW)",
     )
     expect(readFileSync("src/main/lib/trpc/routers/debug.ts", "utf8")).toContain(
       "resolveFlapstackProtocol(IS_DEV, !IS_DEV && isPreviewExecutable())",
@@ -107,7 +119,8 @@ describe("test-control lifecycle", () => {
 
   it("allows Windows renderer control to finish cache refreshes", () => {
     const source = readFileSync("src/main/lib/mcp-test-control/service.ts", "utf8")
-    expect(source).toContain('process.platform === "win32" ? 15_000 : 5_000')
+    expect(source).toContain('platform === "win32" ? 15_000 : 5_000')
+    expect(source).toContain("resolveDevRendererControlTimeoutMs(options.timeoutMs)")
   })
 
   it("waits for the renderer to observe approval timeout invalidation", () => {

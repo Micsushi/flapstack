@@ -4,13 +4,15 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { createRequire } from "node:module"
 import { DatabaseSync } from "node:sqlite"
+import { build } from "esbuild"
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, "..")
 const temp = mkdtempSync(join(tmpdir(), "flapstack-usage-daemon-"))
 const dbPath = join(temp, "agents.db")
 const settingsPath = join(temp, "usage-settings.json")
-const daemonEntry = join(root, "out/main/usage-daemon.js")
+const sourceBuildDir = mkdtempSync(join(root, ".usage-daemon-source-smoke-"))
+const daemonEntry = join(sourceBuildDir, "usage-daemon-current-source.cjs")
 const electronPath = require("electron")
 const children = new Set()
 
@@ -86,6 +88,16 @@ function readDaemonBudgetAlert() {
 }
 
 try {
+  await build({
+    entryPoints: [join(root, "src/main/usage-daemon.ts")],
+    outfile: daemonEntry,
+    bundle: true,
+    packages: "external",
+    platform: "node",
+    format: "cjs",
+    target: "node22",
+    logLevel: "silent",
+  })
   const db = new DatabaseSync(dbPath)
   for (const migration of readdirSync(join(root, "drizzle"))
     .filter((name) => /^\d{4}_.+\.sql$/.test(name))
@@ -198,6 +210,7 @@ try {
   }
   await Promise.allSettled([...children].map((child) => waitForExit(child, 2_000)))
   rmSync(temp, { recursive: true, force: true })
+  rmSync(sourceBuildDir, { recursive: true, force: true })
 }
 
 async function waitFor(predicate, timeoutMs = 8_000) {

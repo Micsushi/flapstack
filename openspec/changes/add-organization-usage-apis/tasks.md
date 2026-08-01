@@ -2,7 +2,8 @@
 
 ### S6-F8-T1 — Lock provider scope, credentials, identity, and provenance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F8
 - Outcome: OpenAI/Anthropic organization endpoints, credential needs, sample fields, truth classes, and unavailable behavior are explicit.
 - Scope: Current official API contract snapshot; scopes; organization/account selection; endpoint/window/cursor/rate limits; currency/coverage; retention; low-value credential test policy; surface keep/remove decision.
@@ -15,7 +16,9 @@
 
 ### S6-F8-T2 — Implement OpenAI organization usage and cost adapter
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:openai-admin-api`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:openai-admin-api` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F8
 - Outcome: Flapstack polls allowed OpenAI organization data with exact identity, cursors, coverage, and errors.
 - Scope: Credential validation; organization/project selection; usage/cost endpoints; pagination/cursors; rate limits; retries; normalization; freshness; diagnostics; fixture capture.
@@ -28,7 +31,9 @@
 
 ### S6-F8-T3 — Implement Anthropic organization usage and cost adapter
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:anthropic-admin-api`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:anthropic-admin-api` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F8
 - Outcome: Flapstack polls allowed Anthropic organization data with exact identity, cursors, coverage, and errors.
 - Scope: Credential validation; organization/workspace selection where exposed; usage/cost endpoints; pagination/cursors; rate limits; retries; normalization; freshness; diagnostics; fixtures.
@@ -41,7 +46,8 @@
 
 ### S6-F8-T4 — Add organization identities, samples, rollups, and reconciliation
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F8
 - Outcome: Organization totals remain queryable and comparable without double counting run/provider datasets.
 - Scope: Schema/migration; organization/account records; samples; cursors; uniqueness; currency; rollups; coverage; comparison queries; rebuild; retention; rollback.
@@ -54,7 +60,8 @@
 
 ### S6-F8-T5 — Add organization Settings, dashboard, budgets, and alerts
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F8
 - Outcome: Authorized users configure organizations and inspect totals, coverage, freshness, budgets, and alerts.
 - Scope: Alphabetical Settings route; write-only credentials; org/account selector; connection diagnostics; usage dashboard scope; comparison copy; budgets/thresholds; alert destinations; hidden-feature behavior.
@@ -67,7 +74,8 @@
 
 ### S6-F8-T6 — Harden daemon lifecycle, failures, security, and diagnostics
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F8
 - Outcome: Closed-app polling handles revocation, rate limits, cursor faults, network loss, and cleanup without secret leakage or duplicate alerts.
 - Scope: Daemon credential handoff; schedules/backoff; cursor recovery; auth disable; network; clock; locks; crash/restart; diagnostics; audit; orphan cleanup.
@@ -80,7 +88,10 @@
 
 ### S6-F8-T7 — Close organization usage acceptance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:live-organization-admin-apis`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:live-organization-admin-apis` remains uncertified.
+- [ ] Release evidence: `release-gate` remains uncertified for native-distribution-daemon-and-credentials.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F8
 - Outcome: OpenAI and Anthropic organization collection, reconciliation, dashboard, daemon, budgets, and alerts pass truthful evidence.
 - Scope: Matrix S6-OU; migrations; credentials; live providers; closed app; rate/failure; export; accessibility; package/platform; docs.

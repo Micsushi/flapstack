@@ -51,6 +51,10 @@ const NEVER_EXPORT_TABLES = new Set([
   "mobile_device_sessions",
   "mobile_session_nonces",
   "mcp_approval_requests",
+  "project_vault_graph_edges",
+  "project_vault_graph_generations",
+  "project_vault_graph_nodes",
+  "project_vault_graph_state",
 ])
 
 export function scopeForTable(tableName: string): PortableScopeId | null {

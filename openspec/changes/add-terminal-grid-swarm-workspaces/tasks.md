@@ -2,7 +2,9 @@
 
 ### S6-F6-T1 — Lock the Chat-group, floating-window, and advanced-grid contract
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:native-cross-window-drag-host`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:native-cross-window-drag-host` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F6
 - Outcome: VS Code reference behavior and current Flapstack foundations become one implementable contract over existing identities and authority.
 - Scope: Map top-level Chat tabs, legacy internal split, Saved Workspace shell, Chat ownership, ActiveChat boundaries, and every `createWindow` caller; record VS Code group/drop/floating behavior; lock four-visible-Chat-per-window and four-workbench-window-total limits, counted/exempt window kinds, presets, shared vs pane-local chrome, responsive minimums, move/copy semantics, fleet/group controls, and non-goals; run a disposable Electron cross-window drag spike on macOS, Windows, and Linux or record the native host proof blocker for each unobserved OS.
@@ -15,7 +17,8 @@
 
 ### S6-F6-T2 — Build the reusable full-Chat pane and bounded group tree
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F6
 - Outcome: One window can render one to four complete, independently operable top-level Chats in a versioned row/column group tree.
 - Scope: Extract a reusable Chat workbench pane from the one-selected-Chat route; pane-local header/transcript/vertical scrollbar/timeline/composer/draft/run/stream/error/focus; shared-sidebar and active-pane details contract; recursive split/group reducer; sashes; maximize/restore; Single, Two Columns, Two Rows, Three Columns, Three Rows, Grid 2x2, Two Rows Right, Two Columns Bottom, Four Columns, and Four Rows layouts; group normalization; responsive minimum/collapse; inactive-tab suspension.
@@ -28,7 +31,8 @@
 
 ### S6-F6-T3 — Add directional tab drag/drop and authoritative pane binding
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F6
 - Outcome: Users reorder tabs, tab Chats together, or create left/right/top/bottom splits with a truthful preview while every pane resolves exact durable identity.
 - Scope: Replace renderer-only pointer reorder with versioned drag sessions; tab-strip insertion; center and edge drop overlays; Escape/cancel; capacity/minimum-size rejection; context-menu and command equivalents; focus after move; bind Chat/terminal/run/agent/worktree/diff/file/browser panes; target validation; stale/missing state; same-window ownership and lifecycle cleanup.
@@ -41,7 +45,8 @@
 
 ### S6-F6-T4 — Add fleet, lineage, activity, and task-path projections
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F6
 - Outcome: Dense grid users understand every agent's role, runtime, lineage, task path, budget, progress, and recovery state.
 - Scope: Fleet pane; lineage/graph; selected-agent details; ordered activity; workflow/mailbox/dependency events; filters; warnings; usage; navigation.
@@ -54,7 +59,8 @@
 
 ### S6-F6-T5 — Add previewed bounded group controls
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F6
 - Outcome: Users select exact agents and safely pause, resume, cancel, or steer with per-target results.
 - Scope: Selection model; action preview; capability/permission matrix; approval; cascade; idempotency; partial results; audit; undo only where service supports it.
@@ -67,7 +73,8 @@
 
 ### S6-F6-T6 — Enforce the four-workbench-window budget
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F6
 - Outcome: Every path that can create a visible Flapstack workbench window obeys one race-safe app-wide limit of four, including main.
 - Scope: Add shared constants/types and main-process `WindowBudget`; classify main/Chat/Saved Workspace windows as counted and dialogs/native pickers/capture overlays/hidden utilities as exempt; reserve/commit/release/expire slots; enumerate/focus existing destinations; route tab drag-out, New Window, Move/Copy into New Window, workspace pane pop-out/remainder, restore, and API/automation callers through the budget; expose typed `available`, `at-limit`, and `reservation-expired` results; log sanitized diagnostics.
@@ -80,7 +87,10 @@
 
 ### S6-F6-T7 — Implement atomic drag-out and cross-window Chat transfer
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:native-drag-multidisplay`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:native-drag-multidisplay` remains uncertified.
+- [ ] Release evidence: `release-gate` remains uncertified for native-package-cross-window-transfer.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F6
 - Outcome: A Chat tab moves between groups/windows or into a new floating Flapstack window with no duplicate identity, editable owner, or lost local state.
 - Scope: Electron main-process drag coordinator; opaque expiring drag sessions; registered-window screen bounds/drop targets; destination reservation; destination-ready handshake; compare-and-transfer Chat ownership; source commit/rollback; same-window and cross-window drop; outside-drop window creation; pull-back; Move into New Window command; read-only Copy into New Window; focus restoration; cap-reached destination chooser; source/destination close and renderer-crash recovery.
@@ -93,7 +103,9 @@
 
 ### S6-F6-T8 — Persist, migrate, and restore window/group/workspace layouts
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Release evidence: `release-gate` remains uncertified for packaged-window-restore.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F6
 - Outcome: Normal and Saved Workspace layouts restore crash-safely within the four-window budget without changing underlying work.
 - Scope: Versioned window-session schema; stable IDs; kind/project/workspace target; display/bounds/compact state; group tree, active group/tab, split sizes, drafts/scroll-anchor references; atomic autosave; `openChatIds` single-group migration; prior Saved Workspace layout adapter; Save as Workspace/template lifecycle; dormant overflow when saved state exceeds four windows; most-recently-focused restore order; missing-display clamp; stale/missing repair; import/export; rollback and last-compatible state.
@@ -106,7 +118,9 @@
 
 ### S6-F6-T9 — Prove accessibility and scale under multi-pane workloads
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:native-assistive-technology-and-24h-soak`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:native-assistive-technology-and-24h-soak` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F6
 - Outcome: Grid remains operable with keyboard/reader and within explicit CPU/memory/render budgets.
 - Scope: Roving group/tab/window focus; split/move/resize/maximize/window commands; cap-reached destination chooser; drag preview announcements; focus restoration; zoom; color; reduced motion; responsive collapse; four simultaneous full Chat panes in each of four windows; virtualization; terminal backpressure; inactive suspension; 20/50/100 advanced panes/agents; listener/window/renderer leak tests.
@@ -119,7 +133,10 @@
 
 ### S6-F6-T10 — Close multi-pane Chat and swarm workspace acceptance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:native-multiwindow-assistive-technology`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:native-multiwindow-assistive-technology` remains uncertified.
+- [ ] Release evidence: `release-gate` remains uncertified for native-distribution-multiwindow.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F6
 - Outcome: Full Chat panes, directional drag, floating windows, binding, fleet, group control, persistence, scale, and accessibility pass one exact build.
 - Scope: Matrix S6-TG; every preset and directional/mirrored layout; four simultaneous send/stream/scroll/composer flows; fifth-group handling; four total workbench windows and every fifth-window path; drag outside and between windows; command fallback; source/destination crash; same-window and cross-window ownership; dormant restore overflow; simple/advanced entry; restart; responsive collapse; stale targets; mixed runtimes; group partial failure; manual test plan, support limits, recovery docs, and packages.

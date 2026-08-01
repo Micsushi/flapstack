@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm"
-import { isAbsolute, join, resolve } from "node:path"
+import { dirname, isAbsolute, join, resolve } from "node:path"
 import type { getDatabase } from "../db"
 import { projects, projectVaultPolicies, projectVaults } from "../db/schema"
+import { ensureProjectVaultGitExclusion, removeProjectVaultGitExclusion } from "./git-exclusion"
 
 export const vaultLocationModes = ["app-managed", "project-owned"] as const
 export type VaultLocationMode = (typeof vaultLocationModes)[number]
@@ -116,6 +117,16 @@ export function getOrCreateProjectVaultPolicy(
   return toPolicy(created)
 }
 
+export function getProjectVaultPolicy(database: Database, projectId: string): ProjectVaultPolicy {
+  const row = database
+    .select()
+    .from(projectVaultPolicies)
+    .where(eq(projectVaultPolicies.projectId, projectId))
+    .get()
+  if (!row) throw new Error("Project vault policy is missing.")
+  return toPolicy(row)
+}
+
 export function updateProjectVaultPolicy(
   database: Database,
   input: {
@@ -153,18 +164,58 @@ export function updateProjectVaultPolicy(
     input.locationMode === "project-owned"
       ? (current.projectOwnedPath ?? getDefaultProjectOwnedVaultPath(project.path))
       : current.projectOwnedPath
-  const updated = database
-    .update(projectVaultPolicies)
-    .set({
-      locationMode: input.locationMode,
-      projectOwnedPath,
-      gitTrackingEnabled: input.locationMode === "project-owned" ? input.gitTrackingEnabled : false,
-      portabilityMode: input.locationMode === "project-owned" ? "project-owned" : "export-required",
-      updatedAt: new Date(),
-    })
-    .where(eq(projectVaultPolicies.projectId, input.projectId))
-    .returning()
-    .get()
-  if (!updated) throw new Error("Failed to update project vault policy.")
+  const changesTracking =
+    scaffolded &&
+    input.locationMode === "project-owned" &&
+    current.gitTrackingEnabled !== input.gitTrackingEnabled
+  const projectRoot = changesTracking ? dirname(dirname(projectOwnedPath!)) : null
+  const disablingTracking = changesTracking && !input.gitTrackingEnabled
+  if (disablingTracking) ensureProjectVaultGitExclusion(projectRoot!)
+
+  let updated: PersistedPolicy | undefined
+  try {
+    updated = database
+      .update(projectVaultPolicies)
+      .set({
+        locationMode: input.locationMode,
+        projectOwnedPath,
+        gitTrackingEnabled:
+          input.locationMode === "project-owned" ? input.gitTrackingEnabled : false,
+        portabilityMode:
+          input.locationMode === "project-owned" ? "project-owned" : "export-required",
+        updatedAt: new Date(),
+      })
+      .where(eq(projectVaultPolicies.projectId, input.projectId))
+      .returning()
+      .get()
+  } catch (error) {
+    if (disablingTracking) removeProjectVaultGitExclusion(projectRoot!)
+    throw error
+  }
+  if (!updated) {
+    if (disablingTracking) removeProjectVaultGitExclusion(projectRoot!)
+    throw new Error("Failed to update project vault policy.")
+  }
+
+  if (changesTracking && input.gitTrackingEnabled) {
+    try {
+      removeProjectVaultGitExclusion(projectRoot!)
+    } catch (error) {
+      database
+        .update(projectVaultPolicies)
+        .set({ gitTrackingEnabled: false, updatedAt: current.updatedAt })
+        .where(eq(projectVaultPolicies.projectId, input.projectId))
+        .run()
+      try {
+        ensureProjectVaultGitExclusion(projectRoot!)
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "Git tracking opt-in failed and the local exclusion rollback also failed.",
+        )
+      }
+      throw error
+    }
+  }
   return toPolicy(updated)
 }

@@ -204,7 +204,7 @@ describe("multi-agent operations configuration", () => {
     expect(service.listTemplates()).toEqual([])
   })
 
-  it("replays 0031 through 0035 without mobile residue", () => {
+  it("keeps orchestration tables available after later migrations", () => {
     const db = new Database(databasePath)
     const names = (
       db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{
@@ -219,7 +219,6 @@ describe("multi-agent operations configuration", () => {
         "coordination_action_intents",
       ]),
     )
-    expect(names.some((name) => name.startsWith("mobile_"))).toBe(false)
     db.close()
   })
 })

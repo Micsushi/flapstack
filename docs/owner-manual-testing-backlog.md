@@ -1573,3 +1573,206 @@ The expanded Windows walkthrough remains in
          limitation.
     - Expected: owner feedback is reproducible and mapped to the exact candidate.
     - Notes:
+
+## Stage 6 — Personalized, Cross-Device, Multi-Agent Release
+
+Stage 6 Tier 3 is owner-only experiential and hardware/provider/release
+confirmation. Every item remains nonblocking for Tier 2 core completion unless
+the owner explicitly relabels it `release-blocking`.
+
+- [ ] S6-F1/F2 — Product polish, onboarding, and feature visibility
+  - State: not tested
+  - Prerequisites: disposable fresh and upgrade profiles, narrow/wide displays,
+    and an optional platform screen reader.
+  - [ ] S6-F1 — Navigation, Settings, Chat, and recovery
+    - Test instructions:
+      1. Traverse every global, project, task, Chat, run, workspace, search, and
+         Settings destination without the mouse.
+      2. Repeat at 200% zoom, narrow width, reduced motion, and with the
+         available platform screen reader.
+      3. Force empty, loading, unavailable, stale, partial, and failed states.
+    - Expected: focus, labels, contrast, state, and recovery remain clear; no
+      launch-critical control is hidden behind unexplained UI.
+    - Notes:
+  - [ ] S6-F2 — Fresh, skipped, resumed, and upgrade onboarding
+    - Test instructions:
+      1. Complete Focused, Standard, Complete, Skip, interrupted, and resumed
+         onboarding paths in separate disposable profiles.
+      2. Preview and apply another visibility preset, hide one feature, then
+         find and re-enable it through Settings search.
+      3. Open an upgraded profile and confirm existing visibility is unchanged
+         until an explicit choice is applied.
+    - Expected: previews match results, explanations agree, and hidden features
+      retain data, APIs, safety, and reversible access.
+    - Notes:
+
+- [ ] S6-F3 — Agent Profiles and reusable personalities
+  - State: not tested
+  - Prerequisites: disposable project; available Codex and Claude accounts for
+    optional provider evidence.
+  - [ ] S6-F3 — Authoring, selection, and immutable resolution
+    - Test instructions:
+      1. Create/import/edit/export one Markdown personality and attach it to two
+         profiles with different capabilities, authority, effort, and speed.
+      2. Select profiles for global, project, task, direct-child, and workflow
+         chats; inspect preview and durable snapshots.
+      3. Change or remove the personality and retry an earlier child.
+    - Expected: Agent Profile remains the only complete configuration,
+      compatible choices are exact, effort and speed stay independent,
+      historical snapshots persist, and Markdown gains no authority.
+    - Notes:
+
+- [ ] S6-F4 — Cross-agent mobile companion
+  - State: not tested
+  - Prerequisites: private LAN, iOS device, Android-class device, disposable
+    desktop profile; no public relay.
+  - [ ] S6-F4 — Pairing, lifecycle, offline recovery, and accessibility
+    - Test instructions:
+      1. Enable the bridge, scan QR, compare fingerprint, pair two devices,
+         rename one, and inspect session expiry.
+      2. Monitor transcript/activity, steer one bounded action, handle one
+         approval, and test honest notifications.
+      3. Lose connectivity, recover an event gap, replay an old request, revoke
+         each device, and move from private to unsafe network.
+    - Expected: bridge stays default-off/private/authenticated; events remain
+      ordered/scoped; replay and stale mutation fail; revoke is immediate; an
+      unsafe interface change stops the bridge.
+    - Notes:
+
+- [ ] S6-F5 — Visual context and screenshot capture
+  - State: not tested
+  - Prerequisites: host capture permission, multiple displays if available, and
+    disposable images containing fake secrets.
+  - [ ] S6-F5 — Permissions, redaction, provenance, and helper parity
+    - Test instructions:
+      1. Deny then grant capture permission and select each supported source,
+         including a second display.
+      2. Crop, annotate, redact fake secrets, confirm, and inspect persisted and
+         exported bytes, metadata, and hash.
+      3. Exercise missing/tampered history, retention deletion, agent-requested
+         capture approval, and the standalone helper when available.
+    - Expected: preview equals confirmed derivative, removed pixels/metadata are
+      unrecoverable, unselected visuals never enter context, and helper safety
+      matches the app.
+    - Notes:
+
+- [ ] S6-F6 — Multi-pane Chat and swarm workspaces
+  - State: not tested
+  - Prerequisites: disposable project with six Chats and mixed run states; large
+    and small displays.
+  - [ ] S6-F6 — Layout, transfer, window budget, recovery, and group actions
+    - Test instructions:
+      1. Follow
+         [`stage6-multi-pane-chat-window-test-plan.md`](stage6-multi-pane-chat-window-test-plan.md)
+         for tab reorder, directional drops, presets, resize, maximize, join,
+         close, keyboard paths, and simultaneous send.
+      2. Transfer Chats across windows; close/crash source and destination; race
+         fifth-group and fifth-window creation.
+      3. Restart stale, over-limit, responsive, and Saved Workspace layouts; run
+         previewed group actions with a partial failure.
+    - Expected: one durable Chat has one editable owner, drafts/focus/streams
+      persist, failed transfers keep source state, excess windows stay dormant,
+      and the app never exceeds four workbench windows.
+    - Notes:
+
+- [ ] S6-F7 — Runtime and cross-provider orchestration composition
+  - State: not tested
+  - Prerequisites: disposable project, low-value Codex/Claude accounts, and
+    configured native Runtimes.
+  - [ ] S6-F7 — Exact targets, bidirectional composition, and recovery
+    - Test instructions:
+      1. Preview harness/Runtime/provider/model/account/profile/permission/
+         worktree combinations, including unavailable/incompatible choices.
+      2. Continue and delegate Codex→Claude and Claude→Codex, then inspect child
+         lineage, task/result envelopes, artifacts, changes, and usage.
+      3. Cancel, pause, resume, steer, crash, restart, retry, and induce uncertain
+         completion while checking secrets/private reasoning never appear.
+    - Expected: no silent fallback, duplicate/replayed launch, broader child
+      authority, leaked hidden state, or double-counted usage occurs.
+    - Notes:
+
+- [ ] S6-F8 — Organization usage APIs
+  - State: not tested
+  - Prerequisites: optional low-value OpenAI and/or Anthropic Admin test
+    organization credentials.
+  - [ ] S6-F8 — Credential, adapter, dashboard, daemon, and failure evidence
+    - Test instructions:
+      1. Save write-only credentials, fetch every page, and compare provider
+         source totals and provenance.
+      2. Exercise rate limits, cursor expiry, partial coverage, stale data,
+         reconciliation, budgets, and alerts.
+      3. Close Flapstack for one daemon cadence, revoke externally, reopen,
+         remove the connection, and inspect sanitized diagnostics.
+    - Expected: no raw payload, identity, or credential leaks; unknown is never
+      zero; totals are not double counted; revoke/removal stops collection.
+    - Notes:
+
+- [ ] S6-F9 — Performance and scale
+  - State: not tested
+  - Prerequisites: exact candidate, recorded hardware/OS/power state, idle host,
+    and large deterministic fixtures.
+  - [ ] S6-F9 — Native budgets, sleep/wake, and 24-hour soak
+    - Test instructions:
+      1. Run cold/warm startup, renderer, long-chat, search, database, migration,
+         streaming, and cleanup profiles at least three measured times.
+      2. Exercise supported pane/agent/terminal concurrency, output flood,
+         partial cancellation, app close, and restart.
+      3. Perform sleep/wake and a 24-hour soak, then inspect processes, sockets,
+         listeners, watchers, memory, CPU, ordering, and durable history.
+    - Expected: exact secret-free reports meet declared budgets/variance or name
+      reviewed expiring exceptions; correctness remains complete and owned
+      resources return near steady state.
+    - Notes:
+
+- [ ] S6-F10 — Cross-platform public distribution
+  - State: not tested
+  - Prerequisites: claimed macOS/Windows/Linux hosts, credentials, artifacts,
+    checksums, manifest, SBOM, and withdrawal runbook.
+  - [ ] S6-F10 — macOS, Windows, Linux, integrity, and withdrawal
+    - Test instructions:
+      1. Verify source, architecture, checksum, signature/timestamp, and
+         notarization/staple/Gatekeeper or platform-equivalent trust.
+      2. Complete clean install, first launch, Stage 5 upgrade, native
+         modules/services/secrets/Runtimes/speech/capture, recovery, and both
+         uninstall data choices.
+      3. Review dependency/SBOM/license/secret/malware reports and rehearse
+         documentation, support, diagnostics, and artifact withdrawal.
+    - Expected: support claims never exceed native evidence; no unsafe bypass is
+      needed; removal touches only owned state; withdrawal is reproducible.
+    - Notes:
+
+- [ ] S6-F12 — Obsidian-compatible project knowledge graph
+  - State: not tested
+  - Prerequisites: real Obsidian, disposable Git repository, central and
+    project-owned vaults, and a large deterministic vault.
+  - [ ] S6-F12 — Migration, interoperability, graph, Git safety, and recovery
+    - Test instructions:
+      1. Upgrade a Stage 4 vault; create/edit/link/alias/rename/move notes,
+         headings, blocks, embeds, tags, and attachments in both tools.
+      2. Exercise conflicts, ambiguous/unresolved links, backlinks, local and
+         whole-vault graph plus accessible list, watcher storms, and exact
+         bounded run-context selection.
+      3. Inspect Git exclusion and opt-in, export/import/remap, delete/rebuild the
+         index, corrupt/recover, restart, and repeat at declared scale.
+    - Expected: Markdown remains source of truth, identities/provenance survive,
+      unselected/unsafe data never enters context, Flapstack never stages or
+      commits knowledge, and index loss never loses knowledge.
+    - Notes:
+
+- [ ] S6-F11 — Integrated Stage 6 owner satisfaction
+  - State: not tested
+  - Prerequisites: exact candidate ledger and all available
+    provider/device/platform capability evidence.
+  - [ ] S6-F11 — Integrated journey and independent owner review
+    - Test instructions:
+      1. Record exact source/build/profile/platform/provider/device/artifact
+         identities and exercise onboarding, personality/profile, mixed
+         workflow, child lineage, multi-pane Chat, visual context, mobile,
+         organization usage, knowledge graph, restart, audit, and export.
+      2. Review security/privacy, UI/accessibility/usability, performance,
+         platform/package behavior, support claims, help, and recovery.
+      3. Mark unavailable provider/device/release rows `accepted with limitation`
+         or leave `not tested`; record defects separately.
+    - Expected: durable state and evidence agree, no P0/P1 issue remains, and
+      Tier 3 notes never inflate Tier 2 acceptance.
+    - Notes:

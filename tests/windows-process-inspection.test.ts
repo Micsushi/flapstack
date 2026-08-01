@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest"
 // @ts-expect-error JavaScript build-script helper intentionally has no declaration file.
 import {
   classifyWindowsFlapstackProcesses,
+  drainWindowsOwnedProcessIds,
+  findIsolatedWindowsProcessIds,
   findOwnedWindowsProcessIds,
+  findStage6IsolatedWindowsProcessIds,
   parseWindowsProcessJson,
   queryWindowsProcesses,
   windowsTaskkillArgs,
@@ -64,6 +67,227 @@ describe("Windows Flapstack process ownership", () => {
   it("kills exact verified pids without recursively adopting a task tree", () => {
     expect(windowsTaskkillArgs(42)).toEqual(["/PID", "42"])
     expect(windowsTaskkillArgs(42, true)).toEqual(["/PID", "42", "/F"])
+    expect(windowsTaskkillArgs(42, true, true)).toEqual(["/PID", "42", "/T", "/F"])
+  })
+
+  it("finds every surviving isolated process by ancestry or unique profile", () => {
+    const profilePath = "C:\\Users\\sushi\\AppData\\Roaming\\Flapstack Dev stage6-perf-123-unique"
+    const processes = [
+      {
+        ProcessId: 10,
+        ParentProcessId: 1,
+        CommandLine: `node "${root}\\node_modules\\electron-vite\\bin\\electron-vite.js" dev`,
+      },
+      {
+        ProcessId: 11,
+        ParentProcessId: 10,
+        CommandLine: `"${root}\\node_modules\\electron\\dist\\electron.exe" .`,
+      },
+      {
+        ProcessId: 12,
+        ParentProcessId: 11,
+        CommandLine: "electron.exe --type=gpu-process",
+      },
+      {
+        ProcessId: 13,
+        ParentProcessId: 999,
+        CommandLine: `electron.exe --type=renderer --user-data-dir="${profilePath}"`,
+      },
+      {
+        ProcessId: 20,
+        ParentProcessId: 1,
+        CommandLine: "electron.exe --type=renderer --user-data-dir=unrelated",
+      },
+    ]
+
+    expect(
+      findIsolatedWindowsProcessIds(processes, {
+        ancestorPids: [10],
+        commandFragments: [profilePath],
+      }),
+    ).toEqual([10, 11, 12, 13])
+  })
+
+  it("targets the live Stage 6 app tree without an exited, reused launcher pid", () => {
+    const profilePath = "C:\\Users\\sushi\\AppData\\Roaming\\Flapstack Dev stage6-perf-123-unique"
+    const launchedAtEpoch = Date.parse("2026-07-31T17:00:00.000Z")
+    const processes = [
+      {
+        ProcessId: 10,
+        ParentProcessId: 1,
+        CreationDate: "2026-07-31T17:00:03.000Z",
+        ExecutablePath: "C:\\Windows\\System32\\notepad.exe",
+        CommandLine: "notepad.exe C:\\unrelated\\notes.txt",
+      },
+      {
+        ProcessId: 11,
+        ParentProcessId: 10,
+        CreationDate: "2026-07-31T17:00:01.000Z",
+        ExecutablePath: `${root}\\node_modules\\electron\\dist\\electron.exe`,
+        CommandLine: `"${root}\\node_modules\\electron\\dist\\electron.exe" "${root}"`,
+      },
+      {
+        ProcessId: 12,
+        ParentProcessId: 11,
+        CreationDate: "2026-07-31T17:00:02.000Z",
+        ExecutablePath: `${root}\\node_modules\\electron\\dist\\electron.exe`,
+        CommandLine: `electron.exe --type=renderer --user-data-dir="${profilePath}" --app-path="${root}"`,
+      },
+      {
+        ProcessId: 20,
+        ParentProcessId: 1,
+        CreationDate: "2026-07-31T17:00:02.000Z",
+        ExecutablePath: `${root}\\node_modules\\electron\\dist\\electron.exe`,
+        CommandLine: `electron.exe --type=renderer --user-data-dir="unrelated" --app-path="${root}"`,
+      },
+    ]
+
+    expect(
+      findStage6IsolatedWindowsProcessIds(processes, {
+        root,
+        profilePath,
+        instance: "stage6-perf-123-unique",
+        launchedAtEpoch,
+        launcherPid: 10,
+        launcherExited: true,
+        descriptorPid: 11,
+        descriptorCreationDate: "2026-07-31T17:00:01.000Z",
+      }),
+    ).toEqual([11, 12])
+  })
+
+  it("rejects an exact-checkout Electron process that reused the descriptor pid", () => {
+    const profilePath = "C:\\Users\\sushi\\AppData\\Roaming\\Flapstack Dev stage6-perf-123-unique"
+    const launchedAtEpoch = Date.parse("2026-07-31T17:00:00.000Z")
+    const electronExecutable = `${root}\\node_modules\\electron\\dist\\electron.exe`
+    const processes = [
+      {
+        ProcessId: 11,
+        ParentProcessId: 1,
+        CreationDate: "2026-07-31T17:00:04.000Z",
+        ExecutablePath: electronExecutable,
+        CommandLine: `"${electronExecutable}" "${root}"`,
+      },
+      {
+        ProcessId: 13,
+        ParentProcessId: 1,
+        CreationDate: "2026-07-31T17:00:01.000Z",
+        ExecutablePath: electronExecutable,
+        CommandLine: `"${electronExecutable}" "${root}"`,
+      },
+      {
+        ProcessId: 12,
+        ParentProcessId: 13,
+        CreationDate: "2026-07-31T17:00:02.000Z",
+        ExecutablePath: electronExecutable,
+        CommandLine: `electron.exe --type=renderer --user-data-dir="${profilePath}" --app-path="${root}"`,
+      },
+    ]
+
+    expect(
+      findStage6IsolatedWindowsProcessIds(processes, {
+        root,
+        profilePath,
+        instance: "stage6-perf-123-unique",
+        launchedAtEpoch,
+        launcherPid: 10,
+        launcherExited: true,
+        descriptorPid: 11,
+        descriptorCreationDate: "2026-07-31T17:00:01.000Z",
+      }),
+    ).toEqual([13, 12])
+  })
+
+  it("stops the process root before children and confirms a stable empty tree", async () => {
+    let rootAlive = true
+    let childAlive = true
+    let replacementAlive = false
+    let now = 0
+    const killed: number[] = []
+    const snapshots: number[][] = []
+
+    const result = await drainWindowsOwnedProcessIds({
+      findOwned: () => {
+        const owned = [
+          ...(rootAlive ? [11] : []),
+          ...(childAlive ? [12] : []),
+          ...(replacementAlive ? [13] : []),
+        ]
+        snapshots.push(owned)
+        return owned
+      },
+      kill: (pid: number) => {
+        killed.push(pid)
+        if (pid === 11) rootAlive = false
+        if (pid === 12) {
+          childAlive = false
+          if (rootAlive) replacementAlive = true
+        }
+        if (pid === 13) replacementAlive = false
+        return `${pid}:0:`
+      },
+      wait: async () => {
+        now += 100
+      },
+      now: () => now,
+      timeoutMs: 1_000,
+    })
+
+    expect(killed).toEqual([11, 12])
+    expect(snapshots.slice(-2)).toEqual([[], []])
+    expect(result).toMatchObject({ stable: true, remaining: [] })
+  })
+
+  it("rechecks ownership after killing the root before acting on a child pid", async () => {
+    let rootAlive = true
+    let childOwned = true
+    let childPidReused = false
+    let now = 0
+    const killed: number[] = []
+
+    const result = await drainWindowsOwnedProcessIds({
+      findOwned: () => [...(rootAlive ? [11] : []), ...(childOwned ? [12] : [])],
+      kill: (pid: number) => {
+        killed.push(pid)
+        if (pid === 11) {
+          rootAlive = false
+          childOwned = false
+          childPidReused = true
+        }
+        return `${pid}:0:`
+      },
+      wait: async () => {
+        now += 100
+      },
+      now: () => now,
+      timeoutMs: 1_000,
+    })
+
+    expect(childPidReused).toBe(true)
+    expect(killed).toEqual([11])
+    expect(result).toMatchObject({ stable: true, remaining: [] })
+  })
+
+  it("accepts the second empty observation exactly at the deadline", async () => {
+    let owned = true
+    let now = 0
+
+    const result = await drainWindowsOwnedProcessIds({
+      findOwned: () => (owned ? [11] : []),
+      kill: (pid: number) => {
+        expect(pid).toBe(11)
+        owned = false
+        return `${pid}:0:`
+      },
+      wait: async () => {
+        now += now === 0 ? 900 : 100
+      },
+      now: () => now,
+      timeoutMs: 1_000,
+    })
+
+    expect(now).toBe(1_000)
+    expect(result).toMatchObject({ stable: true, remaining: [] })
   })
 
   it("classifies the exact dev main, renderer, and packaged app", () => {

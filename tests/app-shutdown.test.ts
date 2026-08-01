@@ -6,6 +6,7 @@ import {
   waitForShutdownIdle,
   type BeforeQuitEvent,
 } from "../src/main/lib/app-shutdown"
+import { VisualCapturePendingStore } from "../src/main/lib/visual-capture/pending-store"
 
 describe("application shutdown", () => {
   it("bounds waits for a provider that never becomes idle", async () => {
@@ -61,6 +62,18 @@ describe("application shutdown", () => {
 
   it("awaits provider persistence and service cleanup before closing SQLite last", async () => {
     const order: string[] = []
+    const pending = new VisualCapturePendingStore(() => 1)
+    const raw = Buffer.from("shutdown-owned raw capture")
+    pending.add(pending.reserve(), {
+      requestId: "request-a",
+      sourceClass: "screen",
+      bytes: raw,
+      actor: { kind: "user", id: "owner" },
+      scope: { projectId: "project-a" },
+      approvalId: null,
+      capturedAt: 1,
+      scaleFactor: 1,
+    })
     const step = (name: string) => async () => {
       order.push(`${name}:start`)
       await Promise.resolve()
@@ -73,6 +86,13 @@ describe("application shutdown", () => {
       stopAutomationScheduler: step("automations"),
       stopDevMcpServer: step("dev-mcp"),
       stopProductMcpBridge: step("product-mcp"),
+      stopMobileBridge: step("mobile"),
+      closeProjectVaultWatchers: step("project-vault-watchers"),
+      purgePendingVisualCaptures: async () => {
+        order.push("visual-captures:start")
+        pending.shutdown()
+        order.push("visual-captures:done")
+      },
       cleanupGitWatchers: step("watchers"),
       shutdownAnalytics: step("analytics"),
       closeDatabase: step("database"),
@@ -89,6 +109,12 @@ describe("application shutdown", () => {
       "dev-mcp:done",
       "product-mcp:start",
       "product-mcp:done",
+      "mobile:start",
+      "mobile:done",
+      "project-vault-watchers:start",
+      "project-vault-watchers:done",
+      "visual-captures:start",
+      "visual-captures:done",
       "watchers:start",
       "watchers:done",
       "analytics:start",
@@ -96,6 +122,7 @@ describe("application shutdown", () => {
       "database:start",
       "database:done",
     ])
+    expect(raw.equals(Buffer.alloc(raw.byteLength))).toBe(true)
   })
 
   it("prevents duplicate quits, runs one shutdown, and exits without another quit", async () => {
@@ -142,6 +169,9 @@ describe("application shutdown", () => {
         stopAutomationScheduler: () => order.push("automations"),
         stopDevMcpServer: () => order.push("dev-mcp"),
         stopProductMcpBridge: () => order.push("product-mcp"),
+        stopMobileBridge: () => order.push("mobile"),
+        closeProjectVaultWatchers: () => order.push("project-vault-watchers"),
+        purgePendingVisualCaptures: () => order.push("visual-captures"),
         cleanupGitWatchers: () => order.push("watchers"),
         shutdownAnalytics: () => order.push("analytics"),
         closeDatabase: () => order.push("database"),

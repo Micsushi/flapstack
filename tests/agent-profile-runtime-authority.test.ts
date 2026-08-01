@@ -26,6 +26,7 @@ describe("durable Agent Profile runtime authority", () => {
     db.exec(`
       CREATE TABLE agent_profile_standalone_launches (run_id TEXT, snapshot_id TEXT);
       CREATE TABLE agent_profile_snapshots (id TEXT PRIMARY KEY, resolved_json TEXT);
+      CREATE TABLE agent_profile_run_bindings (run_id TEXT PRIMARY KEY, chat_id TEXT, snapshot_id TEXT);
       CREATE TABLE orchestration_agents (run_id TEXT, definition TEXT);
       CREATE TABLE agent_runs (id TEXT PRIMARY KEY, prompt_message_id TEXT);
       CREATE TABLE orchestration_transition_events (
@@ -81,6 +82,35 @@ describe("durable Agent Profile runtime authority", () => {
     )
 
     expect(readDurableAgentProfileRuntimeAuthority(db, "run-1")).toEqual({ kind: "invalid" })
+  })
+
+  it("recovers a regular Chat run from its immutable binding snapshot", () => {
+    db.prepare(
+      `INSERT INTO agent_profile_snapshots (id, resolved_json)
+       VALUES ('snapshot-regular', ?)`,
+    ).run(
+      JSON.stringify({
+        digest: "c".repeat(64),
+        profile: { profileId: "profile-regular", version: 3 },
+        capability: {
+          ...DEFAULT_AGENT_CAPABILITY,
+          skills: ["review"],
+        },
+      }),
+    )
+    db.prepare(
+      `INSERT INTO agent_profile_run_bindings (run_id, chat_id, snapshot_id)
+       VALUES ('run-regular', 'chat-regular', 'snapshot-regular')`,
+    ).run()
+
+    expect(readDurableAgentProfileRuntimeAuthority(db, "run-regular")).toEqual({
+      kind: "authority",
+      authority: expect.objectContaining({
+        snapshotId: "snapshot-regular",
+        profile: { profileId: "profile-regular", version: 3 },
+        allowedSkills: ["review"],
+      }),
+    })
   })
 })
 

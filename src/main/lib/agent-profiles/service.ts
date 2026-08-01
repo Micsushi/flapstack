@@ -26,6 +26,7 @@ import {
 } from "./capability-change"
 import { STARTER_AGENT_PROFILES } from "./starter-catalog"
 import { canonicalJson, epochSeconds as epoch, sha256Text as sha256 } from "./values"
+import { resolveConfiguredAgentPersonality } from "./personality-resolution"
 
 type Sqlite = Database.Database
 type DatabaseLike = Sqlite | object
@@ -121,6 +122,67 @@ export class AgentProfileService {
     return { profile: profileDto(row), version: versionDto(row) }
   }
 
+  previewInlinePersonalityConversion(ref: AgentProfileVersionRef) {
+    const item = this.get(ref)
+    if (item.profile.source === "built-in") throw builtInReadOnly()
+    if (item.profile.currentVersion !== ref.version) throw versionConflict()
+    if (item.version.definition.personality) {
+      throw new AgentProfileServiceError(
+        "version-conflict",
+        "This Agent Profile version already references an exact Personality.",
+      )
+    }
+    const conversion = {
+      profile: ref,
+      profileName: item.profile.name,
+      scope: item.profile.scope,
+      name: `${item.profile.name} style`,
+      traits: {
+        tone: item.version.definition.presentation.tone,
+        verbosity: item.version.definition.presentation.verbosity,
+        formatting: item.version.definition.presentation.formatting,
+        responseStructure: item.version.definition.presentation.responseStructure,
+        labels: [
+          item.version.definition.presentation.characterLabel,
+          item.version.definition.presentation.voiceLabel,
+        ].filter((label): label is string => Boolean(label)),
+        color: item.version.definition.presentation.color,
+      },
+      body: "",
+    }
+    return { ...conversion, digest: sha256(canonicalJson(conversion)) }
+  }
+
+  inlinePersonalityConversionState(
+    ref: AgentProfileVersionRef,
+    personality: NonNullable<AgentProfileVersionInput["personality"]>,
+  ) {
+    return this.previewInlinePersonalityConversionOrRetry(ref, personality)
+  }
+
+  convertInlinePersonality(input: {
+    profile: AgentProfileVersionRef
+    expectedDigest: string
+    personality: NonNullable<AgentProfileVersionInput["personality"]>
+  }) {
+    const preview = this.previewInlinePersonalityConversionOrRetry(input.profile, input.personality)
+    if (preview.kind === "existing") return preview.value
+    if (preview.value.digest !== input.expectedDigest) {
+      throw new AgentProfileServiceError(
+        "version-conflict",
+        "Inline Personality conversion changed after preview.",
+      )
+    }
+    return this.update({
+      profileId: input.profile.profileId,
+      expectedVersion: input.profile.version,
+      definition: {
+        ...this.get(input.profile).version.definition,
+        personality: input.personality,
+      },
+    })
+  }
+
   previewCreateCapabilityChange(inputValue: unknown) {
     const input = agentProfileCreateInputSchema.parse(inputValue)
     const change = classifyAgentProfileCapabilityChange(null, input.definition)
@@ -167,6 +229,7 @@ export class AgentProfileService {
     this.assertScope(input.scope)
     assertAgentProfileSecretFree(input)
     this.assertBase(input.definition, null, input.scope)
+    assertPersonalityReference(input.definition, input.scope)
     const id = randomUUID()
     const now = epoch()
     const preview = this.previewCreateCapabilityChange(input)
@@ -212,6 +275,7 @@ export class AgentProfileService {
         const current = this.get({ profileId: input.profileId, version: input.expectedVersion })
         this.assertScope(current.profile.scope)
         this.assertBase(input.definition, input.profileId, profileScope(profile))
+        assertPersonalityReference(input.definition, current.profile.scope)
         const change = classifyAgentProfileCapabilityChange(
           current.version.definition,
           input.definition,
@@ -528,6 +592,36 @@ export class AgentProfileService {
     }
   }
 
+  private previewInlinePersonalityConversionOrRetry(
+    ref: AgentProfileVersionRef,
+    personality: NonNullable<AgentProfileVersionInput["personality"]>,
+  ):
+    | {
+        kind: "preview"
+        value: ReturnType<AgentProfileService["previewInlinePersonalityConversion"]>
+      }
+    | {
+        kind: "existing"
+        value: { profile: AgentProfileDto; version: AgentProfileVersionDto }
+      } {
+    const profile = profileDto(this.requireProfile(ref.profileId))
+    if (profile.currentVersion !== ref.version) {
+      const current = this.get({
+        profileId: ref.profileId,
+        version: profile.currentVersion,
+      })
+      if (
+        profile.currentVersion === ref.version + 1 &&
+        current.version.definition.personality?.personalityId === personality.personalityId &&
+        current.version.definition.personality.version === personality.version
+      ) {
+        return { kind: "existing", value: current }
+      }
+      throw versionConflict()
+    }
+    return { kind: "preview", value: this.previewInlinePersonalityConversion(ref) }
+  }
+
   private verifyAndConsumeCapabilityApproval(
     preview: ReturnType<AgentProfileService["previewCreateCapabilityChange"]>,
     approvalAuditId: string | null,
@@ -704,6 +798,7 @@ export class AgentProfileService {
           digest,
           inheritCapabilityFields: definition.inheritCapabilityFields,
           inheritPresentationFields: definition.inheritPresentationFields,
+          personalityRef: definition.personality,
         }),
         epoch(),
       )
@@ -761,6 +856,7 @@ function versionDto(row: Row): AgentProfileVersionDto {
   ) as AgentProfileVersionDto["provenance"] & {
     inheritCapabilityFields?: string[]
     inheritPresentationFields?: string[]
+    personalityRef?: AgentProfileVersionInput["personality"]
   }
   return {
     profileId: String(row.id),
@@ -769,6 +865,7 @@ function versionDto(row: Row): AgentProfileVersionDto {
       base: row.base_profile_id
         ? { profileId: String(row.base_profile_id), version: Number(row.base_profile_version) }
         : null,
+      personality: provenance.personalityRef ?? null,
       capability: JSON.parse(String(row.capability_json)),
       presentation: JSON.parse(String(row.presentation_json)),
       inheritCapabilityFields: provenance.inheritCapabilityFields ?? [],
@@ -776,6 +873,23 @@ function versionDto(row: Row): AgentProfileVersionDto {
     }),
     provenance,
     createdAt: timestamp(row.version_created_at)!,
+  }
+}
+
+function assertPersonalityReference(
+  definition: AgentProfileVersionInput,
+  scope: AgentProfileScope,
+): void {
+  if (!definition.personality) return
+  try {
+    resolveConfiguredAgentPersonality(definition.personality, scope)
+  } catch (error) {
+    throw new AgentProfileServiceError(
+      "scope-invalid",
+      `Agent Personality reference is unavailable: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
   }
 }
 
@@ -791,6 +905,16 @@ function localProvenance() {
 
 function importedDisabledRequirements(definition: AgentProfileVersionInput) {
   return [
+    ...(definition.personality
+      ? [
+          {
+            kind: "personality",
+            id: `${definition.personality.personalityId}@${definition.personality.version}`,
+            reason:
+              "Imported exact Personality references stay unresolved until that version is present and selected locally.",
+          },
+        ]
+      : []),
     ...definition.capability.tools.map((id) => ({
       kind: "tool",
       id,

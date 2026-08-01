@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react"
 import { toast } from "sonner"
 import { useMessageQueueStore } from "../stores/message-queue-store"
 import { useStreamingStatusStore } from "../stores/streaming-status-store"
-import { useAgentSubChatStore } from "../stores/sub-chat-store"
+import { getAgentSubChatStore } from "../stores/sub-chat-store"
 import { agentChatStore } from "../stores/agent-chat-store"
 import { trackMessageSent } from "../../../lib/analytics"
 import { appStore } from "../../../lib/jotai-store"
@@ -156,9 +156,8 @@ export function QueueProcessor() {
         }
 
         // Get mode from sub-chat store for analytics
-        const subChatMeta = useAgentSubChatStore
-          .getState()
-          .allSubChats.find((sc) => sc.id === subChatId)
+        const subChatStore = getAgentSubChatStore(parentChatId)
+        const subChatMeta = subChatStore.getState().allSubChats.find((sc) => sc.id === subChatId)
         const mode = subChatMeta?.mode || "write"
 
         // Track message sent
@@ -169,7 +168,7 @@ export function QueueProcessor() {
         })
 
         // Update timestamps
-        useAgentSubChatStore.getState().updateSubChatTimestamp(subChatId)
+        subChatStore.getState().updateSubChatTimestamp(subChatId)
 
         // Set loading state for sidebar indicator
         setLoading(

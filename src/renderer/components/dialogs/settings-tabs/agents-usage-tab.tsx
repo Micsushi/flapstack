@@ -16,6 +16,7 @@ import {
   filterSupersededPersonalAccountRows,
   formatQuotaUsage,
   prepareUsageHistorySeries,
+  providerFreshness,
   quotaPercentUsed,
   usagePaceStatus,
   type CurrentUsageSummary,
@@ -160,6 +161,96 @@ function StatusBadge({ status }: { status: string }) {
     <Badge variant={tone as "default" | "outline" | "secondary"} className="text-[11px]">
       {status}
     </Badge>
+  )
+}
+
+function OrganizationScopeFields({
+  title,
+  organizationLabel,
+  scopeLabel,
+  organizationId,
+  scopeIds,
+  validatedBinding,
+  disabled,
+  onSave,
+}: {
+  title: string
+  organizationLabel: string
+  scopeLabel: string
+  organizationId: string | null
+  scopeIds: string[]
+  validatedBinding?: {
+    organizationId: string
+    validatedAt: string
+    coverage: { selection: string }
+  } | null
+  disabled: boolean
+  onSave: (organizationId: string | null, scopeIds: string[]) => void
+}) {
+  const [organizationDraft, setOrganizationDraft] = useState(organizationId ?? "")
+  const [scopeDraft, setScopeDraft] = useState(scopeIds.join(", "))
+
+  useEffect(() => {
+    setOrganizationDraft(organizationId ?? "")
+    setScopeDraft(scopeIds.join(", "))
+  }, [organizationId, scopeIds])
+
+  return (
+    <fieldset className="space-y-2 rounded-md border border-border/70 p-3">
+      <legend className="px-1 text-xs font-medium text-foreground">{title}</legend>
+      <label className="block text-xs text-muted-foreground">
+        {organizationLabel}
+        <input
+          value={organizationDraft}
+          maxLength={200}
+          autoComplete="off"
+          onChange={(event) => setOrganizationDraft(event.target.value)}
+          placeholder="Optional exact organization ID"
+          className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-foreground"
+        />
+      </label>
+      <label className="block text-xs text-muted-foreground">
+        {scopeLabel}
+        <input
+          value={scopeDraft}
+          autoComplete="off"
+          onChange={(event) => setScopeDraft(event.target.value)}
+          placeholder="Comma-separated; blank means all"
+          className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1.5 text-foreground"
+        />
+      </label>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() =>
+          onSave(
+            organizationDraft.trim() || null,
+            [
+              ...new Set(
+                scopeDraft
+                  .split(/[,\n]/)
+                  .map((entry) => entry.trim())
+                  .filter((entry) => entry.length > 0 && entry.length <= 200),
+              ),
+            ].sort(),
+          )
+        }
+        className="min-h-8 rounded border border-border px-3 py-1 text-xs hover:bg-foreground/5 disabled:opacity-50"
+      >
+        {validatedBinding === undefined ? "Save exact scope" : "Save & validate exact scope"}
+      </button>
+      {validatedBinding !== undefined && (
+        <p
+          role="status"
+          className={`text-xs ${validatedBinding ? "text-muted-foreground" : "text-destructive"}`}
+        >
+          Validated organization binding:{" "}
+          {validatedBinding
+            ? `${validatedBinding.organizationId} · ${validatedBinding.coverage.selection} · ${new Date(validatedBinding.validatedAt).toLocaleString()}`
+            : "Unavailable. Add the Admin key and exact organization, then save this scope."}
+        </p>
+      )}
+    </fieldset>
   )
 }
 
@@ -960,6 +1051,9 @@ export function AgentsUsageTab() {
   const setSettings = trpc.usage.setSettings.useMutation({
     onSettled: () => void utils.usage.getSettings.invalidate(),
   })
+  const setOrganizationScope = trpc.usage.setOrganizationScope.useMutation({
+    onSettled: () => void utils.usage.getSettings.invalidate(),
+  })
   const setSecret = trpc.usage.setSecret.useMutation({
     onSettled: () => void utils.usage.getSecretPresence.invalidate(),
   })
@@ -1022,6 +1116,7 @@ export function AgentsUsageTab() {
     { label: "Provider setting", error: setProviderEnabled.error },
     { label: "Provider details", error: setProviderSettings.error },
     { label: "Usage setting", error: setSettings.error },
+    { label: "Organization scope", error: setOrganizationScope.error },
     { label: "Credential update", error: setSecret.error },
     { label: "Daemon install", error: installDaemon.error },
     { label: "Daemon removal", error: uninstallDaemon.error },
@@ -1477,6 +1572,52 @@ export function AgentsUsageTab() {
             </div>
           </div>
 
+          {settings && (
+            <div className="space-y-3 rounded-lg border border-border bg-background p-4">
+              <div>
+                <h4 className="text-sm font-medium text-foreground">Exact provider scope</h4>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  These non-secret identifiers bind organization reports to the account and projects
+                  or workspaces you selected. Empty scope lists include all child scopes.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 @[38rem]:grid-cols-2">
+                <OrganizationScopeFields
+                  title="OpenAI"
+                  organizationLabel="OpenAI organization ID"
+                  scopeLabel="OpenAI project IDs"
+                  organizationId={settings.organization.openai.organizationId}
+                  scopeIds={settings.organization.openai.projectIds}
+                  validatedBinding={settings.organization.openai.validatedBinding}
+                  disabled={setOrganizationScope.isPending}
+                  onSave={(organizationId, scopeIds) =>
+                    setOrganizationScope.mutate({
+                      provider: "openai",
+                      organizationId,
+                      scopeIds,
+                    })
+                  }
+                />
+                <OrganizationScopeFields
+                  title="Anthropic"
+                  organizationLabel="Anthropic organization ID"
+                  scopeLabel="Anthropic workspace IDs"
+                  organizationId={settings.organization.anthropic.organizationId}
+                  scopeIds={settings.organization.anthropic.workspaceIds}
+                  validatedBinding={settings.organization.anthropic.validatedBinding}
+                  disabled={setOrganizationScope.isPending}
+                  onSave={(organizationId, scopeIds) =>
+                    setOrganizationScope.mutate({
+                      provider: "anthropic",
+                      organizationId,
+                      scopeIds,
+                    })
+                  }
+                />
+              </div>
+            </div>
+          )}
+
           {/* Provider cards */}
           <div className="space-y-2" data-dev-usage-section="provider-states">
             <h4 className="text-sm font-medium text-foreground">Providers</h4>
@@ -1539,14 +1680,31 @@ export function AgentsUsageTab() {
                           </p>
                         ) : (
                           providerStates.map((state) => {
-                            const hasError = isProviderErrorStatus(state.status)
+                            const freshness = providerFreshness(
+                              state,
+                              Date.now(),
+                              providerSettings?.cadenceSecondsOverride ??
+                                settings?.cadenceSeconds ??
+                                300,
+                            )
+                            const freshnessCopy =
+                              freshness.state === "stale"
+                                ? "Stale · last-known data"
+                                : freshness.state === "unavailable"
+                                  ? "Unavailable · no successful poll"
+                                  : "Current"
+                            const hasError =
+                              freshness.state === "unavailable" ||
+                              isProviderErrorStatus(state.status)
                             return (
                               <div
                                 key={state.id}
                                 className={`rounded-md border p-2 ${
                                   hasError
                                     ? "border-destructive/40 bg-destructive/5"
-                                    : "border-border/60 bg-foreground/[0.02]"
+                                    : freshness.state === "stale"
+                                      ? "border-amber-500/40 bg-amber-500/5"
+                                      : "border-border/60 bg-foreground/[0.02]"
                                 }`}
                               >
                                 <div className="flex items-center justify-between gap-2">
@@ -1555,6 +1713,18 @@ export function AgentsUsageTab() {
                                   </span>
                                   <StatusBadge status={state.status} />
                                 </div>
+                                <p
+                                  className={`mt-1 text-[11px] ${
+                                    freshness.state === "unavailable"
+                                      ? "text-destructive"
+                                      : "text-muted-foreground"
+                                  }`}
+                                >
+                                  {freshnessCopy}
+                                  {state.lastSuccessAt
+                                    ? ` · last success ${new Date(state.lastSuccessAt).toLocaleString()}`
+                                    : ""}
+                                </p>
                                 <p
                                   className={`mt-1 break-words text-xs ${
                                     hasError ? "text-destructive" : "text-muted-foreground"

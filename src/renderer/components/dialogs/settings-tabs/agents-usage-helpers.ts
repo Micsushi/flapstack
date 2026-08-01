@@ -38,6 +38,17 @@ export interface UsagePaceResult {
   delta: number | null
 }
 
+export interface ProviderFreshnessInput {
+  status: string
+  lastSuccessAt?: Date | string | number | null
+  lastErrorAt?: Date | string | number | null
+}
+
+export type ProviderFreshness =
+  | { state: "current"; label: "Current" }
+  | { state: "stale"; label: "Stale · last-known data" }
+  | { state: "unavailable"; label: "Unavailable · no successful poll" }
+
 export interface UsageHistorySeries {
   key: string
   label: string
@@ -87,6 +98,28 @@ function timestamp(value: UsageSummaryRow["capturedAt"]): number {
     return Number.isFinite(parsed) ? parsed : 0
   }
   return 0
+}
+
+/** Keep a successful last-known value visible after a provider failure, but
+ * never present it as current. A source with no successful poll is unavailable,
+ * not zero and not merely stale. */
+export function providerFreshness(
+  input: ProviderFreshnessInput,
+  now = Date.now(),
+  cadenceSeconds = 300,
+): ProviderFreshness {
+  const lastSuccessAt = timestamp(input.lastSuccessAt)
+  if (!lastSuccessAt) {
+    return { state: "unavailable", label: "Unavailable · no successful poll" }
+  }
+  const lastErrorAt = timestamp(input.lastErrorAt)
+  const staleAfterMs = Math.max(30_000, cadenceSeconds * 2_000)
+  const errorAfterSuccess = lastErrorAt > lastSuccessAt
+  const unhealthy = input.status !== "ok"
+  if (errorAfterSuccess || unhealthy || now - lastSuccessAt >= staleAfterMs) {
+    return { state: "stale", label: "Stale · last-known data" }
+  }
+  return { state: "current", label: "Current" }
 }
 
 /** Personal OAuth providers expose one active local account at a time. Keep

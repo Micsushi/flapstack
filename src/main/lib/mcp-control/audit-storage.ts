@@ -377,6 +377,8 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
     case "create_vault_section":
     case "update_vault_section":
     case "update_vault_handoff":
+    case "create_vault_node":
+    case "update_vault_node":
       return {
         ...vaultTarget(),
         content: textDigest("content"),
@@ -408,6 +410,11 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
       return safe("projectId", "taskId", "chatId", "runId", "cursor", "limit")
     case "list_vault_sections":
     case "read_vault_section":
+    case "list_vault_nodes":
+    case "read_vault_node":
+    case "preview_vault_context":
+    case "move_vault_node":
+    case "link_vault_nodes":
       return vaultTarget()
     case "ping":
     case "describe":

@@ -231,6 +231,7 @@ describe("test chat renderer selection boundary", () => {
       chatId: "chat-1",
       subChatId: "sub-chat-1",
       project: expect.objectContaining({ id: "project-1", name: "Project" }),
+      persistedMessages: [],
     })
     expect(() => resolveTestChatSelection({ chatId: "chat-1", subChatId: "missing" })).toThrow(
       "does not belong",

@@ -21,6 +21,7 @@ describe("saved workspace window controls", () => {
   let container: HTMLDivElement
   let claimWorkspacePane: ReturnType<typeof vi.fn>
   let releaseWorkspacePane: ReturnType<typeof vi.fn>
+  let openWorkspaceRemainder: ReturnType<typeof vi.fn>
   let ownershipCallback: ((payload: WorkspaceOwnershipInvalidation) => void) | undefined
 
   beforeEach(() => {
@@ -34,6 +35,11 @@ describe("saved workspace window controls", () => {
       ownerStableId: "main",
     })
     releaseWorkspacePane = vi.fn().mockResolvedValue(undefined)
+    openWorkspaceRemainder = vi.fn().mockResolvedValue({
+      ok: true,
+      state: "opened",
+      ownerStableId: "remainder",
+    })
     Object.defineProperty(window, "desktopApi", {
       configurable: true,
       value: {
@@ -47,11 +53,7 @@ describe("saved workspace window controls", () => {
         ),
         focusWorkspacePaneOwner: vi.fn().mockResolvedValue(true),
         focusChatOwner: vi.fn().mockResolvedValue(true),
-        openWorkspaceRemainder: vi.fn().mockResolvedValue({
-          ok: true,
-          state: "opened",
-          ownerStableId: "remainder",
-        }),
+        openWorkspaceRemainder,
       },
     })
   })
@@ -357,6 +359,49 @@ describe("saved workspace window controls", () => {
       "move",
     )
     expect(container.textContent).toContain("Live chat")
+  })
+
+  it("reports the exact construction failure when opening the remainder separately", async () => {
+    claimWorkspacePane.mockResolvedValueOnce({
+      ok: false,
+      ownerStableId: "workspace-owner",
+      conflicts: [{ kind: "chat", chatId: "chat", ownerStableId: "workspace-owner" }],
+    })
+    openWorkspaceRemainder.mockResolvedValueOnce({
+      ok: false,
+      ownerStableId: "workspace-owner",
+      conflicts: [],
+      reason: "creation-failed",
+    })
+
+    await act(async () => {
+      root.render(
+        createElement(
+          WorkspacePaneOwnershipBoundary,
+          {
+            projectId: "project",
+            workspaceId: "workspace",
+            pane: { id: "pane", binding: { type: "chat", chatId: "chat" } },
+          },
+          createElement("p", null, "Live chat"),
+        ),
+      )
+    })
+
+    const openSeparately = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Open remaining workspace separately",
+    )!
+    await act(async () => openSeparately.click())
+
+    expect(openWorkspaceRemainder).toHaveBeenCalledWith({
+      projectId: "project",
+      workspaceId: "workspace",
+      skipPaneId: "pane",
+    })
+    expect(container.textContent).toContain(
+      "Flapstack could not construct or attach the new window. Existing work was kept.",
+    )
+    expect(container.textContent).not.toContain("already active in another window")
   })
 
   it("exposes keyboard-focusable pop-out and pull-back controls", async () => {

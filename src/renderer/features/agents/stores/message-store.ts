@@ -50,8 +50,18 @@ export interface Message {
 export const getPerChatMessageKey = (subChatId: string, messageId: string) =>
   `${subChatId}:::${messageId}`
 
-// This is the key optimization: updating one message doesn't affect others.
-export const messageAtomFamily = atomFamily((_messageKey: string) => atom<Message | null>(null))
+export const messagesByChatAtom = atomFamily((_subChatId: string) =>
+  atom<Map<string, Message>>(new Map()),
+)
+
+// Each mounted message keeps an independent derived subscription, while large
+// transcript hydration commits one per-chat map instead of thousands of atoms.
+export const messageAtomFamily = atomFamily((messageKey: string) => {
+  const separatorIndex = messageKey.indexOf(":::")
+  const subChatId = messageKey.slice(0, separatorIndex)
+  const messageId = messageKey.slice(separatorIndex + 3)
+  return atom((get) => get(messagesByChatAtom(subChatId)).get(messageId) ?? null)
+})
 
 // Track active message IDs per subChat for cleanup
 const activeMessageIdsByChat = new Map<string, Set<string>>()
@@ -308,7 +318,7 @@ export const userMessageIdsPerChatAtom = atomFamily((subChatId: string) =>
 // MESSAGE GROUPS - For rendering structure
 // ============================================================================
 
-type MessageGroupType = { userMsgId: string; assistantMsgIds: string[] }
+export type MessageGroupType = { userMsgId: string; assistantMsgIds: string[] }
 const messageGroupsCacheByChat = new Map<string, MessageGroupType[]>()
 
 export const messageGroupsAtom = atom((get) => {
@@ -384,7 +394,7 @@ function buildMessageGroups(ids: string[], roles: Map<string, string>): MessageG
 }
 
 const messageGroupsPerChatCache = new Map<string, MessageGroupType[]>()
-const messageGroupsPerChatAtom = atomFamily((subChatId: string) =>
+export const messageGroupsPerChatAtom = atomFamily((subChatId: string) =>
   atom((get) => {
     const ids = get(messageIdsPerChatAtom(subChatId))
     const roles = get(messageRolesPerChatAtom(subChatId))
@@ -939,36 +949,33 @@ export const syncMessagesWithStatusAtom = atom(
       set(messageRolesPerChatAtom(currentSubChatId), newRoles)
     }
 
-    // Update individual message atoms ONLY if they changed
-    // This is the key optimization - only changed messages trigger re-renders
-    // CRITICAL: AI SDK mutates objects in-place, so we MUST create a new reference
-    // for Jotai to detect the change (it uses Object.is() for comparison)
-    // We need to deep clone the message because:
-    // 1. msg object itself is mutated in-place
-    // 2. msg.parts array is mutated in-place
-    // 3. Individual part objects inside parts are mutated in-place
+    // Hydrate one map so a large transcript produces one store commit. Mounted
+    // per-message selectors still only update when their selected object changes.
+    const currentMessages = get(messagesByChatAtom(currentSubChatId))
+    const nextMessages = new Map<string, Message>()
+    let messagesChanged = currentMessages.size !== messages.length
     const lastMessageId = newIds[newIds.length - 1] ?? null
     for (const msg of messages) {
-      const messageKey = getPerChatMessageKey(currentSubChatId, msg.id)
-      const currentAtomValue = get(messageAtomFamily(messageKey))
+      const currentMessage = currentMessages.get(msg.id)
       const msgChanged = hasMessageChanged(currentSubChatId, msg.id, msg)
       const isLastMessage = msg.id === lastMessageId
 
-      // CRITICAL FIX: Also update if atom is null (not yet populated)
       // Always refresh the last message because AI SDK can mutate non-last parts
       // of the current streaming assistant message without changing the last part.
-      if (msgChanged || !currentAtomValue || isLastMessage) {
-        // Deep clone message with new parts array and new part objects
-        const clonedMsg = {
+      if (msgChanged || !currentMessage || isLastMessage) {
+        nextMessages.set(msg.id, {
           ...msg,
           parts: msg.parts?.map((part: any) => ({
             ...part,
             input: part.input ? { ...part.input } : undefined,
           })),
-        }
-        set(messageAtomFamily(messageKey), clonedMsg)
+        })
+        messagesChanged = true
+      } else {
+        nextMessages.set(msg.id, currentMessage)
       }
     }
+    if (messagesChanged) set(messagesByChatAtom(currentSubChatId), nextMessages)
 
     // Cleanup removed message atoms to prevent memory leaks
     const newIdsSet = new Set(newIds)
@@ -1059,6 +1066,8 @@ export function clearSubChatCaches(subChatId: string): {
     }
     activeMessageIdsByChat.delete(subChatId)
   }
+  appStore.set(messagesByChatAtom(subChatId), new Map())
+  messagesByChatAtom.remove(subChatId)
 
   // Clear other caches
   userMessageIdsCacheByChat.delete(subChatId)

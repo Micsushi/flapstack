@@ -23,6 +23,18 @@ export function readDurableAgentProfileRuntimeAuthority(
     "prepare" in database && typeof database.prepare === "function"
       ? (database as Database.Database)
       : (database as { $client: Database.Database }).$client
+  const regularRows = db
+    .prepare(
+      `SELECT b.snapshot_id, s.resolved_json
+       FROM agent_profile_run_bindings b
+       LEFT JOIN agent_profile_snapshots s ON s.id = b.snapshot_id
+       WHERE b.run_id = ?`,
+    )
+    .all(runId) as Row[]
+  if (regularRows.length > 1) return { kind: "invalid" }
+  if (regularRows.length === 1) {
+    return authorityFromSnapshotRow(regularRows[0]!)
+  }
   const standaloneRows = db
     .prepare(
       `SELECT l.snapshot_id, s.resolved_json

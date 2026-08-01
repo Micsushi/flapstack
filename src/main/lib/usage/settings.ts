@@ -31,6 +31,50 @@ export interface UsageProviderSettings {
   thresholds: UsageAlertThresholds
 }
 
+export interface UsageOrganizationSettings {
+  openai: {
+    /** Exact organization selected for Admin API requests. Admin polling stays
+     * disabled until this selection is proven by the provider. */
+    organizationId: string | null
+    /** Empty means all projects. */
+    projectIds: string[]
+    /** Durable non-secret proof that this exact credential, organization, and
+     * configured coverage were validated together. */
+    validatedBinding: OpenAiValidatedOrganizationBinding | null
+  }
+  anthropic: {
+    /** Exact organization expected from `/v1/organizations/me`. */
+    organizationId: string | null
+    /** Empty means all workspaces, including the default workspace. */
+    workspaceIds: string[]
+    /** Durable non-secret proof that this exact credential, organization, and
+     * configured coverage were validated together. */
+    validatedBinding: AnthropicValidatedOrganizationBinding | null
+  }
+}
+
+export interface OpenAiValidatedOrganizationBinding {
+  organizationId: string
+  /** Stable one-way credential fingerprint, never the credential. */
+  credentialTag: string
+  validatedAt: string
+  coverage: {
+    selection: "all-projects" | "selected-projects"
+    projectIds: string[]
+  }
+}
+
+export interface AnthropicValidatedOrganizationBinding {
+  organizationId: string
+  /** Stable one-way credential fingerprint, never the credential. */
+  credentialTag: string
+  validatedAt: string
+  coverage: {
+    selection: "all-workspaces" | "selected-workspaces"
+    workspaceIds: string[]
+  }
+}
+
 export interface UsageSettings {
   /** Global default poll cadence. Default 5 minutes per S2.0. */
   cadenceSeconds: number
@@ -41,6 +85,8 @@ export interface UsageSettings {
   /** Send Discord webhook alerts from the daemon. */
   discordAlertsEnabled: boolean
   providers: Record<UsageProviderId, UsageProviderSettings>
+  /** Non-secret Admin API scope selectors shared by the app and daemon. */
+  organization: UsageOrganizationSettings
 }
 
 const defaultThresholds: UsageAlertThresholds = {
@@ -68,6 +114,10 @@ export const defaultUsageSettings: UsageSettings = {
   providers: Object.fromEntries(
     USAGE_PROVIDER_IDS.map((id) => [id, defaultProviderSettings()]),
   ) as Record<UsageProviderId, UsageProviderSettings>,
+  organization: {
+    openai: { organizationId: null, projectIds: [], validatedBinding: null },
+    anthropic: { organizationId: null, workspaceIds: [], validatedBinding: null },
+  },
 }
 
 export function getUsageSettings(): UsageSettings {
@@ -90,6 +140,7 @@ export function setUsageSettings(patch: Partial<UsageSettings>): UsageSettings {
     // Provider settings are updated independently by the UI. A shallow merge
     // here would silently disable every provider except the one in a patch.
     providers: { ...current.providers, ...patch.providers },
+    organization: patch.organization ?? current.organization,
   })
   const configPath = getUsageSettingsPath()
   mkdirSync(dirname(configPath), { recursive: true })
@@ -127,7 +178,38 @@ export function normalizeUsageSettings(raw: Partial<UsageSettings>): UsageSettin
     discordAlertsEnabled:
       typeof raw.discordAlertsEnabled === "boolean" ? raw.discordAlertsEnabled : false,
     providers,
+    organization: normalizeOrganizationSettings(raw.organization),
   }
+}
+
+export function invalidateOpenAiOrganizationBinding(credentialTag: string): boolean {
+  const current = getUsageSettings()
+  if (current.organization.openai.validatedBinding?.credentialTag !== credentialTag) return false
+  setUsageSettings({
+    organization: {
+      ...current.organization,
+      openai: {
+        ...current.organization.openai,
+        validatedBinding: null,
+      },
+    },
+  })
+  return true
+}
+
+export function invalidateAnthropicOrganizationBinding(credentialTag: string): boolean {
+  const current = getUsageSettings()
+  if (current.organization.anthropic.validatedBinding?.credentialTag !== credentialTag) return false
+  setUsageSettings({
+    organization: {
+      ...current.organization,
+      anthropic: {
+        ...current.organization.anthropic,
+        validatedBinding: null,
+      },
+    },
+  })
+  return true
 }
 
 export function resolveCadenceSeconds(
@@ -156,6 +238,137 @@ function sanitizeNumberList(value: unknown, fallback: number[]): number[] {
 
 function sanitizePositive(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null
+}
+
+function normalizeOrganizationSettings(value: unknown): UsageOrganizationSettings {
+  const organization = value && typeof value === "object" ? (value as Record<string, unknown>) : {}
+  const openai =
+    organization.openai && typeof organization.openai === "object"
+      ? (organization.openai as Record<string, unknown>)
+      : {}
+  const anthropic =
+    organization.anthropic && typeof organization.anthropic === "object"
+      ? (organization.anthropic as Record<string, unknown>)
+      : {}
+  return {
+    openai: {
+      organizationId: normalizedIdentity(openai.organizationId),
+      projectIds: normalizedIdentityList(openai.projectIds),
+      validatedBinding: normalizedOpenAiBinding(openai.validatedBinding, openai),
+    },
+    anthropic: {
+      organizationId: normalizedIdentity(anthropic.organizationId),
+      workspaceIds: normalizedIdentityList(anthropic.workspaceIds),
+      validatedBinding: normalizedAnthropicBinding(anthropic.validatedBinding, anthropic),
+    },
+  }
+}
+
+function normalizedOpenAiBinding(
+  value: unknown,
+  configured: Record<string, unknown>,
+): OpenAiValidatedOrganizationBinding | null {
+  if (!value || typeof value !== "object") return null
+  const binding = value as Record<string, unknown>
+  const organizationId = normalizedIdentity(binding.organizationId)
+  const credentialTag = normalizedIdentity(binding.credentialTag)
+  const validatedAt =
+    typeof binding.validatedAt === "string" && Number.isFinite(Date.parse(binding.validatedAt))
+      ? new Date(binding.validatedAt).toISOString()
+      : null
+  const coverage =
+    binding.coverage && typeof binding.coverage === "object"
+      ? (binding.coverage as Record<string, unknown>)
+      : {}
+  const projectIds = normalizedIdentityList(coverage.projectIds)
+  const selection =
+    coverage.selection === "all-projects" || coverage.selection === "selected-projects"
+      ? coverage.selection
+      : null
+  const configuredOrganizationId = normalizedIdentity(configured.organizationId)
+  const configuredProjectIds = normalizedIdentityList(configured.projectIds)
+  const expectedSelection = configuredProjectIds.length > 0 ? "selected-projects" : "all-projects"
+  if (
+    !organizationId ||
+    !credentialTag ||
+    !validatedAt ||
+    !selection ||
+    organizationId !== configuredOrganizationId ||
+    selection !== expectedSelection ||
+    projectIds.length !== configuredProjectIds.length ||
+    projectIds.some((projectId, index) => projectId !== configuredProjectIds[index])
+  ) {
+    return null
+  }
+  return {
+    organizationId,
+    credentialTag,
+    validatedAt,
+    coverage: { selection, projectIds },
+  }
+}
+
+function normalizedAnthropicBinding(
+  value: unknown,
+  configured: Record<string, unknown>,
+): AnthropicValidatedOrganizationBinding | null {
+  if (!value || typeof value !== "object") return null
+  const binding = value as Record<string, unknown>
+  const organizationId = normalizedIdentity(binding.organizationId)
+  const credentialTag = normalizedIdentity(binding.credentialTag)
+  const validatedAt =
+    typeof binding.validatedAt === "string" && Number.isFinite(Date.parse(binding.validatedAt))
+      ? new Date(binding.validatedAt).toISOString()
+      : null
+  const coverage =
+    binding.coverage && typeof binding.coverage === "object"
+      ? (binding.coverage as Record<string, unknown>)
+      : {}
+  const workspaceIds = normalizedIdentityList(coverage.workspaceIds)
+  const selection =
+    coverage.selection === "all-workspaces" || coverage.selection === "selected-workspaces"
+      ? coverage.selection
+      : null
+  const configuredOrganizationId = normalizedIdentity(configured.organizationId)
+  const configuredWorkspaceIds = normalizedIdentityList(configured.workspaceIds)
+  const expectedSelection =
+    configuredWorkspaceIds.length > 0 ? "selected-workspaces" : "all-workspaces"
+  if (
+    !organizationId ||
+    !credentialTag ||
+    !validatedAt ||
+    !selection ||
+    organizationId !== configuredOrganizationId ||
+    selection !== expectedSelection ||
+    workspaceIds.length !== configuredWorkspaceIds.length ||
+    workspaceIds.some((workspaceId, index) => workspaceId !== configuredWorkspaceIds[index])
+  ) {
+    return null
+  }
+  return {
+    organizationId,
+    credentialTag,
+    validatedAt,
+    coverage: { selection, workspaceIds },
+  }
+}
+
+function normalizedIdentity(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 && trimmed.length <= 200 ? trimmed : null
+}
+
+function normalizedIdentityList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return [
+    ...new Set(
+      value.flatMap((entry) => {
+        const normalized = normalizedIdentity(entry)
+        return normalized ? [normalized] : []
+      }),
+    ),
+  ].sort()
 }
 
 function getUsageSettingsPath(): string {

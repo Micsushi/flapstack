@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest"
 import {
   chatBelongsToProject,
+  refreshDevChatUntilVisible,
   refreshDevSelectionSnapshot,
+  validateDevChatSelectionSnapshot,
 } from "../src/renderer/features/settings/dev-test-selection-refresh"
 
 describe("development renderer selection refresh", () => {
@@ -58,5 +60,107 @@ describe("development renderer selection refresh", () => {
     expect(chatBelongsToProject(chats, "old-chat", "fixture-project")).toBe(false)
     expect(chatBelongsToProject(chats, "missing", "fixture-project")).toBe(false)
     expect(chatBelongsToProject(chats, "fixture-chat", null)).toBe(false)
+  })
+
+  it("rejects chat selection until the exact fixture project and chat are in renderer caches", () => {
+    const valid = {
+      projects: [{ id: "fixture-project" }],
+      chats: [{ id: "fixture-chat", projectId: "fixture-project" }],
+      targetChat: { id: "fixture-chat", projectId: "fixture-project" },
+    }
+
+    expect(() =>
+      validateDevChatSelectionSnapshot(valid, "fixture-project", "fixture-chat"),
+    ).not.toThrow()
+    expect(() =>
+      validateDevChatSelectionSnapshot(
+        { ...valid, projects: [] },
+        "fixture-project",
+        "fixture-chat",
+      ),
+    ).toThrow(/project.*cache/i)
+    expect(() =>
+      validateDevChatSelectionSnapshot(
+        { ...valid, targetChat: null },
+        "fixture-project",
+        "fixture-chat",
+      ),
+    ).toThrow(/chat.*cache/i)
+    expect(() =>
+      validateDevChatSelectionSnapshot(
+        {
+          ...valid,
+          targetChat: { id: "fixture-chat", projectId: "other-project" },
+        },
+        "fixture-project",
+        "fixture-chat",
+      ),
+    ).toThrow(/project/i)
+  })
+
+  it("replays the bounded refresh until the exact product transcript is visible", async () => {
+    let frame = 0
+    const dispatchRefresh = vi.fn()
+    const prepareSelection = vi.fn()
+    const visible = await refreshDevChatUntilVisible(
+      {
+        chatId: "fixture-chat",
+        subChatId: "fixture-sub-chat",
+        messages: [{ id: "one" }, { id: "two" }],
+      },
+      {
+        timeoutMs: 1_000,
+        now: () => frame * 16,
+        nextFrame: async () => {
+          frame += 1
+        },
+        prepareSelection,
+        dispatchRefresh,
+        readVisibleState: () =>
+          frame < 3
+            ? null
+            : {
+                chatId: "fixture-chat",
+                subChatId: "fixture-sub-chat",
+                messageCount: 2,
+              },
+      },
+    )
+
+    expect(prepareSelection).toHaveBeenCalledTimes(3)
+    expect(dispatchRefresh).toHaveBeenCalledTimes(3)
+    expect(visible).toEqual({
+      chatId: "fixture-chat",
+      subChatId: "fixture-sub-chat",
+      messageCount: 2,
+    })
+  })
+
+  it("reports the last observed product pane state when selection times out", async () => {
+    let frame = 0
+    await expect(
+      refreshDevChatUntilVisible(
+        {
+          chatId: "fixture-chat",
+          subChatId: "fixture-sub-chat",
+          messages: [{ id: "one" }],
+        },
+        {
+          timeoutMs: 16,
+          now: () => frame * 16,
+          nextFrame: async () => {
+            frame += 1
+          },
+          prepareSelection: vi.fn(),
+          dispatchRefresh: vi.fn(),
+          readVisibleState: () => ({
+            chatId: "fixture-chat",
+            subChatId: "other-sub-chat",
+            messageCount: -1,
+            details: { transcriptMounted: false },
+          }),
+        },
+      ),
+    ).rejects.toThrow(/"subChatId":"other-sub-chat".*"transcriptMounted":false/)
   })
 })

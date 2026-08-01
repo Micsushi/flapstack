@@ -1026,7 +1026,11 @@ function assertOutput(step: Step, output: unknown) {
   if (step.outputSchema === null) return
   validateJsonSchema(step.outputSchema, output, `Step ${step.id} output`)
 }
-function validateJsonSchema(schema: Record<string, unknown>, value: unknown, path: string): void {
+export function validateJsonSchema(
+  schema: Record<string, unknown>,
+  value: unknown,
+  path: string,
+): void {
   if (Array.isArray(schema.enum) && !schema.enum.some((candidate) => deepEqual(candidate, value)))
     throw new Error(`${path} is not an allowed enum value.`)
   if ("const" in schema && !deepEqual(schema.const, value))

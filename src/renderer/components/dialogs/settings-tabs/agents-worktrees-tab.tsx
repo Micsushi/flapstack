@@ -10,6 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "../../ui/selec
 import { toast } from "sonner"
 import { COMMAND_PROMPTS } from "../../../features/agents/commands"
 import { agentsSettingsDialogOpenAtom, selectedAgentChatIdAtom } from "../../../lib/atoms"
+import {
+  NewChatAgentProfileSelector,
+  type NewChatAgentProfileSelectionState,
+} from "../../../features/agent-profiles/new-chat-agent-profile-selector"
 
 function useIsNarrowScreen(): boolean {
   const [isNarrow, setIsNarrow] = useState(false)
@@ -67,6 +71,8 @@ export function AgentsWorktreesTab() {
   const [unixCommands, setUnixCommands] = useState<string[]>([])
   const [windowsCommands, setWindowsCommands] = useState<string[]>([])
   const [showPlatformSpecific, setShowPlatformSpecific] = useState(false)
+  const [fillProfileSelection, setFillProfileSelection] =
+    useState<NewChatAgentProfileSelectionState>(null)
 
   // Auto-select first project
   useEffect(() => {
@@ -243,34 +249,63 @@ export function AgentsWorktreesTab() {
 
           {/* Setup Commands - Main */}
           <div className="space-y-2">
-            <div className="pb-2 flex items-center justify-between">
+            <div className="pb-2 flex items-start justify-between gap-3">
               <div>
                 <h4 className="text-sm font-medium text-foreground">Setup Commands</h4>
                 <p className="text-xs text-muted-foreground mt-1">
                   Commands run in the worktree after creation
                 </p>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="gap-1.5"
-                onClick={() => {
-                  const prompt = COMMAND_PROMPTS["worktree-setup"]
-                  if (prompt && selectedProjectId) {
-                    createChatMutation.mutate({
-                      projectId: selectedProjectId,
-                      name: "Worktree Setup",
-                      initialMessageParts: [{ type: "text", text: prompt }],
-                      useWorktree: false,
-                      mode: "write",
-                    })
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <NewChatAgentProfileSelector
+                  scope="project"
+                  projectId={selectedProjectId}
+                  permissionMode="ask-before-edits"
+                  runtimePreference="auto"
+                  onSelectionChange={setFillProfileSelection}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => {
+                    const prompt = COMMAND_PROMPTS["worktree-setup"]
+                    if (prompt && selectedProjectId) {
+                      const profile =
+                        fillProfileSelection && !("invalid" in fillProfileSelection)
+                          ? fillProfileSelection
+                          : null
+                      createChatMutation.mutate({
+                        scope: "project",
+                        projectId: selectedProjectId,
+                        name: "Worktree Setup",
+                        initialMessageParts: [{ type: "text", text: prompt }],
+                        useWorktree: false,
+                        mode: "write",
+                        agentProfile: profile?.profile,
+                        confirmedAgentProfileDigest: profile?.digest,
+                        harness: profile?.harness,
+                        model: profile?.model ?? undefined,
+                        runtimePreference: profile?.runtimePreference,
+                        permissionMode: profile?.permissionMode as
+                          | "read-only"
+                          | "ask-before-edits"
+                          | "auto-edit-project-only"
+                          | "full-access"
+                          | undefined,
+                      })
+                    }
+                  }}
+                  disabled={
+                    !selectedProjectId ||
+                    createChatMutation.isPending ||
+                    (fillProfileSelection !== null && "invalid" in fillProfileSelection)
                   }
-                }}
-                disabled={!selectedProjectId || createChatMutation.isPending}
-              >
-                <AIPenIcon className="h-3.5 w-3.5" />
-                Fill with AI
-              </Button>
+                >
+                  <AIPenIcon className="h-3.5 w-3.5" />
+                  Fill with AI
+                </Button>
+              </div>
             </div>
 
             <div className="bg-background rounded-lg border border-border overflow-hidden">

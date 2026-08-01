@@ -10,6 +10,7 @@ import {
 } from "../../../shared/agent-profiles"
 import {
   orchestrationAgentDefinitionSchema,
+  type DirectChildProfilePreviewInput,
   type OrchestrationAgentDefinition,
 } from "../../../shared/agent-orchestration"
 import { orchestrationTemplateDefinitionSchema } from "../../../shared/orchestration-operations"
@@ -21,6 +22,7 @@ import {
   frozenAgentProfileRuntimeResolution,
   frozenAgentProfileRuntimeAuthority,
   intersectAgentProfilePermissions,
+  resolvedAgentProfileInstructions,
 } from "./resolver"
 import { assertAgentProfileSecretFree } from "./service"
 import { canonicalJson, epochSeconds as epoch } from "./values"
@@ -253,6 +255,23 @@ export class AgentProfileWorkflowBindingService {
       .immediate()
   }
 
+  previewDirectChild(input: DirectChildProfilePreviewInput) {
+    return this.resolveDirectChild(input, false)
+  }
+
+  materializeDirectChild(
+    input: DirectChildProfilePreviewInput & { confirmedSnapshotDigest: string },
+  ) {
+    const preview = this.resolveDirectChild(input, false)
+    if (preview.snapshot.digest !== input.confirmedSnapshotDigest) {
+      throw new AgentProfileWorkflowBindingError(
+        "snapshot-conflict",
+        "Direct child Agent Profile changed after preview.",
+      )
+    }
+    return this.resolveDirectChild(input, true)
+  }
+
   /**
    * Materializes the exact definition F3 must persist for a workflow worker.
    * An absent binding is an explicit pass-through. A present but invalid binding
@@ -461,11 +480,12 @@ export class AgentProfileWorkflowBindingService {
       definitionId: workflowStep.agentDefinition.definitionId,
       role: binding.workflowRole,
       name: snapshot.displayName,
-      prompt: snapshot.capability.instructions,
+      prompt: resolvedAgentProfileInstructions(snapshot),
       harness: snapshot.capability.harness,
       model: snapshot.capability.modelPreference ?? undefined,
       runtimePreference: frozenAgentProfileRuntimeResolution(snapshot).preference,
       reasoningEffort: snapshot.capability.reasoningEffort ?? undefined,
+      speedPreference: snapshot.capability.speedPreference ?? undefined,
       profileRuntimeAuthority: frozenAgentProfileRuntimeAuthority(snapshot),
       permissionMode: snapshot.capability.permissionMode,
       customPermissions: snapshot.capability.customPermissions ?? undefined,
@@ -475,6 +495,127 @@ export class AgentProfileWorkflowBindingService {
         ? "Return output matching the bound JSON schema."
         : "Complete the bound workflow role and report a concrete result.",
     })
+  }
+
+  private resolveDirectChild(input: DirectChildProfilePreviewInput, persist: boolean) {
+    const context = this.requireDirectChildContext(input.taskId, input.parentAgentId, input.profile)
+    const resolver = new AgentProfileResolver(this.sqlite)
+    const draft = resolver.preview({
+      profile: input.profile,
+      overrides: input.overrides,
+      policy: context.policy,
+    })
+    const runtimeResolution = this.requireRuntimeResolutionForProject(
+      context.projectId,
+      draft.capability.harness,
+    )
+    const snapshot = persist
+      ? resolver.snapshot(
+          input.profile,
+          input.overrides,
+          context.policy,
+          "launch",
+          runtimeResolution,
+        )
+      : resolver.preview(
+          {
+            profile: input.profile,
+            overrides: input.overrides,
+            policy: context.policy,
+          },
+          "launch",
+          runtimeResolution,
+        )
+    const hardConflicts = snapshot.conflicts.filter((conflict) =>
+      AGENT_PROFILE_LAUNCH_BLOCKING_CONFLICT_CODES.some((code) => code === conflict.code),
+    )
+    if (hardConflicts.length) {
+      throw new AgentProfileWorkflowBindingError(
+        "launch-blocked",
+        hardConflicts.map((conflict) => conflict.message).join(" "),
+      )
+    }
+    if (!["inherit", "none"].includes(snapshot.capability.worktreeStrategy)) {
+      throw new AgentProfileWorkflowBindingError(
+        "launch-blocked",
+        "Direct child Agent Profiles may inherit the parent worktree or request no worktree.",
+      )
+    }
+    return {
+      snapshot,
+      definition: orchestrationAgentDefinitionSchema.parse({
+        agentId: input.agent.agentId,
+        definitionId: input.agent.definitionId,
+        role: snapshot.capability.role,
+        name: snapshot.displayName,
+        prompt: resolvedAgentProfileInstructions(snapshot),
+        spec: input.agent.spec,
+        harness: snapshot.capability.harness,
+        model: snapshot.capability.modelPreference ?? undefined,
+        runtimePreference: frozenAgentProfileRuntimeResolution(snapshot).preference,
+        reasoningEffort: snapshot.capability.reasoningEffort ?? undefined,
+        speedPreference: snapshot.capability.speedPreference ?? undefined,
+        profileRuntimeAuthority: frozenAgentProfileRuntimeAuthority(snapshot),
+        permissionMode: snapshot.capability.permissionMode,
+        customPermissions: snapshot.capability.customPermissions ?? undefined,
+        worktreeStrategy: snapshot.capability.worktreeStrategy,
+        dependencyAgentIds: input.agent.dependencyAgentIds,
+        completionCriteria: input.agent.completionCriteria,
+      }),
+    }
+  }
+
+  private requireDirectChildContext(
+    taskId: string,
+    parentAgentId: string,
+    profile: AgentProfileVersionRef,
+  ) {
+    const row = this.sqlite
+      .prepare(
+        `SELECT oa.definition, oa.depth, o.max_depth, t.project_id
+         FROM orchestration_agents oa
+         JOIN task_orchestrations o ON o.task_id = oa.task_id
+         JOIN tasks t ON t.id = oa.task_id
+         WHERE oa.id = ? AND oa.task_id = ?`,
+      )
+      .get(parentAgentId, taskId) as
+      { definition: string; depth: number; max_depth: number; project_id: string } | undefined
+    if (!row) {
+      throw new AgentProfileWorkflowBindingError(
+        "launch-blocked",
+        "Direct child parent agent or orchestration is missing.",
+      )
+    }
+    const parent = orchestrationAgentDefinitionSchema.parse(JSON.parse(row.definition))
+    const authority = parent.profileRuntimeAuthority
+    if (!authority || !authority.allowedDescendantProfileIds.includes(profile.profileId)) {
+      throw new AgentProfileWorkflowBindingError(
+        "launch-blocked",
+        "Parent Agent Profile does not allow the selected exact child profile.",
+      )
+    }
+    if (authority.maxDescendants < 1 || row.depth >= row.max_depth) {
+      throw new AgentProfileWorkflowBindingError(
+        "launch-blocked",
+        "Parent Agent Profile descendant ceiling does not allow another child.",
+      )
+    }
+    const remainingDepth = Math.max(
+      0,
+      Math.min(authority.maxDescendants - 1, row.max_depth - row.depth - 1),
+    )
+    return {
+      projectId: row.project_id,
+      policy: agentProfileLaunchPolicySchema.parse({
+        permissionMode: parent.permissionMode,
+        customPermissions: parent.customPermissions ?? null,
+        allowedTools: authority.allowedTools,
+        allowedSkills: authority.allowedSkills,
+        allowedModels: null,
+        allowedRuntimes: null,
+        maxDescendants: remainingDepth,
+      }),
+    }
   }
 
   private requireCurrentLaunchPolicy(
@@ -574,6 +715,13 @@ export class AgentProfileWorkflowBindingService {
         "Workflow task Runtime scope is missing.",
       )
     }
+    return this.requireRuntimeResolutionForProject(workflow.project_id, harness)
+  }
+
+  private requireRuntimeResolutionForProject(
+    projectId: string,
+    harness: string,
+  ): AgentProfileRuntimeResolution {
     const row = this.sqlite
       .prepare(
         `SELECT d.scope_type, d.preference, d.version
@@ -584,7 +732,7 @@ export class AgentProfileWorkflowBindingService {
          ORDER BY CASE d.scope_type WHEN 'project' THEN 0 ELSE 1 END
          LIMIT 1`,
       )
-      .get(harness, workflow.project_id) as
+      .get(harness, projectId) as
       | {
           scope_type: "project" | "global"
           preference: AgentRuntimePreference

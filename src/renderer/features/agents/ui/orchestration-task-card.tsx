@@ -46,6 +46,12 @@ import { CoordinationEngineLaunchPreviewPanel } from "./coordination-engine-laun
 import { OrchestrationLineageTree } from "./orchestration-lineage-tree"
 import { OrchestrationWorkflowPanel } from "./orchestration-workflow-panel"
 import { OrchestrationActivityPanel } from "./orchestration-activity-panel"
+import {
+  SwarmGroupControlPanel,
+  type SwarmGroupAction,
+  type SwarmGroupExecutionDto,
+  type SwarmGroupPreviewDto,
+} from "./swarm-group-control-panel"
 
 type AgentEditorMode =
   | { kind: "create-orchestration"; createTask: boolean }
@@ -233,6 +239,8 @@ export function OrchestrationOverviewCard({
   onLineageAction,
   onStartCoordination,
   onOpenWorkspace,
+  onPreviewGroupControl,
+  onExecuteGroupControl,
 }: {
   overview: OrchestrationTaskOverviewDto
   lineage: OrchestrationLineageDto
@@ -250,6 +258,14 @@ export function OrchestrationOverviewCard({
   ) => void
   onStartCoordination?: () => void
   onOpenWorkspace?: () => void
+  onPreviewGroupControl?: (
+    action: SwarmGroupAction,
+    selectedAgentIds: string[],
+  ) => Promise<SwarmGroupPreviewDto>
+  onExecuteGroupControl?: (
+    preview: SwarmGroupPreviewDto,
+    steerMessage: string,
+  ) => Promise<SwarmGroupExecutionDto>
 }) {
   const { orchestration, aggregate, agents } = overview
   const cost = formatOrchestrationCost(
@@ -407,6 +423,19 @@ export function OrchestrationOverviewCard({
       />
 
       <OrchestrationActivityPanel taskId={orchestration.taskId} agents={agents} />
+
+      {onPreviewGroupControl && onExecuteGroupControl && (
+        <SwarmGroupControlPanel
+          agents={agents.map((agent) => ({
+            id: agent.id,
+            label: agent.definition.name ?? agent.definition.role,
+            status: agent.status,
+          }))}
+          busy={busy}
+          onPreview={onPreviewGroupControl}
+          onExecute={onExecuteGroupControl}
+        />
+      )}
 
       <ul aria-label="Orchestration agents" className="space-y-1.5">
         {agents.map((agent) => (
@@ -1015,6 +1044,7 @@ export function OrchestrationTaskCard({
   const replace = trpc.spawnedAgents.replaceAgent.useMutation(mutationOptions)
   const add = trpc.spawnedAgents.addAgent.useMutation(mutationOptions)
   const create = trpc.spawnedAgents.createOrchestration.useMutation(mutationOptions)
+  const executeSwarmControl = trpc.spawnedAgents.executeSwarmControl.useMutation(mutationOptions)
   const coordinate =
     trpc.orchestrationOperations.executeCoordinationAction.useMutation(mutationOptions)
   const busy =
@@ -1023,6 +1053,7 @@ export function OrchestrationTaskCard({
     replace.isPending ||
     add.isPending ||
     create.isPending ||
+    executeSwarmControl.isPending ||
     coordinate.isPending
   const overview = overviewQuery.data
   const lineage = lineageQuery.data
@@ -1165,6 +1196,20 @@ export function OrchestrationTaskCard({
               orchestrationId: taskQueryId,
               providerIdentity: null,
             },
+          })
+        }
+        onPreviewGroupControl={(action, selectedAgentIds) =>
+          utils.spawnedAgents.previewSwarmControl.fetch({
+            taskId: taskQueryId,
+            action,
+            selectedAgentIds,
+          })
+        }
+        onExecuteGroupControl={(expectedPreview, steerMessage) =>
+          executeSwarmControl.mutateAsync({
+            taskId: taskQueryId,
+            expectedPreview,
+            steerMessage,
           })
         }
         onOpenWorkspace={

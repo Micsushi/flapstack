@@ -13,6 +13,7 @@ import { AgentsMcpTab } from "../../components/dialogs/settings-tabs/agents-mcp-
 import { AgentsModelsTab } from "../../components/dialogs/settings-tabs/agents-models-tab"
 import { AgentsRuntimesTab } from "../../components/dialogs/settings-tabs/agents-runtimes-tab"
 import { AgentsLocalModelsTab } from "../../components/dialogs/settings-tabs/agents-local-models-tab"
+import { AgentsMobileCompanionTab } from "../../components/dialogs/settings-tabs/agents-mobile-companion-tab"
 import { AgentsCoordinationEnginesTab } from "../../components/dialogs/settings-tabs/agents-coordination-engines-tab"
 import { AgentsProfilesStudioTab } from "../../components/dialogs/settings-tabs/agents-profiles-studio-tab"
 import { AgentsPreferencesTab } from "../../components/dialogs/settings-tabs/agents-preferences-tab"
@@ -25,6 +26,7 @@ import { AgentsVoiceTab } from "../../components/dialogs/settings-tabs/agents-vo
 import { AgentsKeyboardTab } from "../../components/dialogs/settings-tabs/agents-keyboard-tab"
 import { AgentsPortabilityTab } from "../../components/dialogs/settings-tabs/agents-portability-tab"
 import { AgentsBetaTab } from "../../components/dialogs/settings-tabs/agents-beta-tab"
+import { AgentsFeatureVisibilityTab } from "../../components/dialogs/settings-tabs/agents-feature-visibility-tab"
 import { normalizeVisibleSettingsTab } from "./settings-visibility"
 import { useBetaFeatures } from "./use-beta-features"
 import { revealSettingsTarget } from "./settings-target"
@@ -85,12 +87,16 @@ export function SettingsContent() {
         return <AgentsPreferencesTab />
       case "permissions":
         return <AgentsPermissionsTab />
+      case "feature-visibility":
+        return <AgentsFeatureVisibilityTab />
       case "models":
         return <AgentsModelsTab />
       case "runtimes":
         return <AgentsRuntimesTab />
       case "local-models":
         return <AgentsLocalModelsTab />
+      case "mobile-companion":
+        return <AgentsMobileCompanionTab />
       case "coordination":
         return <AgentsCoordinationEnginesTab />
       case "agent-profiles":

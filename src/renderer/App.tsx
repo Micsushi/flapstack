@@ -1,6 +1,6 @@
 import { Provider as JotaiProvider, useAtomValue, useSetAtom } from "jotai"
 import { ThemeProvider, useTheme } from "next-themes"
-import { useEffect, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Toaster } from "sonner"
 import { McpApprovalBridge } from "./features/mcp-safety/approval-bridge"
 import { McpExternalMutationRefreshBridge } from "./features/mcp-safety/external-mutation-refresh"
@@ -27,24 +27,28 @@ import {
   ApiKeyOnboardingPage,
   BillingMethodPage,
   CodexOnboardingPage,
+  FeatureVisibilityOnboardingPage,
 } from "./features/onboarding"
-import { identify, initAnalytics, shutdown } from "./lib/analytics"
+import { initAnalytics, shutdown, syncAnalyticsConsent } from "./lib/analytics"
 import {
   anthropicOnboardingCompletedAtom,
   apiKeyOnboardingCompletedAtom,
   billingMethodAtom,
   codexOnboardingCompletedAtom,
+  featureVisibilityGuideRerunAtom,
 } from "./lib/atoms"
 import { appStore } from "./lib/jotai-store"
 import { subscribeCliLaunchDirectories } from "./lib/cli-launch-directory"
 import { VSCodeThemeProvider } from "./lib/themes/theme-provider"
 import { trpc } from "./lib/trpc"
 import { trpcClient } from "./lib/trpc"
+import { showWorkbenchWindowCreationFeedback } from "./lib/workbench-window-limit"
 import {
   CREDENTIAL_MIGRATION_STATUS_EVENT,
   migrateLegacyCredentials,
   recordCredentialMigrationStatus,
 } from "./lib/credential-migration"
+import { resolveFeatureVisibilityProfileKind } from "../shared/feature-visibility"
 
 /**
  * Custom Toaster that adapts to theme
@@ -73,6 +77,8 @@ function AppContent() {
   const apiKeyOnboardingCompleted = useAtomValue(apiKeyOnboardingCompletedAtom)
   const setApiKeyOnboardingCompleted = useSetAtom(apiKeyOnboardingCompletedAtom)
   const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
+  const rerunFeatureVisibilityGuide = useAtomValue(featureVisibilityGuideRerunAtom)
+  const setRerunFeatureVisibilityGuide = useSetAtom(featureVisibilityGuideRerunAtom)
   const setCodexOnboardingCompleted = useSetAtom(codexOnboardingCompletedAtom)
   const selectedProject = useAtomValue(selectedProjectAtom)
   const setSelectedProject = useSetAtom(selectedProjectAtom)
@@ -83,7 +89,47 @@ function AppContent() {
   const setDesktopView = useSetAtom(desktopViewAtom)
   const { setActiveSubChat, addToOpenSubChats, queueNavigation, setChatId } = useAgentSubChatStore()
   const trpcUtils = trpc.useUtils()
+  const { data: projects, isLoading: isLoadingProjects } = trpc.projects.list.useQuery()
+  const { data: archivedProjects, isLoading: isLoadingArchivedProjects } =
+    trpc.projects.listArchived.useQuery()
+  const { data: cliConfig, isLoading: isLoadingCliConfig } =
+    trpc.claudeCode.hasExistingCliConfig.useQuery()
+  const hasProviderSetup = Boolean(
+    billingMethod ||
+    anthropicOnboardingCompleted ||
+    apiKeyOnboardingCompleted ||
+    codexOnboardingCompleted,
+  )
+  const [hadPersistedProviderSetup] = useState(hasProviderSetup)
+  const hasLegacyProviderSetup = hadPersistedProviderSetup || Boolean(cliConfig?.hasConfig)
+  const featureVisibilityProfileKind = resolveFeatureVisibilityProfileKind({
+    hasExistingProject: Boolean(selectedProject || projects?.length || archivedProjects?.length),
+    hasLegacyProviderSetup,
+  })
+  const featureVisibility = trpc.featureVisibility.get.useQuery(
+    {
+      profileKind: featureVisibilityProfileKind,
+    },
+    {
+      enabled:
+        Boolean(hadPersistedProviderSetup || !isLoadingCliConfig) &&
+        Boolean(
+          selectedProject ||
+          hasLegacyProviderSetup ||
+          (!isLoadingProjects && !isLoadingArchivedProjects),
+        ),
+    },
+  )
   const { mutateAsync: openLaunchDirectory } = trpc.projects.openLaunchDirectory.useMutation()
+  const applyFeatureVisibility = trpc.featureVisibility.applyChanges.useMutation()
+
+  useEffect(
+    () =>
+      window.desktopApi.onFeatureVisibilityChanged(() => {
+        void trpcUtils.featureVisibility.get.invalidate()
+      }),
+    [trpcUtils.featureVisibility.get],
+  )
 
   useEffect(
     () =>
@@ -346,6 +392,10 @@ function AppContent() {
     if (!window.desktopApi?.claimChat) return
     const currentChatId = appStore.get(selectedAgentChatIdAtom)
     if (!currentChatId) return
+    if (currentChatId === "new-chat") {
+      setSelectedChatId(null)
+      return
+    }
     window.desktopApi.claimChat(currentChatId).then((result) => {
       if (!result.ok) {
         // Another window already has this chat - clear our selection
@@ -358,8 +408,6 @@ function AppContent() {
 
   // Check if user has existing CLI config (API key or proxy)
   // Based on PR #29 by @sa4hnd
-  const { data: cliConfig, isLoading: isLoadingCliConfig } =
-    trpc.claudeCode.hasExistingCliConfig.useQuery()
   const claudeIntegration = trpc.claudeCode.getIntegration.useQuery(undefined, { retry: 1 })
   const customClaudeCredential = trpc.credentials.status.useQuery(
     { id: "claude.custom-api-token" },
@@ -468,7 +516,60 @@ function AppContent() {
     return <ApiKeyOnboardingPage />
   }
 
+  if (featureVisibility.isLoading) return <ProviderCheckPage />
+
+  if (
+    featureVisibility.isError ||
+    !featureVisibility.data ||
+    featureVisibility.data.status === "repair-required"
+  ) {
+    return <FeatureVisibilityCheckPage retry={() => void featureVisibility.refetch()} />
+  }
+
+  if (featureVisibility.data.status === "pending-onboarding" || rerunFeatureVisibilityGuide) {
+    return (
+      <FeatureVisibilityOnboardingPage
+        revision={featureVisibility.data.revision}
+        visibility={featureVisibility.data.visibility}
+        onApply={async (input) => {
+          const applied = await applyFeatureVisibility.mutateAsync({
+            profileKind: featureVisibilityProfileKind,
+            ...input,
+          })
+          trpcUtils.featureVisibility.get.setData(
+            { profileKind: featureVisibilityProfileKind },
+            applied,
+          )
+          setRerunFeatureVisibilityGuide(false)
+        }}
+        onCancel={
+          rerunFeatureVisibilityGuide ? () => setRerunFeatureVisibilityGuide(false) : undefined
+        }
+      />
+    )
+  }
+
   return <AgentsLayout />
+}
+
+function FeatureVisibilityCheckPage(props: { retry: () => void }) {
+  return (
+    <div className="flex h-screen w-screen items-center justify-center bg-background px-6 text-foreground">
+      <div className="max-w-md rounded-xl border border-border p-6 text-center">
+        <h1 className="text-base font-semibold">Feature visibility needs attention</h1>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Flapstack kept every feature visible and did not replace the preference file. Retry after
+          repairing or restoring it.
+        </p>
+        <button
+          className="mt-5 h-8 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+          onClick={props.retry}
+        >
+          Retry
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function ProviderCheckPage() {
@@ -480,37 +581,29 @@ function ProviderCheckPage() {
 }
 
 export function App() {
-  // Initialize analytics on mount
   useEffect(() => {
-    initAnalytics()
+    return window.desktopApi?.onWorkbenchWindowCreationBlocked((failure) => {
+      showWorkbenchWindowCreationFeedback(failure)
+    })
+  }, [])
 
-    // Sync analytics opt-out status to main process
-    const syncOptOutStatus = async () => {
+  useEffect(() => {
+    const initializeConsentedAnalytics = async () => {
       try {
-        const optOut = localStorage.getItem("preferences:analytics-opt-out") === "true"
-        await window.desktopApi?.setAnalyticsOptOut(optOut)
+        await initAnalytics()
       } catch (error) {
-        console.warn("[Analytics] Failed to sync opt-out status:", error)
+        console.warn("[Analytics] Failed to initialize consented analytics:", error)
       }
     }
-    syncOptOutStatus()
-
-    // Identify user if already authenticated
-    const identifyUser = async () => {
-      try {
-        const user = await window.desktopApi?.getUser()
-        if (user?.id) {
-          identify(user.id, { email: user.email, name: user.name })
-        }
-      } catch (error) {
-        console.warn("[Analytics] Failed to identify user:", error)
-      }
-    }
-    identifyUser()
+    void initializeConsentedAnalytics()
+    const removeConsentListener = window.desktopApi?.onAnalyticsConsentChanged((consentGranted) => {
+      void syncAnalyticsConsent(consentGranted)
+    })
 
     // Cleanup on unmount
     return () => {
-      shutdown()
+      removeConsentListener?.()
+      void shutdown()
     }
   }, [])
 

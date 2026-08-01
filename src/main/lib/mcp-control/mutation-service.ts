@@ -2,7 +2,7 @@ import type Database from "better-sqlite3"
 import { openAppDatabase } from "../db/access"
 import { createHash, randomUUID } from "node:crypto"
 import { realpath } from "node:fs/promises"
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { z } from "zod"
 import { projectVaultSectionIds } from "../project-vaults/registry"
 import { readFileInsideRoot, writeFileInsideRoot } from "../path-safety"
@@ -36,6 +36,7 @@ import {
   runtimeSnapshotSqlValues,
 } from "../agent-runtime/snapshot"
 import { normalizeChatMode, resolveChatModePermission } from "../../../shared/chat-mode"
+import { VisualArtifactStore } from "../visual-capture/artifact-store"
 
 const itemSchema = z.enum(["project", "task", "chat"])
 const name = z.string().trim().min(1).max(200)
@@ -65,6 +66,15 @@ const schemas = {
       kind: z.enum(["pasted-text", "text"]).default("pasted-text"),
     })
     .strict(),
+  request_visual_capture: z
+    .object({
+      projectId: id,
+      chatId: id,
+      runId: id,
+      sourceIntent: z.enum(["screen", "window", "application-window", "region"]).optional(),
+    })
+    .strict(),
+  read_visual_context: z.object({ artifactId: z.string().uuid() }).strict(),
   rename_item: z.object({ kind: itemSchema, id, name }).strict(),
   move_chat: z
     .object({
@@ -110,7 +120,7 @@ export function createMcpMutationService(
 ): McpMutationService {
   if (!databasePath) throw new Error("FLAPSTACK_DB_PATH is required for MCP mutations.")
   return {
-    async invoke(operation, caller, rawInput) {
+    async invoke(operation, caller, rawInput, context) {
       const schema = schemas[operation as keyof typeof schemas]
       if (!schema) return fail("invalid-input", "Unsupported mutation operation.")
       const input = schema.safeParse(rawInput)
@@ -140,6 +150,22 @@ export function createMcpMutationService(
             return createChat(db, scope, input.data as z.infer<typeof schemas.create_chat>)
           case "add_attachment":
             return addAttachment(db, scope, input.data as z.infer<typeof schemas.add_attachment>)
+          case "request_visual_capture":
+            return requestVisualCapture(
+              db,
+              scope,
+              caller,
+              input.data as z.infer<typeof schemas.request_visual_capture>,
+              context,
+            )
+          case "read_visual_context":
+            return await readVisualContext(
+              db,
+              databasePath,
+              scope,
+              caller,
+              input.data as z.infer<typeof schemas.read_visual_context>,
+            )
           case "rename_item":
             return renameItem(db, scope, input.data as z.infer<typeof schemas.rename_item>)
           case "move_chat":
@@ -173,6 +199,131 @@ export function createMcpMutationService(
       }
     },
   }
+}
+
+function requestVisualCapture(
+  db: Database.Database,
+  scope: Scope,
+  caller: McpCallerIdentity,
+  input: z.infer<typeof schemas.request_visual_capture>,
+  context: { invocationId: string; approved: boolean } | undefined,
+): McpControlResponse {
+  if (!context?.approved) {
+    return fail("approval-required", "Visual capture requires an exact Tier 3 approval.")
+  }
+  if (
+    input.chatId !== caller.chatId ||
+    input.runId !== caller.runId ||
+    input.projectId !== scope.projectId
+  ) {
+    return fail("out-of-scope", "Visual capture request must match the exact caller scope.")
+  }
+  const run = db
+    .prepare(
+      `SELECT r.id
+         FROM agent_runs r
+         JOIN chats c ON c.id = r.chat_id
+        WHERE r.id = ? AND r.chat_id = ? AND c.project_id = ?`,
+    )
+    .get(input.runId, input.chatId, input.projectId)
+  if (!run) return fail("stale-caller", "Visual capture caller run is missing or stale.")
+  const existing = db
+    .prepare(
+      `SELECT request_id AS requestId
+         FROM visual_capture_audit
+        WHERE request_id = ? AND action = 'request' AND actor_kind = 'agent'
+        LIMIT 1`,
+    )
+    .get(context.invocationId) as { requestId: string } | undefined
+  if (!existing) {
+    db.prepare(
+      `INSERT INTO visual_capture_audit
+         (artifact_id, request_id, action, actor_kind, actor_id, project_id, outcome, occurred_at)
+       VALUES (NULL, ?, 'request', 'agent', ?, ?, 'allowed', ?)`,
+    ).run(context.invocationId, input.runId, input.projectId, Date.now())
+  }
+  return {
+    ok: true,
+    data: {
+      state: "awaiting-visible-user-selection",
+      captureRequestId: context.invocationId,
+      scope: {
+        projectId: input.projectId,
+        chatId: input.chatId,
+        runId: input.runId,
+      },
+      sourceIntent: input.sourceIntent ?? null,
+    },
+  }
+}
+
+async function readVisualContext(
+  db: Database.Database,
+  databasePath: string,
+  scope: Scope,
+  caller: McpCallerIdentity,
+  input: z.infer<typeof schemas.read_visual_context>,
+): Promise<McpControlResponse> {
+  const selected = db
+    .prepare(
+      `SELECT a.project_id AS projectId
+         FROM visual_artifacts a
+         JOIN visual_artifact_links l ON l.artifact_id = a.id
+        WHERE a.id = ?
+          AND a.archived_at IS NULL
+          AND (
+            (l.consumer_kind = 'run' AND l.consumer_id = ?)
+            OR (l.consumer_kind = 'chat' AND l.consumer_id = ?)
+            OR (
+              l.consumer_kind = 'task'
+              AND EXISTS (
+                SELECT 1 FROM chats caller_chat
+                 WHERE caller_chat.id = ?
+                   AND caller_chat.task_id = l.consumer_id
+              )
+            )
+            OR (
+              l.consumer_kind = 'knowledge'
+              AND EXISTS (
+                SELECT 1
+                  FROM agent_runs caller_run,
+                       json_each(caller_run.vault_context_manifest, '$.graphContext.entries') entry
+                 WHERE caller_run.id = ?
+                   AND json_extract(entry.value, '$.nodeId') = l.consumer_id
+              )
+            )
+          )
+        LIMIT 1`,
+    )
+    .get(input.artifactId, caller.runId ?? "", caller.chatId, caller.chatId, caller.runId ?? "") as
+    { projectId: string } | undefined
+  if (!selected) return fail("out-of-scope", "Visual artifact is not selected for this caller.")
+  if (selected.projectId !== scope.projectId) {
+    return fail("out-of-scope", "Visual artifact belongs to another project.")
+  }
+  const store = new VisualArtifactStore(db, visualArtifactRootForDatabase(databasePath))
+  const verified = await store.readVerified(input.artifactId)
+  db.prepare(
+    `INSERT INTO visual_capture_audit
+       (artifact_id, request_id, action, actor_kind, actor_id, project_id, outcome, occurred_at)
+     VALUES (?, NULL, 'read', 'agent', ?, ?, 'allowed', ?)`,
+  ).run(input.artifactId, caller.runId ?? caller.chatId, selected.projectId, Date.now())
+  return {
+    ok: true,
+    data: {
+      artifactId: verified.record.id,
+      mediaType: "image/png",
+      sha256: verified.record.derivativeSha256,
+      base64Data: verified.bytes.toString("base64"),
+    },
+  }
+}
+
+function visualArtifactRootForDatabase(databasePath: string): string {
+  const databaseDirectory = dirname(databasePath)
+  return basename(databaseDirectory).toLowerCase() === "data"
+    ? join(dirname(databaseDirectory), "visual-artifacts")
+    : join(databaseDirectory, "visual-artifacts")
 }
 
 function orchestrateTask(

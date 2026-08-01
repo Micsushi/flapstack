@@ -21,7 +21,7 @@ import {
   planSidebarOpenAtomFamily,
   subChatModeAtomFamily,
 } from "../atoms"
-import { useAgentSubChatStore } from "../stores/sub-chat-store"
+import { useAgentSubChatStoreApi } from "../stores/sub-chat-store"
 import { getToolStatus } from "./agent-tool-registry"
 import { areToolPropsEqual } from "./agent-tool-utils"
 
@@ -51,6 +51,7 @@ export const AgentPlanFileTool = memo(function AgentPlanFileTool({
   subChatId,
   isEdit = false,
 }: AgentPlanFileToolProps) {
+  const subChatStore = useAgentSubChatStoreApi()
   const [isExpanded, setIsExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const { isPending } = getToolStatus(part, chatStatus)
@@ -148,7 +149,7 @@ export const AgentPlanFileTool = memo(function AgentPlanFileTool({
 
   // Handle build plan - triggers via atom, consumed by ChatViewInner
   const handleBuildPlan = useCallback(() => {
-    const activeSubChatId = useAgentSubChatStore.getState().activeSubChatId
+    const activeSubChatId = subChatStore.getState().activeSubChatId
     if (activeSubChatId) {
       setPendingBuildPlanSubChatId(activeSubChatId)
     }

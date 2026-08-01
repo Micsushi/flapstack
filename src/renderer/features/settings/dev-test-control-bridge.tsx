@@ -2,6 +2,7 @@ import { useEffect } from "react"
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
+  billingMethodAtom,
   ctrlTabTargetAtom,
   customHotkeysAtom,
   getReleasedCtrlTabTarget,
@@ -10,7 +11,7 @@ import {
 } from "../../lib/atoms"
 import { buildShortcutState, mutateShortcutConfig } from "../../lib/hotkeys"
 import { appStore } from "../../lib/jotai-store"
-import { api } from "../../lib/mock-api"
+import { controlStage6ElectronMeasurement } from "../../lib/stage6-electron-performance-control"
 import { trpc } from "../../lib/trpc"
 import {
   desktopViewAtom,
@@ -21,7 +22,11 @@ import {
   pendingUserQuestionsAtom,
 } from "../agents/atoms"
 import { readRendererOrchestrationCard } from "../agents/lib/orchestration-test-state"
-import { useAgentSubChatStore } from "../agents/stores/sub-chat-store"
+import {
+  getAgentSubChatStore,
+  getMountedAgentSubChatStore,
+  useAgentSubChatStore,
+} from "../agents/stores/sub-chat-store"
 import { invokePermissionUiTestControl } from "../agents/lib/permission-ui-test-control"
 import {
   detailsSidebarOpenAtom,
@@ -31,7 +36,12 @@ import {
   widgetVisibilityAtomFamily,
 } from "../details-sidebar/atoms"
 import { SETTINGS_TAB_REGISTRY, normalizeVisibleSettingsTab } from "./settings-visibility"
-import { chatBelongsToProject, refreshDevSelectionSnapshot } from "./dev-test-selection-refresh"
+import {
+  chatBelongsToProject,
+  refreshDevChatUntilVisible,
+  refreshDevSelectionSnapshot,
+  validateDevChatSelectionSnapshot,
+} from "./dev-test-selection-refresh"
 
 function boundedCarryoverDataset(
   element: HTMLElement,
@@ -145,7 +155,6 @@ function readVoiceUiState(document: Document, historyId?: string) {
 /** Always-mounted renderer half of the authenticated development test-control bridge. */
 export function DevTestControlBridge() {
   const trpcUtils = trpc.useUtils()
-  const apiUtils = api.useUtils()
 
   useEffect(() => {
     if (!window.desktopApi?.onDevRendererControlRequest) return
@@ -170,6 +179,22 @@ export function DevTestControlBridge() {
         storedCtrlTabTarget: appStore.get(ctrlTabTargetAtom),
         effectiveCtrlTabTarget: getReleasedCtrlTabTarget(),
       })
+      if (request.command === "performance.measure") {
+        try {
+          window.desktopApi.respondDevRendererControl({
+            requestId: request.requestId,
+            ok: true,
+            state: await controlStage6ElectronMeasurement(request),
+          })
+        } catch (error) {
+          window.desktopApi.respondDevRendererControl({
+            requestId: request.requestId,
+            ok: false,
+            error: error instanceof Error ? error.message : "Electron performance control failed",
+          })
+        }
+        return
+      }
       if (request.command === "settings.get") {
         window.desktopApi.respondDevRendererControl({
           requestId: request.requestId,
@@ -273,99 +298,119 @@ export function DevTestControlBridge() {
         return
       }
       if (request.command === "chat.select") {
-        const snapshot = await refreshDevSelectionSnapshot(
-          {
-            invalidateProjects: () => trpcUtils.projects.list.invalidate(),
-            fetchProjects: () => trpcUtils.projects.list.fetch(),
-            invalidateChats: () => trpcUtils.chats.list.invalidate(),
-            fetchChats: () => trpcUtils.chats.list.fetch({}),
-            invalidateChat: (chatId) => trpcUtils.chats.get.invalidate({ id: chatId }),
-            fetchChat: (chatId) => trpcUtils.chats.get.fetch({ id: chatId }),
-          },
-          request.chatId,
-        )
-        const projectActive = snapshot.projects.some((project) => project.id === request.project.id)
-        if (!projectActive || snapshot.targetChat?.projectId !== request.project.id) {
+        try {
+          if (request.prepareStage6PerformanceProfile) {
+            appStore.set(billingMethodAtom, "local-only")
+          }
+          const snapshot = await refreshDevSelectionSnapshot(
+            {
+              invalidateProjects: () => trpcUtils.projects.list.invalidate(),
+              fetchProjects: () => trpcUtils.projects.list.fetch(),
+              invalidateChats: () => trpcUtils.chats.list.invalidate(),
+              fetchChats: () => trpcUtils.chats.list.fetch({}),
+              invalidateChat: (chatId) => trpcUtils.chats.get.invalidate({ id: chatId }),
+              fetchChat: (chatId) => trpcUtils.chats.get.fetch({ id: chatId }),
+            },
+            request.chatId,
+          )
+          validateDevChatSelectionSnapshot(snapshot, request.project.id, request.chatId)
+          const persistedMessages = request.persistedMessages
+          const compatibilityStore = getAgentSubChatStore().getState()
+          compatibilityStore.setChatId(null)
+          compatibilityStore.queueNavigation(request.chatId, request.subChatId)
+          appStore.set(selectedProjectAtom, request.project)
+          appStore.set(selectedAgentChatIdAtom, request.chatId)
+          appStore.set(selectedChatIsRemoteAtom, false)
+          appStore.set(openAgentChatIdsAtom, (current) =>
+            current.includes(request.chatId) ? current : [...current, request.chatId],
+          )
+          appStore.set(agentsSettingsDialogOpenAtom, false)
+          if (request.showOrchestration) {
+            appStore.set(detailsSidebarOpenAtom, true)
+            appStore.set(detailsSidebarTabAtom, "details")
+            const visibilityAtom = widgetVisibilityAtomFamily(request.chatId)
+            const visibleWidgets = appStore.get(visibilityAtom)
+            if (!visibleWidgets.includes("orchestration")) {
+              appStore.set(visibilityAtom, ["orchestration", ...visibleWidgets])
+            }
+          }
+
+          await refreshDevChatUntilVisible(
+            {
+              chatId: request.chatId,
+              subChatId: request.subChatId,
+              messages: persistedMessages,
+            },
+            {
+              timeoutMs: 15_000,
+              now: () => performance.now(),
+              nextFrame: () =>
+                new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve())),
+              prepareSelection: () => {
+                const mountedStore = getMountedAgentSubChatStore(request.chatId)
+                if (!mountedStore) return
+                const mountedState = mountedStore.getState()
+                if (mountedState.chatId !== request.chatId) {
+                  mountedState.queueNavigation(request.chatId, request.subChatId)
+                  mountedState.setChatId(request.chatId)
+                }
+                mountedStore.getState().queueNavigation(request.chatId, request.subChatId)
+              },
+              dispatchRefresh: (detail) =>
+                window.dispatchEvent(new CustomEvent("flapstack-dev-chat-refresh", { detail })),
+              readVisibleState: () => {
+                const groups = Array.from(
+                  document.querySelectorAll<HTMLElement>("[data-chat-group][data-active-chat-id]"),
+                )
+                const group = groups.find(
+                  (element) => element.dataset.activeChatId === request.chatId,
+                )
+                const transcript =
+                  group?.querySelector<HTMLElement>(
+                    "[data-chat-container][data-active-sub-chat-id]",
+                  ) ?? null
+                const mountedState = getMountedAgentSubChatStore(request.chatId)?.getState()
+                return {
+                  chatId: group?.dataset.activeChatId ?? (mountedState ? request.chatId : ""),
+                  subChatId:
+                    transcript?.dataset.activeSubChatId ?? mountedState?.activeSubChatId ?? "",
+                  messageCount: transcript
+                    ? Number(transcript.dataset.stage6PerformanceMessageCount)
+                    : -1,
+                  details: {
+                    selectedChatId: appStore.get(selectedAgentChatIdAtom),
+                    workbenchChatIds: groups.map((element) => element.dataset.activeChatId ?? ""),
+                    mountedStoreChatId: mountedState?.chatId ?? null,
+                    mountedOpenSubChatIds: mountedState?.openSubChatIds ?? [],
+                    transcriptMounted: Boolean(transcript),
+                  },
+                }
+              },
+            },
+          )
+
+          const selectedSubChatId =
+            getMountedAgentSubChatStore(request.chatId)?.getState().activeSubChatId ?? null
+          window.desktopApi.respondDevRendererControl({
+            requestId: request.requestId,
+            ok: true,
+            state: {
+              chatId: appStore.get(selectedAgentChatIdAtom),
+              subChatId: selectedSubChatId,
+              selectedProject: request.project,
+              settingsOpen: false,
+              detailsOpen: appStore.get(detailsSidebarOpenAtom),
+              detailsTab: appStore.get(detailsSidebarTabAtom),
+              persistedMessageCount: persistedMessages.length,
+            },
+          })
+        } catch (error) {
           window.desktopApi.respondDevRendererControl({
             requestId: request.requestId,
             ok: false,
-            error: "Test chat project state is stale",
+            error: error instanceof Error ? error.message : "Chat selection failed",
           })
-          return
         }
-        await apiUtils.agents.getAgentChat.invalidate({ chatId: request.chatId })
-        const persistedSubChat = (
-          snapshot.targetChat as {
-            subChats?: Array<{ id: string; messages?: string | null }>
-          } | null
-        )?.subChats?.find((subChat) => subChat.id === request.subChatId)
-        let persistedMessages: unknown[] | null = null
-        if (persistedSubChat?.messages) {
-          try {
-            const parsed = JSON.parse(persistedSubChat.messages)
-            if (Array.isArray(parsed)) persistedMessages = parsed
-          } catch {
-            persistedMessages = null
-          }
-        }
-        const store = useAgentSubChatStore.getState()
-        store.setChatId(null)
-        store.queueNavigation(request.chatId, request.subChatId)
-        appStore.set(selectedProjectAtom, request.project)
-        appStore.set(selectedAgentChatIdAtom, request.chatId)
-        appStore.set(selectedChatIsRemoteAtom, false)
-        appStore.set(openAgentChatIdsAtom, (current) =>
-          current.includes(request.chatId) ? current : [...current, request.chatId],
-        )
-        appStore.set(agentsSettingsDialogOpenAtom, false)
-        if (request.showOrchestration) {
-          appStore.set(detailsSidebarOpenAtom, true)
-          appStore.set(detailsSidebarTabAtom, "details")
-          const visibilityAtom = widgetVisibilityAtomFamily(request.chatId)
-          const visibleWidgets = appStore.get(visibilityAtom)
-          if (!visibleWidgets.includes("orchestration")) {
-            appStore.set(visibilityAtom, ["orchestration", ...visibleWidgets])
-          }
-        }
-        store.setChatId(request.chatId)
-        // The active chat mounts asynchronously and may restore its persisted first tab
-        // after the queued navigation is consumed. Re-apply the bounded requested
-        // sub-chat to the now-active store so dev evidence cannot drift to a sibling tab.
-        store.queueNavigation(request.chatId, request.subChatId)
-        await new Promise<void>((resolve) =>
-          window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())),
-        )
-        const refreshedStore = useAgentSubChatStore.getState()
-        if (refreshedStore.chatId !== request.chatId) {
-          refreshedStore.queueNavigation(request.chatId, request.subChatId)
-          refreshedStore.setChatId(request.chatId)
-        }
-        refreshedStore.queueNavigation(request.chatId, request.subChatId)
-        appStore.set(selectedProjectAtom, request.project)
-        appStore.set(selectedAgentChatIdAtom, request.chatId)
-        appStore.set(selectedChatIsRemoteAtom, false)
-        if (persistedMessages) {
-          window.dispatchEvent(
-            new CustomEvent("flapstack-dev-chat-refresh", {
-              detail: { subChatId: request.subChatId, messages: persistedMessages },
-            }),
-          )
-          await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
-        }
-        const selectedSubChatId = useAgentSubChatStore.getState().activeSubChatId
-        window.desktopApi.respondDevRendererControl({
-          requestId: request.requestId,
-          ok: true,
-          state: {
-            chatId: appStore.get(selectedAgentChatIdAtom),
-            subChatId: selectedSubChatId,
-            selectedProject: request.project,
-            settingsOpen: false,
-            detailsOpen: appStore.get(detailsSidebarOpenAtom),
-            detailsTab: appStore.get(detailsSidebarTabAtom),
-            persistedMessageCount: persistedMessages?.length ?? 0,
-          },
-        })
         return
       }
       if (request.command === "chat.copy") {

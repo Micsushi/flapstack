@@ -8,6 +8,12 @@ export function resolveFlapstackProtocol(isDev: boolean, isPreview: boolean): st
   return isDev ? "flapstack-dev" : isPreview ? "flapstack-preview" : "flapstack"
 }
 
+export function isStage6PerformanceProfile(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env.FLAPSTACK_STAGE6_PERFORMANCE_PROFILE === "1"
+}
+
 export function isDevTestControlEnabled(
   isDev: boolean,
   isPreview: boolean,

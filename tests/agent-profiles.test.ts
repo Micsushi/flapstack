@@ -19,7 +19,11 @@ import * as schema from "../src/main/lib/db/schema"
 import { AgentProfileEvaluationService } from "../src/main/lib/agent-profiles/evaluation"
 import { classifyAgentProfileCapabilityChange } from "../src/main/lib/agent-profiles/capability-change"
 import { getAgentProfileDiagnostics } from "../src/main/lib/agent-profiles/diagnostics"
-import { AgentProfileResolver } from "../src/main/lib/agent-profiles/resolver"
+import {
+  AgentProfileResolver,
+  resolvedAgentProfileInstructions,
+} from "../src/main/lib/agent-profiles/resolver"
+import { configureAgentPersonalityResolutionPort } from "../src/main/lib/agent-profiles/personality-resolution"
 import {
   AgentProfileService,
   AgentProfileServiceError,
@@ -31,6 +35,7 @@ import {
 } from "../src/main/lib/agent-profiles/approval-authority"
 import { StandaloneAgentLaunchService } from "../src/main/lib/agent-profiles/standalone-launch"
 import { readDurableAgentProfileRuntimeAuthority } from "../src/main/lib/agent-profiles/runtime-authority"
+import { createAgentOrchestrationService } from "../src/main/lib/agent-orchestration/service"
 import {
   AgentProfileWorkflowBindingService,
   createAgentProfileWorkflowMaterializerPort,
@@ -2074,11 +2079,303 @@ describe("Agent Profile renderer contracts", () => {
   })
 })
 
+describe("Stage 6 reusable personality references", () => {
+  it("snapshots one exact presentation-only personality without changing capability", () => {
+    const personalityId = randomUUID()
+    const personality = {
+      metadata: {
+        schemaVersion: 1 as const,
+        id: personalityId,
+        version: 2,
+        name: "Direct",
+        scope: { type: "project" as const, projectId: "project-1" },
+        base: null,
+        traits: {
+          tone: "warm" as const,
+          verbosity: "terse" as const,
+          formatting: "markdown" as const,
+          responseStructure: "Outcome, evidence, blockers.",
+          labels: ["review"],
+          color: "#4f46e5",
+        },
+      },
+      body: "Review directly and cite concrete evidence.",
+      digest: "a".repeat(64),
+      chain: [{ ref: { personalityId, version: 2 }, digest: "a".repeat(64) }],
+    }
+    configureAgentPersonalityResolutionPort({
+      resolve: (ref, scope) => {
+        expect(ref).toEqual({ personalityId, version: 2 })
+        expect(scope).toEqual({ type: "project", projectId: "project-1" })
+        return personality
+      },
+    })
+    try {
+      const service = createAgentProfileService(sqlite)
+      const profileDefinition = definition()
+      profileDefinition.personality = { personalityId, version: 2 }
+      const created = approvedCreate(service, profileInput("Shared style", profileDefinition))
+      const resolver = new AgentProfileResolver(sqlite)
+      const snapshot = resolver.snapshot(
+        { profileId: created.profile.id, version: 1 },
+        null,
+        policy("read-only"),
+      )
+
+      expect(snapshot.personality).toEqual({
+        ref: { personalityId, version: 2 },
+        ...personality,
+      })
+      expect(snapshot.presentation).toMatchObject({
+        tone: "warm",
+        verbosity: "terse",
+        responseStructure: "Outcome, evidence, blockers.",
+      })
+      expect(snapshot.capability.permissionMode).toBe("read-only")
+      expect(snapshot.capability.tools).toEqual([])
+      expect(resolvedAgentProfileInstructions(snapshot)).toContain(
+        "Exact Personality " + personalityId + "@2",
+      )
+      expect(resolvedAgentProfileInstructions(snapshot)).toContain(personality.body)
+      expect(resolver.getSnapshot(snapshot.snapshotId).personality?.digest).toBe("a".repeat(64))
+    } finally {
+      configureAgentPersonalityResolutionPort(null)
+    }
+  })
+
+  it("snapshots fast speed independently and blocks a later incompatible model", () => {
+    const service = createAgentProfileService(sqlite)
+    const profile = approvedCreate(
+      service,
+      profileInput(
+        "Fast reviewer",
+        definition({
+          harness: "codex",
+          runtimePreference: "codex",
+          modelPreference: "gpt-5.4",
+          reasoningEffort: "low",
+          speedPreference: "fast",
+        }),
+      ),
+    )
+    const resolver = new AgentProfileResolver(sqlite)
+    const fast = resolver.preview({
+      profile: { profileId: profile.profile.id, version: 1 },
+      overrides: null,
+      policy: policy("read-only"),
+    })
+
+    expect(fast.capability).toMatchObject({
+      reasoningEffort: "low",
+      speedPreference: "fast",
+    })
+    expect(fast.conflicts.map((conflict) => conflict.code)).not.toContain("speed-unsupported")
+
+    const incompatible = resolver.preview({
+      profile: { profileId: profile.profile.id, version: 1 },
+      overrides: {
+        instructionAppend: null,
+        modelPreference: "gpt-5.4-mini",
+        reasoningEffort: null,
+        speedPreference: null,
+        presentation: null,
+      },
+      policy: policy("read-only"),
+    })
+    expect(incompatible.capability.reasoningEffort).toBe("low")
+    expect(incompatible.conflicts).toContainEqual(
+      expect.objectContaining({
+        code: "speed-unsupported",
+        field: "speedPreference",
+      }),
+    )
+  })
+
+  it("converts inline S4 presentation once while keeping historical profile versions readable", () => {
+    const personalityId = randomUUID()
+    configureAgentPersonalityResolutionPort({
+      resolve: (ref) => ({
+        metadata: {
+          schemaVersion: 1,
+          id: ref.personalityId,
+          version: ref.version,
+          name: "Legacy style",
+          scope: { type: "project", projectId: "project-1" },
+          base: null,
+          traits: {
+            tone: "direct",
+            verbosity: "balanced",
+            formatting: "markdown",
+            responseStructure: "Lead with the outcome, then evidence and blockers.",
+            labels: [],
+            color: null,
+          },
+        },
+        body: "",
+        digest: "b".repeat(64),
+        chain: [{ ref, digest: "b".repeat(64) }],
+      }),
+    })
+    try {
+      const service = createAgentProfileService(sqlite)
+      const created = approvedCreate(service, profileInput("Legacy inline", launchableDefinition()))
+      const ref = { profileId: created.profile.id, version: 1 }
+      const personality = { personalityId, version: 1 }
+      const preview = service.previewInlinePersonalityConversion(ref)
+      const converted = service.convertInlinePersonality({
+        profile: ref,
+        expectedDigest: preview.digest,
+        personality,
+      })
+
+      expect(converted.profile.currentVersion).toBe(2)
+      expect(service.get(ref).version.definition.personality).toBeNull()
+      expect(
+        service.get({ profileId: ref.profileId, version: 2 }).version.definition.personality,
+      ).toEqual(personality)
+      expect(
+        createAgentProfileService(sqlite).inlinePersonalityConversionState(ref, personality),
+      ).toMatchObject({ kind: "existing", value: { profile: { currentVersion: 2 } } })
+    } finally {
+      configureAgentPersonalityResolutionPort(null)
+    }
+  })
+
+  it("previews and idempotently creates an exact allowed direct child within parent ceilings", () => {
+    seedWorkflow(sqlite)
+    const profiles = createAgentProfileService(sqlite)
+    const child = approvedCreate(
+      profiles,
+      profileInput(
+        "Direct child",
+        launchableDefinition({
+          tools: ["shell"],
+          maxDescendants: 6,
+          worktreeStrategy: "inherit",
+        }),
+      ),
+    )
+    const parent = approvedCreate(
+      profiles,
+      profileInput(
+        "Parent",
+        launchableDefinition({
+          tools: ["shell"],
+          allowedDescendantProfileIds: [child.profile.id],
+          maxDescendants: 2,
+        }),
+      ),
+    )
+    const parentSnapshot = new AgentProfileResolver(sqlite).snapshot(
+      { profileId: parent.profile.id, version: 1 },
+      null,
+      policy("read-only", {
+        tools: ["shell"],
+        maxDescendants: 2,
+      }),
+    )
+    const parentDefinition = {
+      role: "parent",
+      name: "Parent",
+      prompt: "Coordinate exact children.",
+      harness: "claude-code" as const,
+      runtimePreference: "claude-code" as const,
+      profileRuntimeAuthority: {
+        snapshotId: parentSnapshot.snapshotId,
+        snapshotDigest: parentSnapshot.digest,
+        profile: parentSnapshot.profile,
+        allowedTools: parentSnapshot.capability.tools,
+        allowedSkills: parentSnapshot.capability.skills,
+        memoryPolicy: parentSnapshot.capability.memoryPolicy,
+        allowedDescendantProfileIds: parentSnapshot.capability.allowedDescendantProfileIds,
+        maxDescendants: parentSnapshot.capability.maxDescendants,
+      },
+      permissionMode: "read-only" as const,
+      worktreeStrategy: "inherit" as const,
+      dependencyAgentIds: [],
+      completionCriteria: "Coordinate.",
+    }
+    sqlite
+      .prepare(
+        `INSERT INTO orchestration_agents
+         (id, task_id, ancestor_agent_ids, depth, definition, dependency_agent_ids, status,
+          chat_id, queued_at, started_at, updated_at)
+         VALUES ('parent-agent', 'task-1', '[]', 1, ?, '[]', 'active',
+          'workflow-chat', 1, 1, 1)`,
+      )
+      .run(JSON.stringify(parentDefinition))
+    const requested = {
+      role: "placeholder",
+      prompt: "This prompt must be replaced.",
+      harness: "claude-code" as const,
+      runtimePreference: "claude-code" as const,
+      permissionMode: "full-access" as const,
+      worktreeStrategy: "task-primary" as const,
+      dependencyAgentIds: [],
+      completionCriteria: "Return concrete evidence.",
+    }
+    const selection = {
+      taskId: "task-1",
+      parentAgentId: "parent-agent",
+      agent: requested,
+      profile: { profileId: child.profile.id, version: 1 },
+      overrides: null,
+    }
+    const binding = new AgentProfileWorkflowBindingService(sqlite)
+    const preview = binding.previewDirectChild(selection)
+    expect(preview.definition).toMatchObject({
+      name: "Direct child",
+      permissionMode: "read-only",
+      worktreeStrategy: "inherit",
+    })
+    expect(preview.snapshot.capability.maxDescendants).toBe(1)
+    expect(preview.snapshot.capability.tools).toEqual(["shell"])
+
+    const orchestration = createAgentOrchestrationService(databasePath)
+    const input = {
+      taskId: "task-1",
+      parentAgentId: "parent-agent",
+      agent: requested,
+      profileSelection: {
+        requestId: "direct-child-request",
+        profile: selection.profile,
+        overrides: null,
+        confirmedSnapshotDigest: preview.snapshot.digest,
+      },
+    }
+    const first = orchestration.addAgent(input)
+    const retry = orchestration.addAgent(input)
+    expect(retry.id).toBe(first.id)
+    expect(retry.parentAgentId).toBe("parent-agent")
+    expect(retry.definition.profileRuntimeAuthority).toMatchObject({
+      profile: selection.profile,
+      maxDescendants: 1,
+    })
+    expect(
+      sqlite
+        .prepare("SELECT count(*) count FROM orchestration_agents WHERE parent_agent_id = ?")
+        .get("parent-agent"),
+    ).toEqual({ count: 1 })
+
+    const disallowed = approvedCreate(
+      profiles,
+      profileInput("Disallowed child", launchableDefinition()),
+    )
+    expect(() =>
+      binding.previewDirectChild({
+        ...selection,
+        profile: { profileId: disallowed.profile.id, version: 1 },
+      }),
+    ).toThrow(/does not allow/i)
+  })
+})
+
 function definition(
   capability: Partial<typeof DEFAULT_AGENT_CAPABILITY> = {},
 ): AgentProfileVersionInput {
   return {
     base: null,
+    personality: null,
     inheritCapabilityFields: [],
     inheritPresentationFields: [],
     capability: {

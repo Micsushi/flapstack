@@ -2,7 +2,8 @@
 
 ### S6-F7-T1 — Freeze ownership, execution-target, and adapter contracts
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F7
 - Outcome: Every target field and request/control/activity/result field has one authoritative owner, and every native, enhanced, translated, or invalid provider/Runtime combination is deterministic.
 - Scope: F3/F11 seam audit; `ExecutionTarget` schema; Runtime mode and adapter-chain identity; provider/model/account/profile/permission/worktree capability graph; snapshot/version; precedence; target preview; loss matrix; failure/repair taxonomy; Stage 4 migration and deprecation map.
@@ -15,7 +16,9 @@
 
 ### S6-F7-T2 — Resolve exact targets through one Runtime adapter broker
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:credentialed-native-provider`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:credentialed-native-provider` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F7
 - Outcome: Direct, continuation, delegated, and workflow launches use one immutable native or translated target and one F11-owned provider/session/event authority.
 - Scope: Versioned F3 consumer port; native and translated target resolution/probe; adapter-chain registry; Codex V2/V1 routing through F11 authority; Claude/native/translated routing; immutable target snapshot; request correlation; idempotent launch intent; drift; diagnostics; repair/retry.
@@ -28,7 +31,9 @@
 
 ### S6-F7-T3 — Materialize child Chats and versioned task/result envelopes
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:credentialed-bidirectional-provider`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:credentialed-bidirectional-provider` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F7
 - Outcome: `Continue with` and `Delegate to` cross providers through distinct child Chats with bounded visible context and durable typed results.
 - Scope: Continue/delegate modes; parent/initiator/ancestor lineage; child Chat/provider-session materialization; visible-context manifest and digest; explicit file/artifact references; task/result envelope versions; required capabilities; structured-output schema mapping for Codex/Claude/Native; output validation/repair; limitations and terminal evidence; deletion/stale-lineage behavior.
@@ -41,7 +46,8 @@
 
 ### S6-F7-T4 — Enforce cross-provider authority, worktree, budget, and controls
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F7
 - Outcome: Delegation cannot expand authority, leak credentials, exceed limits, corrupt a shared worktree, or claim unsupported controls.
 - Scope: Effective-authority intersection; provider/account/permission/network/tool/MCP/skill/descendant/budget/workspace/worktree preview and approval; credential isolation; shared-worktree lease/conflict policy; isolated-worktree lifecycle; exact cancel/pause/resume/steer capability; group cascade; race with terminal; audit and partial results.
@@ -54,7 +60,8 @@
 
 ### S6-F7-T5 — Unify activity, usage, cancellation, and recovery without replay
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F7
 - Outcome: Parent and child projections reference exact native activity, usage, and lifecycle while retaining attempt identity and surviving every crash window without duplicate work.
 - Scope: Activity high-water and ordered merge; delegation/workflow-only events; definition/Chat/run/target/checkpoint/attempt identity; child result projection; provider/account/model/Runtime usage references and parent aggregation; cancellation intent; terminal CAS; reservations; crash windows; uncertain state; retry; cleanup and long-history bounds.
@@ -67,20 +74,29 @@
 
 ### S6-F7-T6 — Ship truthful composition UX and target previews
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:credentialed-native-translated-provider`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:credentialed-native-translated-provider` remains uncertified.
+- [ ] Release evidence: `release-gate` remains uncertified for native-distribution-composition.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F7
 - Outcome: Users can preview, continue, delegate, inspect, repair, cancel, and recover native, enhanced, and translated Runtime compositions without interpreting adapter compatibility themselves.
-- Scope: Capability-compatible Runtime selector; Native/Enhanced/Translated badges; adapter-chain and loss preview; `Continue with` and `Delegate to`; execution-target/context/authority/worktree/budget preview; unavailable reason/repair; lineage/navigation; result/activity references; diagnostics; accessibility; docs; credentialed native and translated paths; mixed workflow; verified Dev and macOS preview package. Windows/Linux parity is owned by S6-F10.
+- T2-core scope: Capability-compatible Runtime selector; Native/Enhanced/Translated badges; adapter-chain and loss preview; `Continue with` and `Delegate to`; execution-target/context/authority/worktree/budget preview; unavailable reason/repair; lineage/navigation; result/activity references; diagnostics; accessibility; docs; and deterministic mixed-workflow contracts.
+- Separate certification: Credentialed native/translated provider paths and promoted macOS, Windows, and Linux packages remain capability or release evidence.
 - Out of scope: Hidden fallback, provider UI cloning, or claiming translated/unavailable provider/platform capabilities as native.
 - Acceptance: UI distinguishes native, enhanced, and translated targets; only capability-probed translated choices are enabled; provider directions show distinct child Chats and exact provenance; losses/context/permissions/worktree/usage are visible; cancellation and forced restart recover honestly; exact build/profile/version evidence exists.
-- Verification: Component/interaction/accessibility/diagnostic tests; credentialed verified-Dev continuation/delegation/mixed-workflow/incompatible-repair/cancel/restart matrix; `npm run package:preview:mac` walkthrough and logs; native Windows/Linux composition repeated by S6-F10.
-- Blocked by: S6-F7-T2, S6-F7-T3, S6-F7-T4, S6-F7-T5, native package/host rows from S6-F10 as applicable
+- T2-core verification: Component, interaction, accessibility, diagnostic, continuation, delegation, mixed-workflow, incompatible-repair, cancellation, and restart contract tests.
+- Separate certification: Credentialed verified-Dev provider walkthroughs and native package composition evidence.
+- Blocked by for T2-core: the `T2-core` scopes of S6-F7-T2, S6-F7-T3, S6-F7-T4, and S6-F7-T5.
+- Release certification remains blocked by: the native package and host rows in S6-F10.
 - Blocks: S6-F7-T7, S6-F11-T3, S6-F11-T6
 - Context: Runtime and provider selectors, Chat handoff/actions, lineage UI, diagnostics, docs/stage6-full-feature-test-matrix.md.
 
 ### S6-F7-T7 — Close Runtime and cross-provider composition acceptance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:credentialed-provider-matrix`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:credentialed-provider-matrix` remains uncertified.
+- [ ] Release evidence: `release-gate` remains uncertified for native-distribution-runtime-composition.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F7
 - Outcome: Native Runtime boundaries and bidirectional cross-provider composition pass automated, live, restart, privacy, accessibility, and package evidence on one exact candidate.
 - Scope: Matrix S6-RO; migrations/rollback; native/enhanced/translated target compatibility; adapter packs; ports; provider authority; child Chats; task/result envelopes; structured output; permission/worktree/budget ceilings; controls; activity/usage; no-replay; UX; security/privacy; docs and manual test handoff.
@@ -93,7 +109,10 @@
 
 ### S6-F7-T8 — Build and verify cross-provider Runtime adapter packs
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:credentialed-translated-provider`, `release-gate`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:credentialed-translated-provider` remains uncertified.
+- [ ] Release evidence: `release-gate` remains uncertified for native-distribution-adapter-pack.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F7
 - Outcome: Codex, Claude Code, and Flapstack Native Runtime contracts are available to other providers/models wherever a versioned adapter can enforce the requested capabilities.
 - Scope: Provider/Runtime adapter SDK and registry; native/enhanced/translated identity; system/developer prompt and instruction-file mapping; tool/permission/MCP/skill/hook translation; session/resume/fork semantics; attachments; reasoning/activity projection; structured output; usage/cancel/recovery; loss matrices; initial Claude-to-Codex-contract, OpenAI-to-Claude-contract, and one generic/local adapter pack; contract fixtures and live proof.

@@ -7,8 +7,13 @@ import type { InternalCreateSessionParams, TerminalSession } from "./types"
 
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
+const windowsPtyReleases = new WeakMap<object, Promise<boolean>>()
 
-function getShellArgs(shell: string): string[] {
+export function terminalShellArgs(shell: string, performanceOwnershipToken?: string): string[] {
+  const shellName = path.win32.basename(shell).toLowerCase()
+  if (performanceOwnershipToken && shellName === "cmd.exe") {
+    return ["/d", "/q", "/k", `set "FLAPSTACK_PTY_OWNER=${performanceOwnershipToken}"`]
+  }
   if (shell.includes("zsh")) {
     return ["-l"]
   }
@@ -37,6 +42,322 @@ export function terminalPtyPlatformOptions(
   platform: NodeJS.Platform = os.platform(),
 ): Pick<pty.IWindowsPtyForkOptions, "useConpty"> {
   return platform === "win32" ? { useConpty: false } : {}
+}
+
+/**
+ * node-pty 1.1.0 does not expose a public disposal seam for the conout worker
+ * created by its Windows winpty path. Its kill() branch closes the PTY but
+ * leaves that worker alive. Keep the version-sensitive access isolated and
+ * guarded so an upstream shape change degrades to a no-op.
+ */
+export function initiateWindowsPtyConoutWorkerRelease(
+  ptyProcess: unknown,
+  platform: NodeJS.Platform = os.platform(),
+  options?: {
+    maximumAttempts?: number
+    wait?: (milliseconds: number) => Promise<void>
+  },
+): boolean {
+  return getOrStartWindowsPtyConoutWorkerRelease(ptyProcess, platform, options) !== undefined
+}
+
+export async function releaseWindowsPtyConoutWorker(
+  ptyProcess: unknown,
+  platform: NodeJS.Platform = os.platform(),
+  options?: {
+    maximumAttempts?: number
+    wait?: (milliseconds: number) => Promise<void>
+  },
+): Promise<boolean> {
+  const release = getOrStartWindowsPtyConoutWorkerRelease(ptyProcess, platform, options)
+  return release ? release : false
+}
+
+/** Ensure bounded performance controls cannot request teardown while kill() is still deferred. */
+export async function waitForWindowsPtyReady(
+  ptyProcess: unknown,
+  platform: NodeJS.Platform = os.platform(),
+  options?: {
+    maximumAttempts?: number
+    wait?: (milliseconds: number) => Promise<void>
+  },
+): Promise<boolean> {
+  if (platform !== "win32" || !isRecord(ptyProcess) || typeof ptyProcess._isReady !== "boolean") {
+    return true
+  }
+  const maximumAttempts = options?.maximumAttempts ?? 200
+  const wait = options?.wait ?? delay
+  for (let attempt = 1; attempt < maximumAttempts && ptyProcess._isReady !== true; attempt += 1) {
+    await wait(10)
+  }
+  return ptyProcess._isReady === true
+}
+
+/**
+ * Finalize a winpty session that never reached WindowsTerminal readiness.
+ * Stop its conout worker before invoking the still-current native agent.
+ */
+export async function terminateUnreadyWindowsPty(
+  ptyProcess: unknown,
+  platform: NodeJS.Platform = os.platform(),
+): Promise<boolean> {
+  if (platform !== "win32" || !isRecord(ptyProcess) || ptyProcess._isReady !== false) return false
+  const agent = ptyProcess._agent
+  if (
+    !isRecord(agent) ||
+    agent._useConpty !== false ||
+    typeof agent.kill !== "function" ||
+    typeof agent._pid !== "number" ||
+    !Number.isSafeInteger(agent._pid) ||
+    agent._pid <= 0 ||
+    typeof agent._innerPid !== "number" ||
+    !Number.isSafeInteger(agent._innerPid) ||
+    agent._innerPid <= 0
+  ) {
+    return false
+  }
+  const native = agent._ptyNative
+  if (
+    !isRecord(native) ||
+    typeof native.getProcessList !== "function" ||
+    typeof native.kill !== "function" ||
+    !(await releaseWindowsPtyConoutWorker(ptyProcess, platform))
+  ) {
+    return false
+  }
+  try {
+    Reflect.apply(agent.kill as (...args: unknown[]) => unknown, agent, [])
+    return true
+  } catch {
+    return false
+  }
+}
+
+function getOrStartWindowsPtyConoutWorkerRelease(
+  ptyProcess: unknown,
+  platform: NodeJS.Platform,
+  options?: {
+    maximumAttempts?: number
+    wait?: (milliseconds: number) => Promise<void>
+  },
+): Promise<boolean> | undefined {
+  if (platform !== "win32" || !isRecord(ptyProcess)) return undefined
+  if (typeof ptyProcess.kill !== "function" || typeof ptyProcess.onExit !== "function") {
+    return undefined
+  }
+  const agent = ptyProcess._agent
+  if (!isRecord(agent) || agent._useConpty !== false) return undefined
+  const connection = agent._conoutSocketWorker
+  if (!isRecord(connection) || typeof connection.dispose !== "function") return undefined
+  const worker = connection._worker
+  if (
+    !isRecord(worker) ||
+    typeof worker.threadId !== "number" ||
+    typeof worker.terminate !== "function"
+  ) {
+    return undefined
+  }
+
+  const existingRelease = windowsPtyReleases.get(ptyProcess)
+  if (existingRelease) return existingRelease
+  const release = releaseWindowsPtyConoutWorkerInternal(agent, connection, worker, options)
+  windowsPtyReleases.set(ptyProcess, release)
+  return release
+}
+
+async function releaseWindowsPtyConoutWorkerInternal(
+  agent: Record<PropertyKey, unknown>,
+  connection: Record<PropertyKey, unknown>,
+  worker: Record<PropertyKey, unknown>,
+  options?: {
+    maximumAttempts?: number
+    wait?: (milliseconds: number) => Promise<void>
+  },
+): Promise<boolean> {
+  const maximumAttempts = options?.maximumAttempts ?? 2
+  const wait = options?.wait ?? delay
+
+  try {
+    try {
+      Reflect.apply(connection.dispose as (...args: unknown[]) => unknown, connection, [])
+    } catch {
+      // The bounded fallback below is still safer than rejecting terminal teardown.
+    }
+
+    for (let attempt = 1; attempt < maximumAttempts && worker.threadId !== -1; attempt += 1) {
+      await wait(25)
+    }
+    if (worker.threadId === -1) {
+      // node-pty's normal drain terminates the worker but leaves the exited
+      // winpty agent's main-thread pipe open. Release it only after the worker
+      // has confirmed the drain is complete.
+      destroyNodePtySocket(agent._inSocket)
+      destroyNodePtySocket(agent._outSocket)
+      return true
+    }
+
+    destroyNodePtySocket(agent._inSocket)
+    destroyNodePtySocket(agent._outSocket)
+    try {
+      await Reflect.apply(worker.terminate as (...args: unknown[]) => unknown, worker, [])
+      return true
+    } catch {
+      return false
+    }
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Capture the exact OS processes owned by a PTY before teardown. The public
+ * shell PID is always retained. The extra winpty identifiers are guarded
+ * because node-pty 1.1.0 does not expose them through its public interface.
+ */
+export interface TerminalPtyOwnedProcessCapture {
+  processIds: number[]
+  complete: boolean
+  reason: string | null
+}
+
+export function captureTerminalPtyOwnedProcesses(
+  ptyProcess: unknown,
+  platform: NodeJS.Platform = os.platform(),
+): TerminalPtyOwnedProcessCapture {
+  if (!isRecord(ptyProcess)) {
+    return { processIds: [], complete: false, reason: "PTY process shape is unavailable." }
+  }
+  const processIds = new Set<number>()
+  const addProcessId = (value: unknown) => {
+    if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+      processIds.add(value)
+    }
+  }
+
+  addProcessId(ptyProcess.pid)
+  if (platform !== "win32") {
+    return {
+      processIds: [...processIds],
+      complete: processIds.size > 0,
+      reason: processIds.size > 0 ? null : "PTY public process ID is unavailable.",
+    }
+  }
+
+  const agent = ptyProcess._agent
+  if (!isRecord(agent) || agent._useConpty !== false) {
+    return {
+      processIds: [...processIds],
+      complete: false,
+      reason: "Guarded winpty agent ownership is unavailable.",
+    }
+  }
+  addProcessId(agent._pid)
+  addProcessId(agent._innerPid)
+
+  const native = agent._ptyNative
+  if (
+    !isRecord(native) ||
+    typeof native.getProcessList !== "function" ||
+    typeof agent._pid !== "number" ||
+    !Number.isSafeInteger(agent._pid) ||
+    agent._pid <= 0 ||
+    typeof agent._innerPid !== "number" ||
+    !Number.isSafeInteger(agent._innerPid) ||
+    agent._innerPid <= 0 ||
+    !processIds.has(ptyProcess.pid as number)
+  ) {
+    return {
+      processIds: [...processIds],
+      complete: false,
+      reason: "Guarded winpty PID or process-list ownership is incomplete.",
+    }
+  }
+
+  try {
+    const consoleProcessIds = Reflect.apply(native.getProcessList, native, [agent._pid])
+    if (!Array.isArray(consoleProcessIds)) {
+      return {
+        processIds: [...processIds],
+        complete: false,
+        reason: "Guarded winpty process list is not an array.",
+      }
+    }
+    for (const processId of consoleProcessIds) addProcessId(processId)
+  } catch {
+    return {
+      processIds: [...processIds],
+      complete: false,
+      reason: "Guarded winpty process list could not be captured.",
+    }
+  }
+
+  return { processIds: [...processIds], complete: true, reason: null }
+}
+
+export function terminalPtyOwnedProcessIds(
+  ptyProcess: unknown,
+  platform: NodeJS.Platform = os.platform(),
+): number[] {
+  return captureTerminalPtyOwnedProcesses(ptyProcess, platform).processIds
+}
+
+export function isTerminalProcessAlive(
+  processId: number,
+  signalProcess: (processId: number, signal: 0) => boolean = process.kill,
+): boolean {
+  try {
+    signalProcess(processId, 0)
+    return true
+  } catch (error) {
+    return !(
+      isRecord(error) &&
+      typeof error.code === "string" &&
+      error.code.toUpperCase() === "ESRCH"
+    )
+  }
+}
+
+export async function waitForTerminalProcessesToExit(
+  processIds: readonly number[],
+  options?: {
+    maximumAttempts?: number
+    wait?: (milliseconds: number) => Promise<void>
+    isAlive?: (processId: number) => boolean
+  },
+): Promise<number[]> {
+  const maximumAttempts = options?.maximumAttempts ?? 100
+  if (!Number.isInteger(maximumAttempts) || maximumAttempts < 1) {
+    throw new Error("Terminal process settlement requires at least one bounded observation.")
+  }
+  const wait = options?.wait ?? delay
+  const isAlive = options?.isAlive ?? isTerminalProcessAlive
+  const uniqueProcessIds = [...new Set(processIds)].filter(
+    (processId) => Number.isSafeInteger(processId) && processId > 0,
+  )
+  let surviving = uniqueProcessIds.filter((processId) => isAlive(processId))
+  for (let attempt = 1; attempt < maximumAttempts && surviving.length > 0; attempt += 1) {
+    await wait(25)
+    surviving = surviving.filter((processId) => isAlive(processId))
+  }
+  return surviving
+}
+
+function destroyNodePtySocket(value: unknown): void {
+  if (isRecord(value) && typeof value.destroy === "function") {
+    try {
+      Reflect.apply(value.destroy, value, [])
+    } catch {
+      // Best-effort fallback after the normal node-pty drain window.
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 /**
@@ -107,9 +428,10 @@ function spawnPty(params: {
   rows: number
   cwd: string
   env: Record<string, string>
+  performanceOwnershipToken?: string
 }): pty.IPty {
-  const { shell, cols, rows, cwd, env } = params
-  const shellArgs = getShellArgs(shell)
+  const { shell, cols, rows, cwd, env, performanceOwnershipToken } = params
+  const shellArgs = terminalShellArgs(shell, performanceOwnershipToken)
   const resolvedCwd = validateAndResolveCwd(cwd)
   const resolvedShell = resolveShellPath(shell)
 
@@ -130,7 +452,7 @@ function spawnPty(params: {
     console.error(`[Terminal] Failed to spawn PTY with ${resolvedShell}:`, error)
     // Try with fallback shell
     console.log(`[Terminal] Retrying with fallback shell: ${FALLBACK_SHELL}`)
-    return pty.spawn(FALLBACK_SHELL, [], {
+    return pty.spawn(FALLBACK_SHELL, terminalShellArgs(FALLBACK_SHELL, performanceOwnershipToken), {
       name: "xterm-256color",
       cols,
       rows,
@@ -156,6 +478,7 @@ export async function createSession(
     cols,
     rows,
     useFallbackShell = false,
+    performanceOwnershipToken,
   } = params
 
   const shell = useFallbackShell ? FALLBACK_SHELL : getDefaultShell()
@@ -179,6 +502,7 @@ export async function createSession(
     rows: terminalRows,
     cwd: workingDir,
     env,
+    performanceOwnershipToken,
   })
 
   const session: TerminalSession = {
@@ -194,6 +518,7 @@ export async function createSession(
     shell,
     startTime: Date.now(),
     usedFallback: useFallbackShell,
+    performanceOwnershipToken,
   }
 
   ptyProcess.onData((data) => {

@@ -34,6 +34,7 @@ function starter(
     supportedCombinations: [],
     definition: {
       base: null,
+      personality: null,
       inheritCapabilityFields: [],
       inheritPresentationFields: [],
       capability: {

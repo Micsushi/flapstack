@@ -75,6 +75,20 @@ describe("saved workspace window ownership", () => {
     expect(manager.getChatOwner("chat")).toBe(main.id)
   })
 
+  it("compare-and-transfers direct Chat ownership only from the exact expected owner", () => {
+    expect(manager.claimChat("chat", main.id)).toEqual({ ok: true })
+
+    expect(manager.compareAndTransferChat("chat", "workspace-secondary", "main")).toMatchObject({
+      ok: false,
+      ownerStableId: "main",
+    })
+    expect(manager.getChatOwner("chat")).toBe(main.id)
+    expect(manager.compareAndTransferChat("chat", "main", "workspace-secondary")).toEqual({
+      ok: true,
+    })
+    expect(manager.getChatOwner("chat")).toBe(secondary.id)
+  })
+
   it("keeps an exact idempotent claim silent to prevent claim-broadcast recursion", () => {
     manager.claimWorkspacePane("workspace", "pane", ["chat"], main.id)
     const mainEvents = main.webContents.sent.length
@@ -169,6 +183,31 @@ describe("saved workspace window ownership", () => {
     })
     expect(manager.findRegisteredByStableId("workspace-secondary")).toBe(secondary)
     expect(manager.count()).toBe(2)
+  })
+
+  it("restores preferred main/secondary IDs without reissuing either identity", () => {
+    const restored = new WindowManager()
+    register(restored, 10, "main")
+    register(restored, 11, "window-2")
+
+    const next = register(restored, 12)
+
+    expect(restored.getStableId(next as never)).toBe("window-3")
+    expect(restored.getRegisteredStableIds()).toEqual(["main", "window-2", "window-3"])
+  })
+
+  it("re-establishes the stable main identity after the prior main closes", () => {
+    const restored = new WindowManager()
+    const priorMain = register(restored, 20, "main")
+    register(restored, 21, "window-2")
+    priorMain.emit("closed")
+
+    const replacementMain = register(restored, 22, "main")
+    const next = register(restored, 23)
+
+    expect(restored.findRegisteredByStableId("main")).toBe(replacementMain)
+    expect(restored.getStableId(next as never)).toBe("window-3")
+    expect(restored.getRegisteredStableIds()).toEqual(["window-2", "main", "window-3"])
   })
 
   it("rejects a managed gone renderer returned by Electron focused-window fallback", () => {

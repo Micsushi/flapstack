@@ -7,12 +7,18 @@ import {
   initAuthManager,
   getAuthManager as getAuthManagerFromModule,
 } from "./auth-manager"
-import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./lib/analytics"
+import {
+  initAnalytics,
+  loadAnalyticsConsent,
+  shutdown as shutdownAnalytics,
+  trackAppOpened,
+} from "./lib/analytics"
 import {
   beginDatabaseMaintenance,
   closeDatabase,
   endDatabaseMaintenance,
   getDatabasePath,
+  getSqliteDatabase,
   initDatabase,
   registerDatabaseMaintenanceParticipant,
   withDatabaseOperation,
@@ -38,6 +44,7 @@ import { startDevMcpServer, type DevMcpServerHandle } from "./lib/mcp-test-contr
 import {
   isDevTestControlEnabled,
   isPreviewExecutable,
+  isStage6PerformanceProfile,
   resolveFlapstackProtocol,
   resolvePreviewUserDataName,
 } from "./lib/mcp-test-control/lifecycle"
@@ -53,12 +60,22 @@ import {
   installBeforeQuitShutdown,
   runAppShutdown,
 } from "./lib/app-shutdown"
+import {
+  createDefaultMobileBridgeService,
+  setAppMobileBridgeService,
+  type MobileBridgeService,
+} from "./lib/mobile-bridge"
+import { MobileControlRuntime, setAppMobileControlRuntime } from "./lib/mobile-events"
 import { getUsageSecret } from "./lib/usage/secrets"
 import {
   recordRunningRunUsageBudgetStop,
   stopRunningRunsOverUsageBudget,
 } from "./lib/usage/budgets"
 import { isCliInstalled, installCli, uninstallCli, parseLaunchDirectory } from "./lib/cli"
+import { VisualArtifactStore } from "./lib/visual-capture/artifact-store"
+import { shutdownAppVisualCapturePendingStore } from "./lib/visual-capture/pending-store"
+import { closeProjectVaultGraphWatchers } from "./lib/project-vaults/graph-index"
+import { closeAgentPersonalityWatchers } from "./lib/trpc/routers/agent-personalities"
 import { buildSingleInstanceLaunchData, dispatchSecondInstanceLaunch } from "./lib/cli-launch"
 import {
   recordProtocolReceipt,
@@ -92,8 +109,10 @@ import {
   hasActiveOpencodeStreams,
 } from "./lib/trpc/routers/opencode"
 import {
-  createMainWindow,
-  createWindow,
+  notifyNativeWorkbenchWindowCreationBlocked,
+  restoreNextDormantWorkbenchWindow,
+  restoreWorkbenchWindows,
+  tryCreateWindowWithRendererChoice,
   getWindow,
   getAllWindows,
   setIsQuitting,
@@ -109,8 +128,18 @@ import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
 
 let devMcpServer: DevMcpServerHandle | null = null
 let productMcpInvalidationBridge: ProductMcpInvalidationBridge | null = null
+let mobileBridgeService: MobileBridgeService | null = null
+let mobileControlRuntime: MobileControlRuntime | null = null
+
+function createAppMobileControlRuntime(): MobileControlRuntime {
+  return new MobileControlRuntime(initDatabase(), {
+    databasePath: getDatabasePath(),
+    bridgeEnabled: () => mobileBridgeService?.getStatus().state === "running",
+  })
+}
 let automationScheduler: AutomationScheduler | null = null
 let automationTriggerRuntime: AutomationTriggerRuntime | null = null
+let visualRetentionTimer: ReturnType<typeof setInterval> | null = null
 let unsubscribeBetaFeatureSettings: (() => void) | null = null
 let orchestrationBetaInitialized = false
 let operationWorkspaceBetaInitialized = false
@@ -119,8 +148,14 @@ let automationBetaTransition = Promise.resolve()
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
 const IS_PREVIEW = !IS_DEV && isPreviewExecutable()
-const PROTOCOL = resolveFlapstackProtocol(IS_DEV, IS_PREVIEW)
-const APP_DISPLAY_NAME = IS_DEV ? "Flapstack Dev" : IS_PREVIEW ? "Flapstack Preview" : "Flapstack"
+const IS_STAGE6_PERFORMANCE = !app.isPackaged && isStage6PerformanceProfile()
+const IS_CONTROL_DEV = IS_DEV || IS_STAGE6_PERFORMANCE
+const PROTOCOL = resolveFlapstackProtocol(IS_CONTROL_DEV, IS_PREVIEW)
+const APP_DISPLAY_NAME = IS_CONTROL_DEV
+  ? "Flapstack Dev"
+  : IS_PREVIEW
+    ? "Flapstack Preview"
+    : "Flapstack"
 
 if (process.platform === "darwin" && IS_DEV) {
   const expectedCheckout = process.env.FLAPSTACK_DEV_CHECKOUT?.trim()
@@ -214,7 +249,7 @@ function initializeOperationWorkspaceBetaServices(): void {
 
 // Set dev mode userData path BEFORE requestSingleInstanceLock()
 // This ensures dev and prod have separate instance locks
-if (IS_DEV) {
+if (IS_CONTROL_DEV) {
   const { join } = require("path")
   const instance = process.env.FLAPSTACK_DEV_INSTANCE?.trim()
   const suffix = instance
@@ -238,27 +273,6 @@ if (IS_DEV) {
 // Increase V8 old-space limit for renderer/main processes to reduce OOM frequency
 // under heavy multi-chat workloads. Must be set before app readiness/window creation.
 app.commandLine.appendSwitch("js-flags", "--max-old-space-size=8192")
-
-// Initialize Sentry before app is ready (production only)
-if (app.isPackaged && !IS_DEV) {
-  const sentryDsn = import.meta.env.MAIN_VITE_SENTRY_DSN
-  if (sentryDsn) {
-    import("@sentry/electron/main")
-      .then((Sentry) => {
-        Sentry.init({
-          dsn: sentryDsn,
-        })
-        console.log("[App] Sentry initialized")
-      })
-      .catch((error) => {
-        console.warn("[App] Failed to initialize Sentry:", error)
-      })
-  } else {
-    console.log("[App] Skipping Sentry initialization (no DSN configured)")
-  }
-} else {
-  console.log("[App] Skipping Sentry initialization (dev mode)")
-}
 
 // Flapstack is local-first; no hosted desktop account backend is configured.
 export function getBaseUrl(): string {
@@ -642,14 +656,22 @@ if (gotTheLock) {
           ? { flapstackNoFocus: true }
           : {},
       windows: getAllWindows(),
-      createWindow: createMainWindow,
+      createWindow: () => tryCreateWindowWithRendererChoice(),
+      notifyBlocked: notifyNativeWorkbenchWindowCreationBlocked,
     })
+    if (dispatch.blocked) {
+      console.warn(`[App] Second-instance window creation blocked: ${dispatch.reason}`)
+    }
     if (url) recordProtocolDispatch(dispatch.activated, getAllWindows().length)
+  })
+
+  app.on("before-quit", () => {
+    setIsQuitting(true)
   })
 
   // App ready
   app.whenReady().then(async () => {
-    if (IS_DEV) {
+    if (IS_CONTROL_DEV) {
       app.setName(APP_DISPLAY_NAME)
     }
 
@@ -666,7 +688,7 @@ if (gotTheLock) {
     // Set app user model ID for Windows (different in dev to avoid taskbar conflicts)
     if (process.platform === "win32") {
       app.setAppUserModelId(
-        IS_DEV
+        IS_CONTROL_DEV
           ? "dev.flapstack.app.dev"
           : IS_PREVIEW
             ? "dev.flapstack.app.preview"
@@ -844,7 +866,7 @@ if (gotTheLock) {
               accelerator: "CmdOrCtrl+Shift+N",
               click: () => {
                 console.log("[Menu] New Window clicked (Cmd+Shift+N)")
-                createWindow()
+                tryCreateWindowWithRendererChoice()
               },
             },
             { type: "separator" },
@@ -956,7 +978,7 @@ if (gotTheLock) {
           label: "New Window",
           click: () => {
             console.log("[Dock] New Window clicked")
-            createWindow()
+            tryCreateWindowWithRendererChoice()
           },
         },
       ])
@@ -982,8 +1004,11 @@ if (gotTheLock) {
     authManager = initAuthManager(!!process.env.ELECTRON_RENDERER_URL)
     console.log("[App] Auth manager initialized")
 
-    // Initialize analytics after auth manager so we can identify user
-    initAnalytics()
+    // Load durable consent before constructing any hosted analytics client.
+    loadAnalyticsConsent()
+    await initAnalytics().catch((error) => {
+      console.warn("[Analytics] Hosted client initialization failed:", error)
+    })
 
     // Track app opened without hosted account identity.
     trackAppOpened()
@@ -1010,7 +1035,21 @@ if (gotTheLock) {
             `[Portability] Recovered ${recovered.length} interrupted import operation(s).`,
           )
         }
-        initDatabase()
+        mobileControlRuntime = createAppMobileControlRuntime()
+        setAppMobileControlRuntime(mobileControlRuntime)
+        registerDatabaseMaintenanceParticipant("mobile-control", {
+          pause: async () => {
+            await mobileBridgeService?.stop("database-maintenance")
+            mobileControlRuntime?.stop()
+            mobileControlRuntime = null
+            setAppMobileControlRuntime(null)
+          },
+          resume: async () => {
+            mobileControlRuntime = createAppMobileControlRuntime()
+            setAppMobileControlRuntime(mobileControlRuntime)
+            await mobileBridgeService?.startFromSettings()
+          },
+        })
         console.log("[App] Database initialized")
       },
       continueStartup: async () => {
@@ -1025,16 +1064,44 @@ if (gotTheLock) {
               run: async () => {
                 productMcpInvalidationBridge = await startProductMcpInvalidationBridge({
                   onInvalidation: (payload) => {
+                    mobileControlRuntime?.ingestInvalidation(payload)
                     broadcastProductInvalidationToWindows(payload, BrowserWindow.getAllWindows())
                   },
                 })
               },
             },
             {
+              name: "Mobile bridge",
+              run: async () => {
+                mobileBridgeService = createDefaultMobileBridgeService({
+                  onRequest: (request, response) => {
+                    if (!mobileControlRuntime) {
+                      response.writeHead(503, {
+                        "cache-control": "no-store",
+                        "content-length": "0",
+                      })
+                      response.end()
+                      return
+                    }
+                    return mobileControlRuntime.handleRequest(request, response)
+                  },
+                  onWebSocket: (session) => {
+                    if (!mobileControlRuntime) {
+                      session.close(1013, "database-maintenance")
+                      return
+                    }
+                    mobileControlRuntime.handleWebSocket(session)
+                  },
+                })
+                setAppMobileBridgeService(mobileBridgeService)
+                await mobileBridgeService.startFromSettings()
+              },
+            },
+            {
               name: "Dev MCP server",
               run: async () => {
                 const devMcpInput = {
-                  enabled: isDevTestControlEnabled(IS_DEV, IS_PREVIEW),
+                  enabled: isDevTestControlEnabled(IS_CONTROL_DEV, IS_PREVIEW),
                   userDataPath: app.getPath("userData"),
                   checkout: app.getAppPath(),
                   profile: basename(app.getPath("userData")),
@@ -1151,6 +1218,35 @@ if (gotTheLock) {
               },
             },
             {
+              name: "Visual artifact retention cleanup",
+              run: () => {
+                const cleanup = () =>
+                  withDatabaseOperation(() =>
+                    new VisualArtifactStore(
+                      getSqliteDatabase(),
+                      join(app.getPath("userData"), "visual-artifacts"),
+                    ).cleanupExpired(),
+                  ).catch((error) =>
+                    console.warn("[Visual Capture] Retention cleanup failed:", error),
+                  )
+                const pause = () => {
+                  if (visualRetentionTimer) clearInterval(visualRetentionTimer)
+                  visualRetentionTimer = null
+                }
+                const resume = () => {
+                  if (!visualRetentionTimer) {
+                    visualRetentionTimer = setInterval(() => void cleanup(), 6 * 60 * 60 * 1_000)
+                  }
+                }
+                registerDatabaseMaintenanceParticipant("visual-artifact-retention", {
+                  pause,
+                  resume,
+                })
+                resume()
+                void cleanup()
+              },
+            },
+            {
               name: "Usage startup catch-up",
               run: () => {
                 void withDatabaseOperation(() =>
@@ -1177,7 +1273,7 @@ if (gotTheLock) {
           }
           previousBetaSettings = settings
         })
-        createMainWindow()
+        restoreWorkbenchWindows()
       },
       cleanup: async () => {
         if (pendingRunTimer) clearInterval(pendingRunTimer)
@@ -1190,6 +1286,12 @@ if (gotTheLock) {
         devMcpServer = null
         await productMcpInvalidationBridge?.stop()
         productMcpInvalidationBridge = null
+        await mobileBridgeService?.stop("startup-cleanup")
+        mobileBridgeService = null
+        setAppMobileBridgeService(null)
+        mobileControlRuntime?.stop()
+        mobileControlRuntime = null
+        setAppMobileControlRuntime(null)
         closeDatabase()
       },
       exit: (code) => app.exit(code),
@@ -1228,7 +1330,7 @@ if (gotTheLock) {
     // macOS: Re-create window when dock icon is clicked
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
-        createMainWindow()
+        restoreNextDormantWorkbenchWindow() ?? tryCreateWindowWithRendererChoice()
       }
     })
   })
@@ -1263,6 +1365,20 @@ if (gotTheLock) {
           await productMcpInvalidationBridge?.stop()
           productMcpInvalidationBridge = null
         },
+        stopMobileBridge: async () => {
+          await mobileBridgeService?.stop("app-quit")
+          mobileBridgeService = null
+          setAppMobileBridgeService(null)
+          mobileControlRuntime?.stop()
+          mobileControlRuntime = null
+          setAppMobileControlRuntime(null)
+        },
+        closeProjectVaultWatchers: () =>
+          Promise.all([
+            closeProjectVaultGraphWatchers(initDatabase()),
+            closeAgentPersonalityWatchers(),
+          ]).then(() => undefined),
+        purgePendingVisualCaptures: shutdownAppVisualCapturePendingStore,
         cleanupGitWatchers,
         shutdownAnalytics,
         closeDatabase,

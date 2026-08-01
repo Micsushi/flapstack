@@ -17,6 +17,7 @@ import {
   runtimeSnapshotSqlValues,
 } from "../agent-runtime/snapshot"
 import { assertResolvedAgentRuntime } from "../agent-runtime/resolver"
+import { agentProfileSpeedCompatibility } from "../../../shared/agent-profile-speed"
 import {
   runtimeAdapterForPreference,
   type AgentRuntimePreference,
@@ -32,6 +33,7 @@ import {
   agentProfileSnapshotPolicyViolations,
   frozenAgentProfileRuntimeAuthority,
   intersectAgentProfilePermissions,
+  resolvedAgentProfileInstructions,
 } from "./resolver"
 import { assertAgentProfileSecretFree } from "./service"
 import {
@@ -185,6 +187,13 @@ export class StandaloneAgentLaunchService {
         // The profile can remain "auto" on the new chat, but this run must use
         // the effective Runtime confirmed in the preview. Re-resolving from
         // the new chat would lose an explicit source-chat preference.
+        const speed = agentProfileSpeedCompatibility(
+          snapshot.capability,
+          snapshot.runtimeResolution,
+        )
+        if (!speed.compatible) {
+          throw new StandaloneAgentLaunchError("launch-blocked", speed.message)
+        }
         const runtimeSnapshot = runtimeSnapshotColumns(
           assertResolvedAgentRuntime({
             harness: snapshot.capability.harness,
@@ -194,7 +203,10 @@ export class StandaloneAgentLaunchService {
               snapshot.capability.permissionMode,
               snapshot.capability.customPermissions,
             ),
-            controls: { modelEffort: snapshot.capability.reasoningEffort },
+            controls: {
+              modelEffort: snapshot.capability.reasoningEffort,
+              serviceTier: speed.serviceTier,
+            },
           }),
         )
         if (runtimeSnapshot.resolvedRuntime !== snapshot.runtimeResolution.resolvedRuntime) {
@@ -254,11 +266,12 @@ export class StandaloneAgentLaunchService {
             definitionId: `profile-snapshot:${snapshot.snapshotId}`,
             role: snapshot.capability.role,
             name: snapshot.displayName,
-            prompt: snapshot.capability.instructions,
+            prompt: resolvedAgentProfileInstructions(snapshot),
             harness: snapshot.capability.harness,
             model: snapshot.capability.modelPreference ?? undefined,
             runtimePreference: snapshot.runtimeResolution.preference,
             reasoningEffort: snapshot.capability.reasoningEffort ?? undefined,
+            speedPreference: snapshot.capability.speedPreference ?? undefined,
             profileRuntimeAuthority: frozenAgentProfileRuntimeAuthority(snapshot),
             permissionMode: snapshot.capability.permissionMode,
             customPermissions: snapshot.capability.customPermissions ?? undefined,
@@ -1098,7 +1111,7 @@ function visibleMessages(messagesJson: string): string[] {
 
 function profilePrompt(snapshot: ResolvedAgentProfileSnapshot, context: string) {
   return [
-    snapshot.capability.instructions,
+    resolvedAgentProfileInstructions(snapshot),
     `Presentation style only (no authority): tone=${snapshot.presentation.tone}; verbosity=${snapshot.presentation.verbosity}; formatting=${snapshot.presentation.formatting}; ${snapshot.presentation.responseStructure}`,
     context || null,
   ]

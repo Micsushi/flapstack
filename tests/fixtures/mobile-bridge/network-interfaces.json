@@ -1,0 +1,15 @@
+{
+  "private": [
+    { "name": "en0", "address": "192.168.50.24", "family": "IPv4", "internal": false },
+    { "name": "utun4", "address": "100.96.0.3", "family": "IPv4", "internal": false },
+    { "name": "lo0", "address": "127.0.0.1", "family": "IPv4", "internal": true }
+  ],
+  "rebound": [
+    { "name": "en0", "address": "192.168.50.25", "family": "IPv4", "internal": false },
+    { "name": "lo0", "address": "127.0.0.1", "family": "IPv4", "internal": true }
+  ],
+  "publicOnly": [
+    { "name": "en0", "address": "8.8.8.8", "family": "IPv4", "internal": false },
+    { "name": "lo0", "address": "127.0.0.1", "family": "IPv4", "internal": true }
+  ]
+}

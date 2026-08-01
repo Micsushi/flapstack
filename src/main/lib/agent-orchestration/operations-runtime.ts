@@ -116,6 +116,10 @@ export function getCascadeControl(databasePath: string) {
   return new CascadeControlService(databasePath, requireRuntime().runtime)
 }
 
+export function getSwarmRuntimeControl() {
+  return requireRuntime().runtime
+}
+
 export function getCodexCoordination(engine: "codex-v2" | "codex-v1") {
   const runtime = requireRuntime()
   const adapter = engine === "codex-v2" ? runtime.codexV2 : runtime.codexV1

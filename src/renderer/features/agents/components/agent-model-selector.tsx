@@ -17,7 +17,6 @@ import {
 } from "../../../components/ui/command"
 import { CheckIcon, IconChevronDown, ReasoningOutputIcon } from "../../../components/ui/icons"
 import { Switch } from "../../../components/ui/switch"
-import { Checkbox } from "../../../components/ui/checkbox"
 import { Button } from "../../../components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover"
 import { cn } from "../../../lib/utils"
@@ -25,8 +24,6 @@ import type { ClaudeEffortLevel, CodexReasoningLevel } from "../lib/models"
 import { formatClaudeEffortLabel, formatCodexReasoningLevelLabel } from "../lib/models"
 import { getHarnessChipMeta } from "../constants"
 import { ProviderChipIcon } from "./provider-chip-icon"
-
-const CROSS_PROVIDER_DIALOG_DISMISSED_KEY = "agent-model-selector:skip-cross-provider-dialog"
 
 export type AgentProviderId =
   "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt" | "local"
@@ -70,7 +67,8 @@ interface AgentModelSelectorProps {
   triggerClassName?: string
   contentClassName?: string
   onOpenModelsSettings?: () => void
-  onContinueWithProvider?: (provider: AgentProviderId) => void
+  onContinueWithProvider?: (provider: AgentProviderId, targetModel: string) => void
+  onDelegateWithProvider?: (provider: AgentProviderId, targetModel: string) => void
   claude: {
     models: ClaudeModelOption[]
     selectedModelId?: string
@@ -301,28 +299,22 @@ const DIALOG_EASING = [0.55, 0.055, 0.675, 0.19] as const
 function CrossProviderConfirmDialog({
   isOpen,
   providerName,
+  modelName,
   onConfirm,
+  onDelegate,
   onClose,
 }: {
   isOpen: boolean
   providerName: string
-  onConfirm: (dontShowAgain: boolean) => void
+  modelName: string
+  onConfirm: () => void
+  onDelegate?: () => void
   onClose: () => void
 }) {
   const [mounted, setMounted] = useState(false)
-  const [dontShowAgain, setDontShowAgain] = useState(false)
-  const dontShowAgainRef = useRef(false)
-  dontShowAgainRef.current = dontShowAgain
-
   useEffect(() => {
     setMounted(true)
   }, [])
-
-  useEffect(() => {
-    if (isOpen) {
-      setDontShowAgain(false)
-    }
-  }, [isOpen])
 
   useEffect(() => {
     if (!isOpen) return
@@ -333,7 +325,7 @@ function CrossProviderConfirmDialog({
       }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault()
-        onConfirm(dontShowAgainRef.current)
+        onConfirm()
       }
     }
     document.addEventListener("keydown", handleKeyDown)
@@ -373,27 +365,27 @@ function CrossProviderConfirmDialog({
                 <div className="p-6">
                   <h2 className="text-xl font-semibold mb-2">Switch to {providerName}</h2>
                   <p className="text-sm text-muted-foreground">
-                    To use a different agent, a new chat will be created with your current
-                    conversation history attached.
+                    A distinct child Chat will receive only the visible conversation context. Hidden
+                    provider state is not transferred.
                   </p>
+                  <dl className="mt-4 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">Selected model</dt>
+                      <dd className="truncate font-medium">{modelName}</dd>
+                    </div>
+                  </dl>
                 </div>
-                <div className="bg-muted p-4 flex items-center justify-between border-t border-border rounded-b-xl">
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <Checkbox
-                      checked={dontShowAgain}
-                      onCheckedChange={(v) => setDontShowAgain(v === true)}
-                    />
-                    <span className="text-xs text-muted-foreground">Don't ask again</span>
-                  </label>
+                <div className="bg-muted p-4 flex items-center justify-end border-t border-border rounded-b-xl">
                   <div className="flex items-center gap-2">
                     <Button onClick={onClose} variant="ghost" className="rounded-md">
                       Cancel
                     </Button>
-                    <Button
-                      onClick={() => onConfirm(dontShowAgain)}
-                      variant="default"
-                      className="rounded-md"
-                    >
+                    {onDelegate ? (
+                      <Button onClick={onDelegate} variant="outline" className="rounded-md">
+                        Delegate task
+                      </Button>
+                    ) : null}
+                    <Button onClick={onConfirm} variant="default" className="rounded-md">
                       New chat
                     </Button>
                   </div>
@@ -419,6 +411,7 @@ export function AgentModelSelector({
   contentClassName,
   onOpenModelsSettings,
   onContinueWithProvider,
+  onDelegateWithProvider,
   claude,
   codex,
   cursor,
@@ -429,7 +422,11 @@ export function AgentModelSelector({
   const setClaudeLoginOpen = useSetAtom(agentsLoginModalOpenAtom)
   const setCodexLoginOpen = useSetAtom(codexLoginModalOpenAtom)
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
-  const [pendingProvider, setPendingProvider] = useState<AgentProviderId | null>(null)
+  const [pendingContinuation, setPendingContinuation] = useState<{
+    provider: AgentProviderId
+    targetModelId: string
+    targetModelLabel: string
+  } | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Record<ModelGroup["id"], boolean>>(() => ({
     "claude-code": selectedAgentId === "claude-code",
     codex: selectedAgentId === "codex",
@@ -599,35 +596,39 @@ export function AgentModelSelector({
     if (!provider) return false
     if (canSelectProvider(provider)) return false
     // When onContinueWithProvider is available, cross-provider items are clickable (not disabled)
-    if (onContinueWithProvider) return false
+    if (onContinueWithProvider || onDelegateWithProvider) return false
     return true
   }
 
   const isItemCrossProvider = (item: FlatModelItem): boolean => {
     const provider = getItemProvider(item)
-    return Boolean(provider && !canSelectProvider(provider) && onContinueWithProvider)
+    return Boolean(
+      provider &&
+      !canSelectProvider(provider) &&
+      (onContinueWithProvider || onDelegateWithProvider),
+    )
   }
 
-  const handleConfirmCrossProvider = useCallback(
-    (dontShowAgain: boolean) => {
-      if (dontShowAgain) {
-        try {
-          localStorage.setItem(CROSS_PROVIDER_DIALOG_DISMISSED_KEY, "true")
-        } catch {}
-      }
-      setConfirmDialogOpen(false)
-      if (pendingProvider && onContinueWithProvider) {
-        onContinueWithProvider(pendingProvider)
-      }
-      setPendingProvider(null)
-    },
-    [pendingProvider, onContinueWithProvider],
-  )
+  const handleConfirmCrossProvider = useCallback(() => {
+    setConfirmDialogOpen(false)
+    if (pendingContinuation && onContinueWithProvider) {
+      onContinueWithProvider(pendingContinuation.provider, pendingContinuation.targetModelId)
+    }
+    setPendingContinuation(null)
+  }, [pendingContinuation, onContinueWithProvider])
 
   const handleCloseConfirmDialog = useCallback(() => {
     setConfirmDialogOpen(false)
-    setPendingProvider(null)
+    setPendingContinuation(null)
   }, [])
+
+  const handleDelegateCrossProvider = useCallback(() => {
+    setConfirmDialogOpen(false)
+    if (pendingContinuation && onDelegateWithProvider) {
+      onDelegateWithProvider(pendingContinuation.provider, pendingContinuation.targetModelId)
+    }
+    setPendingContinuation(null)
+  }, [pendingContinuation, onDelegateWithProvider])
 
   const handleItemClick = (item: FlatModelItem) => {
     const provider = getItemProvider(item)
@@ -635,22 +636,16 @@ export function AgentModelSelector({
     if (!provider) return
 
     // Cross-provider click → show confirmation or continue directly
-    if (!canSelectProvider(provider) && onContinueWithProvider) {
-      if (item.type === "local") local?.onSelectModel(item.model.id)
+    if (!canSelectProvider(provider) && (onContinueWithProvider || onDelegateWithProvider)) {
+      const targetModelId = getItemModelId(item)
+      if (!targetModelId) return
       handleOpenChange(false)
-      const dismissed = (() => {
-        try {
-          return localStorage.getItem(CROSS_PROVIDER_DIALOG_DISMISSED_KEY) === "true"
-        } catch {
-          return false
-        }
-      })()
-      if (dismissed) {
-        onContinueWithProvider(provider)
-      } else {
-        setPendingProvider(provider)
-        setConfirmDialogOpen(true)
-      }
+      setPendingContinuation({
+        provider,
+        targetModelId,
+        targetModelLabel: getItemLabel(item),
+      })
+      setConfirmDialogOpen(true)
       return
     }
 
@@ -710,6 +705,12 @@ export function AgentModelSelector({
       case "custom":
         return "Custom Model"
     }
+  }
+
+  const getItemModelId = (item: FlatModelItem): string | null => {
+    if (item.type === "ollama") return item.modelName
+    if (item.type === "custom") return claude.selectedModelId?.trim() || null
+    return item.model.id
   }
 
   const getItemKey = (item: FlatModelItem): string => {
@@ -940,13 +941,21 @@ export function AgentModelSelector({
       <CrossProviderConfirmDialog
         isOpen={confirmDialogOpen}
         providerName={
-          pendingProvider === "codex"
+          pendingContinuation?.provider === "codex"
             ? "Codex"
-            : pendingProvider === "cursor-agent"
+            : pendingContinuation?.provider === "cursor-agent"
               ? "Cursor"
-              : "Claude Code"
+              : pendingContinuation?.provider === "openrouter"
+                ? "OpenRouter"
+                : pendingContinuation?.provider === "nanogpt"
+                  ? "NanoGPT"
+                  : pendingContinuation?.provider === "local"
+                    ? "Local"
+                    : "Claude Code"
         }
+        modelName={pendingContinuation?.targetModelLabel ?? "Unavailable"}
         onConfirm={handleConfirmCrossProvider}
+        onDelegate={onDelegateWithProvider ? handleDelegateCrossProvider : undefined}
         onClose={handleCloseConfirmDialog}
       />
     </Popover>

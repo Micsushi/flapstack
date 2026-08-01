@@ -16,6 +16,7 @@ import {
 import { getDatabase, getDatabasePath } from "../../db"
 import { getAgentProfileDiagnostics } from "../../agent-profiles/diagnostics"
 import { requestAgentProfileCapabilityApproval } from "../../agent-profiles/approval-authority"
+import { AgentProfileChatBindingService } from "../../agent-profiles/chat-binding"
 import { AgentProfileEvaluationService } from "../../agent-profiles/evaluation"
 import { AgentProfileResolver } from "../../agent-profiles/resolver"
 import { createAgentProfileService } from "../../agent-profiles/service"
@@ -40,6 +41,68 @@ export const agentProfilesRouter = router({
   get: publicProcedure
     .input(agentProfileVersionRefSchema)
     .query(({ input }) => createAgentProfileService(getDatabase()).get(input)),
+  searchForChat: publicProcedure
+    .input(z.object({ chatId: idSchema, query: z.string().trim().max(200).default("") }))
+    .query(({ input }) =>
+      new AgentProfileChatBindingService(getDatabase()).searchForChat(input.chatId, input.query),
+    ),
+  searchForNewChat: publicProcedure
+    .input(
+      z.object({
+        scope: z.enum(["global", "project", "task"]),
+        projectId: idSchema.optional(),
+        taskId: idSchema.optional(),
+        query: z.string().trim().max(200).default(""),
+      }),
+    )
+    .query(({ input }) =>
+      new AgentProfileChatBindingService(getDatabase()).searchForNewChat(input),
+    ),
+  previewNewChatBinding: publicProcedure
+    .input(
+      z.object({
+        scope: z.enum(["global", "project", "task"]),
+        projectId: idSchema.optional(),
+        taskId: idSchema.optional(),
+        permissionMode: z.string().trim().min(1).max(80),
+        runtimePreference: z.enum([
+          "auto",
+          "codex",
+          "codex-enhanced",
+          "claude-code",
+          "claude-code-enhanced",
+          "flapstack-native",
+        ]),
+        profile: agentProfileVersionRefSchema,
+      }),
+    )
+    .query(({ input }) =>
+      new AgentProfileChatBindingService(getDatabase()).previewForNewChat(input),
+    ),
+  previewChatBinding: publicProcedure
+    .input(z.object({ chatId: idSchema, profile: agentProfileVersionRefSchema }))
+    .query(({ input }) => new AgentProfileChatBindingService(getDatabase()).preview(input)),
+  bindChat: publicProcedure
+    .input(
+      z.object({
+        chatId: idSchema,
+        profile: agentProfileVersionRefSchema,
+        confirmedDigest: z.string().regex(/^[0-9a-f]{64}$/),
+      }),
+    )
+    .mutation(({ input }) =>
+      new AgentProfileChatBindingService(getDatabase()).bind({
+        chatId: input.chatId,
+        profile: input.profile,
+        expectedDigest: input.confirmedDigest,
+      }),
+    ),
+  getChatBinding: publicProcedure
+    .input(z.object({ chatId: idSchema }))
+    .query(({ input }) => new AgentProfileChatBindingService(getDatabase()).get(input.chatId)),
+  clearChatBinding: publicProcedure
+    .input(z.object({ chatId: idSchema }))
+    .mutation(({ input }) => new AgentProfileChatBindingService(getDatabase()).clear(input.chatId)),
   create: publicProcedure.input(agentProfileCreateInputSchema).mutation(async ({ input }) => {
     const profiles = createAgentProfileService(getDatabase())
     const preview = profiles.previewCreateCapabilityChange(input)

@@ -12,6 +12,7 @@ export type SttInput = {
   audioBuffer: Buffer
   format: "webm" | "wav" | "mp3" | "m4a" | "ogg"
   language?: string
+  vocabularyHints?: readonly string[]
 }
 
 export type SttResult = {
@@ -62,6 +63,7 @@ export type SttAdapterInfo = {
   kind: SpeechAdapterKind
   supportsStreaming: boolean
   offline: boolean
+  supportsVocabularyHints: boolean
 }
 
 export type TtsAdapterInfo = {

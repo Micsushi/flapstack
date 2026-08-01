@@ -2,7 +2,8 @@
 
 ### S6-F1-T1 — Audit every user-facing surface and set usability baselines
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F1
 - Outcome: One inventory identifies every production route, control, state, ownership boundary, and measurable usability problem.
 - Scope: Route/component inventory; current screenshots; task timings; navigation depth; duplicate controls; inaccessible paths; stale copy; responsive/multi-window gaps; ranked P0-P2 findings.
@@ -15,7 +16,8 @@
 
 ### S6-F1-T2 — Establish shared visual, density, responsive, and state primitives
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F1
 - Outcome: Feature screens reuse one token/component/state foundation.
 - Scope: Color/type/spacing/density tokens; focus/contrast; buttons/fields/cards/tabs/chips; empty/loading/stale/error/recovery patterns; responsive breakpoints; motion policy; Storybook-equivalent fixture gallery.
@@ -28,7 +30,8 @@
 
 ### S6-F1-T3 — Refine navigation, sidebar, hierarchy, and discovery
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F1
 - Outcome: Users find projects, tasks, chats, workspaces, advanced areas, archives, and Settings with less ambiguity.
 - Scope: Sidebar hierarchy; pinned/archive/search; selected/active states; breadcrumbs; direct routes; compact/expanded density; overflow; window ownership; empty first project.
@@ -41,7 +44,8 @@
 
 ### S6-F1-T4 — Refine chat, composer, run, and details workflows
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F1
 - Outcome: Starting, understanding, steering, reviewing, and recovering an agent run is clear and consistent.
 - Scope: Header hierarchy; composer controls; model/tuning/profile/worktree/permission previews; streaming/tool/reasoning rows; question/approval cards; Review/Undo; details panel; terminal/diff/file transitions.
@@ -54,7 +58,8 @@
 
 ### S6-F1-T5 — Rebuild Settings information architecture and alphabetical categories
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F1
 - Outcome: Settings categories are alphabetically ordered, searchable, provider-accurate, and consistently structured.
 - Scope: Top-level alphabetical ordering by displayed label; page templates; search index; keywords; deep-link/focus/highlight; advanced sections; hidden-feature routes; dirty/save/error behavior.
@@ -67,7 +72,8 @@
 
 ### S6-F1-T6 — Add progress capsule, timeline preview, and unified feedback
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F1
 - Outcome: Long-running work and long conversations are glanceable without losing full detail.
 - Scope: Plan/run progress capsule; current step/change counts; transcript timeline/minimap; previews; jump/focus; grouped long histories; toast/inbox/progress consistency; unavailable metric hiding.
@@ -80,7 +86,8 @@
 
 ### S6-F1-T7 — Refine saved workspaces and multi-window behavior
 
-- [ ] Completion: acceptance and verification passed
+- Evidence class: `T2-core`.
+- [x] T2-core completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F1
 - Outcome: Dense layouts remain understandable, restorable, and ownership-safe.
 - Scope: Pane chrome; layout editing; tabs/pop-outs; four-chat boundary; focus/open-here; stale targets; resize; terminal/file/diff/browser panels; crash-safe restore.
@@ -93,7 +100,9 @@
 
 ### S6-F1-T8 — Close accessibility, voice-language, and recovery-state gaps
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:native-assistive-technology`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:native-assistive-technology` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F1
 - Outcome: Every audited critical workflow has complete accessible names, focus, copy, errors, and recovery.
 - Scope: WCAG-oriented audit; screen-reader landmarks/live regions; keyboard traps; color-only cues; localization-safe layout; plain-language microcopy; bounded inspectable dynamic speech vocabulary; transcript review; destructive confirmation; offline/stale/permission errors.
@@ -106,7 +115,9 @@
 
 ### S6-F1-T9 — Close product-wide UI/UX acceptance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core`, `T2-capability:native-assistive-technology`.
+- [x] T2-core completion: acceptance and verification passed
+- [ ] Capability evidence: `T2-capability:native-assistive-technology` remains uncertified.
 - Parent: Project Flapstack / Stage S6 / Feature S6-F1
 - Outcome: One exact SHA passes automated visual/accessibility gates and observed end-to-end usability.
 - Scope: Matrix S6-UX; visual fixtures; task-time comparison; novice/power-user walkthroughs; responsive/multi-window; clean profile; upgrade; docs and known limitations.

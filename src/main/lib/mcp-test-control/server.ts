@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
+import { app } from "electron"
 import * as z from "zod/v4"
 import { CREDENTIAL_IDS } from "../../../shared/credential-types"
 import { CHAT_MODES } from "../../../shared/chat-mode"
@@ -18,6 +19,7 @@ import {
   cleanupProductMcpCaller,
   cancelProductMcpChildRun,
   controlProductMcpRenderer,
+  controlElectronPerformanceMeasurement,
   controlSettings,
   controlPermissionUi,
   createTestChat,
@@ -38,6 +40,7 @@ import {
   getPermissionUiState,
   getVisibleCopySearchState,
   requestDevRendererControl,
+  stage6PerformanceRendererSelectionTimeoutMs,
   getRendererAgentInputState,
   getRendererAgentInputNavigationState,
   getRendererUsageUiState,
@@ -80,9 +83,14 @@ import {
   setProductMcpTestExposure,
   startProductMcpTestCall,
   openTestChat,
+  provisionStage6PerformanceFixture,
   replyAgentInputRequest,
   waitForRunState,
 } from "./service"
+import {
+  STAGE6_ELECTRON_MEASUREMENT_OPERATIONS,
+  getStage6ElectronMeasurementContract,
+} from "../../../shared/stage6-electron-performance-control"
 import {
   getCredentialStatus,
   getPermissionState,
@@ -114,6 +122,7 @@ import {
 } from "./carryover-controls"
 import { sanitizeStage4ControlError } from "./stage4-boundary"
 import { configureStage4OwnershipJournal } from "./stage4-ownership"
+import { isStage6PerformanceProfile } from "./lifecycle"
 import {
   STAGE4_PROFILE_MUTATION_ACTIONS,
   STAGE4_PROFILE_READ_ACTIONS,
@@ -503,11 +512,18 @@ function registerTools(server: McpServer): void {
       try {
         const selection = resolveTestChatSelection(input)
         return result(
-          await requestDevRendererControl({
-            command: "chat.select",
-            ...selection,
-            showOrchestration: input.showOrchestration,
-          }),
+          await requestDevRendererControl(
+            {
+              command: "chat.select",
+              ...selection,
+              prepareStage6PerformanceProfile:
+                !app.isPackaged && isStage6PerformanceProfile() ? true : undefined,
+              showOrchestration: input.showOrchestration,
+            },
+            {
+              timeoutMs: stage6PerformanceRendererSelectionTimeoutMs(),
+            },
+          ),
         )
       } catch (error) {
         return failure(error)
@@ -554,6 +570,67 @@ function registerTools(server: McpServer): void {
     async (input) => {
       try {
         return result(await requestDevRendererControl({ command: "orchestration.get", ...input }))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "control_electron_performance_measurement",
+    {
+      description:
+        "Control fixed renderer-owned Stage 6 Electron measurement markers. This returns an observer interval and internally captured build identity, not a budget verdict.",
+      inputSchema: {
+        budgetId: z
+          .string()
+          .min(1)
+          .max(160)
+          .refine((value) => {
+            try {
+              getStage6ElectronMeasurementContract(value)
+              return true
+            } catch {
+              return false
+            }
+          }, "Unknown Stage 6 Electron performance budget"),
+        action: z.enum([
+          "observe-cold-shell-ready",
+          "observe-warm-shell-ready",
+          "open-first-use",
+          "open-warm-first-use",
+          "dispatch-input-probe",
+          "observe-animation-frames",
+          "observe-long-tasks",
+          "render-long-chat-fixture",
+          "search-large-fixture",
+          "dispatch-grid-input-probe",
+        ]),
+        operation: z.enum(STAGE6_ELECTRON_MEASUREMENT_OPERATIONS),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await controlElectronPerformanceMeasurement(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "provision_stage6_performance_fixture",
+    {
+      description:
+        "Provision and select an isolated Stage 6 product transcript fixture at a fixed cardinality.",
+      inputSchema: {
+        messageCount: z.union([z.literal(1), z.literal(200)]),
+        paneCount: z.union([z.literal(1), z.literal(4)]),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(provisionStage6PerformanceFixture(input))
       } catch (error) {
         return failure(error)
       }

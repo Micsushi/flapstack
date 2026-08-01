@@ -21,6 +21,8 @@ import {
   setUsageSecret,
 } from "../../usage/secrets"
 import { getAppUsageSecret } from "../../usage/app-secrets"
+import { validateOpenAiOrganizationBinding } from "../../usage/providers/codex"
+import { validateAnthropicOrganizationBinding } from "../../usage/providers/anthropic"
 import { syncOnWatchUsageHistory } from "../../usage/onwatch-history"
 import { readDaemonStatus } from "../../usage-daemon/lifecycle"
 import {
@@ -161,6 +163,58 @@ export const usageRouter = router({
       return setUsageSettings({ providers: settings.providers })
     }),
 
+  setOrganizationScope: publicProcedure
+    .input(
+      z
+        .object({
+          provider: z.enum(["openai", "anthropic"]),
+          organizationId: z.string().trim().min(1).max(200).nullable(),
+          scopeIds: z.array(z.string().trim().min(1).max(200)).max(100),
+        })
+        .strict(),
+    )
+    .mutation(async ({ input }) => {
+      const settings = getUsageSettings()
+      const scopeIds = [...new Set(input.scopeIds)].sort()
+      const organization =
+        input.provider === "openai"
+          ? {
+              ...settings.organization,
+              openai: {
+                organizationId: input.organizationId,
+                projectIds: scopeIds,
+                validatedBinding: null,
+              },
+            }
+          : {
+              ...settings.organization,
+              anthropic: {
+                organizationId: input.organizationId,
+                workspaceIds: scopeIds,
+                validatedBinding: null,
+              },
+            }
+      const next = setUsageSettings({ organization })
+      if (!input.organizationId) return next
+      const secretKey = input.provider === "openai" ? "openai.api_key" : "anthropic.admin_key"
+      const apiKey = getUsageSecret(secretKey)
+      if (!apiKey) return next
+      if (input.provider === "openai") {
+        await validateOpenAiOrganizationBinding(
+          apiKey,
+          input.organizationId,
+          next.organization.openai.projectIds,
+        )
+      } else {
+        await validateAnthropicOrganizationBinding(
+          apiKey,
+          input.organizationId,
+          next.organization.anthropic.workspaceIds,
+        )
+      }
+      return getUsageSettings()
+    }),
+
   // ---- Credentials (presence only; values never returned) ----
   getSecretPresence: publicProcedure.query(async () => ({
     "openai.api_key": hasUsageSecret("openai.api_key"),
@@ -174,8 +228,45 @@ export const usageRouter = router({
 
   setSecret: publicProcedure
     .input(z.object({ key: secretKeySchema, value: z.string().nullable() }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       setUsageSecret(input.key, input.value)
+      if (input.key === "openai.api_key") {
+        const settings = getUsageSettings()
+        setUsageSettings({
+          organization: {
+            ...settings.organization,
+            openai: {
+              ...settings.organization.openai,
+              validatedBinding: null,
+            },
+          },
+        })
+        if (input.value && settings.organization.openai.organizationId) {
+          await validateOpenAiOrganizationBinding(
+            input.value,
+            settings.organization.openai.organizationId,
+            settings.organization.openai.projectIds,
+          )
+        }
+      } else if (input.key === "anthropic.admin_key") {
+        const settings = getUsageSettings()
+        setUsageSettings({
+          organization: {
+            ...settings.organization,
+            anthropic: {
+              ...settings.organization.anthropic,
+              validatedBinding: null,
+            },
+          },
+        })
+        if (input.value && settings.organization.anthropic.organizationId) {
+          await validateAnthropicOrganizationBinding(
+            input.value,
+            settings.organization.anthropic.organizationId,
+            settings.organization.anthropic.workspaceIds,
+          )
+        }
+      }
       return { ok: true, present: hasUsageSecret(input.key) }
     }),
 

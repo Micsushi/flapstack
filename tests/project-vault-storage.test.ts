@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
+import { execFileSync } from "node:child_process"
 import {
   existsSync,
   mkdirSync,
@@ -69,6 +70,11 @@ describe("typed project vault storage", () => {
       .all() as Array<{ name: string }>
     expect(tables.map((table) => table.name)).toEqual([
       "project_vault_backups",
+      "project_vault_custom_notes",
+      "project_vault_graph_edges",
+      "project_vault_graph_generations",
+      "project_vault_graph_nodes",
+      "project_vault_graph_state",
       "project_vault_policies",
       "project_vault_sections",
       "project_vaults",
@@ -120,6 +126,7 @@ describe("typed project vault storage", () => {
   })
 
   it("scaffolds the stable project-owned path only after policy opt-in", async () => {
+    execFileSync("git", ["init", "-q"], { cwd: projectRoot })
     updateProjectVaultPolicy(database, {
       projectId: "project-1",
       appDataRoot,

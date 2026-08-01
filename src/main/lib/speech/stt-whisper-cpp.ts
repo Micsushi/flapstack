@@ -84,6 +84,7 @@ export const whisperCppAdapter: SttAdapter = {
   kind: "local",
   supportsStreaming: false,
   offline: true,
+  supportsVocabularyHints: true,
 
   async isAvailable(): Promise<SpeechAdapterAvailability> {
     const binary = await findWorkingWhisperBinary()
@@ -137,6 +138,7 @@ export const whisperCppAdapter: SttAdapter = {
       const inputPath = await convertToWhisperAudio(audioPath, wavPath, input.format)
       const args = ["-m", modelPath, "-f", inputPath, "-otxt", "-of", outputBase]
       if (input.language) args.push("-l", input.language)
+      if (input.vocabularyHints?.length) args.push("--prompt", input.vocabularyHints.join(", "))
       await execFileAsync(binary, args, { timeout: 180000 })
       const textPath = `${outputBase}.txt`
       const text = existsSync(textPath) ? fs.readFileSync(textPath, "utf8") : ""

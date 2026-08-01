@@ -29,6 +29,58 @@ if (process.platform === "win32") {
   vitestArgs.push("--exclude", windowsPlatformProductTest)
 }
 
+const commandSteps = [
+  packageBinStep("lint", "eslint", "eslint", ["."], { root }),
+  packageBinStep("style", "prettier", "prettier", ["--check", "."], { root }),
+  packageBinStep("typecheck", "typescript", "tsc", ["--noEmit"], { root }),
+  {
+    label: "native Node ABI",
+    command: node,
+    args: [path.join(root, "scripts", "ensure-native-abi.mjs"), "node"],
+    cwd: root,
+  },
+  {
+    label: "Stage 6 Tier 2 ledger",
+    command: node,
+    args: [path.join(root, "scripts/check-stage6-tier2-ledger.mjs")],
+    cwd: root,
+  },
+  ...(process.platform === "win32"
+    ? [
+        {
+          label: "Stage 6 bounded performance",
+          command: node,
+          args: [
+            path.join(root, "scripts/stage6-performance.mjs"),
+            "--core",
+            "--ci",
+            "--hardware",
+            "minimum-supported",
+          ],
+          cwd: root,
+        },
+      ]
+    : []),
+  packageBinStep("tests", "vitest", "vitest", vitestArgs, { root }),
+  ...(process.platform === "win32"
+    ? [
+        packageBinStep(
+          "Windows platform product tests",
+          "vitest",
+          "vitest",
+          ["run", windowsPlatformProductTest, "--maxWorkers=1"],
+          { root },
+        ),
+      ]
+    : []),
+  {
+    label: "build",
+    command: node,
+    args: [path.join(root, "scripts", "build.mjs")],
+    cwd: root,
+  },
+]
+
 assertPortablePackageScripts(JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")), [
   "build",
   "check",
@@ -43,38 +95,7 @@ assertPortablePackageScripts(JSON.parse(readFileSync(path.join(root, "package.js
 
 try {
   runWithIsolatedTestGitEnvironment((isolatedGitEnv) =>
-    runCommandSequence(
-      [
-        packageBinStep("lint", "eslint", "eslint", ["."], { root }),
-        packageBinStep("style", "prettier", "prettier", ["--check", "."], { root }),
-        packageBinStep("typecheck", "typescript", "tsc", ["--noEmit"], { root }),
-        {
-          label: "native Node ABI",
-          command: node,
-          args: [path.join(root, "scripts", "ensure-native-abi.mjs"), "node"],
-          cwd: root,
-        },
-        packageBinStep("tests", "vitest", "vitest", vitestArgs, { root }),
-        ...(process.platform === "win32"
-          ? [
-              packageBinStep(
-                "Windows platform product tests",
-                "vitest",
-                "vitest",
-                ["run", windowsPlatformProductTest, "--maxWorkers=1"],
-                { root },
-              ),
-            ]
-          : []),
-        {
-          label: "build",
-          command: node,
-          args: [path.join(root, "scripts", "build.mjs")],
-          cwd: root,
-        },
-      ],
-      { env: isolatedGitEnv },
-    ),
+    runCommandSequence(commandSteps, { env: isolatedGitEnv }),
   )
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error))

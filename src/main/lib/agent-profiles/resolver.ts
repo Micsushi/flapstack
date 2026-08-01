@@ -34,6 +34,9 @@ import {
   optionalString as stringOrNull,
   sha256Text as sha256,
 } from "./values"
+import { resolveConfiguredAgentPersonality } from "./personality-resolution"
+import type { ResolvedAgentPersonalityDocument } from "../../../shared/agent-personalities"
+import { agentProfileSpeedCompatibility } from "../../../shared/agent-profile-speed"
 
 type Sqlite = Database.Database
 type DatabaseLike = Sqlite | object
@@ -64,6 +67,7 @@ export class AgentProfileResolutionError extends Error {
 type Composed = {
   capability: AgentCapabilityProfile
   presentation: AgentPresentationStyle
+  personality: ResolvedAgentProfileSnapshot["personality"]
   sources: Record<string, AgentProfileResolvedFieldSource>
   unresolvedRequirements: Array<{ kind: string; id: string; reason: string }>
 }
@@ -75,6 +79,7 @@ const capabilityFields = [
   "runtimePreference",
   "modelPreference",
   "reasoningEffort",
+  "speedPreference",
   "tools",
   "skills",
   "permissionMode",
@@ -153,6 +158,15 @@ export class AgentProfileResolver {
       runtimeResolutionInput,
     )
     const conflicts = intersectPolicy(composed, policy, profile, runtimeResolution)
+    const speed = agentProfileSpeedCompatibility(composed.capability, runtimeResolution)
+    if (!speed.compatible) {
+      conflicts.push({
+        code: speed.code,
+        field: "speedPreference",
+        message: speed.message,
+        repair: speed.repair,
+      })
+    }
     const evaluation = latestEvaluation(
       this.sqlite,
       profile,
@@ -184,6 +198,7 @@ export class AgentProfileResolver {
       displayName,
       capability: composed.capability,
       presentation: composed.presentation,
+      personality: composed.personality,
       sources: composed.sources,
       conflicts,
       unresolvedRequirements: composed.unresolvedRequirements,
@@ -281,6 +296,7 @@ export class AgentProfileResolver {
           row.base_profile_id && row.base_profile_version
             ? { profileId: String(row.base_profile_id), version: Number(row.base_profile_version) }
             : null,
+        personality: provenance.personalityRef ?? null,
         capability: JSON.parse(String(row.capability_json)),
         presentation: JSON.parse(String(row.presentation_json)),
         inheritCapabilityFields: provenance.inheritCapabilityFields ?? [],
@@ -307,6 +323,10 @@ export class AgentProfileResolver {
       assign(composed.presentation, field, definition.presentation[field])
       composed.sources[`presentation.${field}`] = source("profile", ref, "Exact profile version")
     }
+    composed.personality = resolvePersonality(definition.personality, scope, identity)
+    if (composed.personality) {
+      applyPersonalityPresentation(composed, composed.personality, ref)
+    }
     composed.unresolvedRequirements = mergeRequirements(
       composed.unresolvedRequirements,
       parseDisabledRequirements(provenance.disabledRequirements),
@@ -324,8 +344,61 @@ function defaults(): Composed {
   return {
     capability: structuredClone(DEFAULT_AGENT_CAPABILITY),
     presentation: structuredClone(DEFAULT_AGENT_PRESENTATION),
+    personality: null,
     sources,
     unresolvedRequirements: [],
+  }
+}
+
+function resolvePersonality(
+  ref: AgentProfileVersionInput["personality"],
+  scopeValue: { type: string; projectId: string | null },
+  profileIdentity: string,
+): ResolvedAgentProfileSnapshot["personality"] {
+  if (!ref) return null
+  const scope =
+    scopeValue.type === "project"
+      ? ({ type: "project", projectId: scopeValue.projectId! } as const)
+      : scopeValue.type === "built-in"
+        ? ({ type: "built-in", projectId: null } as const)
+        : ({ type: "user", projectId: null } as const)
+  let personality: ResolvedAgentPersonalityDocument
+  try {
+    personality = resolveConfiguredAgentPersonality(ref, scope)
+  } catch (error) {
+    throw new AgentProfileResolutionError(
+      "profile-corrupt",
+      `Agent Profile ${profileIdentity} references an unavailable exact Personality version: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+  }
+  return {
+    ref,
+    metadata: personality.metadata,
+    body: personality.body,
+    digest: personality.digest,
+    chain: personality.chain,
+  }
+}
+
+function applyPersonalityPresentation(
+  composed: Composed,
+  personality: NonNullable<ResolvedAgentProfileSnapshot["personality"]>,
+  profile: AgentProfileVersionRef,
+): void {
+  const traits = personality.metadata.traits
+  composed.presentation.tone = traits.tone
+  composed.presentation.verbosity = traits.verbosity
+  composed.presentation.formatting = traits.formatting
+  composed.presentation.responseStructure = traits.responseStructure
+  composed.presentation.color = traits.color
+  for (const field of ["tone", "verbosity", "formatting", "responseStructure", "color"] as const) {
+    composed.sources[`presentation.${field}`] = source(
+      "profile",
+      profile,
+      `Exact Personality ${personality.ref.personalityId}@${personality.ref.version}`,
+    )
   }
 }
 
@@ -380,6 +453,14 @@ function applyOverrides(
       layer,
       profile,
       "Bounded effort preference",
+    )
+  }
+  if (overrides.speedPreference !== null) {
+    composed.capability.speedPreference = overrides.speedPreference
+    composed.sources["capability.speedPreference"] = source(
+      layer,
+      profile,
+      "Bounded speed preference",
     )
   }
   if (overrides.presentation) {
@@ -661,6 +742,22 @@ export function frozenAgentProfileRuntimeAuthority(
     allowedDescendantProfileIds: [...snapshot.capability.allowedDescendantProfileIds],
     maxDescendants: snapshot.capability.maxDescendants,
   }
+}
+
+export function resolvedAgentProfileInstructions(
+  snapshot: Pick<ResolvedAgentProfileSnapshot, "capability" | "personality">,
+): string {
+  return [
+    snapshot.capability.instructions.trim(),
+    snapshot.personality
+      ? [
+          `Exact Personality ${snapshot.personality.ref.personalityId}@${snapshot.personality.ref.version} (behavior and presentation only; this does not grant authority):`,
+          snapshot.personality.body.trim(),
+        ].join("\n")
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n")
 }
 
 function resolvedProfileRuntime(
