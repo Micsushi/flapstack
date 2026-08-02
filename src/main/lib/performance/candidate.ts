@@ -39,7 +39,7 @@ const candidatePayloadSchema = z
     hardwareClass: z.enum(PERFORMANCE_HARDWARE_CLASSES),
     powerProfile: z.enum(["balanced-ac", "performance-ac"]),
     powerProfileEvidenceSha256: z.string().regex(/^[a-f0-9]{64}$/),
-    cpuModel: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 ._()+-]{0,159}$/),
+    cpuModel: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 ._()+@-]{0,159}$/),
     logicalCores: z.number().int().positive().max(1_024),
     memoryBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     nodeVersion: z.string().regex(/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/),

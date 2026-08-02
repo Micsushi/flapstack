@@ -115,6 +115,15 @@ describe("Stage 6 deterministic performance authority", () => {
     ).toThrow(/hardware class/i)
   })
 
+  it("accepts standard Azure Windows CPU model labels", () => {
+    expect(() =>
+      createCandidateBinding({
+        ...candidateInput(),
+        cpuModel: "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
+      }),
+    ).not.toThrow()
+  })
+
   it("revalidates package artifact invariants for externally parsed candidate bindings", () => {
     const payload = {
       ...candidateInput(),
