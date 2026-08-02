@@ -13,10 +13,15 @@ function execFileAsync(
 ) {
   return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     const { input, ...execOptions } = options
-    const child = execFileCallback(command, args, execOptions, (error, stdout, stderr) => {
-      if (error) reject(error)
-      else resolve({ stdout: String(stdout), stderr: String(stderr) })
-    })
+    const child = execFileCallback(
+      command,
+      args,
+      { ...execOptions, windowsHide: true },
+      (error, stdout, stderr) => {
+        if (error) reject(error)
+        else resolve({ stdout: String(stdout), stderr: String(stderr) })
+      },
+    )
     activeChildren.set(child, requestScopeId)
     child.on("exit", () => activeChildren.delete(child))
     if (input !== undefined) {

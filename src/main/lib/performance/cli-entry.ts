@@ -102,6 +102,7 @@ function assertCanonicalRepositoryRoot(repositoryRoot: string): void {
   const observed = execFileSync("git", ["rev-parse", "--show-toplevel"], {
     cwd: repositoryRoot,
     encoding: "utf8",
+    windowsHide: true,
   }).trim()
   if (
     resolve(observed) !== resolve(repositoryRoot) ||

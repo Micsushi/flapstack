@@ -419,7 +419,11 @@ function defaultSpawn(
   args: string[],
   options: { cwd?: string; env: NodeJS.ProcessEnv; windowsHide: boolean },
 ): ChildProcessWithoutNullStreams {
-  return spawn(command, args, { ...options, stdio: ["pipe", "pipe", "pipe"] })
+  return spawn(command, args, {
+    ...options,
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

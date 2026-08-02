@@ -203,7 +203,7 @@ function readMacKeychainSecret(service: string): string | null {
   const result = spawnSync(
     "/usr/bin/security",
     ["find-generic-password", "-s", service, "-a", userInfo().username, "-w"],
-    { encoding: "utf8" },
+    { encoding: "utf8", windowsHide: true },
   )
   return result.status === 0 ? result.stdout.trim() || null : null
 }
@@ -212,7 +212,7 @@ function writeMacKeychainSecret(service: string, value: string): boolean {
   const result = spawnSync(
     "/usr/bin/security",
     ["add-generic-password", "-s", service, "-a", userInfo().username, "-U", "-w"],
-    { encoding: "utf8", input: `${value}\n` },
+    { encoding: "utf8", input: `${value}\n`, windowsHide: true },
   )
   return result.status === 0
 }

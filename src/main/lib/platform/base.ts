@@ -139,6 +139,7 @@ export abstract class BasePlatformProvider implements PlatformProvider {
       timeout: options?.timeout ?? 5000,
       env: options?.env as NodeJS.ProcessEnv | undefined,
       encoding: "utf8",
+      windowsHide: true,
     })
     return { stdout, stderr }
   }

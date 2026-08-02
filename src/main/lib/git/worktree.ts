@@ -134,16 +134,18 @@ async function createEmptyRootCommit(
     await execFileAsync("git", ["-C", mainRepoPath, "read-tree", "--empty"], {
       env: indexEnv,
       timeout: 30_000,
+      windowsHide: true,
     })
     const { stdout: treeOutput } = await execFileAsync("git", ["-C", mainRepoPath, "write-tree"], {
       env: indexEnv,
       encoding: "utf8",
       timeout: 30_000,
+      windowsHide: true,
     })
     const { stdout: commitOutput } = await execFileAsync(
       "git",
       ["-C", mainRepoPath, "commit-tree", treeOutput.trim(), "-m", "Initialize worktree"],
-      { env, encoding: "utf8", timeout: 30_000 },
+      { env, encoding: "utf8", timeout: 30_000, windowsHide: true },
     )
     return commitOutput.trim()
   } finally {
@@ -230,7 +232,7 @@ export async function createWorktree(
     await execFileAsync(
       "git",
       ["-C", mainRepoPath, "worktree", "add", worktreePath, "-b", branch, commitHash],
-      { env, timeout: 120_000 },
+      { env, timeout: 120_000, windowsHide: true },
     )
     bindFilesystemRootIdentity(worktreePath)
     return { commitHash, bootstrappedEmptyRepository }
@@ -283,7 +285,7 @@ export async function removeWorktree(
     await execFileAsync(
       "git",
       ["-C", mainRepoPath, "worktree", "remove", worktreePath, "--force"],
-      { env, timeout: 60_000 },
+      { env, timeout: 60_000, windowsHide: true },
     )
 
     return { success: true }
@@ -551,7 +553,7 @@ export async function branchExistsOnRemote(
     await execFileAsync(
       "git",
       ["-C", worktreePath, "ls-remote", "--exit-code", "--heads", "origin", branchName],
-      { env, timeout: 30_000 },
+      { env, timeout: 30_000, windowsHide: true },
     )
     // Exit code 0 = branch exists (--exit-code flag ensures this)
     return { status: "exists" }

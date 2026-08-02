@@ -375,7 +375,7 @@ export const projectsRouter = router({
 
       // Clone the repo
       const cloneUrl = `https://github.com/${owner}/${repo}.git`
-      await execAsync(`git clone "${cloneUrl}" "${clonePath}"`)
+      await execAsync(`git clone "${cloneUrl}" "${clonePath}"`, { windowsHide: true })
 
       // Get git info and create project
       const db = getDatabase()

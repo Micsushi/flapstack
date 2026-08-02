@@ -324,12 +324,13 @@ function readProcessStartIdentity(pid: number): string | null {
           "-Command",
           `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`,
         ],
-        { encoding: "utf8", timeout: 2_000 },
+        { encoding: "utf8", timeout: 2_000, windowsHide: true },
       ).trim()
     }
     return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
       encoding: "utf8",
       timeout: 2_000,
+      windowsHide: true,
     }).trim()
   } catch {
     return null

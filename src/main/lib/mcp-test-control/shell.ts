@@ -40,6 +40,7 @@ export async function runShellCommand(
       timeout: options.timeoutMs ?? 30_000,
       env: options.env ?? process.env,
       maxBuffer: 1024 * 1024 * 4,
+      windowsHide: true,
     })
 
     return {

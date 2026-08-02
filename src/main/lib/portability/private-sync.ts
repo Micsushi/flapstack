@@ -895,6 +895,7 @@ async function runGit(
     env: { ...process.env, ...environment },
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
+    windowsHide: true,
   })
   return stdout
 }
@@ -909,6 +910,7 @@ async function runGitBounded(
       env: process.env,
       encoding: "utf8",
       maxBuffer: maxOutputBytes,
+      windowsHide: true,
     })
     if (Buffer.byteLength(stdout) > maxOutputBytes) throw new Error(PRIVATE_SYNC_LIMIT_ERROR)
     return stdout

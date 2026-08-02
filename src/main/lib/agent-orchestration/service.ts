@@ -2078,6 +2078,7 @@ function listRegisteredWorktrees(projectPath: string): RegisteredWorktree[] {
     output = execFileSync("git", ["-C", projectPath, "worktree", "list", "--porcelain"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
     })
   } catch {
     throw new AgentOrchestrationError(

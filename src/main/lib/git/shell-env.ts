@@ -115,6 +115,7 @@ export async function getShellEnvironment(): Promise<Record<string, string>> {
         ...process.env,
         HOME: os.homedir(),
       },
+      windowsHide: true,
     })
 
     const env: Record<string, string> = {}
@@ -158,6 +159,7 @@ export async function checkGitLfsAvailable(env: Record<string, string>): Promise
     await execFileAsync("git", ["lfs", "version"], {
       timeout: 5_000,
       env,
+      windowsHide: true,
     })
     return true
   } catch {
@@ -187,7 +189,11 @@ export async function execWithShellEnv(
   options?: Omit<ExecFileOptionsWithStringEncoding, "encoding">,
 ): Promise<{ stdout: string; stderr: string }> {
   try {
-    return await execFileAsync(cmd, args, { ...options, encoding: "utf8" })
+    return await execFileAsync(cmd, args, {
+      ...options,
+      encoding: "utf8",
+      windowsHide: true,
+    })
   } catch (error) {
     // Only retry on ENOENT (command not found), only on macOS
     // Skip if we've already successfully fixed PATH, or if a fix attempt is in progress
@@ -224,6 +230,7 @@ export async function execWithShellEnv(
         ...options,
         encoding: "utf8",
         env: retryEnv,
+        windowsHide: true,
       })
     } catch (retryError) {
       // Shell env derivation or retry failed - allow future retries

@@ -139,6 +139,7 @@ export async function startSidecar(params: {
     },
     detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
   })
 
   const handle: SidecarHandle = {

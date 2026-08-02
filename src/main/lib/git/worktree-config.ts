@@ -216,6 +216,7 @@ export async function executeWorktreeSetup(
           ROOT_WORKTREE_PATH: mainRepoPath,
         },
         timeout: 300_000, // 5 minutes per command
+        windowsHide: true,
       })
 
       if (stdout) {

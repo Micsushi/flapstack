@@ -144,12 +144,14 @@ export class DarwinPlatformProvider extends BasePlatformProvider {
       if (existsSync(installPath)) {
         await execAsync(
           `osascript -e 'do shell script "rm -f ${installPath}" with administrator privileges'`,
+          { windowsHide: true },
         )
       }
 
       // Create symlink with admin privileges
       await execAsync(
         `osascript -e 'do shell script "ln -s \\"${sourcePath}\\" ${installPath}" with administrator privileges'`,
+        { windowsHide: true },
       )
 
       console.log("[CLI] Installed flapstack command to", installPath)
@@ -173,6 +175,7 @@ export class DarwinPlatformProvider extends BasePlatformProvider {
 
       await execAsync(
         `osascript -e 'do shell script "rm -f ${installPath}" with administrator privileges'`,
+        { windowsHide: true },
       )
 
       console.log("[CLI] Uninstalled flapstack command")

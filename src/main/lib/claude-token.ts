@@ -43,6 +43,7 @@ function readFromMacOSKeychain(): ClaudeOAuthCredential | null {
     const result = execSync('security find-generic-password -s "Claude Code-credentials" -w', {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     }).trim()
 
     if (result) {
@@ -97,7 +98,7 @@ function readFromLinuxSecretService(): ClaudeOAuthCredential | null {
     // Try secret-tool (works with GNOME Keyring, KDE Wallet via libsecret)
     const result = execSync(
       'secret-tool lookup service "Claude Code" account "credentials" 2>/dev/null',
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
     ).trim()
 
     if (result) {
@@ -120,6 +121,7 @@ function readFromLinuxSecretService(): ClaudeOAuthCredential | null {
     const result = execSync("pass show claude-code/credentials 2>/dev/null", {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     }).trim()
 
     if (result) {
@@ -267,6 +269,7 @@ export function isClaudeCliInstalled(): boolean {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, PATH: fullPath },
+      windowsHide: true,
     })
     return true
   } catch {
@@ -295,6 +298,7 @@ export function runClaudeSetupToken(
       stdio: ["ignore", "pipe", "pipe"],
       shell: true,
       env: { ...process.env, PATH: fullPath },
+      windowsHide: true,
     })
 
     let stdout = ""

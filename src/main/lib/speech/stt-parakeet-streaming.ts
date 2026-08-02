@@ -205,7 +205,10 @@ class StreamingSidecar {
     if (this.child && !this.child.killed) return
     const executable = findParakeetSidecar()
     if (!executable) throw new Error("Parakeet streaming sidecar is not prepared")
-    const child = spawn(executable, [], { stdio: ["pipe", "pipe", "pipe"] })
+    const child = spawn(executable, [], {
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    })
     this.child = child
     readline.createInterface({ input: child.stdout }).on("line", (line) => {
       try {

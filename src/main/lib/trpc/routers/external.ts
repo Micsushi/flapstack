@@ -120,7 +120,7 @@ export const externalRouter = router({
         try {
           // Check if the command exists first
           const lookup = editorLookupCommand(process.platform, editor.cmd)
-          execFileSync(lookup.command, lookup.args, { stdio: "ignore" })
+          execFileSync(lookup.command, lookup.args, { stdio: "ignore", windowsHide: true })
           await spawnExternalCommand(process.platform, editor.cmd, editor.args, {
             cwd: cwd || undefined,
           })

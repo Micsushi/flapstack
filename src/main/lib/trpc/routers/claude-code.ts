@@ -103,6 +103,7 @@ async function hasLoggedInClaudeCli(): Promise<boolean> {
     const shellEnv = getClaudeShellEnvironment()
     const { stdout } = await execFileAsync(getBundledClaudeBinaryPath(), ["auth", "status"], {
       env: { ...process.env, ...shellEnv },
+      windowsHide: true,
     })
     const status = JSON.parse(stdout) as { loggedIn?: boolean }
     loggedIn = status.loggedIn === true
@@ -226,6 +227,7 @@ function startLocalClaudeAuthSession(): LocalClaudeAuthStatus {
   const child = spawn(getBundledClaudeBinaryPath(), ["auth", "login"], {
     env: { ...process.env, ...shellEnv },
     stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
   })
   const status: LocalClaudeAuthStatus = {
     flowId,

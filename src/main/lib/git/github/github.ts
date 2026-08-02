@@ -39,7 +39,7 @@ export async function fetchGitHubPRStatus(worktreePath: string): Promise<GitHubS
     const { stdout: branchOutput } = await execFileAsync(
       "git",
       ["rev-parse", "--abbrev-ref", "HEAD"],
-      { cwd: worktreePath },
+      { cwd: worktreePath, windowsHide: true },
     )
     const branchName = branchOutput.trim()
 

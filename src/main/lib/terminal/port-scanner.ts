@@ -77,7 +77,7 @@ async function getListeningPortsLsof(pids: number[]): Promise<PortInfo[]> {
     const { stdout: output } = await execFileAsync(
       "sh",
       ["-c", `lsof -p ${pidArg} -iTCP -sTCP:LISTEN -P -n 2>/dev/null || true`],
-      { maxBuffer: 10 * 1024 * 1024, timeout: 5000 },
+      { maxBuffer: 10 * 1024 * 1024, timeout: 5000, windowsHide: true },
     )
 
     if (!output.trim()) return []
@@ -134,6 +134,7 @@ async function getListeningPortsWindows(pids: number[]): Promise<PortInfo[]> {
     const { stdout: output } = await execFileAsync("netstat", ["-ano"], {
       maxBuffer: 10 * 1024 * 1024,
       timeout: 5000,
+      windowsHide: true,
     })
 
     const pidSet = new Set(pids)
@@ -213,7 +214,7 @@ async function getProcessNameWindowsAsync(pid: number): Promise<string> {
     const { stdout: output } = await execFileAsync(
       "wmic",
       ["process", "where", `processid=${pid}`, "get", "name"],
-      { timeout: 2000 },
+      { timeout: 2000, windowsHide: true },
     )
     const lines = output.trim().split("\n")
     if (lines.length >= 2) {
@@ -226,7 +227,7 @@ async function getProcessNameWindowsAsync(pid: number): Promise<string> {
       const { stdout: output } = await execFileAsync(
         "powershell",
         ["-Command", `(Get-Process -Id ${pid}).ProcessName`],
-        { timeout: 2000 },
+        { timeout: 2000, windowsHide: true },
       )
       name = output.trim() || "unknown"
     } catch {
@@ -260,7 +261,7 @@ export async function getProcessName(pid: number): Promise<string> {
       const { stdout: output } = await execFileAsync(
         "sh",
         ["-c", `ps -p ${pid} -o comm= 2>/dev/null || true`],
-        { timeout: 2000 },
+        { timeout: 2000, windowsHide: true },
       )
       const parsedName = output.trim()
       // On macOS, comm may be truncated. The full path can be gotten with -o command=

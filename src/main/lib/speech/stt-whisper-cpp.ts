@@ -457,7 +457,7 @@ function getSpeechDataDir() {
 
 function execFileAsync(command: string, args: string[], options: { timeout?: number } = {}) {
   return new Promise<void>((resolve, reject) => {
-    execFileCallback(command, args, options, (error) => {
+    execFileCallback(command, args, { ...options, windowsHide: true }, (error) => {
       if (error) reject(error)
       else resolve()
     })
@@ -466,7 +466,7 @@ function execFileAsync(command: string, args: string[], options: { timeout?: num
 
 function execFileCapture(command: string, args: string[], options: { timeout?: number } = {}) {
   return new Promise<string>((resolve, reject) => {
-    execFileCallback(command, args, options, (error, stdout, stderr) => {
+    execFileCallback(command, args, { ...options, windowsHide: true }, (error, stdout, stderr) => {
       const output = `${stdout || ""}\n${stderr || ""}`
       if (error && !output.trim()) reject(error)
       else resolve(output)

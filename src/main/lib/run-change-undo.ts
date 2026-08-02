@@ -136,6 +136,7 @@ async function readTreeFile(
         cwd: worktreePath,
         encoding: "buffer",
         maxBuffer: 128 * 1024 * 1024,
+        windowsHide: true,
       },
     )
     const entry = treeOutput.subarray(
@@ -154,6 +155,7 @@ async function readTreeFile(
       cwd: worktreePath,
       encoding: "buffer",
       maxBuffer: 128 * 1024 * 1024,
+      windowsHide: true,
     })
     return {
       content: Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout),
@@ -253,7 +255,7 @@ export async function planInverseFileContent(
       const { stdout } = await execFileAsync(
         "git",
         ["merge-file", "-p", currentPath, afterPath, beforePath],
-        { encoding: "buffer", maxBuffer: 128 * 1024 * 1024 },
+        { encoding: "buffer", maxBuffer: 128 * 1024 * 1024, windowsHide: true },
       )
       return { result: Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout) }
     } catch (error) {

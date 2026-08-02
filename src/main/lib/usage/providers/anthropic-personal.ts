@@ -119,7 +119,7 @@ function readMacKeychainCredentials(): AnthropicPersonalCredentials | null {
   const result = spawnSync(
     "/usr/bin/security",
     ["find-generic-password", "-s", "Claude Code-credentials", "-a", userInfo().username, "-w"],
-    { encoding: "utf8" },
+    { encoding: "utf8", windowsHide: true },
   )
   return result.status === 0 ? parseCredentials(result.stdout) : null
 }

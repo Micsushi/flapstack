@@ -59,7 +59,7 @@ export interface GitRemoteInfo {
  */
 async function isGitRepo(path: string): Promise<boolean> {
   try {
-    await execAsync("git rev-parse --git-dir", { cwd: path })
+    await execAsync("git rev-parse --git-dir", { cwd: path, windowsHide: true })
     return true
   } catch {
     return false
@@ -147,6 +147,7 @@ export async function getGitRemoteInfo(projectPath: string): Promise<GitRemoteIn
     // Get the remote URL for origin
     const { stdout } = await execAsync("git remote get-url origin", {
       cwd: projectPath,
+      windowsHide: true,
     })
 
     const remoteUrl = stdout.trim()

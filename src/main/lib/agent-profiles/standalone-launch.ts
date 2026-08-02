@@ -1158,7 +1158,7 @@ function resolveWorktree(source: SourceDto, snapshot: ResolvedAgentProfileSnapsh
     registered = execFileSync(
       "git",
       ["-C", source.projectPath, "worktree", "list", "--porcelain"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
     )
   } catch {
     throw new StandaloneAgentLaunchError(

@@ -209,7 +209,7 @@ function getKeychainSecret(key: string): string | null {
   const result = spawnSync(
     "/usr/bin/security",
     ["find-generic-password", "-s", credentialService(), "-a", keychainAccount(key), "-w"],
-    { encoding: "utf8" },
+    { encoding: "utf8", windowsHide: true },
   )
   return result.status === 0 ? result.stdout.trim() || null : null
 }
@@ -222,6 +222,7 @@ function setKeychainSecret(key: string, value: string | null): boolean {
       ["delete-generic-password", "-s", credentialService(), "-a", account],
       {
         encoding: "utf8",
+        windowsHide: true,
       },
     )
     // macOS `security` exits 44 for errSecItemNotFound. Other failures (for
@@ -231,7 +232,12 @@ function setKeychainSecret(key: string, value: string | null): boolean {
   const result = spawnSync(
     "/usr/bin/security",
     ["add-generic-password", "-s", credentialService(), "-a", account, "-U", "-w"],
-    { encoding: "utf8", input: `${value}\n${value}\n`, timeout: 10_000 },
+    {
+      encoding: "utf8",
+      input: `${value}\n${value}\n`,
+      timeout: 10_000,
+      windowsHide: true,
+    },
   )
   return result.status === 0
 }
@@ -242,7 +248,7 @@ export function getUsageSecretAsync(key: string): Promise<string | null> {
     execFile(
       "/usr/bin/security",
       ["find-generic-password", "-s", credentialService(), "-a", keychainAccount(key), "-w"],
-      { encoding: "utf8", timeout: 10_000 },
+      { encoding: "utf8", timeout: 10_000, windowsHide: true },
       (error, stdout) => {
         const value = error ? null : stdout.trim() || null
         resolve(value ?? getUsageSecret(key))
@@ -264,6 +270,7 @@ export function setUsageSecretAsync(key: string, value: string | null): Promise<
     const child = spawn("/usr/bin/security", args, {
       stdio: [value ? "pipe" : "ignore", "ignore", "ignore"],
       timeout: 10_000,
+      windowsHide: true,
     })
     let settled = false
     const finish = (error?: Error) => {
@@ -296,6 +303,7 @@ function linuxSecretArgs(key: string): string[] {
 function getLinuxSecret(key: string): string | null {
   const result = spawnSync("secret-tool", ["lookup", ...linuxSecretArgs(key)], {
     encoding: "utf8",
+    windowsHide: true,
   })
   return result.status === 0 ? result.stdout.replace(/\r?\n$/, "") || null : null
 }
@@ -303,13 +311,16 @@ function getLinuxSecret(key: string): string | null {
 function setLinuxSecret(key: string, value: string | null): boolean {
   const args = linuxSecretArgs(key)
   if (value == null || value === "") {
-    const result = spawnSync("secret-tool", ["clear", ...args], { encoding: "utf8" })
+    const result = spawnSync("secret-tool", ["clear", ...args], {
+      encoding: "utf8",
+      windowsHide: true,
+    })
     return result.status === 0 || result.status === 1
   }
   const result = spawnSync(
     "secret-tool",
     ["store", "--label=Flapstack usage credential", ...args],
-    { encoding: "utf8", input: value },
+    { encoding: "utf8", input: value, windowsHide: true },
   )
   return result.status === 0
 }

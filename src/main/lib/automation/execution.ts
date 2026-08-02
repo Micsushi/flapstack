@@ -1207,6 +1207,7 @@ function assertRegisteredWorktree(
         {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "ignore"],
+          windowsHide: true,
         },
       )
         .split("\n")

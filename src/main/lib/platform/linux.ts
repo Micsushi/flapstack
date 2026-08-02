@@ -149,17 +149,17 @@ export class LinuxPlatformProvider extends BasePlatformProvider {
       // Remove existing if present
       if (existsSync(installPath)) {
         try {
-          await execAsync(`rm -f ${installPath}`)
+          await execAsync(`rm -f ${installPath}`, { windowsHide: true })
         } catch {
-          await execAsync(`sudo rm -f ${installPath}`)
+          await execAsync(`sudo rm -f ${installPath}`, { windowsHide: true })
         }
       }
 
       // Create symlink - try without sudo first
       try {
-        await execAsync(`ln -s "${sourcePath}" ${installPath}`)
+        await execAsync(`ln -s "${sourcePath}" ${installPath}`, { windowsHide: true })
       } catch {
-        await execAsync(`sudo ln -s "${sourcePath}" ${installPath}`)
+        await execAsync(`sudo ln -s "${sourcePath}" ${installPath}`, { windowsHide: true })
       }
 
       console.log("[CLI] Installed flapstack command to", installPath)
@@ -183,9 +183,9 @@ export class LinuxPlatformProvider extends BasePlatformProvider {
 
       // Try without sudo first
       try {
-        await execAsync(`rm -f ${installPath}`)
+        await execAsync(`rm -f ${installPath}`, { windowsHide: true })
       } catch {
-        await execAsync(`sudo rm -f ${installPath}`)
+        await execAsync(`sudo rm -f ${installPath}`, { windowsHide: true })
       }
 
       console.log("[CLI] Uninstalled flapstack command")

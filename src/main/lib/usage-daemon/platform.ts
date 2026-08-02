@@ -34,7 +34,11 @@ export interface DaemonInstallParams {
 
 export type DaemonCommandRunner = (command: string, args: string[]) => string
 const runDaemonCommand: DaemonCommandRunner = (command, args) =>
-  execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+  execFileSync(command, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    windowsHide: true,
+  })
 
 function commandExitStatus(error: unknown): number | null {
   if (!error || typeof error !== "object" || !("status" in error)) return null
@@ -175,9 +179,12 @@ export function installMacLaunchAgent(params: DaemonInstallParams): void {
   mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true })
   writeFileSync(path, buildLaunchAgentPlist({ ...params, serviceId }), { mode: 0o600 })
   try {
-    execFileSync("launchctl", ["bootout", launchctlDomain(), path], { stdio: "ignore" })
+    execFileSync("launchctl", ["bootout", launchctlDomain(), path], {
+      stdio: "ignore",
+      windowsHide: true,
+    })
   } catch {}
-  execFileSync("launchctl", ["bootstrap", launchctlDomain(), path])
+  execFileSync("launchctl", ["bootstrap", launchctlDomain(), path], { windowsHide: true })
 }
 
 export function windowsDaemonScriptPath(configDir: string): string {
@@ -403,8 +410,10 @@ export function installLinuxSystemdUserService(params: DaemonInstallParams): voi
   const path = systemdUserUnitPath(serviceId)
   mkdirSync(join(homedir(), ".config", "systemd", "user"), { recursive: true })
   writeFileSync(path, buildSystemdUserUnit(params), { mode: 0o600 })
-  execFileSync("systemctl", ["--user", "daemon-reload"])
-  execFileSync("systemctl", ["--user", "enable", "--now", unitName])
+  execFileSync("systemctl", ["--user", "daemon-reload"], { windowsHide: true })
+  execFileSync("systemctl", ["--user", "enable", "--now", unitName], {
+    windowsHide: true,
+  })
 }
 
 export function uninstallLinuxSystemdUserServiceWithRunner(
@@ -616,7 +625,7 @@ export function uninstallMacLaunchAgent(serviceId?: string | null): void {
     path,
     domain: launchctlDomain(),
     label: serviceLabel(LAUNCH_AGENT_LABEL, serviceId),
-    run: (args, options) => execFileSync("launchctl", args, options),
+    run: (args, options) => execFileSync("launchctl", args, { ...options, windowsHide: true }),
     remove: (target) => rmSync(target, { force: true }),
   })
 }
