@@ -9,7 +9,7 @@ import {
 import { desktopViewAtom } from "../agents/atoms"
 import { AgentsAppearanceTab } from "../../components/dialogs/settings-tabs/agents-appearance-tab"
 import { AgentsDebugTab } from "../../components/dialogs/settings-tabs/agents-debug-tab"
-import { AgentsMcpTab } from "../../components/dialogs/settings-tabs/agents-mcp-tab"
+import { AgentsPluginsHubTab } from "../../components/dialogs/settings-tabs/agents-plugins-hub-tab"
 import { AgentsModelsTab } from "../../components/dialogs/settings-tabs/agents-models-tab"
 import { AgentsRuntimesTab } from "../../components/dialogs/settings-tabs/agents-runtimes-tab"
 import { AgentsLocalModelsTab } from "../../components/dialogs/settings-tabs/agents-local-models-tab"
@@ -108,13 +108,13 @@ export function SettingsContent() {
       case "keyboard":
         return <AgentsKeyboardTab />
       case "skills":
-        return <AgentsProviderExtensionsTab initialKind="skill" />
+        return <AgentsPluginsHubTab initialView="skills" />
       case "agents":
         return <AgentsProviderExtensionsTab initialKind="custom-agent" />
       case "mcp":
-        return <AgentsMcpTab />
+        return <AgentsPluginsHubTab initialView="mcp" />
       case "plugins":
-        return <AgentsProviderExtensionsTab initialKind="plugin" />
+        return <AgentsPluginsHubTab initialView="plugins" />
       case "projects":
         return <AgentsProjectsTab />
       case "usage":

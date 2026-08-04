@@ -136,12 +136,12 @@ export function SettingsSidebar() {
   )
   const advancedTabs = useMemo(
     () =>
-      getVisibleSettingsTabs("advanced", { showDevelopment: showDebugTab, betaFeatures }).map(
-        (tab) => ({
+      getVisibleSettingsTabs("advanced", { showDevelopment: showDebugTab, betaFeatures })
+        .filter((tab) => tab.id !== "skills" && tab.id !== "mcp")
+        .map((tab) => ({
           ...tab,
           icon: SETTINGS_TAB_ICONS[tab.id] ?? SlidersFilledIcon,
-        }),
-      ),
+        })),
     [betaFeatures, showDebugTab],
   )
 
@@ -339,7 +339,11 @@ export function SettingsSidebar() {
                 <TabButton
                   key={tab.id}
                   tab={tab}
-                  isActive={activeTab === tab.id}
+                  isActive={
+                    tab.id === "plugins" && ["plugins", "skills", "mcp"].includes(activeTab)
+                      ? true
+                      : activeTab === tab.id
+                  }
                   onClick={() => handleTabClick(tab.id)}
                 />
               ))}

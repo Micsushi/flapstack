@@ -186,8 +186,8 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
   {
     id: "plugins",
     label: "Plugins",
-    description: "Manage plugin-provided commands and skills",
-    keywords: ["extension", "marketplace", "install"],
+    description: "Manage plugins, apps, MCP servers, and skills in one place",
+    keywords: ["extension", "app", "connector", "marketplace", "install", "mcp", "skill"],
     section: "advanced",
     released: true,
   },

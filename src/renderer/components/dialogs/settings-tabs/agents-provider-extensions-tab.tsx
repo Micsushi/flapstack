@@ -202,8 +202,10 @@ const emptyDraft: Draft = {
 
 export function AgentsProviderExtensionsTab({
   initialKind = "all",
+  embedded = false,
 }: {
   initialKind?: ExtensionManagerKind
+  embedded?: boolean
 }) {
   const betaFeatures = useBetaFeatures()
   const selectedProject = useAtomValue(selectedProjectAtom)
@@ -813,12 +815,19 @@ export function AgentsProviderExtensionsTab({
       <aside className="flex w-96 shrink-0 flex-col border-r border-border/70">
         <div className="space-y-2 border-b border-border/70 p-3">
           <div className="flex items-center justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-semibold">Extension Manager</h2>
-              <p className="text-[10px] text-muted-foreground">
-                Native truth, policy, and copy support
+            {!embedded && (
+              <div>
+                <h2 className="text-sm font-semibold">Extension Manager</h2>
+                <p className="text-[10px] text-muted-foreground">
+                  Native truth, policy, and copy support
+                </p>
+              </div>
+            )}
+            {embedded && (
+              <p className="text-xs font-medium text-muted-foreground">
+                {kindLabels[initialKind] ?? "Extensions"}
               </p>
-            </div>
+            )}
             <Button
               variant="ghost"
               size="icon"
