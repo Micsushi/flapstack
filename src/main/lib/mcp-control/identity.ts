@@ -4,6 +4,7 @@ import { z } from "zod"
 import { parseCustomPermissionToggles, parsePermissionMode } from "../permissions"
 import type { McpCallerIdentity, McpCallerStore } from "./types"
 import { readDurableAgentProfileRuntimeAuthority } from "../agent-profiles/runtime-authority"
+import { canonicalMcpChatScope } from "./scope"
 
 const callerEnvironmentSchema = z.object({
   FLAPSTACK_MCP_CHAT_ID: z.string().trim().min(1),
@@ -62,6 +63,8 @@ export function resolveTrustedMcpCaller(
   return {
     chatId: chat.id,
     runId: run?.id,
+    ...(chat.projectId !== undefined ? { projectId: chat.projectId } : {}),
+    ...(chat.taskId !== undefined ? { taskId: chat.taskId } : {}),
     permissionMode: mode,
     customPermissions: customPermissions ?? undefined,
     ...(run?.profileRuntimeAuthority
@@ -93,12 +96,20 @@ export function createSqliteMcpCallerStore(
   return {
     findChat(chatId) {
       const row = query(
-        "SELECT id, permission_mode, archived_at, mcp_exposure_enabled FROM chats WHERE id = ?",
+        `SELECT c.id, c.scope, c.project_id, c.task_id, c.permission_mode, c.archived_at,
+                c.mcp_exposure_enabled, p.id valid_project_id, t.project_id task_project_id
+         FROM chats c
+         LEFT JOIN projects p ON p.id = c.project_id AND p.archived_at IS NULL
+         LEFT JOIN tasks t ON t.id = c.task_id AND t.archived_at IS NULL
+         WHERE c.id = ?`,
         [chatId],
       )
-      return row
+      const scope = row ? canonicalMcpChatScope(row) : null
+      return row && scope
         ? {
-            id: String(row.id),
+            id: scope.chatId,
+            projectId: scope.projectId,
+            taskId: scope.taskId,
             permissionMode: typeof row.permission_mode === "string" ? row.permission_mode : null,
             archived: row.archived_at != null,
             exposureEnabled: row.mcp_exposure_enabled === 1,

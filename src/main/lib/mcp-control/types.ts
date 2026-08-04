@@ -16,6 +16,8 @@ export type McpControlTool = {
 export type McpCallerIdentity = {
   chatId: string
   runId?: string
+  projectId?: string | null
+  taskId?: string | null
   permissionMode?: PermissionMode
   customPermissions?: CustomPermissionToggles
   profileRuntimeAuthority?: AgentProfileRuntimeAuthority
@@ -23,6 +25,8 @@ export type McpCallerIdentity = {
 
 export type McpCallerRecord = {
   id: string
+  projectId?: string | null
+  taskId?: string | null
   permissionMode: string | null
   archived: boolean
   exposureEnabled: boolean

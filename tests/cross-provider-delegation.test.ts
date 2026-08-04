@@ -408,6 +408,56 @@ describe("cross-provider Runtime delegation", () => {
     expect(retry.attemptId).not.toBe(first.attemptId)
   })
 
+  it("reconciles durable running attempts on startup without replay", async () => {
+    const fixture = createFixture("codex")
+    const runtime = new RuntimeStub()
+    const service = new CrossProviderDelegationService(fixture.path, runtime)
+    const request = {
+      sourceChatId: "source",
+      targetHarness: "claude-code" as const,
+      targetModel: "claude",
+      preference: "claude-code" as const,
+      requestId: "startup-recovery",
+      objective: "Review.",
+    }
+    const preview = service.preview(request)
+    const created = service.delegate({ ...request, confirmedPreviewDigest: preview.digest })
+    const secondRequest = { ...request, requestId: "startup-recovery-second" }
+    const secondPreview = service.preview(secondRequest)
+    const second = service.delegate({
+      ...secondRequest,
+      confirmedPreviewDigest: secondPreview.digest,
+    })
+    await Promise.resolve()
+    expect(runtime.launches).toHaveLength(2)
+
+    const restarted = new CrossProviderDelegationService(fixture.path, runtime)
+    await expect(restarted.recoverRunningAttempts(1)).resolves.toEqual({
+      attempted: 1,
+      failed: 0,
+      remaining: 2,
+    })
+    await expect(restarted.recoverRunningAttempts(1)).resolves.toEqual({
+      attempted: 1,
+      failed: 0,
+      remaining: 2,
+    })
+    runtime.state = "completed"
+    await expect(restarted.recoverRunningAttempts(1)).resolves.toEqual({
+      attempted: 1,
+      failed: 0,
+      remaining: 1,
+    })
+    await expect(restarted.recoverRunningAttempts(1)).resolves.toEqual({
+      attempted: 1,
+      failed: 0,
+      remaining: 0,
+    })
+    expect(runtime.launches).toHaveLength(2)
+    expect(await restarted.reconcile(created.attemptId)).toMatchObject({ status: "success" })
+    expect(await restarted.reconcile(second.attemptId)).toMatchObject({ status: "success" })
+  })
+
   it("lets provider terminal truth win cancellation and keeps one durable usage/result projection", async () => {
     const fixture = createFixture("claude-code")
     const runtime = new RuntimeStub()

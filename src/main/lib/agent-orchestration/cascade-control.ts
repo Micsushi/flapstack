@@ -1,7 +1,10 @@
 import Database from "better-sqlite3"
 import { createHash, randomUUID } from "node:crypto"
 import { recordOrchestrationTransition } from "./activity-projection"
-import type { RuntimeLaunchCoordinatorPort } from "./runtime-launch-port"
+import type {
+  RuntimeLaunchCoordinatorPort,
+  RuntimeReconciliationState,
+} from "./runtime-launch-port"
 
 type Row = Record<string, unknown>
 const TARGET_CLAIM_SECONDS = 300
@@ -151,15 +154,25 @@ export class CascadeControlService {
       claimDb.close()
       if (!target) continue
       try {
+        let lifecycleState: RuntimeReconciliationState | "no-run" = "no-run"
         if (target.run_id)
-          await this.coordinateRuntime(String(intent.action), String(target.run_id), intentId)
+          lifecycleState = (
+            await this.coordinateRuntime(String(intent.action), String(target.run_id), intentId)
+          ).lifecycleState
         const finishDb = new Database(this.databasePath)
         finishDb
-          .prepare(
-            `UPDATE orchestration_control_targets SET state = 'reconciled', error = NULL, updated_at = ?
-             WHERE intent_id = ? AND agent_id = ? AND state = 'processing'`,
-          )
-          .run(epoch(), intentId, target.agent_id)
+          .transaction(() => {
+            const updated = finishDb
+              .prepare(
+                `UPDATE orchestration_control_targets SET state = 'reconciled', error = NULL, updated_at = ?
+                 WHERE intent_id = ? AND agent_id = ? AND state = 'processing'`,
+              )
+              .run(epoch(), intentId, target.agent_id)
+            if (updated.changes === 1 && intent.action === "stop") {
+              projectStopTarget(finishDb, String(target.agent_id), lifecycleState)
+            }
+          })
+          .immediate()
         finishDb.close()
       } catch (error) {
         const finishDb = new Database(this.databasePath)
@@ -175,6 +188,7 @@ export class CascadeControlService {
 
     const db = new Database(this.databasePath)
     try {
+      if (intent.action === "stop") projectNoRunStopTargets(db, intentId)
       const counts = db
         .prepare(
           "SELECT state, count(*) count FROM orchestration_control_targets WHERE intent_id = ? GROUP BY state",
@@ -270,6 +284,45 @@ function applyCompletedControl(db: Database.Database, intent: Row) {
   ).run(now, taskId)
 }
 
+function projectStopTarget(
+  db: Database.Database,
+  agentId: string,
+  lifecycleState: RuntimeReconciliationState | "no-run",
+) {
+  const status =
+    lifecycleState === "completed"
+      ? "completed"
+      : lifecycleState === "failed"
+        ? "failed"
+        : "stopped"
+  const now = epoch()
+  db.prepare(
+    `UPDATE orchestration_agents
+     SET status = ?, stop_reason = ?, completed_at = COALESCE(completed_at, ?),
+         progress_percent = CASE WHEN ? = 'completed' THEN 100 ELSE progress_percent END,
+         lease_owner = ?, lease_expires_at = NULL, updated_at = ?
+     WHERE id = ? AND status in ('queued','active')`,
+  ).run(
+    status,
+    status === "stopped" ? "cascade-stop-intent" : null,
+    now,
+    status,
+    status === "stopped" ? "cancellation-consumed" : null,
+    now,
+    agentId,
+  )
+}
+
+function projectNoRunStopTargets(db: Database.Database, intentId: string) {
+  const targets = db
+    .prepare(
+      `SELECT agent_id FROM orchestration_control_targets
+       WHERE intent_id = ? AND state = 'no-run'`,
+    )
+    .all(intentId) as Array<{ agent_id: string }>
+  for (const target of targets) projectStopTarget(db, target.agent_id, "no-run")
+}
+
 function buildPreview(
   db: Database.Database,
   taskId: string,
@@ -279,13 +332,14 @@ function buildPreview(
     .prepare("SELECT coordination_engine FROM task_orchestrations WHERE task_id = ?")
     .get(taskId) as Row | undefined
   if (!orchestration) throw new Error("Orchestration not found.")
-  const rows = db
+  const allRows = db
     .prepare(
       `SELECT id, run_id, parent_agent_id, status, lease_expires_at
        FROM orchestration_agents WHERE task_id = ? ORDER BY depth DESC, id`,
     )
     .all(taskId) as Row[]
-  const ids = new Set(rows.map((row) => String(row.id)))
+  const ids = new Set(allRows.map((row) => String(row.id)))
+  const rows = allRows.filter((row) => ["queued", "active"].includes(String(row.status)))
   const uncertain = db
     .prepare(
       `SELECT count(*) count FROM coordination_action_intents

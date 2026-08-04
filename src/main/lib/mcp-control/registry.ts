@@ -1002,7 +1002,13 @@ function approvalDecisionError(
 }
 
 function snapshotCaller(caller: McpCallerIdentity): McpCallerIdentity {
-  return { chatId: caller.chatId, runId: caller.runId, permissionMode: caller.permissionMode }
+  return {
+    chatId: caller.chatId,
+    runId: caller.runId,
+    projectId: caller.projectId,
+    taskId: caller.taskId,
+    permissionMode: caller.permissionMode,
+  }
 }
 
 function applySelfReference(

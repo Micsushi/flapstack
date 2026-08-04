@@ -2137,6 +2137,9 @@ describe("Stage 6 reusable personality references", () => {
         "Exact Personality " + personalityId + "@2",
       )
       expect(resolvedAgentProfileInstructions(snapshot)).toContain(personality.body)
+      expect(resolvedAgentProfileInstructions(snapshot)).toContain(
+        "tone=warm; verbosity=terse; formatting=markdown; Outcome, evidence, blockers.",
+      )
       expect(resolver.getSnapshot(snapshot.snapshotId).personality?.digest).toBe("a".repeat(64))
     } finally {
       configureAgentPersonalityResolutionPort(null)

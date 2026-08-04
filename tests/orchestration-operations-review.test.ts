@@ -1195,6 +1195,87 @@ describe("cascade review invariants", () => {
     expect(readTaskStatus()).toBe("running")
     expect(resume).toHaveBeenCalledWith("pause-run")
   })
+
+  it("does not send pause or resume controls to terminal agents", async () => {
+    seedAgent("active-agent", "active-run")
+    seedAgent("completed-agent", "completed-run")
+    const db = new Database(databasePath)
+    db.prepare(
+      "UPDATE orchestration_agents SET status = 'completed', completed_at = 2 WHERE id = 'completed-agent'",
+    ).run()
+    db.prepare(
+      "UPDATE agent_runs SET status = 'success', completed_at = 2 WHERE id = 'completed-run'",
+    ).run()
+    db.prepare(
+      "UPDATE orchestration_agents SET parent_agent_id = 'completed-agent' WHERE id = 'active-agent'",
+    ).run()
+    db.close()
+    const pause = vi.fn(async (runId: string) => reference(runId, "running"))
+    const resume = vi.fn(async (runId: string) => reference(runId, "running"))
+    const control = new CascadeControlService(databasePath, { ...runtime(), pause, resume })
+
+    expect(control.preview("task-1", "pause").agents).toEqual([
+      expect.objectContaining({ agentId: "active-agent", orphaned: false }),
+    ])
+
+    const pauseIntent = control.request("task-1", "pause")
+    await expect(control.reconcile(pauseIntent.intentId)).resolves.toMatchObject({
+      state: "completed",
+    })
+    expect(pause).toHaveBeenCalledTimes(1)
+    expect(pause).toHaveBeenCalledWith("active-run")
+
+    const resumeIntent = control.request("task-1", "resume")
+    await expect(control.reconcile(resumeIntent.intentId)).resolves.toMatchObject({
+      state: "completed",
+    })
+    expect(resume).toHaveBeenCalledTimes(1)
+    expect(resume).toHaveBeenCalledWith("active-run")
+  })
+
+  it("lets terminal completion win a stop race", async () => {
+    seedAgent("stop-agent", "stop-run")
+    const control = new CascadeControlService(databasePath, runtime())
+    const intent = control.request("task-1", "stop")
+
+    await expect(control.reconcile(intent.intentId)).resolves.toMatchObject({ state: "completed" })
+    const db = new Database(databasePath, { readonly: true })
+    expect(
+      db
+        .prepare(
+          "SELECT status, stop_reason, completed_at FROM orchestration_agents WHERE id = 'stop-agent'",
+        )
+        .get(),
+    ).toMatchObject({
+      status: "completed",
+      stop_reason: null,
+      completed_at: expect.any(Number),
+    })
+    db.close()
+  })
+
+  it("projects partial stop truth and consumes acknowledged cancellations", async () => {
+    seedAgent("cancelled-agent", "cancelled-run")
+    seedAgent("failed-agent", "failed-run")
+    const cancel = vi.fn(async (runId: string) => {
+      if (runId === "failed-run") throw new Error("provider unavailable")
+      return reference(runId, "cancelled")
+    })
+    const control = new CascadeControlService(databasePath, { ...runtime(), cancel })
+    const intent = control.request("task-1", "stop")
+
+    await expect(control.reconcile(intent.intentId)).resolves.toMatchObject({ state: "partial" })
+    const db = new Database(databasePath)
+    expect(
+      db.prepare("SELECT id, status, lease_owner FROM orchestration_agents ORDER BY id").all(),
+    ).toEqual([
+      { id: "cancelled-agent", status: "stopped", lease_owner: "cancellation-consumed" },
+      { id: "failed-agent", status: "active", lease_owner: null },
+    ])
+    db.prepare("UPDATE agent_runs SET status = 'cancelled' WHERE id = 'cancelled-run'").run()
+    db.close()
+    expect(createAgentOrchestrationService(databasePath).listCancellationRequests()).toEqual([])
+  })
 })
 
 describe("Codex durability review invariants", () => {
@@ -1945,7 +2026,10 @@ function runtime(): RuntimeLaunchCoordinatorPort {
     cancel: vi.fn(async (runId) => reference(runId, "completed")),
   }
 }
-function reference(runId: string, lifecycleState: "running" | "completed" | "failed") {
+function reference(
+  runId: string,
+  lifecycleState: "running" | "completed" | "cancelled" | "failed",
+) {
   return {
     runId,
     chatId: "chat-1",

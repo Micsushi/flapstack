@@ -96,21 +96,20 @@ import {
   filterClaudeExtensionMcpServers,
   getClaudeExtensionSdkOptions,
 } from "../../extension-management"
-import { isWithinProjectBoundary } from "../../permission-boundary"
 import { buildAgentsOption } from "./agent-utils"
 import { getApprovedPluginMcpServers, getEnabledPlugins } from "./claude-settings"
 import {
   buildClaudePermissionApplication,
   getGlobalDefault,
-  isClaudeReadOnlyToolAllowed,
-  isCustomToolAllowed,
   mapClaudeSdkPermissionMode,
   parseCustomPermissionToggles,
   parsePermissionMode,
   resolveForRun,
+  resolveClaudeRuntimeToolPermissionWithoutBridge,
   type PermissionMode,
 } from "../../permissions"
 import { updateSubChatRunStatusIfAuthoritative } from "../../run-status-authority"
+import { normalizeClaudeRuntimeEffort } from "../../agent-runtime/claude-code/controls"
 import {
   findMissingClaudeSessionMessage,
   isMissingClaudeSessionError,
@@ -1192,11 +1191,9 @@ export const claudeRouter = router({
                 `The frozen Agent Profile requires ${chatProfile.launch.harness}; this Chat opened ${HARNESS}.`,
               )
             }
-            if (chatProfile?.launch.reasoningEffort === "minimal") {
-              throw new Error(
-                "The frozen Agent Profile requests Minimal effort, which Claude Code does not support.",
-              )
-            }
+            const runtimeEffort = normalizeClaudeRuntimeEffort(
+              chatProfile?.launch.reasoningEffort ?? input.effort,
+            )
 
             // 1. Get existing messages from DB
             const existing = db
@@ -1960,7 +1957,11 @@ export const claudeRouter = router({
               promptMessageId: userMessage.id,
               customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
               images: input.images,
-              reasoningEffort: chatProfile?.launch.reasoningEffort ?? undefined,
+              reasoningEffort:
+                chatProfile?.launch.reasoningEffort == null ||
+                chatProfile.launch.reasoningEffort === "minimal"
+                  ? undefined
+                  : chatProfile.launch.reasoningEffort,
               serviceTier: chatProfile?.launch.serviceTier,
             })
             agentRunId = run.id
@@ -2287,43 +2288,14 @@ ${prompt}
                     }
                   }
 
-                  if (
-                    resolvedPermissionMode === "read-only" &&
-                    !isClaudeReadOnlyToolAllowed(toolName)
-                  ) {
-                    return {
-                      behavior: "deny",
-                      message: `Tool "${toolName}" blocked by read-only permission mode.`,
-                    }
-                  }
-
-                  if (
-                    resolvedPermissionMode === "custom" &&
-                    !isCustomToolAllowed(customPermissions, toolName)
-                  ) {
-                    return {
-                      behavior: "deny",
-                      message: `Tool "${toolName}" is disabled by custom permissions.`,
-                    }
-                  }
-
-                  if (
-                    resolvedPermissionMode === "custom" &&
-                    /^(Edit|MultiEdit|Write|NotebookEdit)$/i.test(toolName)
-                  ) {
-                    const requestedPath =
-                      typeof toolInput.file_path === "string" ? toolInput.file_path : ""
-                    if (
-                      !requestedPath ||
-                      !(await isWithinProjectBoundary(input.cwd, requestedPath))
-                    ) {
-                      return {
-                        behavior: "deny",
-                        message:
-                          "Custom project edits cannot leave the selected worktree boundary.",
-                      }
-                    }
-                  }
+                  const toolPermission = await resolveClaudeRuntimeToolPermissionWithoutBridge({
+                    mode: resolvedPermissionMode,
+                    customPermissions,
+                    cwd: input.cwd,
+                    toolName,
+                    toolInput,
+                  })
+                  if (toolPermission.behavior === "deny") return toolPermission
 
                   if (input.mode === "plan") {
                     if (toolName === "Edit" || toolName === "Write") {
@@ -2422,10 +2394,7 @@ ${prompt}
                       updatedInput: { questions: (toolInput as any).questions, answers },
                     }
                   }
-                  return {
-                    behavior: "allow",
-                    updatedInput: toolInput,
-                  }
+                  return toolPermission
                 },
                 stderr: (data: string) => {
                   stderrLines.push(data)
@@ -2447,9 +2416,7 @@ ${prompt}
                   isUsingOllama,
                 }),
                 ...(resolvedModel && { model: resolvedModel }),
-                ...((chatProfile?.launch.reasoningEffort ?? input.effort)
-                  ? { effort: chatProfile?.launch.reasoningEffort ?? input.effort }
-                  : {}),
+                ...(runtimeEffort ? { effort: runtimeEffort } : {}),
                 ...(!isUsingOllama && {
                   thinking: input.reasoningEnabled
                     ? { type: "adaptive" as const, display: "summarized" as const }

@@ -5,6 +5,7 @@ import { orchestrationFleetQuerySchema } from "../../../shared/agent-orchestrati
 import { queryOrchestrationFleet } from "../agent-orchestration/fleet"
 import { isBetaFeatureEnabled } from "../beta-features/settings"
 import type { McpCallerIdentity } from "./types"
+import { canonicalMcpChatScope } from "./scope"
 
 const PAGE_MAX = 50
 const pageShape = {
@@ -108,15 +109,22 @@ function timestamp(value: unknown): string | null {
 }
 
 function scopeFor(store: McpReadStore, caller: McpCallerIdentity): Scope {
-  const row = store.get("SELECT id, scope, task_id, project_id FROM chats WHERE id = ?", [
-    caller.chatId,
-  ])
-  if (!row) fail("not-found", "Caller chat no longer exists.")
+  const row = store.get(
+    `SELECT c.id, c.scope, c.task_id, c.project_id, p.id valid_project_id,
+            t.project_id task_project_id
+     FROM chats c
+     LEFT JOIN projects p ON p.id = c.project_id AND p.archived_at IS NULL
+     LEFT JOIN tasks t ON t.id = c.task_id AND t.archived_at IS NULL
+     WHERE c.id = ?`,
+    [caller.chatId],
+  )
+  const scope = row ? canonicalMcpChatScope(row) : null
+  if (!scope) fail("not-found", "Caller chat no longer exists or has invalid scope.")
   return {
-    chatId: String(row.id),
-    kind: String(row.scope),
-    taskId: row.task_id ? String(row.task_id) : null,
-    projectId: row.project_id ? String(row.project_id) : null,
+    chatId: scope.chatId,
+    kind: scope.kind,
+    taskId: scope.taskId,
+    projectId: scope.projectId,
   }
 }
 

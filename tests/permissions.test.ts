@@ -15,6 +15,7 @@ import {
   mapClaudeSdkPermissionMode,
   resolvePermission,
   resolveClaudeRuntimeToolPermission,
+  resolveClaudeRuntimeToolPermissionWithoutBridge,
   setPermissionChangeBehavior,
   setGlobalDefault,
   type PermissionMode,
@@ -336,5 +337,19 @@ describe("permissions", () => {
         toolInput: { command: "git status" },
       }),
     ).resolves.toMatchObject({ behavior: "allow" })
+  })
+
+  it("fails closed when legacy Claude has no approval bridge", async () => {
+    await expect(
+      resolveClaudeRuntimeToolPermissionWithoutBridge({
+        mode: "ask-before-edits",
+        cwd: configDir,
+        toolName: "Write",
+        toolInput: { file_path: join("src", "inside.ts") },
+      }),
+    ).resolves.toMatchObject({
+      behavior: "deny",
+      message: expect.stringMatching(/approval bridge/i),
+    })
   })
 })

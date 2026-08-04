@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { readFileSync } from "node:fs"
 import { buildClaudeRuntimeSdkControls } from "../src/main/lib/agent-runtime/claude-code"
 
 describe("Claude Runtime independent controls", () => {
@@ -46,5 +47,28 @@ describe("Claude Runtime independent controls", () => {
         hookDiagnostics: false,
       }),
     ).toThrow("Unsupported Claude effort")
+  })
+
+  it.each([
+    ["none", undefined],
+    ["minimal", undefined],
+    ["ultra", "max"],
+  ] as const)("normalizes shared %s effort to Claude SDK semantics", (modelEffort, effort) => {
+    expect(
+      buildClaudeRuntimeSdkControls({
+        schemaVersion: 1,
+        modelEffort,
+        modelThinking: null,
+        reasoningDisplay: true,
+        subagentActivity: true,
+        hookDiagnostics: false,
+      }).effort,
+    ).toBe(effort)
+  })
+
+  it("uses the same effort normalization for the legacy chat path", () => {
+    const source = readFileSync("src/main/lib/trpc/routers/claude.ts", "utf8")
+    expect(source).toContain("const runtimeEffort = normalizeClaudeRuntimeEffort(")
+    expect(source).not.toContain("requests Minimal effort")
   })
 })

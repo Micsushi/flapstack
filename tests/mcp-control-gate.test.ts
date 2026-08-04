@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { evaluateMcpGate, evaluateMcpToolGate } from "../src/main/lib/mcp-control/gate"
 import { resolveTrustedMcpCaller } from "../src/main/lib/mcp-control/identity"
+import { canonicalMcpChatScope } from "../src/main/lib/mcp-control/scope"
 import { getMcpControlTool, mcpControlTools } from "../src/main/lib/mcp-control/registry"
 import type {
   McpCallerRecord,
@@ -36,6 +37,8 @@ function createStore(input?: {
           permissionMode: "ask-before-edits",
           archived: false,
           exposureEnabled: true,
+          projectId: "project-1",
+          taskId: "task-1",
         }
       : input.chat
   const run =
@@ -50,12 +53,37 @@ function createStore(input?: {
 }
 
 describe("trusted MCP caller resolution", () => {
+  it("accepts only canonical persisted chat scopes", () => {
+    expect(
+      canonicalMcpChatScope({
+        id: "chat-task",
+        scope: "task",
+        project_id: "project-1",
+        task_id: "task-1",
+        valid_project_id: "project-1",
+        task_project_id: "project-1",
+      }),
+    ).toMatchObject({ kind: "task", projectId: "project-1", taskId: "task-1" })
+    expect(
+      canonicalMcpChatScope({
+        id: "chat-project",
+        scope: "project",
+        project_id: "project-1",
+        task_id: "task-2",
+        valid_project_id: "project-1",
+        task_project_id: "project-2",
+      }),
+    ).toBeNull()
+  })
+
   it("uses the durable run snapshot instead of launcher-provided permission data", () => {
     expect(resolveTrustedMcpCaller({ chatId: "chat-1", runId: "run-1" }, createStore())).toEqual({
       chatId: "chat-1",
       runId: "run-1",
       permissionMode: "full-access",
       customPermissions: undefined,
+      projectId: "project-1",
+      taskId: "task-1",
     })
   })
 

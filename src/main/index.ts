@@ -24,6 +24,7 @@ import {
   withDatabaseOperation,
 } from "./lib/db"
 import { getMainRuntimeLaunchService } from "./lib/main-run-launcher"
+import { CrossProviderDelegationService } from "./lib/agent-runtime/cross-provider-delegation"
 import { createAgentOrchestrationService } from "./lib/agent-orchestration/service"
 import {
   advancePendingWorkflows,
@@ -1157,10 +1158,29 @@ if (gotTheLock) {
                 const runtimeLaunchService = getMainRuntimeLaunchService(databasePath)
                 const pendingRunLauncher = runtimeLaunchService.launch
                 const orchestrationService = createAgentOrchestrationService(databasePath)
+                const runtimeComposition = new CrossProviderDelegationService(
+                  databasePath,
+                  runtimeLaunchService,
+                )
+                let nextRuntimeCompositionRecoveryAt = 0
+                let runtimeCompositionRecoveryPending = true
                 const launchPendingRuns = async () => {
                   if (pendingRunDrainActive) return
                   pendingRunDrainActive = true
                   try {
+                    if (
+                      runtimeCompositionRecoveryPending &&
+                      Date.now() >= nextRuntimeCompositionRecoveryAt
+                    ) {
+                      nextRuntimeCompositionRecoveryAt = Date.now() + 5_000
+                      const recovery = await runtimeComposition.recoverRunningAttempts()
+                      runtimeCompositionRecoveryPending = recovery.remaining > 0
+                      if (recovery.failed > 0) {
+                        console.error(
+                          `[App] ${recovery.failed}/${recovery.attempted} Runtime composition recoveries failed.`,
+                        )
+                      }
+                    }
                     if (isBetaFeatureEnabled("orchestration")) {
                       initializeOrchestrationBetaServices()
                       orchestrationService.tickAll()

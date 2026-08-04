@@ -10,13 +10,25 @@ export type ClaudeRuntimeSdkControls = {
 
 const EFFORT_VALUES = new Set(["low", "medium", "high", "xhigh", "max"])
 
+export function normalizeClaudeRuntimeEffort(
+  effort: string | null | undefined,
+): ClaudeRuntimeSdkControls["effort"] {
+  const normalized =
+    effort == null || effort === "none" || effort === "minimal"
+      ? undefined
+      : effort === "ultra"
+        ? "max"
+        : effort
+  if (normalized !== undefined && !EFFORT_VALUES.has(normalized)) {
+    throw new Error(`Unsupported Claude effort: ${normalized}`)
+  }
+  return normalized as ClaudeRuntimeSdkControls["effort"]
+}
+
 export function buildClaudeRuntimeSdkControls(
   controls: RuntimeLaunchControls,
 ): ClaudeRuntimeSdkControls {
-  const effort = controls.modelEffort
-  if (effort !== null && !EFFORT_VALUES.has(effort)) {
-    throw new Error(`Unsupported Claude effort: ${effort}`)
-  }
+  const effort = normalizeClaudeRuntimeEffort(controls.modelEffort)
 
   const thinking =
     controls.modelThinking === false
@@ -31,7 +43,7 @@ export function buildClaudeRuntimeSdkControls(
   return {
     includePartialMessages: true,
     ...(thinking ? { thinking } : {}),
-    ...(effort ? { effort: effort as ClaudeRuntimeSdkControls["effort"] } : {}),
+    ...(effort ? { effort } : {}),
     forwardSubagentText: controls.subagentActivity,
     includeHookEvents: controls.hookDiagnostics,
   }

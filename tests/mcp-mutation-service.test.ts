@@ -31,6 +31,14 @@ beforeEach(() => {
     .prepare("INSERT INTO tasks (id, project_id, name) VALUES ('task-1', 'project-1', 'Task')")
     .run()
   sqlite
+    .prepare("INSERT INTO projects (id, name, path) VALUES ('project-2', 'Other', '/tmp/other')")
+    .run()
+  sqlite
+    .prepare(
+      "INSERT INTO tasks (id, project_id, name) VALUES ('task-2', 'project-2', 'Other task')",
+    )
+    .run()
+  sqlite
     .prepare(
       "INSERT INTO chats (id, name, scope, project_id, task_id, permission_mode) VALUES ('chat-1', 'Caller', 'task', 'project-1', 'task-1', 'full-access')",
     )
@@ -38,6 +46,16 @@ beforeEach(() => {
   sqlite
     .prepare(
       "INSERT INTO chats (id, name, scope, project_id, task_id, permission_mode) VALUES ('chat-2', 'Target', 'task', 'project-1', 'task-1', 'full-access')",
+    )
+    .run()
+  sqlite
+    .prepare(
+      "INSERT INTO chats (id, name, scope, project_id, permission_mode) VALUES ('chat-project', 'Project caller', 'project', 'project-1', 'full-access')",
+    )
+    .run()
+  sqlite
+    .prepare(
+      "INSERT INTO chats (id, name, scope, project_id, permission_mode) VALUES ('chat-project-target', 'Project target', 'project', 'project-1', 'full-access')",
     )
     .run()
 })
@@ -103,6 +121,64 @@ describe("MCP mutation service", () => {
         { id: "chat-2", scope: "project", projectId: "project-1" },
       ),
     ).resolves.toMatchObject({ ok: false, error: { code: "out-of-scope" } })
+  })
+
+  it("rejects task identity on project-scoped create and move operations", async () => {
+    const service = createMcpMutationService(path)
+    const caller = { chatId: "chat-project", permissionMode: "full-access" as const }
+
+    await expect(
+      service.invoke("create_chat", caller, {
+        name: "Malformed scope",
+        scope: "project",
+        projectId: "project-1",
+        taskId: "task-2",
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "invalid-input" } })
+    await expect(
+      service.invoke("move_chat", caller, {
+        id: "chat-project-target",
+        scope: "project",
+        projectId: "project-1",
+        taskId: "task-2",
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "invalid-input" } })
+
+    expect(
+      sqlite
+        .prepare("SELECT scope, project_id, task_id FROM chats WHERE id = ?")
+        .get("chat-project-target"),
+    ).toEqual({ scope: "project", project_id: "project-1", task_id: null })
+
+    await expect(
+      service.invoke("create_chat", caller, {
+        name: "Matching task scope",
+        scope: "task",
+        projectId: "project-1",
+        taskId: "task-1",
+      }),
+    ).resolves.toMatchObject({ ok: true })
+    await expect(
+      service.invoke("create_chat", caller, {
+        name: "Mismatched task scope",
+        scope: "task",
+        projectId: "project-2",
+        taskId: "task-1",
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "invalid-input" } })
+  })
+
+  it("fails closed for a legacy noncanonical caller scope", async () => {
+    sqlite.prepare("UPDATE chats SET task_id = 'task-2' WHERE id = 'chat-project'").run()
+    const service = createMcpMutationService(path)
+
+    await expect(
+      service.invoke(
+        "create_chat",
+        { chatId: "chat-project", permissionMode: "full-access" },
+        { name: "Must not create", scope: "project", projectId: "project-1" },
+      ),
+    ).resolves.toMatchObject({ ok: false, error: { code: "stale-caller" } })
   })
 
   it("makes archive and restore safe to retry and rejects stale targets", async () => {

@@ -1110,13 +1110,7 @@ function visibleMessages(messagesJson: string): string[] {
 }
 
 function profilePrompt(snapshot: ResolvedAgentProfileSnapshot, context: string) {
-  return [
-    resolvedAgentProfileInstructions(snapshot),
-    `Presentation style only (no authority): tone=${snapshot.presentation.tone}; verbosity=${snapshot.presentation.verbosity}; formatting=${snapshot.presentation.formatting}; ${snapshot.presentation.responseStructure}`,
-    context || null,
-  ]
-    .filter(Boolean)
-    .join("\n\n")
+  return [resolvedAgentProfileInstructions(snapshot), context || null].filter(Boolean).join("\n\n")
 }
 
 function assertLaunchable(snapshot: ResolvedAgentProfileSnapshot) {

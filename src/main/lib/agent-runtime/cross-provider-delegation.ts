@@ -105,6 +105,9 @@ export class CrossProviderDelegationError extends Error {
 }
 
 export class CrossProviderDelegationService {
+  private recoveryCursor = ""
+  private recoveryUpperBound: string | null | undefined
+
   constructor(
     private readonly databasePath: string,
     private readonly runtime: RuntimeDelegationLaunchPort,
@@ -420,6 +423,82 @@ export class CrossProviderDelegationService {
     if (isTerminal(String(row.status))) return referenceFromRow(row, false)
     await this.runtime.cancel(String(row.run_id), reason)
     return await this.reconcile(attemptId)
+  }
+
+  async recoverRunningAttempts(limit = 128): Promise<{
+    attempted: number
+    failed: number
+    remaining: number
+  }> {
+    const requestedLimit = Number.isFinite(limit) ? Math.trunc(limit) : 128
+    const boundedLimit = Math.max(1, Math.min(requestedLimit, 1_000))
+    if (this.recoveryUpperBound === undefined) {
+      const snapshotDb = this.open()
+      try {
+        this.recoveryUpperBound = (
+          snapshotDb
+            .prepare(
+              "SELECT MAX(attempt_id) attempt_id FROM runtime_composition_attempts WHERE status = 'running'",
+            )
+            .get() as { attempt_id: string | null }
+        ).attempt_id
+        this.recoveryCursor = ""
+      } finally {
+        snapshotDb.close()
+      }
+    }
+
+    let attemptIds: string[] = []
+    let hasMore = false
+    if (this.recoveryUpperBound) {
+      const db = this.open()
+      try {
+        const rows = (
+          db
+            .prepare(
+              `SELECT attempt_id FROM runtime_composition_attempts
+               WHERE status = 'running' AND attempt_id > ? AND attempt_id <= ?
+               ORDER BY attempt_id LIMIT ?`,
+            )
+            .all(this.recoveryCursor, this.recoveryUpperBound, boundedLimit + 1) as Array<{
+            attempt_id: string
+          }>
+        ).map((row) => row.attempt_id)
+        hasMore = rows.length > boundedLimit
+        attemptIds = rows.slice(0, boundedLimit)
+      } finally {
+        db.close()
+      }
+    }
+
+    let failed = 0
+    for (const attemptId of attemptIds) {
+      try {
+        await this.reconcile(attemptId)
+      } catch {
+        try {
+          await this.finalize(attemptId, "uncertain")
+        } catch {
+          failed += 1
+        }
+      }
+    }
+    if (attemptIds.length > 0) this.recoveryCursor = attemptIds.at(-1)!
+    if (!hasMore) this.recoveryUpperBound = undefined
+
+    const remainingDb = this.open()
+    try {
+      const remaining = (
+        remainingDb
+          .prepare(
+            "SELECT COUNT(*) count FROM runtime_composition_attempts WHERE status = 'running'",
+          )
+          .get() as { count: number }
+      ).count
+      return { attempted: attemptIds.length, failed, remaining }
+    } finally {
+      remainingDb.close()
+    }
   }
 
   private launch(runId: string): void {

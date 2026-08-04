@@ -37,10 +37,23 @@ import {
 } from "../agent-runtime/snapshot"
 import { normalizeChatMode, resolveChatModePermission } from "../../../shared/chat-mode"
 import { VisualArtifactStore } from "../visual-capture/artifact-store"
+import { canonicalMcpChatScope } from "./scope"
 
 const itemSchema = z.enum(["project", "task", "chat"])
 const name = z.string().trim().min(1).max(200)
 const id = z.string().trim().min(1).max(128)
+
+function validateChatDestination(input: {
+  scope: "global" | "project" | "task"
+  projectId?: string
+  taskId?: string
+}): boolean {
+  return !(
+    (input.scope === "global" && (input.projectId || input.taskId)) ||
+    (input.scope === "project" && (!input.projectId || input.taskId)) ||
+    (input.scope === "task" && !input.taskId)
+  )
+}
 
 const schemas = {
   spawn_thread: threadSpawnRequestSchema,
@@ -126,6 +139,11 @@ export function createMcpMutationService(
       const input = schema.safeParse(rawInput)
       if (!input.success)
         return fail("invalid-input", input.error.issues[0]?.message ?? "Invalid input.")
+      if (
+        (operation === "create_chat" || operation === "move_chat") &&
+        !validateChatDestination(input.data as z.infer<typeof schemas.create_chat>)
+      )
+        return fail("invalid-input", "Scope identity must match the chat destination.")
       const db = openAppDatabase(databasePath)
       try {
         db.pragma("foreign_keys = ON")
@@ -451,15 +469,21 @@ type Scope = { chatId: string; projectId: string | null; taskId: string | null; 
 function callerScope(db: Database.Database, caller: McpCallerIdentity): Scope {
   const row = db
     .prepare(
-      "SELECT id, scope, project_id, task_id FROM chats WHERE id = ? AND archived_at IS NULL",
+      `SELECT c.id, c.scope, c.project_id, c.task_id, p.id valid_project_id,
+              t.project_id task_project_id
+       FROM chats c
+       LEFT JOIN projects p ON p.id = c.project_id AND p.archived_at IS NULL
+       LEFT JOIN tasks t ON t.id = c.task_id AND t.archived_at IS NULL
+       WHERE c.id = ? AND c.archived_at IS NULL`,
     )
     .get(caller.chatId) as Row | undefined
-  if (!row) throw new Error("Caller chat is stale.")
+  const scope = row ? canonicalMcpChatScope(row) : null
+  if (!scope) throw new Error("Caller chat is stale.")
   return {
-    chatId: String(row.id),
-    kind: String(row.scope),
-    projectId: stringOrNull(row.project_id),
-    taskId: stringOrNull(row.task_id),
+    chatId: scope.chatId,
+    kind: scope.kind,
+    projectId: scope.projectId,
+    taskId: scope.taskId,
   }
 }
 function stringOrNull(value: unknown): string | null {
@@ -548,7 +572,10 @@ function createChat(
       .prepare("SELECT project_id FROM tasks WHERE id = ? AND archived_at IS NULL")
       .get(taskId) as Row | undefined
     if (!task) return fail("stale-target", "Task is missing or archived.")
-    projectId = String(task.project_id)
+    const taskProjectId = String(task.project_id)
+    if (projectId && projectId !== taskProjectId)
+      return fail("invalid-input", "Task does not belong to the requested project.")
+    projectId = taskProjectId
   }
   if (scope.taskId && taskId !== scope.taskId)
     return fail("out-of-scope", "Chat is outside the caller task scope.")
@@ -937,7 +964,10 @@ function moveChat(
         .prepare("SELECT project_id FROM tasks WHERE id = ? AND archived_at IS NULL")
         .get(taskId) as Row | undefined)
     if (!task) return fail("stale-target", "Task is missing or archived.")
-    projectId = String(task.project_id)
+    const taskProjectId = String(task.project_id)
+    if (projectId && projectId !== taskProjectId)
+      return fail("invalid-input", "Task does not belong to the requested project.")
+    projectId = taskProjectId
   }
   if (
     (scope.taskId && (input.scope !== "task" || taskId !== scope.taskId)) ||

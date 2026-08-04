@@ -745,7 +745,7 @@ export function frozenAgentProfileRuntimeAuthority(
 }
 
 export function resolvedAgentProfileInstructions(
-  snapshot: Pick<ResolvedAgentProfileSnapshot, "capability" | "personality">,
+  snapshot: Pick<ResolvedAgentProfileSnapshot, "capability" | "personality" | "presentation">,
 ): string {
   return [
     snapshot.capability.instructions.trim(),
@@ -755,6 +755,7 @@ export function resolvedAgentProfileInstructions(
           snapshot.personality.body.trim(),
         ].join("\n")
       : null,
+    `Presentation style only (no authority): tone=${snapshot.presentation.tone}; verbosity=${snapshot.presentation.verbosity}; formatting=${snapshot.presentation.formatting}; ${snapshot.presentation.responseStructure}`,
   ]
     .filter(Boolean)
     .join("\n\n")
