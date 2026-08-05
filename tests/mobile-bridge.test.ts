@@ -7,6 +7,7 @@ import {
   FileMobileBridgeCertificateProvider,
   FileMobileBridgeSettingsStore,
   MobileBridgeService,
+  PollingMobileNetworkSource,
   SlidingWindowMobileBridgeAdmission,
   defaultMobileBridgeSettings,
   normalizeMobileBridgeSettings,
@@ -387,6 +388,28 @@ describe("mobile-bridge", () => {
     expect(admission.openConnection("10.0.0.6")).toBe(false)
     admission.closeConnection("10.0.0.4")
     expect(admission.openConnection("10.0.0.6")).toBe(true)
+  })
+
+  it("fails closed when polling the active network interfaces fails", () => {
+    vi.useFakeTimers()
+    try {
+      const read = vi
+        .fn<() => MobileNetworkInterface[]>()
+        .mockReturnValueOnce(interfaceFixtures.private!)
+        .mockImplementationOnce(() => {
+          throw new Error("network inventory failed")
+        })
+      const listener = vi.fn()
+      const network = new PollingMobileNetworkSource(10, read)
+      const unsubscribe = network.subscribe(listener)
+
+      vi.advanceTimersByTime(10)
+
+      expect(listener).toHaveBeenCalledWith([])
+      unsubscribe()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("stores generated certificate keys owner-only and returns a stable SHA-256 fingerprint", async () => {

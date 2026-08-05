@@ -71,7 +71,12 @@ export class PollingMobileNetworkSource implements MobileNetworkSource {
   }
 
   private poll(): void {
-    const interfaces = this.read()
+    let interfaces: MobileNetworkInterface[]
+    try {
+      interfaces = this.read()
+    } catch {
+      interfaces = []
+    }
     const next = networkSignature(interfaces)
     if (next === this.signature) return
     this.signature = next

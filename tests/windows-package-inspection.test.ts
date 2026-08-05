@@ -1,6 +1,7 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 // @ts-expect-error JavaScript build-script helper intentionally has no declaration file.
 import {
@@ -48,6 +49,11 @@ function fixture() {
   ]) {
     writeFileSync(join(bin, license), "license")
   }
+  const sidecar = join(bin, "flapstack-stt-sidecar.exe")
+  writeFileSync(
+    join(bin, ".stt-sidecar.sha256"),
+    `${createHash("sha256").update(readFileSync(sidecar)).digest("hex")}\n`,
+  )
   writeFileSync(join(resources, "app.asar"), "asar")
   return app
 }
@@ -88,5 +94,14 @@ describe("Windows package inspection", () => {
     expect(() =>
       inspectWindowsApp(fixture(), "win32-x64", { readVersion: () => "38.0.0.0" }),
     ).toThrow("Electron version mismatch")
+  })
+
+  it("rejects a sidecar changed after package-resource preparation", () => {
+    const app = fixture()
+    appendFileSync(join(dirname(app), "resources", "bin", "flapstack-stt-sidecar.exe"), "tampered")
+
+    expect(() => inspectWindowsApp(app, "win32-x64", { readVersion: () => "39.8.10.0" })).toThrow(
+      /SHA256/,
+    )
   })
 })

@@ -255,6 +255,20 @@ describe("binary download recovery", () => {
     expect(existsSync(`${missingPath}.download`)).toBe(false)
   })
 
+  it("replaces an existing metadata cache on Windows", async () => {
+    const directory = temporaryDirectory()
+    const cachePath = join(directory, "manifest.json")
+    writeFileSync(cachePath, JSON.stringify({ version: "old" }))
+
+    await expect(
+      fetchJsonWithCache("https://example.invalid/manifest.json", cachePath, async () => ({
+        version: "fresh",
+      })),
+    ).resolves.toEqual({ version: "fresh" })
+
+    expect(JSON.parse(readFileSync(cachePath, "utf8"))).toEqual({ version: "fresh" })
+  })
+
   it("preserves the last verified Claude binary when a replacement download fails", async () => {
     const binDirectory = temporaryDirectory()
     const targetDirectory = join(binDirectory, "win32-x64")

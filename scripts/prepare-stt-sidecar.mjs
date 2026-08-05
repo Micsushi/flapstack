@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -52,6 +53,34 @@ function cargoCommand() {
   throw new Error("Rust/Cargo is required to prepare the streaming STT sidecar")
 }
 
+export function resolveTranscribeLicense(cargo, runner = spawnSync) {
+  const result = runner(
+    cargo.command,
+    ["metadata", "--format-version=1", "--locked", "--offline"],
+    {
+      cwd: crate,
+      encoding: "utf8",
+      env: { ...process.env, ...cargo.env },
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  )
+  if (result.error) throw result.error
+  if (result.status !== 0) throw new Error("Could not inspect the locked STT dependency graph")
+  const metadata = JSON.parse(result.stdout)
+  const dependency = metadata.packages?.find(
+    (entry) => entry.name === "transcribe-cpp" && entry.version === TRANSCRIBE_CPP_VERSION,
+  )
+  if (!dependency?.manifest_path) {
+    throw new Error(`Locked transcribe-cpp ${TRANSCRIBE_CPP_VERSION} metadata is missing`)
+  }
+  const license = path.join(path.dirname(dependency.manifest_path), "LICENSE")
+  const stat = fs.lstatSync(license)
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`transcribe-cpp license must be a regular file: ${license}`)
+  }
+  return license
+}
+
 function build(targetKey) {
   const cargo = cargoCommand()
   const target = rustTargets[targetKey]
@@ -74,15 +103,19 @@ function build(targetKey) {
   const binaryName = targetKey.startsWith("win32-")
     ? "flapstack-stt-sidecar.exe"
     : "flapstack-stt-sidecar"
-  return targetKey === hostKey
-    ? path.join(crate, "target", "release", binaryName)
-    : path.join(crate, "target", target, "release", binaryName)
+  return {
+    binary:
+      targetKey === hostKey
+        ? path.join(crate, "target", "release", binaryName)
+        : path.join(crate, "target", target, "release", binaryName),
+    cargo,
+  }
 }
 
 function main() {
   const targetKey = argsValue("--platform") || `${process.platform}-${process.arch}`
   const outputRoot = argsValue("--output-root")
-  const binary = build(targetKey)
+  const { binary, cargo } = build(targetKey)
   if (!fs.existsSync(binary)) throw new Error(`STT sidecar binary missing: ${binary}`)
 
   if (outputRoot) {
@@ -95,17 +128,11 @@ function main() {
       path.join(destination, "flapstack-stt-sidecar-LICENSE"),
     )
     fs.copyFileSync(
-      path.join(
-        os.homedir(),
-        ".cargo",
-        "registry",
-        "src",
-        fs.readdirSync(path.join(os.homedir(), ".cargo", "registry", "src"))[0],
-        `transcribe-cpp-${TRANSCRIBE_CPP_VERSION}`,
-        "LICENSE",
-      ),
+      resolveTranscribeLicense(cargo),
       path.join(destination, "transcribe.cpp-LICENSE"),
     )
+    const digest = createHash("sha256").update(fs.readFileSync(binary)).digest("hex")
+    fs.writeFileSync(path.join(destination, ".stt-sidecar.sha256"), `${digest}\n`)
     fs.writeFileSync(path.join(destination, ".transcribe-version"), `${TRANSCRIBE_CPP_VERSION}\n`)
   }
 

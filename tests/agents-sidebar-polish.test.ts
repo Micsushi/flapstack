@@ -14,4 +14,12 @@ describe("agents sidebar polish", () => {
     expect(source).toContain("text-left pt-0.5 pb-1.5 cursor-pointer group relative")
     expect(source).not.toContain("text-left py-1 cursor-pointer group relative")
   })
+
+  it("gives the icon-only Settings action an accessible name", () => {
+    const settingsButton = source.slice(
+      source.indexOf('data-tour="settings"'),
+      source.indexOf("<SettingsIcon", source.indexOf('data-tour="settings"')),
+    )
+    expect(settingsButton).toContain('aria-label="Settings"')
+  })
 })

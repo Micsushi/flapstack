@@ -45,5 +45,6 @@ describe("Windows CI contract", () => {
     expect(steps["Upload Windows Preview"].with?.path).toContain(
       "release-preview/windows-security-report.json",
     )
+    expect(steps["Upload Windows Preview"].with?.["retention-days"]).toBe(3)
   })
 })

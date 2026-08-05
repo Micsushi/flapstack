@@ -120,3 +120,4 @@ jobs:
             release-preview/windows-security-report.json
             release-preview/windows-security-report.json.sha256
           if-no-files-found: error
+          retention-days: 3

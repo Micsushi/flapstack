@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import {
   resolveSttAdapter,
@@ -35,7 +38,11 @@ import {
   verifyWhisperBinary,
 } from "../src/main/lib/speech/stt-whisper-cpp"
 import { encodePcmWav, resampleMono } from "../src/renderer/lib/hooks/use-voice-recording"
-import { PARAKEET_MODEL } from "../src/main/lib/speech/stt-parakeet-streaming"
+import {
+  PARAKEET_MODEL,
+  replaceDownloadedModel,
+  StreamingSidecar,
+} from "../src/main/lib/speech/stt-parakeet-streaming"
 import { speakWithTtsFallback } from "../src/main/lib/speech/tts-fallback"
 import { toMicrophoneError } from "../src/renderer/lib/hooks/use-voice-recording"
 import {
@@ -299,6 +306,26 @@ describe("local Whisper audio preparation", () => {
     expect(PARAKEET_MODEL.sizeBytes).toBe(731_357_568)
     expect(PARAKEET_MODEL.sha256).toMatch(/^[a-f0-9]{64}$/)
     expect(PARAKEET_MODEL.license).toBe("NVIDIA-Open-Model-License")
+  })
+
+  it("replaces an invalid Parakeet model on Windows-compatible filesystems", () => {
+    const directory = mkdtempSync(join(tmpdir(), "flapstack-parakeet-repair-"))
+    const destination = join(directory, "model.gguf")
+    const temporary = `${destination}.download`
+    writeFileSync(destination, "invalid")
+    writeFileSync(temporary, "verified")
+
+    replaceDownloadedModel(temporary, destination)
+
+    expect(readFileSync(destination, "utf8")).toBe("verified")
+  })
+
+  it("reports a sidecar launch failure instead of emitting an unhandled error", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "flapstack-sidecar-launch-"))
+    const invalidExecutable = join(directory, "invalid-sidecar")
+    writeFileSync(invalidExecutable, "not executable")
+
+    await expect(new StreamingSidecar(invalidExecutable).ping()).rejects.toThrow()
   })
 
   it("resamples live microphone frames to 16 kHz mono PCM", () => {

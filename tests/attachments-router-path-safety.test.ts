@@ -844,6 +844,21 @@ describe("attachment durable path contracts", () => {
     await expect(caller.get({ id: attachment.id })).resolves.toBeUndefined()
   })
 
+  it.each(["file", "image"] as const)(
+    "rejects new %s rows without durable provenance",
+    async (kind) => {
+      await expect(
+        caller.createText({
+          chatId: "chat-1",
+          kind,
+          name: `${kind}.txt`,
+          contentText: "not durable attachment bytes",
+        }),
+      ).rejects.toThrow()
+      expect(attachmentRowCount()).toBe(0)
+    },
+  )
+
   it("reconciles bounded import orphans while preserving referenced payloads", async () => {
     const attachment = await caller.importFile({
       chatId: "chat-1",

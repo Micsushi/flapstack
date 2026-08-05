@@ -64,6 +64,40 @@ describe("Windows Flapstack process ownership", () => {
     expect(findOwnedWindowsProcessIds(processes, { root, selfPid: 999 })).toEqual([10])
   })
 
+  it("does not trust a checkout path mentioned by an unrelated command", () => {
+    const processes = [
+      {
+        ProcessId: 10,
+        ParentProcessId: 1,
+        ExecutablePath: "C:\\Windows\\System32\\notepad.exe",
+        CommandLine: `notepad.exe "${root}\\release-preview\\notes.txt"`,
+      },
+    ]
+
+    expect(findOwnedWindowsProcessIds(processes, { root, selfPid: 999 })).toEqual([])
+  })
+
+  it("adopts a newer child of an owned process without relying on its command text", () => {
+    const processes = [
+      {
+        ProcessId: 10,
+        ParentProcessId: 1,
+        CreationDate: "2026-08-04T18:00:00.000Z",
+        ExecutablePath: `${root}\\node_modules\\electron\\dist\\electron.exe`,
+        CommandLine: `"${root}\\node_modules\\electron\\dist\\electron.exe" .`,
+      },
+      {
+        ProcessId: 11,
+        ParentProcessId: 10,
+        CreationDate: "2026-08-04T18:00:01.000Z",
+        ExecutablePath: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        CommandLine: "powershell.exe -NoLogo",
+      },
+    ]
+
+    expect(findOwnedWindowsProcessIds(processes, { root, selfPid: 999 })).toEqual([11, 10])
+  })
+
   it("kills exact verified pids without recursively adopting a task tree", () => {
     expect(windowsTaskkillArgs(42)).toEqual(["/PID", "42"])
     expect(windowsTaskkillArgs(42, true)).toEqual(["/PID", "42", "/F"])

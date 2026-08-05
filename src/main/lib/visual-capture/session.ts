@@ -53,6 +53,7 @@ type Session = {
   approvalId: string | null
   createdAt: number
   expiresAt: number
+  sourceRevision: number
   sources: Map<string, z.infer<typeof sourceKindSchema>>
   selectedSourceId: string | null
 }
@@ -115,6 +116,7 @@ export class VisualCaptureSessionService {
       approvalId,
       createdAt: now,
       expiresAt,
+      sourceRevision: 0,
       sources: new Map(),
       selectedSourceId: null,
     })
@@ -123,23 +125,42 @@ export class VisualCaptureSessionService {
 
   async listSources(id: string): Promise<VisualCaptureSource[]> {
     const session = this.#getActive(id)
-    const sources = (await this.#provider.enumerate()).map((source) => {
-      const previewDataUrl = z
-        .string()
-        .startsWith("data:image/png;base64,")
-        .max(48 * 1_048_576)
-        .optional()
-        .parse(source.previewDataUrl)
-      return {
-        id: z.string().min(1).max(500).parse(source.id),
-        kind: sourceKindSchema.parse(source.kind),
-        label: z.string().min(1).max(500).parse(source.label),
-        displayId: z.string().max(200).nullable().parse(source.displayId),
-        ...(previewDataUrl ? { previewDataUrl } : {}),
-      }
-    })
-    session.sources = new Map(sources.map((source) => [source.id, source.kind]))
+    this.#discard([...session.sources.keys()])
+    session.sources.clear()
     session.selectedSourceId = null
+    const sourceRevision = ++session.sourceRevision
+    const enumerated = await this.#provider.enumerate()
+    let sources: VisualCaptureSource[]
+    try {
+      if (this.#sessions.get(id) !== session) {
+        throw new Error("Visual capture request is not active.")
+      }
+      if (session.sourceRevision !== sourceRevision) {
+        throw new Error("Visual capture source refresh was superseded.")
+      }
+      this.#getActive(id)
+      sources = enumerated.map((source) => {
+        const previewDataUrl = z
+          .string()
+          .startsWith("data:image/png;base64,")
+          .max(48 * 1_048_576)
+          .optional()
+          .parse(source.previewDataUrl)
+        return {
+          id: z.string().min(1).max(500).parse(source.id),
+          kind: sourceKindSchema.parse(source.kind),
+          label: z.string().min(1).max(500).parse(source.label),
+          displayId: z.string().max(200).nullable().parse(source.displayId),
+          ...(previewDataUrl ? { previewDataUrl } : {}),
+        }
+      })
+    } catch (error) {
+      this.#discard(
+        enumerated.map((source) => source.id).filter((value) => typeof value === "string"),
+      )
+      throw error
+    }
+    session.sources = new Map(sources.map((source) => [source.id, source.kind]))
     return sources
   }
 
@@ -178,7 +199,7 @@ export class VisualCaptureSessionService {
     try {
       captured = await this.#provider.capture(selectedSourceId)
     } finally {
-      this.#discard([...session.sources.keys()].filter((sourceId) => sourceId !== selectedSourceId))
+      this.#discard([...session.sources.keys()])
     }
     if (captured.sourceId !== session.selectedSourceId) {
       throw new Error("Capture provider returned a frame for a different source.")
@@ -208,7 +229,7 @@ export class VisualCaptureSessionService {
   #getActive(id: string): Session {
     const session = this.#sessions.get(id)
     if (!session) throw new Error("Visual capture request is not active.")
-    if (this.#now() > session.expiresAt) {
+    if (this.#now() >= session.expiresAt) {
       this.#sessions.delete(id)
       this.#discard([...session.sources.keys()])
       throw new Error("Visual capture request expired.")

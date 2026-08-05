@@ -15,7 +15,7 @@ function processText(process) {
 }
 
 export function windowsProcessCreationEpoch(process) {
-  const value = process.CreationDate
+  const value = process?.CreationDate
   if (value instanceof Date) return value.getTime()
   if (typeof value === "number") return value
   const powershellEpoch = /\/Date\((\d+)(?:[+-]\d+)?\)\//.exec(String(value ?? ""))
@@ -54,23 +54,22 @@ export function findOwnedWindowsProcessIds(processes, options) {
   const root = `${normalized(windowsPath.resolve(options.root))}\\`
   const selfPid = Number(options.selfPid ?? process.pid)
   const owned = new Set()
-  const ownershipSegments = [
-    "\\node_modules\\electron-vite\\",
-    "\\node_modules\\electron\\dist\\",
-    "\\release\\",
-    "\\release-preview\\",
-    "\\resources\\bin\\",
-  ]
+  const entriesByPid = new Map(processes.map((entry) => [Number(entry.ProcessId), entry]))
 
   for (const entry of processes) {
     const pid = Number(entry.ProcessId)
-    const text = normalized(processText(entry))
-    if (
-      pid > 0 &&
-      pid !== selfPid &&
-      text.includes(root) &&
-      ownershipSegments.some((segment) => text.includes(segment))
-    ) {
+    const executable = normalized(entry.ExecutablePath)
+    const command = normalized(entry.CommandLine)
+    const ownedExecutable = [
+      `${root}node_modules\\electron\\dist\\`,
+      `${root}release\\`,
+      `${root}release-preview\\`,
+      `${root}resources\\bin\\`,
+    ].some((prefix) => executable.startsWith(prefix))
+    const ownedLauncher =
+      windowsPath.basename(executable) === "node.exe" &&
+      command.includes(`${root}node_modules\\electron-vite\\`)
+    if (pid > 0 && pid !== selfPid && (ownedExecutable || ownedLauncher)) {
       owned.add(pid)
     }
   }
@@ -82,19 +81,22 @@ export function findOwnedWindowsProcessIds(processes, options) {
       const pid = Number(entry.ProcessId)
       const parentPid = Number(entry.ParentProcessId)
       const text = normalized(processText(entry))
+      const createdAt = windowsProcessCreationEpoch(entry)
+      const parentCreatedAt = windowsProcessCreationEpoch(entriesByPid.get(parentPid))
+      const verifiedAncestry =
+        createdAt !== null && parentCreatedAt !== null && createdAt >= parentCreatedAt
       if (
         pid > 0 &&
         pid !== selfPid &&
         owned.has(parentPid) &&
         !owned.has(pid) &&
-        text.includes(root)
+        (verifiedAncestry || text.includes(root))
       ) {
         owned.add(pid)
         changed = true
       }
     }
   }
-  const entriesByPid = new Map(processes.map((entry) => [Number(entry.ProcessId), entry]))
   const depth = (pid, seen = new Set()) => {
     if (seen.has(pid)) return 0
     seen.add(pid)

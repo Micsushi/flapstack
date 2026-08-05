@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -50,6 +51,18 @@ function runSidecarSmoke(binary) {
   if (result.status !== 0 || response.id !== 1 || response.ok !== true)
     throw new Error(`Parakeet sidecar smoke returned an invalid response: ${result.stdout}`)
   console.log("Parakeet sidecar smoke: ping ok")
+}
+
+export function assertDigestMarker(binary, marker) {
+  const markerStat = fs.lstatSync(marker)
+  if (!markerStat.isFile() || markerStat.isSymbolicLink()) {
+    throw new Error(`${marker}: expected a regular SHA256 marker`)
+  }
+  const expected = fs.readFileSync(marker, "utf8").trim()
+  const actual = createHash("sha256").update(fs.readFileSync(binary)).digest("hex")
+  if (!/^[a-f0-9]{64}$/.test(expected) || actual !== expected) {
+    throw new Error(`${binary}: SHA256 does not match ${marker}`)
+  }
 }
 
 function readElectronVersion(appPath) {
@@ -137,6 +150,7 @@ export function inspectWindowsApp(appPath, platformKey, options = {}) {
     const inspection = assertBundledBinary(binary, platformKey)
     console.log(`${label}: regular ${inspection.format} ${inspection.architectures.join("+")}`)
   }
+  assertDigestMarker(binaries.Parakeet, path.join(bin, ".stt-sidecar.sha256"))
   const asar = path.join(resources, "app.asar")
   const asarStat = fs.lstatSync(asar)
   if (!asarStat.isFile() || asarStat.isSymbolicLink()) {
@@ -226,6 +240,7 @@ export function inspectMacApp(appPath, platformKey, options = {}) {
     })
     console.log(`${label}: regular ${inspection.format} ${inspection.architectures.join("+")}`)
   }
+  assertDigestMarker(binaries.Parakeet, path.join(resources, "bin", ".stt-sidecar.sha256"))
 
   for (const license of [
     "flapstack-stt-sidecar-LICENSE",

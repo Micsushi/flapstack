@@ -29,7 +29,7 @@ import {
   MAX_ATTACHMENT_IMAGE_PIXELS,
 } from "../../../../shared/attachment-mime"
 
-const attachmentKindSchema = z.enum(["file", "image", "pasted-text", "chat-history", "text"])
+const textAttachmentKindSchema = z.enum(["pasted-text", "chat-history", "text"])
 const importedAttachmentKindSchema = z.enum(["file", "image"])
 const MAX_ATTACHMENT_BASE64_CHARS = Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4
 const IMAGE_MIME_TYPES = new Set(["image/gif", "image/jpeg", "image/png", "image/webp"])
@@ -99,7 +99,7 @@ export const attachmentsRouter = router({
       z.object({
         chatId: z.string(),
         taskId: z.string().optional().nullable(),
-        kind: attachmentKindSchema.default("pasted-text"),
+        kind: textAttachmentKindSchema.default("pasted-text"),
         name: z.string().min(1),
         contentText: z.string(),
       }),

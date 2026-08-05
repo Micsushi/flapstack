@@ -60,7 +60,9 @@ export function startProductTour(): void {
 
 function findAvailableStep(start: number, direction: 1 | -1): number {
   for (let index = start; index >= 0 && index < PRODUCT_TOUR_STEPS.length; index += direction) {
-    if (document.querySelector(PRODUCT_TOUR_STEPS[index].selector)) return index
+    const target = document.querySelector<HTMLElement>(PRODUCT_TOUR_STEPS[index].selector)
+    const rect = target?.getBoundingClientRect()
+    if (target?.isConnected && rect && rect.width > 0 && rect.height > 0) return index
   }
   return -1
 }
@@ -72,7 +74,9 @@ export function ProductTour() {
   const [stepIndex, setStepIndex] = useState(0)
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null)
   const nextButtonRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
+  const focusedStepRef = useRef<number | null>(null)
 
   const openTour = useCallback(() => {
     restoreFocusRef.current =
@@ -138,11 +142,22 @@ export function ProductTour() {
       return
     }
 
-    target.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" })
-    const updateRect = () => setTargetRect(target.getBoundingClientRect())
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
+    target.scrollIntoView({
+      block: "center",
+      inline: "nearest",
+      behavior: reduceMotion ? "auto" : "smooth",
+    })
+    const updateRect = () => {
+      const rect = target.getBoundingClientRect()
+      if (!target.isConnected || rect.width <= 0 || rect.height <= 0) {
+        goNext()
+        return
+      }
+      setTargetRect(rect)
+    }
     const frame = requestAnimationFrame(() => {
       updateRect()
-      nextButtonRef.current?.focus()
     })
     window.addEventListener("resize", updateRect)
     window.addEventListener("scroll", updateRect, true)
@@ -152,6 +167,16 @@ export function ProductTour() {
       window.removeEventListener("scroll", updateRect, true)
     }
   }, [goNext, isOpen, stepIndex])
+
+  useEffect(() => {
+    if (!isOpen) {
+      focusedStepRef.current = null
+      return
+    }
+    if (!targetRect || focusedStepRef.current === stepIndex) return
+    focusedStepRef.current = stepIndex
+    nextButtonRef.current?.focus()
+  }, [isOpen, stepIndex, targetRect])
 
   useEffect(() => {
     if (!isOpen) return
@@ -165,6 +190,21 @@ export function ProductTour() {
       } else if (event.key === "ArrowLeft") {
         event.preventDefault()
         goBack()
+      } else if (event.key === "Tab") {
+        const buttons = Array.from(
+          dialogRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [],
+        )
+        if (buttons.length === 0) return
+        const currentIndex = buttons.indexOf(document.activeElement as HTMLButtonElement)
+        event.preventDefault()
+        const nextIndex = event.shiftKey
+          ? currentIndex <= 0
+            ? buttons.length - 1
+            : currentIndex - 1
+          : currentIndex < 0 || currentIndex === buttons.length - 1
+            ? 0
+            : currentIndex + 1
+        buttons[nextIndex].focus()
       }
     }
     window.addEventListener("keydown", handleKeyDown)
@@ -195,9 +235,11 @@ export function ProductTour() {
         aria-hidden="true"
       />
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="product-tour-title"
+        aria-describedby="product-tour-description"
         className="fixed z-[72] rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-2xl"
         style={{ left: panelLeft, top: panelTop, width: panelWidth }}
       >
@@ -216,7 +258,12 @@ export function ProductTour() {
           <h2 id="product-tour-title" className="mt-1 text-sm font-semibold">
             {step.title}
           </h2>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{step.body}</p>
+          <p
+            id="product-tour-description"
+            className="mt-1 text-xs leading-relaxed text-muted-foreground"
+          >
+            {step.body}
+          </p>
         </div>
         <div className="mt-4 flex items-center justify-between">
           <button

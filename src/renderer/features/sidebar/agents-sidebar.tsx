@@ -7565,6 +7565,7 @@ export function AgentsSidebar({
                   <button
                     type="button"
                     data-tour="settings"
+                    aria-label="Settings"
                     onClick={() => {
                       setSettingsActiveTab("preferences")
                       setSettingsDialogOpen(true)

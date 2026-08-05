@@ -40,6 +40,7 @@ export type ParakeetModelStatus =
 let modelStatus: ParakeetModelStatus = { status: "absent" }
 let activeDownload: Promise<string> | null = null
 let validatedModel: { size: number; mtimeMs: number; valid: boolean } | null = null
+const SIDECAR_REQUEST_TIMEOUT_MS = 120_000
 
 function speechDataDir() {
   return path.join(app.getPath("userData"), "speech")
@@ -118,6 +119,13 @@ export function ensureParakeetModel() {
   return activeDownload
 }
 
+export function replaceDownloadedModel(temporary: string, destination: string) {
+  // Windows rename cannot replace an existing file. The existing model has
+  // already failed size/hash validation, so removing it remains retryable.
+  rmSync(destination, { force: true })
+  renameSync(temporary, destination)
+}
+
 async function downloadParakeetModel() {
   if (await validModel()) {
     writeModelNotice()
@@ -154,7 +162,7 @@ async function downloadParakeetModel() {
       throw new Error("Downloaded model size is invalid")
     if ((await sha256(temporary)) !== PARAKEET_MODEL.sha256)
       throw new Error("Downloaded model checksum is invalid")
-    renameSync(temporary, destination)
+    replaceDownloadedModel(temporary, destination)
     writeModelNotice()
     validatedModel = null
     modelStatus = { status: "present", sizeBytes: PARAKEET_MODEL.sizeBytes }
@@ -190,32 +198,57 @@ type SidecarResponse = {
   error?: string
 }
 
-class StreamingSidecar {
+export class StreamingSidecar {
   private child: ChildProcessWithoutNullStreams | null = null
   private nextId = 1
   private pending = new Map<
     number,
-    { resolve: (value: SidecarResponse) => void; reject: (error: Error) => void }
+    {
+      resolve: (value: SidecarResponse) => void
+      reject: (error: Error) => void
+      timeout: ReturnType<typeof setTimeout>
+    }
   >()
   private loadedPath: string | null = null
   private unloadTimer: ReturnType<typeof setTimeout> | null = null
   private streamActive = false
 
+  constructor(private readonly executableOverride?: string) {}
+
+  private closeChild(child: ChildProcessWithoutNullStreams, error: Error) {
+    if (this.child !== child) return
+    this.child = null
+    this.loadedPath = null
+    this.streamActive = false
+    if (this.unloadTimer) clearTimeout(this.unloadTimer)
+    this.unloadTimer = null
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout)
+      pending.reject(error)
+    }
+    this.pending.clear()
+  }
+
   private async launch() {
-    if (this.child && !this.child.killed) return
-    const executable = findParakeetSidecar()
+    if (this.child && this.child.exitCode === null && !this.child.killed) return
+    const executable = this.executableOverride ?? findParakeetSidecar()
     if (!executable) throw new Error("Parakeet streaming sidecar is not prepared")
     const child = spawn(executable, [], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     })
     this.child = child
+    const spawned = new Promise<void>((resolve, reject) => {
+      child.once("spawn", resolve)
+      child.once("error", reject)
+    })
     readline.createInterface({ input: child.stdout }).on("line", (line) => {
       try {
         const response = JSON.parse(line) as SidecarResponse
         const pending = this.pending.get(response.id)
         if (!pending) return
         this.pending.delete(response.id)
+        clearTimeout(pending.timeout)
         response.ok
           ? pending.resolve(response)
           : pending.reject(new Error(response.error || "Streaming STT failed"))
@@ -224,25 +257,34 @@ class StreamingSidecar {
       }
     })
     child.stderr.on("data", (chunk) => console.warn(`[Parakeet] ${String(chunk).trim()}`))
+    child.on("error", (error) => this.closeChild(child, error))
     child.once("exit", () => {
-      this.child = null
-      this.loadedPath = null
-      this.streamActive = false
-      if (this.unloadTimer) clearTimeout(this.unloadTimer)
-      this.unloadTimer = null
-      for (const pending of this.pending.values())
-        pending.reject(new Error("Streaming STT sidecar exited"))
-      this.pending.clear()
+      this.closeChild(child, new Error("Streaming STT sidecar exited"))
     })
+    await spawned
   }
 
   private async request(command: string, payload: Record<string, unknown> = {}) {
     await this.launch()
     const id = this.nextId++
     return await new Promise<SidecarResponse>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
-      this.child!.stdin.write(`${JSON.stringify({ command, id, ...payload })}\n`)
+      const child = this.child
+      if (!child) return reject(new Error("Streaming STT sidecar exited before the request"))
+      const timeout = setTimeout(() => {
+        this.closeChild(child, new Error(`Streaming STT sidecar timed out during ${command}`))
+        child.kill()
+      }, SIDECAR_REQUEST_TIMEOUT_MS)
+      this.pending.set(id, { resolve, reject, timeout })
+      child.stdin.write(`${JSON.stringify({ command, id, ...payload })}\n`, (error) => {
+        if (!error) return
+        this.closeChild(child, error)
+        child.kill()
+      })
     })
+  }
+
+  async ping() {
+    await this.request("ping")
   }
 
   async load() {

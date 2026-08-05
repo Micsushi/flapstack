@@ -11,6 +11,7 @@ import {
   replaceDirectoryAtomically,
   verifyCachedBinaryDigest,
 } from "./lib/packaged-binary.mjs"
+import { TRANSCRIBE_CPP_VERSION } from "./prepare-stt-sidecar.mjs"
 import { whisperResourceFiles } from "./prepare-whisper-binary.mjs"
 
 export const CLAUDE_VERSION = "2.1.207"
@@ -67,6 +68,7 @@ function expectedTargetFiles(target) {
     windows ? "flapstack-stt-sidecar.exe" : "flapstack-stt-sidecar",
     "flapstack-stt-sidecar-LICENSE",
     "transcribe.cpp-LICENSE",
+    ".stt-sidecar.sha256",
     ".transcribe-version",
   ]
 }
@@ -81,6 +83,21 @@ export async function validatePreparedTarget(target, rootDirectory = binDirector
     windows ? "flapstack-stt-sidecar.exe" : "flapstack-stt-sidecar",
   ]
   for (const binary of binaries) assertBundledBinary(path.join(directory, binary), target)
+  if (
+    !(await verifyCachedBinaryDigest(
+      path.join(directory, windows ? "flapstack-stt-sidecar.exe" : "flapstack-stt-sidecar"),
+      target,
+      path.join(directory, ".stt-sidecar.sha256"),
+    ))
+  ) {
+    throw new Error(`${directory}: STT sidecar digest validation failed`)
+  }
+  if (
+    fs.readFileSync(path.join(directory, ".transcribe-version"), "utf8").trim() !==
+    TRANSCRIBE_CPP_VERSION
+  ) {
+    throw new Error(`${directory}: STT sidecar dependency version is invalid`)
+  }
   if (
     !(await verifyCachedBinaryDigest(
       path.join(directory, windows ? "codex.exe" : "codex"),

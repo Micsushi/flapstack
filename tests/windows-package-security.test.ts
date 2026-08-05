@@ -55,7 +55,8 @@ describe("Windows package security report", () => {
     const packageJson = JSON.parse(readFileSync("package.json", "utf8"))
     expect(packageJson.overrides).toMatchObject({
       dompurify: "3.4.12",
-      "fast-uri": "3.1.4",
+      "fast-uri": "3.1.5",
+      "ip-address": "10.4.0",
       sharp: "0.35.3",
       tar: "7.5.22",
     })

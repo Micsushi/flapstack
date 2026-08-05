@@ -108,7 +108,7 @@ function writeJsonAtomically(filePath, value) {
   fs.rmSync(temporaryPath, { force: true })
   try {
     fs.writeFileSync(temporaryPath, `${JSON.stringify(value)}\n`, { flag: "wx", mode: 0o600 })
-    fs.renameSync(temporaryPath, filePath)
+    replaceFileAtomically(temporaryPath, filePath)
   } finally {
     fs.rmSync(temporaryPath, { force: true })
   }

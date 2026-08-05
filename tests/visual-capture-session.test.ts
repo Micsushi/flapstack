@@ -104,7 +104,7 @@ describe("visual capture session safety boundary", () => {
     })
     await service.listSources(expired.id)
     service.selectSource(expired.id, "screen:1", { kind: "user", id: "owner" })
-    now = 111
+    now = 110
     await expect(service.capture(expired.id)).rejects.toThrow(/expired/i)
     expect(backend.discard).toHaveBeenCalledWith(["screen:1", "window:7"])
 
@@ -117,7 +117,7 @@ describe("visual capture session safety boundary", () => {
     await service.listSources(failed.id)
     service.selectSource(failed.id, "window:7", { kind: "user", id: "owner" })
     await expect(service.capture(failed.id)).rejects.toThrow(/protected content/i)
-    expect(backend.discard).toHaveBeenCalledWith(["screen:1"])
+    expect(backend.discard).toHaveBeenCalledWith(["screen:1", "window:7"])
     await expect(service.capture(failed.id)).rejects.toThrow(/not active/i)
 
     const completed = service.begin({
@@ -129,6 +129,68 @@ describe("visual capture session safety boundary", () => {
     service.selectSource(completed.id, "screen:1", { kind: "user", id: "owner" })
     await service.capture(completed.id)
     await expect(service.capture(completed.id)).rejects.toThrow(/not active/i)
+  })
+
+  it("invalidates an earlier source selection when source refresh fails", async () => {
+    const backend = provider()
+    const service = new VisualCaptureSessionService(backend, () => 1_000)
+    const request = service.begin({
+      actor: { kind: "user", id: "owner" },
+      visibleUserInitiation: true,
+      scope: { projectId: "project-a" },
+    })
+    await service.listSources(request.id)
+    service.selectSource(request.id, "screen:1", { kind: "user", id: "owner" })
+    vi.mocked(backend.enumerate).mockRejectedValueOnce(new Error("source refresh failed"))
+
+    await expect(service.listSources(request.id)).rejects.toThrow(/refresh failed/i)
+    await expect(service.capture(request.id)).rejects.toThrow(/select/i)
+    expect(backend.discard).toHaveBeenCalledWith(["screen:1", "window:7"])
+  })
+
+  it("discards frames returned after cancellation during source enumeration", async () => {
+    let resolveSources!: (sources: Awaited<ReturnType<VisualCaptureProvider["enumerate"]>>) => void
+    const backend = provider()
+    vi.mocked(backend.enumerate).mockImplementationOnce(
+      () => new Promise((resolve) => (resolveSources = resolve)),
+    )
+    const service = new VisualCaptureSessionService(backend, () => 1_000)
+    const request = service.begin({
+      actor: { kind: "user", id: "owner" },
+      visibleUserInitiation: true,
+      scope: { projectId: "project-a" },
+    })
+
+    const pending = service.listSources(request.id)
+    service.cancel(request.id)
+    resolveSources([{ id: "screen:late", kind: "screen", label: "Late", displayId: "1" }])
+
+    await expect(pending).rejects.toThrow(/not active/i)
+    expect(backend.discard).toHaveBeenCalledWith(["screen:late"])
+  })
+
+  it("discards a slower source refresh after a newer refresh starts", async () => {
+    type Sources = Awaited<ReturnType<VisualCaptureProvider["enumerate"]>>
+    const resolvers: Array<(sources: Sources) => void> = []
+    const backend = provider()
+    vi.mocked(backend.enumerate).mockImplementation(
+      () => new Promise((resolve) => resolvers.push(resolve)),
+    )
+    const service = new VisualCaptureSessionService(backend, () => 1_000)
+    const request = service.begin({
+      actor: { kind: "user", id: "owner" },
+      visibleUserInitiation: true,
+      scope: { projectId: "project-a" },
+    })
+
+    const slower = service.listSources(request.id)
+    const newer = service.listSources(request.id)
+    resolvers[0]!([{ id: "screen:old", kind: "screen", label: "Old", displayId: "1" }])
+    await expect(slower).rejects.toThrow(/superseded/i)
+    resolvers[1]!([{ id: "screen:new", kind: "screen", label: "New", displayId: "1" }])
+
+    await expect(newer).resolves.toMatchObject([{ id: "screen:new" }])
+    expect(backend.discard).toHaveBeenCalledWith(["screen:old"])
   })
 
   it("does not retain preview bytes or titles in its durable result contract", async () => {
