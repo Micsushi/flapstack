@@ -4,13 +4,17 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   CrossProviderDelegationError,
   CrossProviderDelegationService,
   type RuntimeDelegationLaunchPort,
 } from "../src/main/lib/agent-runtime/cross-provider-delegation"
-import type { QueuedAgentRun } from "../src/main/lib/run-launch-service"
+import {
+  loadRunningAgentRun,
+  recoverInterruptedMcpRuns,
+  type QueuedAgentRun,
+} from "../src/main/lib/run-launch-service"
 import type { ResolvedAgentRuntime, RuntimeAdapterProbe } from "../src/shared/agent-runtime"
 
 class RuntimeStub implements RuntimeDelegationLaunchPort {
@@ -180,6 +184,88 @@ describe("cross-provider Runtime delegation", () => {
       db.close()
     },
   )
+
+  it("reloads a delegated output schema from durable state before reconstructed launch", async () => {
+    const fixture = createFixture("codex")
+    const runtime = new RuntimeStub()
+    const service = new CrossProviderDelegationService(fixture.path, runtime)
+    const outputSchema = {
+      type: "object",
+      required: ["verdict"],
+      properties: { verdict: { type: "string" } },
+      additionalProperties: false,
+    }
+    const request = {
+      sourceChatId: "source",
+      targetHarness: "claude-code" as const,
+      targetModel: "claude",
+      preference: "codex" as const,
+      requestId: "durable-output-schema",
+      objective: "Review after restart.",
+      requiredCapabilities: ["structuredOutput"],
+      outputSchema,
+    }
+    const preview = service.preview(request)
+    const created = service.delegate({ ...request, confirmedPreviewDigest: preview.digest })
+    await vi.waitFor(() => expect(runtime.launches).toHaveLength(1))
+
+    const db = new Database(fixture.path)
+    const attempt = db
+      .prepare("SELECT task_envelope FROM runtime_composition_attempts WHERE run_id = ?")
+      .get(created.runId) as { task_envelope: string }
+    db.close()
+    expect(JSON.parse(attempt.task_envelope).outputSchema).toEqual(outputSchema)
+
+    const reloaded = loadRunningAgentRun(fixture.path, created.runId)
+    expect(reloaded?.outputSchema).toEqual(outputSchema)
+    const reconstructedRuntime = new RuntimeStub()
+    await reconstructedRuntime.launch(reloaded!)
+    expect(reconstructedRuntime.launches).toEqual([
+      expect.objectContaining({ runId: created.runId, outputSchema }),
+    ])
+  })
+
+  it("fails a malformed delegated task envelope during restart recovery without dispatch", async () => {
+    const fixture = createFixture("codex")
+    const runtime = new RuntimeStub()
+    const service = new CrossProviderDelegationService(fixture.path, runtime)
+    const request = {
+      sourceChatId: "source",
+      targetHarness: "claude-code" as const,
+      targetModel: "claude",
+      preference: "codex" as const,
+      requestId: "malformed-durable-envelope",
+      objective: "Review after restart.",
+      outputSchema: { type: "object" },
+    }
+    const preview = service.preview(request)
+    const created = service.delegate({ ...request, confirmedPreviewDigest: preview.digest })
+    await vi.waitFor(() => expect(runtime.launches).toHaveLength(1))
+    const db = new Database(fixture.path)
+    try {
+      db.prepare(
+        "UPDATE runtime_composition_attempts SET task_envelope = '{}' WHERE run_id = ?",
+      ).run(created.runId)
+    } finally {
+      db.close()
+    }
+    const reconcile = vi.fn(async (_run: QueuedAgentRun) => "running" as const)
+
+    await expect(recoverInterruptedMcpRuns(fixture.path, { reconcile })).resolves.toBe(0)
+
+    expect(reconcile).not.toHaveBeenCalled()
+    expect(runtime.launches).toHaveLength(1)
+    const recoveredDb = new Database(fixture.path)
+    const recovered = recoveredDb
+      .prepare(
+        `SELECT r.status, s.run_status
+         FROM agent_runs r JOIN sub_chats s ON s.id = r.sub_chat_id
+         WHERE r.id = ?`,
+      )
+      .get(created.runId)
+    recoveredDb.close()
+    expect(recovered).toEqual({ status: "failure", run_status: "failure" })
+  })
 
   it.each([
     ["codex", "claude-code", "claude-code"],
