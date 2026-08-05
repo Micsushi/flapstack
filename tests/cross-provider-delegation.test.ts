@@ -11,7 +11,7 @@ import {
   type RuntimeDelegationLaunchPort,
 } from "../src/main/lib/agent-runtime/cross-provider-delegation"
 import {
-  loadRunningAgentRun,
+  drainPendingMcpRuns,
   recoverInterruptedMcpRuns,
   type QueuedAgentRun,
 } from "../src/main/lib/run-launch-service"
@@ -185,7 +185,7 @@ describe("cross-provider Runtime delegation", () => {
     },
   )
 
-  it("reloads a delegated output schema from durable state before reconstructed launch", async () => {
+  it("drains a pending MCP run with its durable delegated output schema", async () => {
     const fixture = createFixture("codex")
     const runtime = new RuntimeStub()
     const service = new CrossProviderDelegationService(fixture.path, runtime)
@@ -213,16 +213,23 @@ describe("cross-provider Runtime delegation", () => {
     const attempt = db
       .prepare("SELECT task_envelope FROM runtime_composition_attempts WHERE run_id = ?")
       .get(created.runId) as { task_envelope: string }
-    db.close()
     expect(JSON.parse(attempt.task_envelope).outputSchema).toEqual(outputSchema)
+    db.prepare("UPDATE agent_runs SET status = 'pending', prompt_message_id = ? WHERE id = ?").run(
+      `mcp-${created.runId}`,
+      created.runId,
+    )
+    db.prepare("UPDATE sub_chats SET run_status = 'pending' WHERE id = ?").run(
+      created.childSubChatId,
+    )
+    db.close()
 
-    const reloaded = loadRunningAgentRun(fixture.path, created.runId)
-    expect(reloaded?.outputSchema).toEqual(outputSchema)
-    const reconstructedRuntime = new RuntimeStub()
-    await reconstructedRuntime.launch(reloaded!)
-    expect(reconstructedRuntime.launches).toEqual([
+    const launch = vi.fn(async (_run: QueuedAgentRun) => undefined)
+    await expect(
+      drainPendingMcpRuns(fixture.path, launch, { waitForCompletion: true }),
+    ).resolves.toBe(1)
+    expect(launch).toHaveBeenCalledWith(
       expect.objectContaining({ runId: created.runId, outputSchema }),
-    ])
+    )
   })
 
   it("fails a malformed delegated task envelope during restart recovery without dispatch", async () => {
