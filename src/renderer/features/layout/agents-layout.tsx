@@ -111,6 +111,23 @@ export function AgentsLayout() {
   const setCodexOnboardingCompleted = useSetAtom(codexOnboardingCompletedAtom)
   const setBillingMethod = useSetAtom(billingMethodAtom)
   const claudeLoginModalConfig = useAtomValue(claudeLoginModalConfigAtom)
+  const lastChatIdRef = useRef<string | null>(selectedChatId)
+
+  useEffect(() => {
+    if (selectedChatId) lastChatIdRef.current = selectedChatId
+  }, [selectedChatId])
+
+  useEffect(() => {
+    const handleMouseBack = (event: MouseEvent) => {
+      if (event.button !== 3 || desktopView === null) return
+      event.preventDefault()
+      setDesktopView(null)
+      setShowNewChatForm(false)
+      if (lastChatIdRef.current) setSelectedChatId(lastChatIdRef.current)
+    }
+    window.addEventListener("mouseup", handleMouseBack)
+    return () => window.removeEventListener("mouseup", handleMouseBack)
+  }, [desktopView, setDesktopView, setSelectedChatId, setShowNewChatForm])
 
   useEffect(() => {
     if (typeof window === "undefined") return

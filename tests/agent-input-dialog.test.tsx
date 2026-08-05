@@ -51,6 +51,12 @@ afterEach(() => {
 })
 
 describe("AgentInputDialog", () => {
+  it("renders as a docked region instead of an interruptive modal", () => {
+    renderDialog()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.body.querySelector('[role="region"]')).not.toBeNull()
+  })
+
   it("uses radio semantics and makes a custom single answer mutually exclusive", async () => {
     const callbacks = renderDialog()
     const radios = [...document.body.querySelectorAll('input[type="radio"]')] as HTMLInputElement[]

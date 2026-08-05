@@ -2011,7 +2011,10 @@ function AgentsContentInner() {
                 />
               ) : (
                 <ChatWorkbench
-                  chats={openChatTabs}
+                  chats={openChatTabs.map((chat) => ({
+                    ...chat,
+                    accentColor: resolveOpenChatTabUnderlineColor(chat, openChatProjectColors),
+                  }))}
                   layout={chatWorkbenchLayout}
                   onLayoutChange={handleChatWorkbenchChange}
                   onActiveChatChange={(chatId) => {

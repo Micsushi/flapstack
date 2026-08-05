@@ -11,6 +11,12 @@ import {
   memo,
 } from "react"
 import { createFileIconElement } from "./agents-file-mention"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "../../../components/ui/context-menu"
 
 // Threshold for skipping expensive trigger detection (characters)
 // Should be >= MAX_PASTE_LENGTH from paste-text.ts to avoid processing large pasted content
@@ -509,6 +515,7 @@ export const AgentsMentionsEditor = memo(
     ref,
   ) {
     const editorRef = useRef<HTMLDivElement>(null)
+    const contextSelectionRef = useRef<Range | null>(null)
     const triggerActive = useRef(false)
     const triggerStartIndex = useRef<number | null>(null)
     // Slash command trigger state
@@ -1392,26 +1399,66 @@ export const AgentsMentionsEditor = memo(
             {placeholder}
           </div>
         )}
-        <div
-          ref={editorRef}
-          contentEditable={!disabled}
-          suppressContentEditableWarning
-          spellCheck={false}
-          onInput={handleInput}
-          onKeyDown={handleKeyDown}
-          onPaste={(e) => {
-            // Save state for undo before paste (immediate, not debounced)
-            immediateSaveUndoState()
-            onPaste?.(e)
-          }}
-          onFocus={onFocus}
-          onBlur={onBlur}
-          className={cn(
-            "min-h-[24px] outline-none whitespace-pre-wrap break-words text-sm relative",
-            disabled && "opacity-50 cursor-not-allowed",
-            className,
-          )}
-        />
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              ref={editorRef}
+              contentEditable={!disabled}
+              suppressContentEditableWarning
+              spellCheck={false}
+              onInput={handleInput}
+              onKeyDown={handleKeyDown}
+              onContextMenu={() => {
+                const selection = window.getSelection()
+                contextSelectionRef.current = selection?.rangeCount
+                  ? selection.getRangeAt(0).cloneRange()
+                  : null
+              }}
+              onPaste={(e) => {
+                immediateSaveUndoState()
+                onPaste?.(e)
+              }}
+              onFocus={onFocus}
+              onBlur={onBlur}
+              className={cn(
+                "min-h-[24px] outline-none whitespace-pre-wrap break-words text-sm relative",
+                disabled && "opacity-50 cursor-not-allowed",
+                className,
+              )}
+            />
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-40">
+            <ContextMenuItem
+              disabled={disabled}
+              onSelect={() => {
+                void navigator.clipboard
+                  .readText()
+                  .then((text) => {
+                    if (!text || !editorRef.current) return
+                    editorRef.current.focus()
+                    const selection = window.getSelection()
+                    const range = contextSelectionRef.current
+                    if (selection && range) {
+                      selection.removeAllRanges()
+                      selection.addRange(range)
+                    }
+                    immediateSaveUndoState()
+                    document.execCommand("insertText", false, text)
+                    editorRef.current.dispatchEvent(
+                      new InputEvent("input", {
+                        bubbles: true,
+                        inputType: "insertFromPaste",
+                        data: text,
+                      }),
+                    )
+                  })
+                  .catch(() => editorRef.current?.focus())
+              }}
+            >
+              Paste
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       </div>
     )
   }),

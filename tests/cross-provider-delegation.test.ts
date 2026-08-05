@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   CrossProviderDelegationError,
   CrossProviderDelegationService,
+  nextRuntimeRecoverySchedule,
   type RuntimeDelegationLaunchPort,
+  type RuntimeRecoverySweep,
 } from "../src/main/lib/agent-runtime/cross-provider-delegation"
 import {
   drainPendingMcpRuns,
@@ -22,6 +24,8 @@ class RuntimeStub implements RuntimeDelegationLaunchPort {
   cancellations: string[] = []
   state: "running" | "completed" | "cancelled" | "failed" | "uncertain" = "running"
   structuredOutput: unknown = { verdict: "pass" }
+  reconcileAttempts = 0
+  reconcileFailure: Error | null = null
 
   compositionProbe(harness: string, runtime: ResolvedAgentRuntime): RuntimeAdapterProbe {
     const supported = { supported: true, reason: null }
@@ -101,6 +105,8 @@ class RuntimeStub implements RuntimeDelegationLaunchPort {
   }
 
   async reconcileRun() {
+    this.reconcileAttempts += 1
+    if (this.reconcileFailure) throw this.reconcileFailure
     return this.state
   }
 
@@ -676,26 +682,138 @@ describe("cross-provider Runtime delegation", () => {
       attempted: 1,
       failed: 0,
       remaining: 2,
+      quarantined: 0,
+      retryAfterMs: 0,
     })
     await expect(restarted.recoverRunningAttempts(1)).resolves.toEqual({
       attempted: 1,
       failed: 0,
       remaining: 2,
+      quarantined: 0,
+      retryAfterMs: 0,
     })
     runtime.state = "completed"
     await expect(restarted.recoverRunningAttempts(1)).resolves.toEqual({
       attempted: 1,
       failed: 0,
       remaining: 1,
+      quarantined: 0,
+      retryAfterMs: 0,
     })
     await expect(restarted.recoverRunningAttempts(1)).resolves.toEqual({
       attempted: 1,
       failed: 0,
       remaining: 0,
+      quarantined: 0,
+      retryAfterMs: null,
     })
     expect(runtime.launches).toHaveLength(2)
     expect(await restarted.reconcile(created.attemptId)).toMatchObject({ status: "success" })
     expect(await restarted.reconcile(second.attemptId)).toMatchObject({ status: "success" })
+  })
+
+  it("quarantines a permanently unrecoverable attempt instead of sweeping it every five seconds", async () => {
+    const fixture = createFixture("codex")
+    const runtime = new RuntimeStub()
+    const created = await delegateForRecovery(fixture.path, runtime, "unrecoverable-recovery")
+    breakFinalization(fixture.path, created.attemptId)
+    runtime.reconcileFailure = new Error("provider unreachable")
+    runtime.reconcileAttempts = 0
+
+    vi.useFakeTimers()
+    let sweeps = 1
+    let recovery: RuntimeRecoverySweep
+    try {
+      const restarted = new CrossProviderDelegationService(fixture.path, runtime)
+      recovery = await restarted.recoverRunningAttempts()
+      let schedule = nextRuntimeRecoverySchedule(recovery, Date.now())
+      for (let tick = 0; tick < 240 && schedule.pending; tick += 1) {
+        vi.advanceTimersByTime(5_000)
+        if (Date.now() < schedule.nextAttemptAt) continue
+        recovery = await restarted.recoverRunningAttempts()
+        sweeps += 1
+        schedule = nextRuntimeRecoverySchedule(recovery, Date.now())
+      }
+      expect(schedule.pending).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(sweeps).toBeLessThanOrEqual(12)
+    expect(runtime.reconcileAttempts).toBeGreaterThanOrEqual(2)
+    expect(runtime.reconcileAttempts).toBeLessThanOrEqual(6)
+    expect(recovery).toMatchObject({ remaining: 1, quarantined: 1, retryAfterMs: null })
+
+    const db = new Database(fixture.path)
+    expect(
+      db
+        .prepare(
+          "SELECT status, result_envelope FROM runtime_composition_attempts WHERE attempt_id = ?",
+        )
+        .get(created.attemptId),
+    ).toEqual({ status: "running", result_envelope: null })
+    db.close()
+  })
+
+  it("keeps bounded backoff retry for a transiently failing recovery", async () => {
+    const fixture = createFixture("codex")
+    const runtime = new RuntimeStub()
+    const created = await delegateForRecovery(fixture.path, runtime, "transient-recovery")
+    const envelope = breakFinalization(fixture.path, created.attemptId)
+    runtime.reconcileFailure = new Error("temporary provider outage")
+    runtime.reconcileAttempts = 0
+
+    vi.useFakeTimers()
+    try {
+      const restarted = new CrossProviderDelegationService(fixture.path, runtime)
+      const first = await restarted.recoverRunningAttempts()
+      expect(first).toMatchObject({ attempted: 1, failed: 1, remaining: 1, quarantined: 0 })
+      expect(first.retryAfterMs).toBeGreaterThan(0)
+      expect(runtime.reconcileAttempts).toBe(1)
+
+      const backedOff = await restarted.recoverRunningAttempts()
+      expect(backedOff).toMatchObject({ attempted: 0, failed: 0, remaining: 1, quarantined: 0 })
+      expect(backedOff.retryAfterMs).toBeGreaterThan(0)
+      expect(runtime.reconcileAttempts).toBe(1)
+
+      vi.advanceTimersByTime(first.retryAfterMs!)
+      restoreFinalization(fixture.path, created.attemptId, envelope)
+      runtime.reconcileFailure = null
+      runtime.state = "completed"
+
+      await expect(restarted.recoverRunningAttempts()).resolves.toEqual({
+        attempted: 1,
+        failed: 0,
+        remaining: 0,
+        quarantined: 0,
+        retryAfterMs: null,
+      })
+      expect(runtime.reconcileAttempts).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const service = new CrossProviderDelegationService(fixture.path, runtime)
+    expect(await service.reconcile(created.attemptId)).toMatchObject({ status: "success" })
+  })
+
+  it("schedules composition recovery only while a running attempt stays actionable", () => {
+    const sweep = { attempted: 0, failed: 0, remaining: 1, quarantined: 0, retryAfterMs: 0 }
+
+    expect(nextRuntimeRecoverySchedule(sweep, 1_000)).toEqual({
+      pending: true,
+      nextAttemptAt: 6_000,
+    })
+    expect(nextRuntimeRecoverySchedule({ ...sweep, retryAfterMs: 40_000 }, 1_000)).toEqual({
+      pending: true,
+      nextAttemptAt: 41_000,
+    })
+    expect(
+      nextRuntimeRecoverySchedule({ ...sweep, quarantined: 1, retryAfterMs: null }, 1_000),
+    ).toEqual({ pending: false, nextAttemptAt: 1_000 })
+    expect(
+      nextRuntimeRecoverySchedule({ ...sweep, remaining: 0, retryAfterMs: null }, 1_000),
+    ).toEqual({ pending: false, nextAttemptAt: 1_000 })
   })
 
   it("lets provider terminal truth win cancellation and keeps one durable usage/result projection", async () => {
@@ -851,6 +969,48 @@ describe("cross-provider Runtime delegation", () => {
     },
   )
 })
+
+async function delegateForRecovery(databasePath: string, runtime: RuntimeStub, requestId: string) {
+  const service = new CrossProviderDelegationService(databasePath, runtime)
+  const request = {
+    sourceChatId: "source",
+    targetHarness: "claude-code" as const,
+    targetModel: "claude",
+    preference: "claude-code" as const,
+    requestId,
+    objective: "Review.",
+  }
+  const preview = service.preview(request)
+  const created = service.delegate({ ...request, confirmedPreviewDigest: preview.digest })
+  await vi.waitFor(() => expect(runtime.reconcileAttempts).toBeGreaterThan(0))
+  return created
+}
+
+function breakFinalization(databasePath: string, attemptId: string): string {
+  const db = new Database(databasePath)
+  try {
+    const row = db
+      .prepare("SELECT task_envelope FROM runtime_composition_attempts WHERE attempt_id = ?")
+      .get(attemptId) as { task_envelope: string }
+    db.prepare(
+      "UPDATE runtime_composition_attempts SET task_envelope = '{}' WHERE attempt_id = ?",
+    ).run(attemptId)
+    return row.task_envelope
+  } finally {
+    db.close()
+  }
+}
+
+function restoreFinalization(databasePath: string, attemptId: string, envelope: string): void {
+  const db = new Database(databasePath)
+  try {
+    db.prepare(
+      "UPDATE runtime_composition_attempts SET task_envelope = ? WHERE attempt_id = ?",
+    ).run(envelope, attemptId)
+  } finally {
+    db.close()
+  }
+}
 
 function createFixture(sourceHarness: "codex" | "claude-code") {
   const root = mkdtempSync(join(tmpdir(), "flapstack-runtime-delegation-"))

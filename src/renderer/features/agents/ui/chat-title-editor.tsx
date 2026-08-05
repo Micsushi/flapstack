@@ -6,8 +6,6 @@ import { Folder } from "lucide-react"
 import { ProviderChipIcon } from "../components/provider-chip-icon"
 import { OpenInButton } from "../../../components/open-in-button"
 
-const MAX_VISIBLE_CHAT_NAME_LENGTH = 40
-
 interface ChatTitleEditorProps {
   name: string
   placeholder?: string
@@ -153,11 +151,6 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   }
 
   const hasRealName = name && name !== placeholder
-  const visibleName =
-    name.length > MAX_VISIBLE_CHAT_NAME_LENGTH
-      ? `${name.slice(0, MAX_VISIBLE_CHAT_NAME_LENGTH)}...`
-      : name
-
   const handleClick = () => {
     // Don't allow editing if disabled or if it's a placeholder (not saved to DB yet)
     if (!disabled && !isEditing && hasRealName) {
@@ -214,7 +207,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
             )}
             title={name}
           >
-            {hasRealName ? visibleName : hasMessages ? placeholder : ""}
+            {hasRealName ? name : hasMessages ? placeholder : ""}
           </span>
         </div>
       )}

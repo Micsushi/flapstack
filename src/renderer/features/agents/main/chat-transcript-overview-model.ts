@@ -10,9 +10,10 @@ export type ChatProgressSummary = {
 
 export type TranscriptMarker = {
   id: string
-  role: "user" | "assistant"
   ordinal: number
   total: number
+  promptPreview: string
+  responsePreview: string | null
 }
 
 const PRIVATE_KINDS = new Set<AgentActivityKind>([
@@ -61,30 +62,49 @@ export function buildTranscriptMarkers(
   messages: readonly unknown[],
   maximum = 12,
 ): TranscriptMarker[] {
-  const eligible = messages.flatMap((message) => {
-    if (!message || typeof message !== "object") return []
-    const candidate = message as { id?: unknown; role?: unknown }
-    if (
-      typeof candidate.id !== "string" ||
-      (candidate.role !== "user" && candidate.role !== "assistant")
-    ) {
-      return []
+  const turns: Array<Pick<TranscriptMarker, "id" | "promptPreview" | "responsePreview">> = []
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue
+    const candidate = message as { id?: unknown; role?: unknown; parts?: unknown }
+    if (candidate.role === "user" && typeof candidate.id === "string") {
+      turns.push({
+        id: candidate.id,
+        promptPreview: publicTextPreview(candidate.parts) || "Untitled prompt",
+        responsePreview: null,
+      })
+      continue
     }
-    return [
-      { id: candidate.id, role: candidate.role } satisfies Pick<TranscriptMarker, "id" | "role">,
-    ]
-  })
-  if (eligible.length === 0) return []
-  const count = Math.max(1, Math.min(maximum, eligible.length))
+    if (candidate.role === "assistant" && turns.length > 0) {
+      const currentTurn = turns.at(-1)!
+      if (currentTurn.responsePreview === null) {
+        currentTurn.responsePreview = publicTextPreview(candidate.parts) || null
+      }
+    }
+  }
+  if (turns.length === 0) return []
+  const count = Math.max(1, Math.min(maximum, turns.length))
   const indexes = new Set<number>()
   for (let marker = 0; marker < count; marker++) {
-    indexes.add(count === 1 ? 0 : Math.round((marker * (eligible.length - 1)) / (count - 1)))
+    indexes.add(count === 1 ? 0 : Math.round((marker * (turns.length - 1)) / (count - 1)))
   }
   return [...indexes].map((index) => ({
-    ...eligible[index]!,
+    ...turns[index]!,
     ordinal: index + 1,
-    total: eligible.length,
+    total: turns.length,
   }))
+}
+
+function publicTextPreview(parts: unknown): string {
+  if (!Array.isArray(parts)) return ""
+  return parts
+    .flatMap((part) => {
+      if (!part || typeof part !== "object") return []
+      const candidate = part as { type?: unknown; text?: unknown }
+      return candidate.type === "text" && typeof candidate.text === "string" ? [candidate.text] : []
+    })
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim()
 }
 
 function activityLabel(kind: AgentActivityKind): string {

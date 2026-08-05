@@ -32,6 +32,13 @@ describe("ChatWorkbench", () => {
   let root: Root
   let container: HTMLDivElement
 
+  async function openPaneOptions() {
+    const trigger = container.querySelector('[aria-label="Chat pane options"]') as HTMLButtonElement
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }))
+    })
+  }
+
   beforeEach(() => {
     container = document.createElement("div")
     document.body.append(container)
@@ -123,7 +130,7 @@ describe("ChatWorkbench", () => {
     expect(renderChat).toHaveBeenCalledWith("a", true)
   })
 
-  it("exposes a visible Save as Workspace action and announces the durable result", async () => {
+  it("keeps Save as workspace in the compact pane menu and announces the durable result", async () => {
     const onSaveAsWorkspace = vi.fn().mockResolvedValue("Saved as workspace Focus layout")
     await act(async () =>
       root.render(
@@ -138,9 +145,10 @@ describe("ChatWorkbench", () => {
       ),
     )
 
-    const button = Array.from(container.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent === "Save as Workspace",
-    )
+    await openPaneOptions()
+    const button = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ).find((candidate) => candidate.textContent === "Save as workspace")
     expect(button).toBeDefined()
     await act(async () => button!.click())
 
@@ -197,8 +205,9 @@ describe("ChatWorkbench", () => {
       ),
     )
 
-    const buttons = [...container.querySelectorAll("button")]
-    expect(buttons.map((button) => button.textContent)).not.toContain("Move to window")
+    await openPaneOptions()
+    const buttons = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    expect(buttons.map((button) => button.textContent)).not.toContain("Move to new window")
     expect(buttons.map((button) => button.textContent)).not.toContain("Open read-only copy")
     expect(buttons.map((button) => button.textContent)).toContain("Take ownership here")
     await act(async () =>
@@ -225,8 +234,9 @@ describe("ChatWorkbench", () => {
       ),
     )
 
-    const moveButton = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "Move to window",
+    await openPaneOptions()
+    const moveButton = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (button) => button.textContent === "Move to new window",
     )!
     await act(async () => moveButton.click())
     expect(container.querySelector('[role="status"]')?.textContent).toContain(
@@ -410,8 +420,9 @@ describe("ChatWorkbench", () => {
         }),
       ),
     )
-    const move = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "Move to existing…",
+    await openPaneOptions()
+    const move = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (button) => button.textContent === "Move to existing window…",
     )!
     await act(async () => move.click())
     expect(onMoveToExistingWindow).toHaveBeenCalledWith("a", "chat-group-1")

@@ -43,11 +43,9 @@ import { toast } from "sonner"
 import { useShallow } from "zustand/react/shallow"
 import type { FileStatus } from "../../../../shared/changes-types"
 import { ChatTranscriptOverview } from "./chat-transcript-overview"
-import {
-  buildTranscriptMarkers,
-  summarizeChatProgress,
-  type TranscriptMarker,
-} from "./chat-transcript-overview-model"
+import { buildTranscriptMarkers, type TranscriptMarker } from "./chat-transcript-overview-model"
+import { hydrateChatFromPersistedMessages } from "./chat-message-hydration"
+import { presentRunError } from "./run-error-presentation"
 import {
   MAX_ATTACHMENT_BYTES,
   normalizeNonImageAttachmentMimeType,
@@ -283,6 +281,45 @@ function getDistanceFromScrollBottom(container: HTMLElement) {
 
 function getScrollToLatestThreshold(container: HTMLElement) {
   return Math.max(50, container.clientHeight / 2)
+}
+
+const STREAMING_WORDS = ["Thinking", "Working", "Cooking"] as const
+
+function StreamingCue() {
+  const [wordIndex, setWordIndex] = useState(0)
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setWordIndex((current) => (current + 1) % STREAMING_WORDS.length),
+      1_800,
+    )
+    return () => window.clearInterval(timer)
+  }, [])
+
+  return (
+    <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground" role="status">
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" aria-hidden />
+      <span>{STREAMING_WORDS[wordIndex]}…</span>
+    </div>
+  )
+}
+
+function hasAssistantOutputForLatestTurn(messages: readonly any[]) {
+  let lastUserIndex = -1
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      lastUserIndex = index
+      break
+    }
+  }
+  return messages.slice(lastUserIndex + 1).some((message) => {
+    if (message?.role !== "assistant") return false
+    return (message.parts ?? []).some(
+      (part: any) =>
+        (part.type === "text" && typeof part.text === "string" && part.text.trim().length > 0) ||
+        part.type?.startsWith("tool-") ||
+        part.type === "dynamic-tool",
+    )
+  })
 }
 
 import { utf8ToBase64, base64ToUtf8 } from "../utils/base64"
@@ -2350,7 +2387,7 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Use subChatId as stable key to prevent HMR-induced duplicate resume requests
   // resume: !!streamId to reconnect to active streams (background streaming support)
-  const { messages, sendMessage, status, stop, regenerate, setMessages } = useChat({
+  const { messages, sendMessage, status, error, stop, regenerate, setMessages } = useChat({
     id: subChatId,
     chat,
     resume: !!streamId,
@@ -4723,27 +4760,15 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Calculate top offset for search bar based on sub-chat selector
   const searchBarTopOffset = isSubChatsSidebarOpen ? "52px" : undefined
-  const shouldShowStatusCard = isStreaming || isCompacting || changedFilesForSubChat.length > 0
+  const shouldShowStatusCard = changedFilesForSubChat.length > 0
   const shouldShowStackedCards = !displayQuestions && (queue.length > 0 || shouldShowStatusCard)
   const transcriptMarkers = useMemo(() => buildTranscriptMarkers(messages), [messages])
-  const progressSummary = useMemo(
-    () =>
-      summarizeChatProgress({
-        events: (activityPage?.events ?? []).filter((event) => event.subChatId === subChatId),
-        isStreaming,
-        isCompacting,
-        messageCount: messages.length,
-        changeCount: changedFilesForSubChat.length,
-      }),
-    [
-      activityPage?.events,
-      changedFilesForSubChat.length,
-      isCompacting,
-      isStreaming,
-      messages.length,
-      subChatId,
-    ],
-  )
+  const visibleActivityCount = (activityPage?.events ?? []).filter(
+    (event) => event.subChatId === subChatId && event.privacyClass === "public",
+  ).length
+  const showStreamingCue =
+    (isStreaming || isCompacting) && !hasAssistantOutputForLatestTurn(messages)
+  const runErrorPresentation = useMemo(() => presentRunError(error?.message), [error?.message])
   const jumpToTranscriptMarker = useCallback((marker: TranscriptMarker) => {
     if (
       messageVirtualizerRef.current?.scrollToMessage(marker.id, {
@@ -4975,11 +5000,7 @@ const ChatViewInner = memo(function ChatViewInner({
         )}
 
         {isActive && (
-          <ChatTranscriptOverview
-            summary={progressSummary}
-            markers={transcriptMarkers}
-            onJump={jumpToTranscriptMarker}
-          />
+          <ChatTranscriptOverview markers={transcriptMarkers} onJump={jumpToTranscriptMarker} />
         )}
 
         {/* Messages */}
@@ -5017,6 +5038,7 @@ const ChatViewInner = memo(function ChatViewInner({
           data-chat-container
           data-active-sub-chat-id={subChatId}
           data-stage6-performance-message-count={messages.length}
+          data-visible-activity-count={visibleActivityCount}
         >
           <div
             ref={contentWrapperRef}
@@ -5054,6 +5076,24 @@ const ChatViewInner = memo(function ChatViewInner({
                   onEditLatest={handleEditLatestMessage}
                   onFork={handleForkFromMessage}
                 />
+                {showStreamingCue && <StreamingCue />}
+                {status === "error" && (
+                  <div
+                    role="alert"
+                    className="mx-1 rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300"
+                  >
+                    <div className="font-medium">{runErrorPresentation.title}</div>
+                    <div className="mt-0.5 text-xs opacity-90">{runErrorPresentation.message}</div>
+                    {runErrorPresentation.technicalDetail && (
+                      <details className="mt-1 text-xs opacity-80">
+                        <summary className="cursor-pointer select-none">Technical details</summary>
+                        <div className="mt-1 break-words font-mono">
+                          {runErrorPresentation.technicalDetail}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                )}
               </>
             </div>
           </div>
@@ -5748,9 +5788,18 @@ function ChatViewScoped({
   const chatSourceMode = useAtomValue(chatSourceModeAtom)
 
   // Fetch chat data from local or remote based on mode
-  const { data: localAgentChat, isLoading: isLocalLoading } = api.agents.getAgentChat.useQuery(
+  const {
+    data: localAgentChat,
+    isLoading: isLocalLoading,
+    isFetching: isLocalFetching,
+    error: localChatError,
+    refetch: refetchLocalChat,
+  } = api.agents.getAgentChat.useQuery(
     { chatId },
-    { enabled: !!chatId && chatSourceMode === "local" },
+    {
+      enabled: !!chatId && chatSourceMode === "local",
+      refetchOnMount: "always",
+    },
   )
 
   const { data: remoteAgentChat, isLoading: isRemoteLoading } = useRemoteChat(
@@ -5797,7 +5846,8 @@ function ChatViewScoped({
   const isLoading = chatSourceMode === "sandbox" ? isRemoteLoading : isLocalLoading
 
   // Compute if we're waiting for local chat data (used as loading gate)
-  const isLocalChatLoading = chatSourceMode === "local" && isLocalLoading
+  const isLocalChatLoading =
+    chatSourceMode === "local" && (isLocalLoading || (isLocalFetching && !localAgentChat))
 
   // Projects query for "Open Locally" functionality
   const { data: projects } = trpc.projects.list.useQuery()
@@ -6988,11 +7038,25 @@ Make sure to preserve all functionality from both branches when resolving confli
       const runWorktreePath = targetWorktreePath || worktreePath
       const desiredProvider = inferProviderFromMessages(subChatId)
       const desiredSubChat = agentSubChats.find((sc) => sc.id === subChatId)
+      const rawDesiredMessages = desiredSubChat?.messages
+      const desiredMessages = Array.isArray(rawDesiredMessages)
+        ? rawDesiredMessages
+        : typeof rawDesiredMessages === "string"
+          ? (() => {
+              try {
+                const parsed = JSON.parse(rawDesiredMessages)
+                return Array.isArray(parsed) ? parsed : []
+              } catch {
+                return []
+              }
+            })()
+          : []
 
       // Fast path for existing chats. Only inspect messages when a local empty-chat provider override
       // might require transport recreation.
       const existing = agentChatStore.get(subChatId)
       if (existing) {
+        hydrateChatFromPersistedMessages(existing, desiredMessages)
         if (isRemoteChat) return existing
 
         const existingOpencodeTransport = (existing as any)?.transport
@@ -7030,40 +7094,15 @@ Make sure to preserve all functionality from both branches when resolving confli
                   : "claude-code"
         if (existingProvider === overrideProvider) return existing
 
-        const subChatForOverride = agentSubChats.find((sc) => sc.id === subChatId)
-        const rawExistingMessages = subChatForOverride?.messages
-        const existingMessageCount = Array.isArray(rawExistingMessages)
-          ? rawExistingMessages.length
-          : typeof rawExistingMessages === "string"
-            ? (() => {
-                try {
-                  const parsed = JSON.parse(rawExistingMessages)
-                  return Array.isArray(parsed) ? parsed.length : 0
-                } catch {
-                  return 0
-                }
-              })()
-            : 0
+        const existingMessageCount = desiredMessages.length
 
         if (existingMessageCount > 0) return existing
         agentChatStore.delete(subChatId)
       }
 
       // Find sub-chat data
-      const subChat = agentSubChats.find((sc) => sc.id === subChatId)
-      const rawMessages = subChat?.messages
-      const messages = Array.isArray(rawMessages)
-        ? rawMessages
-        : typeof rawMessages === "string"
-          ? (() => {
-              try {
-                const parsed = JSON.parse(rawMessages)
-                return Array.isArray(parsed) ? parsed : []
-              } catch {
-                return []
-              }
-            })()
-          : []
+      const subChat = desiredSubChat
+      const messages = desiredMessages
 
       // Get mode from store metadata (falls back to currentMode)
       const subChatMeta = subChatStore.getState().allSubChats.find((sc) => sc.id === subChatId)
@@ -7179,7 +7218,7 @@ Make sure to preserve all functionality from both branches when resolving confli
         transport,
         onError: (error: Error) => {
           // Sync status to global store on error (allows queue to continue)
-          useStreamingStatusStore.getState().setStatus(subChatId, "ready")
+          useStreamingStatusStore.getState().setStatus(subChatId, "error")
           syncFinishedMessagesToChatCache(subChatId, newChat)
           const failedSubChatName =
             subChatStore.getState().allSubChats.find((chat) => chat.id === subChatId)?.name ||
@@ -7859,11 +7898,11 @@ Make sure to preserve all functionality from both branches when resolving confli
 
   // Get or create Chat instance for active sub-chat
   const activeChat = useMemo(() => {
-    if (!canonicalConversationId || !agentChat) {
+    if (!canonicalConversationId || !agentChat || isLocalChatLoading) {
       return null
     }
     return getOrCreateChat(canonicalConversationId)
-  }, [canonicalConversationId, agentChat, getOrCreateChat, chatId, chatWorkingDir])
+  }, [canonicalConversationId, agentChat, getOrCreateChat, isLocalChatLoading])
 
   // Check if active sub-chat is the first one (for renaming parent chat)
   // Use agentSubChats directly to avoid race condition with store initialization
@@ -8344,8 +8383,34 @@ Make sure to preserve all functionality from both branches when resolving confli
                 </div>
               ) : (
                 <>
-                  {/* Empty chat area - no loading indicator */}
-                  <div className="flex-1" />
+                  <div className="flex flex-1 items-center justify-center px-6">
+                    {localChatError ? (
+                      <div className="max-w-sm text-center">
+                        <div className="text-sm font-medium text-foreground">
+                          Couldn’t load this chat
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {localChatError.message || "The saved conversation is unavailable."}
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-3"
+                          onClick={() => void refetchLocalChat()}
+                        >
+                          Retry
+                        </Button>
+                      </div>
+                    ) : (
+                      <div
+                        className="flex items-center gap-2 text-sm text-muted-foreground"
+                        role="status"
+                      >
+                        <IconSpinner className="h-4 w-4 animate-spin" />
+                        Loading chat…
+                      </div>
+                    )}
+                  </div>
 
                   {/* Disabled input while loading */}
                   <div className="px-2 pb-2">

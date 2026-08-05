@@ -268,9 +268,9 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
             aria-setsize={userMsgIds.length}
             data-index={virtualItem.index}
             data-virtual-message-group={userMsgId}
-            className="absolute left-0 top-0 w-full"
+            className="absolute left-0 w-full"
             style={{
-              transform: `translateY(${virtualItem.start - scrollMargin}px)`,
+              top: `${virtualItem.start - scrollMargin}px`,
             }}
           >
             <IsolatedMessageGroup

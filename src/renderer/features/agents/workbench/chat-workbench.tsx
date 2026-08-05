@@ -23,6 +23,17 @@ import {
   type ChatWorkbenchPreset,
 } from "../../../../shared/chat-workbench"
 import { cn } from "../../../lib/utils"
+import { ChevronRight, MoreHorizontal, X } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "../../../components/ui/dropdown-menu"
 
 const CHAT_DRAG_TYPE = "application/x-flapstack-chat-workbench"
 
@@ -33,7 +44,7 @@ export const CHAT_WORKBENCH_A11Y = {
   status: "Chat workbench status",
 } as const
 
-export type ChatWorkbenchChat = { id: string; name?: string | null }
+export type ChatWorkbenchChat = { id: string; name?: string | null; accentColor?: string | null }
 export type ChatWorkbenchDragSource = {
   chatId: string
   groupId: string
@@ -97,6 +108,10 @@ export function ChatWorkbench({
   } | null>(null)
   const chatNames = useMemo(
     () => new Map(chats.map((chat) => [chat.id, chat.name?.trim() || "New Chat"])),
+    [chats],
+  )
+  const chatAccents = useMemo(
+    () => new Map(chats.map((chat) => [chat.id, chat.accentColor ?? null])),
     [chats],
   )
   const groups = collectChatGroups(layout.root)
@@ -332,6 +347,20 @@ export function ChatWorkbench({
     }
   }
 
+  const saveWorkspace = onSaveAsWorkspace
+    ? () => {
+        setSavingWorkspace(true)
+        void onSaveAsWorkspace()
+          .then(setAnnouncement)
+          .catch((error: unknown) =>
+            setAnnouncement(
+              error instanceof Error ? error.message : "Workspace could not be saved.",
+            ),
+          )
+          .finally(() => setSavingWorkspace(false))
+      }
+    : undefined
+
   return (
     <section
       ref={shellRef}
@@ -344,26 +373,6 @@ export function ChatWorkbench({
       data-visible-groups={visibleGroups.length}
       data-collapsed-groups={projected.collapsedGroupIds.length}
     >
-      {onSaveAsWorkspace && (
-        <button
-          type="button"
-          className="absolute right-2 top-2 z-40 rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs font-medium shadow-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60"
-          disabled={savingWorkspace}
-          onClick={() => {
-            setSavingWorkspace(true)
-            void onSaveAsWorkspace()
-              .then(setAnnouncement)
-              .catch((error: unknown) =>
-                setAnnouncement(
-                  error instanceof Error ? error.message : "Workspace could not be saved.",
-                ),
-              )
-              .finally(() => setSavingWorkspace(false))
-          }}
-        >
-          {savingWorkspace ? "Saving Workspace…" : "Save as Workspace"}
-        </button>
-      )}
       {projected.collapsedGroupIds.length > 0 && (
         <div
           role="status"
@@ -382,6 +391,7 @@ export function ChatWorkbench({
         }
         layout={layout}
         chatNames={chatNames}
+        chatAccents={chatAccents}
         readOnlyChatIds={readOnlyChatIds}
         renderChat={renderChat}
         dispatch={dispatch}
@@ -394,6 +404,8 @@ export function ChatWorkbench({
         onMoveToNewWindow={onMoveToNewWindow ? runWindowAction : undefined}
         onMoveToExistingWindow={onMoveToExistingWindow ? runWindowAction : undefined}
         onClaimOwnership={onClaimOwnership ? runWindowAction : undefined}
+        onSaveWorkspace={saveWorkspace}
+        savingWorkspace={savingWorkspace}
         logicalGroupForChat={logicalGroupForChat}
       />
       <div
@@ -412,6 +424,7 @@ function WorkbenchNode({
   node,
   layout,
   chatNames,
+  chatAccents,
   readOnlyChatIds,
   renderChat,
   dispatch,
@@ -424,11 +437,14 @@ function WorkbenchNode({
   onMoveToNewWindow,
   onMoveToExistingWindow,
   onClaimOwnership,
+  onSaveWorkspace,
+  savingWorkspace,
   logicalGroupForChat,
 }: {
   node: ChatGroupNode
   layout: ChatWorkbenchLayout
   chatNames: ReadonlyMap<string, string>
+  chatAccents: ReadonlyMap<string, string | null>
   readOnlyChatIds: ReadonlySet<string>
   renderChat: (chatId: string, active: boolean) => ReactNode
   dispatch: (action: ChatWorkbenchAction) => void
@@ -454,6 +470,8 @@ function WorkbenchNode({
     groupId: string,
   ) => Promise<void>
   onClaimOwnership?: (operation: "claim", chatId: string, groupId: string) => Promise<void>
+  onSaveWorkspace?: () => void
+  savingWorkspace: boolean
   logicalGroupForChat: (chatId: string) => Extract<ChatGroupNode, { type: "group" }> | undefined
 }) {
   if (node.type === "group") {
@@ -462,6 +480,7 @@ function WorkbenchNode({
         group={node}
         layout={layout}
         chatNames={chatNames}
+        chatAccents={chatAccents}
         readOnlyChatIds={readOnlyChatIds}
         renderChat={renderChat}
         dispatch={dispatch}
@@ -474,6 +493,8 @@ function WorkbenchNode({
         onMoveToNewWindow={onMoveToNewWindow}
         onMoveToExistingWindow={onMoveToExistingWindow}
         onClaimOwnership={onClaimOwnership}
+        onSaveWorkspace={onSaveWorkspace}
+        savingWorkspace={savingWorkspace}
         logicalGroupForChat={logicalGroupForChat}
       />
     )
@@ -493,6 +514,7 @@ function WorkbenchNode({
             node={child}
             layout={layout}
             chatNames={chatNames}
+            chatAccents={chatAccents}
             readOnlyChatIds={readOnlyChatIds}
             renderChat={renderChat}
             dispatch={dispatch}
@@ -505,6 +527,8 @@ function WorkbenchNode({
             onMoveToNewWindow={onMoveToNewWindow}
             onMoveToExistingWindow={onMoveToExistingWindow}
             onClaimOwnership={onClaimOwnership}
+            onSaveWorkspace={onSaveWorkspace}
+            savingWorkspace={savingWorkspace}
             logicalGroupForChat={logicalGroupForChat}
           />
         </SplitChild>
@@ -607,6 +631,7 @@ function ChatGroup({
   group,
   layout,
   chatNames,
+  chatAccents,
   readOnlyChatIds,
   renderChat,
   dispatch,
@@ -619,11 +644,14 @@ function ChatGroup({
   onMoveToNewWindow,
   onMoveToExistingWindow,
   onClaimOwnership,
+  onSaveWorkspace,
+  savingWorkspace,
   logicalGroupForChat,
 }: {
   group: Extract<ChatGroupNode, { type: "group" }>
   layout: ChatWorkbenchLayout
   chatNames: ReadonlyMap<string, string>
+  chatAccents: ReadonlyMap<string, string | null>
   readOnlyChatIds: ReadonlySet<string>
   renderChat: (chatId: string, active: boolean) => ReactNode
   dispatch: (action: ChatWorkbenchAction) => void
@@ -649,11 +677,29 @@ function ChatGroup({
     groupId: string,
   ) => Promise<void>
   onClaimOwnership?: (operation: "claim", chatId: string, groupId: string) => Promise<void>
+  onSaveWorkspace?: () => void
+  savingWorkspace: boolean
   logicalGroupForChat: (chatId: string) => Extract<ChatGroupNode, { type: "group" }> | undefined
 }) {
   const activeChatId = group.chatIds.includes(group.activeChatId)
     ? group.activeChatId
     : group.chatIds[0]
+  const groupPreferenceKey = `flapstack-chat-group:${windowId}:${group.id}`
+  const [groupPresentation, setGroupPresentation] = useState<{
+    name: string
+    collapsed: boolean
+  }>(() => {
+    try {
+      const stored = localStorage.getItem(groupPreferenceKey)
+      if (stored) return JSON.parse(stored) as { name: string; collapsed: boolean }
+    } catch {
+      // Ignore malformed presentation preferences.
+    }
+    return { name: `Group ${group.id.split("-").at(-1) ?? "1"}`, collapsed: false }
+  })
+  useEffect(() => {
+    localStorage.setItem(groupPreferenceKey, JSON.stringify(groupPresentation))
+  }, [groupPreferenceKey, groupPresentation])
   const activate = (chatId: string) => {
     dispatch({ type: "activate-tab", groupId: group.id, chatId })
     onActiveChatChange(chatId)
@@ -722,31 +768,43 @@ function ChatGroup({
       }}
     >
       <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-muted/30 px-1">
+        <button
+          type="button"
+          className="flex h-8 max-w-32 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+          aria-expanded={!groupPresentation.collapsed}
+          onClick={() =>
+            setGroupPresentation((current) => ({ ...current, collapsed: !current.collapsed }))
+          }
+        >
+          <ChevronRight
+            className={cn(
+              "h-3.5 w-3.5 transition-transform",
+              !groupPresentation.collapsed && "rotate-90",
+            )}
+          />
+          <span className="truncate">{groupPresentation.name}</span>
+        </button>
         <div
           role="tablist"
           aria-label={CHAT_WORKBENCH_A11Y.tabs}
-          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+          className={cn(
+            "min-w-0 flex-1 items-center gap-1 overflow-x-auto",
+            groupPresentation.collapsed ? "hidden" : "flex",
+          )}
           onDragOver={(event) => preview(event, "tab")}
           onDrop={(event) => commitDrop(event, { groupId: group.id, zone: "tab" })}
         >
           {group.chatIds.map((chatId, index) => (
-            <button
+            <div
               key={chatId}
-              id={tabId(group.id, chatId)}
-              type="button"
-              role="tab"
-              aria-selected={chatId === activeChatId}
-              aria-controls={panelId(group.id, chatId)}
-              tabIndex={chatId === activeChatId ? 0 : -1}
               draggable={!readOnlyChatIds.has(chatId)}
               className={cn(
-                "max-w-48 truncate rounded px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                "group/tab relative flex h-8 w-44 shrink-0 items-center rounded-md border border-transparent",
                 chatId === activeChatId
-                  ? "bg-background text-foreground shadow-sm"
+                  ? "border-border bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:bg-accent",
               )}
-              onClick={() => activate(chatId)}
-              onKeyDown={(event) => tabKeyDown(event, index)}
+              style={{ borderTopColor: chatAccents.get(chatId) ?? undefined }}
               onDragStart={(event) => {
                 event.dataTransfer.effectAllowed = "move"
                 const source = {
@@ -765,93 +823,132 @@ function ChatGroup({
               onDragOver={(event) => preview(event, "tab", index)}
               onDrop={(event) => commitDrop(event, { groupId: group.id, zone: "tab" })}
             >
-              {chatNames.get(chatId) ?? chatId}
-              {readOnlyChatIds.has(chatId) ? " (read only)" : ""}
-            </button>
+              <button
+                id={tabId(group.id, chatId)}
+                type="button"
+                role="tab"
+                aria-selected={chatId === activeChatId}
+                aria-controls={panelId(group.id, chatId)}
+                tabIndex={chatId === activeChatId ? 0 : -1}
+                className="min-w-0 flex-1 truncate px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                onClick={() => activate(chatId)}
+                onKeyDown={(event) => tabKeyDown(event, index)}
+              >
+                {chatNames.get(chatId) ?? chatId}
+                {readOnlyChatIds.has(chatId) ? " (read only)" : ""}
+              </button>
+              <button
+                type="button"
+                aria-label={`Close ${chatNames.get(chatId) ?? "Chat"} presentation`}
+                className={cn(
+                  "mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-0 hover:bg-muted group-hover/tab:opacity-100 focus-visible:opacity-100",
+                  chatId === activeChatId && "opacity-60",
+                )}
+                onClick={() => dispatch({ type: "close-tab", groupId: group.id, chatId })}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
           ))}
         </div>
-        <select
-          aria-label="Chat pane layout"
-          className="h-7 max-w-28 rounded border border-border bg-background px-1 text-xs"
-          defaultValue=""
-          onChange={(event) => {
-            if (!event.target.value) return
-            dispatch({ type: "apply-preset", preset: event.target.value as ChatWorkbenchPreset })
-            event.target.value = ""
-          }}
-        >
-          <option value="">Layout</option>
-          <option value="single">Single</option>
-          <option value="two-columns">Two columns</option>
-          <option value="two-rows">Two rows</option>
-          <option value="three-columns">Three columns</option>
-          <option value="three-rows">Three rows</option>
-          <option value="grid-2x2">Grid 2x2</option>
-          <option value="two-rows-right">Two rows right</option>
-          <option value="two-columns-bottom">Two columns bottom</option>
-          <option value="four-columns">Four columns</option>
-          <option value="four-rows">Four rows</option>
-        </select>
-        {layout.activeGroupId === group.id &&
-          !readOnlyChatIds.has(activeChatId) &&
-          onMoveToNewWindow && (
-            <>
-              <button
-                type="button"
-                className="rounded px-2 py-1 text-xs hover:bg-accent"
-                onClick={() => void onMoveToNewWindow("move", activeChatId, group.id)}
-              >
-                Move to window
-              </button>
-              <button
-                type="button"
-                className="rounded px-2 py-1 text-xs hover:bg-accent"
-                onClick={() => void onMoveToNewWindow("read-only-copy", activeChatId, group.id)}
-              >
-                Open read-only copy
-              </button>
-            </>
-          )}
-        {layout.activeGroupId === group.id &&
-          !readOnlyChatIds.has(activeChatId) &&
-          onMoveToExistingWindow && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className="rounded px-2 py-1 text-xs hover:bg-accent"
-              onClick={() => void onMoveToExistingWindow("move-existing", activeChatId, group.id)}
+              className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent"
+              aria-label="Chat pane options"
             >
-              Move to existing…
+              <MoreHorizontal className="h-4 w-4" />
             </button>
-          )}
-        {layout.activeGroupId === group.id &&
-          readOnlyChatIds.has(activeChatId) &&
-          onClaimOwnership && (
-            <button
-              type="button"
-              className="rounded px-2 py-1 text-xs hover:bg-accent"
-              onClick={() => void onClaimOwnership("claim", activeChatId, group.id)}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>Layout</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-44">
+                {(
+                  [
+                    "single",
+                    "two-columns",
+                    "two-rows",
+                    "three-columns",
+                    "three-rows",
+                    "grid-2x2",
+                    "four-columns",
+                    "four-rows",
+                  ] as ChatWorkbenchPreset[]
+                ).map((preset) => (
+                  <DropdownMenuItem
+                    key={preset}
+                    className="capitalize"
+                    onSelect={() => dispatch({ type: "apply-preset", preset })}
+                  >
+                    {preset.replaceAll("-", " ")}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem
+              onSelect={() => dispatch({ type: "toggle-maximize", groupId: group.id })}
             >
-              Take ownership here
-            </button>
-          )}
-        <button
-          type="button"
-          className="rounded px-2 py-1 text-xs hover:bg-accent"
-          aria-label={
-            layout.maximizedGroupId === group.id ? "Restore Chat pane" : "Maximize Chat pane"
-          }
-          onClick={() => dispatch({ type: "toggle-maximize", groupId: group.id })}
-        >
-          {layout.maximizedGroupId === group.id ? "Restore" : "Max"}
-        </button>
-        <button
-          type="button"
-          className="rounded px-2 py-1 text-xs hover:bg-accent"
-          aria-label={`Close ${chatNames.get(activeChatId) ?? "Chat"} presentation`}
-          onClick={() => dispatch({ type: "close-tab", groupId: group.id, chatId: activeChatId })}
-        >
-          ×
-        </button>
+              {layout.maximizedGroupId === group.id ? "Restore pane" : "Maximize pane"}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                const name = window.prompt("Group name", groupPresentation.name)?.trim()
+                if (name) setGroupPresentation((current) => ({ ...current, name }))
+              }}
+            >
+              Rename group…
+            </DropdownMenuItem>
+            {layout.activeGroupId === group.id &&
+              readOnlyChatIds.has(activeChatId) &&
+              onClaimOwnership && (
+                <DropdownMenuItem
+                  onSelect={() => void onClaimOwnership("claim", activeChatId, group.id)}
+                >
+                  Take ownership here
+                </DropdownMenuItem>
+              )}
+            {layout.activeGroupId === group.id &&
+              !readOnlyChatIds.has(activeChatId) &&
+              onMoveToNewWindow && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onSelect={() => void onMoveToNewWindow("move", activeChatId, group.id)}
+                  >
+                    Move to new window
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      void onMoveToNewWindow("read-only-copy", activeChatId, group.id)
+                    }
+                  >
+                    Open read-only copy
+                  </DropdownMenuItem>
+                </>
+              )}
+            {layout.activeGroupId === group.id &&
+              !readOnlyChatIds.has(activeChatId) &&
+              onMoveToExistingWindow && (
+                <DropdownMenuItem
+                  onSelect={() =>
+                    void onMoveToExistingWindow("move-existing", activeChatId, group.id)
+                  }
+                >
+                  Move to existing window…
+                </DropdownMenuItem>
+              )}
+            {onSaveWorkspace && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem disabled={savingWorkspace} onSelect={onSaveWorkspace}>
+                  {savingWorkspace ? "Saving workspace…" : "Save as workspace"}
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <div
         id={panelId(group.id, activeChatId)}

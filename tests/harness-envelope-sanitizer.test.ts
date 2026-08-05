@@ -44,4 +44,53 @@ describe("harness envelope sanitizer", () => {
     )
     expect(sanitizeHarnessEnvelopeEcho("Visible first.\n--- BEGIN LOADED")).toBe("Visible first.")
   })
+
+  it("removes a complete nonce-bound BEGIN/END USER REQUEST envelope", () => {
+    const nonce = "3f2a9c0b7d1e4f5a6b8c9d0e1f2a3b4c"
+    expect(
+      sanitizeHarnessEnvelopeEcho(
+        `Visible first.\n--- BEGIN USER REQUEST ${nonce} ---\nprivate prompt\n--- END USER REQUEST ${nonce} ---\nVisible last.`,
+      ),
+    ).toBe("Visible first.\nVisible last.")
+  })
+
+  it("hides an unmatched BEGIN through end of chunk even when a decoy mismatched-nonce END is present", () => {
+    const beginNonce = "3f2a9c0b7d1e4f5a6b8c9d0e1f2a3b4c"
+    const endNonce = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    const text = `Visible first.\n--- BEGIN USER REQUEST ${beginNonce} ---\nprivate prompt\n--- END USER REQUEST ${endNonce} ---\nVisible last.`
+    expect(sanitizeHarnessEnvelopeEcho(text)).toBe("Visible first.")
+  })
+
+  it("still removes the envelope once the real same-nonce END arrives after a decoy END", () => {
+    const beginNonce = "3f2a9c0b7d1e4f5a6b8c9d0e1f2a3b4c"
+    const decoyNonce = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    const text =
+      `Visible first.\n--- BEGIN USER REQUEST ${beginNonce} ---\n` +
+      `private prompt\n--- END USER REQUEST ${decoyNonce} ---\nmore private prompt\n` +
+      `--- END USER REQUEST ${beginNonce} ---\nVisible last.`
+    expect(sanitizeHarnessEnvelopeEcho(text)).toBe("Visible first.\nVisible last.")
+  })
+
+  it("hides an unfinished trailing nonce-bound BEGIN USER REQUEST envelope while streaming", () => {
+    const nonce = "3f2a9c0b7d1e4f5a6b8c9d0e1f2a3b4c"
+    expect(
+      sanitizeHarnessEnvelopeEcho(
+        `Visible first.\n--- BEGIN USER REQUEST ${nonce} ---\nprivate prompt so far`,
+      ),
+    ).toBe("Visible first.")
+    expect(
+      sanitizeHarnessEnvelopeEcho(`Visible first.\n--- BEGIN USER REQUEST ${nonce.slice(0, 8)}`),
+    ).toBe("Visible first.")
+    expect(sanitizeHarnessEnvelopeEcho("Visible first.\n--- BEGIN USER REQUEST")).toBe(
+      "Visible first.",
+    )
+  })
+
+  it("preserves ordinary inline discussion of the nonce envelope marker syntax", () => {
+    expect(
+      sanitizeHarnessEnvelopeEcho(
+        "Explain the --- BEGIN USER REQUEST <nonce> --- boundary in this protocol.",
+      ),
+    ).toBe("Explain the --- BEGIN USER REQUEST <nonce> --- boundary in this protocol.")
+  })
 })

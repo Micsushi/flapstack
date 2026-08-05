@@ -253,9 +253,8 @@ describe("IsolatedMessagesSection transcript virtualization", () => {
     })
 
     const startForIndex = (index: number) => {
-      const transform = container.querySelector<HTMLElement>(`[data-index="${index}"]`)?.style
-        .transform
-      return Number.parseFloat(transform?.match(/-?\d+(?:\.\d+)?/)?.[0] ?? "")
+      const style = container.querySelector<HTMLElement>(`[data-index="${index}"]`)?.style
+      return Number.parseFloat(style?.top || style?.transform.match(/-?\d+(?:\.\d+)?/)?.[0] || "")
     }
     expect(startForIndex(1) - startForIndex(0)).toBe(80)
     expect(startForIndex(2) - startForIndex(1)).toBe(160)
@@ -498,7 +497,9 @@ describe("IsolatedMessagesSection transcript virtualization", () => {
       Array.from(container.querySelectorAll<HTMLElement>("[data-virtual-message-group]")).map(
         (element) => ({
           key: element.dataset.virtualMessageGroup!,
-          start: Number.parseFloat(element.style.transform.match(/-?\d+(?:\.\d+)?/)?.[0] ?? "NaN"),
+          start: Number.parseFloat(
+            element.style.top || element.style.transform.match(/-?\d+(?:\.\d+)?/)?.[0] || "NaN",
+          ),
         }),
       )
     const anchorBeforePrepend = findVisibleTranscriptAnchor(

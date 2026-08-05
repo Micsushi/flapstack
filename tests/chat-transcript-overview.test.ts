@@ -52,16 +52,61 @@ describe("active Chat transcript overview", () => {
     expect(JSON.stringify(summary)).not.toContain("PRIVATE_CHAIN_OF_THOUGHT")
   })
 
-  it("bounds timeline markers while keeping the first and last visible message", () => {
+  it("groups each prompt with its public response preview and excludes private reasoning", () => {
+    const messages = [
+      {
+        id: "prompt-1",
+        role: "user",
+        parts: [{ type: "text", text: "  First   prompt  " }],
+        privateReasoning: "never summarize this",
+      },
+      {
+        id: "response-1",
+        role: "assistant",
+        parts: [
+          { type: "reasoning", text: "PRIVATE_CHAIN_OF_THOUGHT" },
+          { type: "text", text: "First public response." },
+        ],
+      },
+      {
+        id: "prompt-2",
+        role: "user",
+        parts: [{ type: "text", text: "Second prompt" }],
+      },
+    ]
+
+    expect(buildTranscriptMarkers(messages)).toEqual([
+      {
+        id: "prompt-1",
+        ordinal: 1,
+        total: 2,
+        promptPreview: "First prompt",
+        responsePreview: "First public response.",
+      },
+      {
+        id: "prompt-2",
+        ordinal: 2,
+        total: 2,
+        promptPreview: "Second prompt",
+        responsePreview: null,
+      },
+    ])
+    expect(JSON.stringify(buildTranscriptMarkers(messages))).not.toContain(
+      "PRIVATE_CHAIN_OF_THOUGHT",
+    )
+  })
+
+  it("bounds timeline turns while keeping the first and last prompt", () => {
     const messages = Array.from({ length: 40 }, (_, index) => ({
       id: `message-${index + 1}`,
       role: index % 2 ? "assistant" : "user",
+      parts: [{ type: "text", text: `Message ${index + 1}` }],
       privateReasoning: "never summarize this",
     }))
     const markers = buildTranscriptMarkers(messages, 8)
     expect(markers).toHaveLength(8)
-    expect(markers[0]).toMatchObject({ id: "message-1", ordinal: 1, total: 40 })
-    expect(markers.at(-1)).toMatchObject({ id: "message-40", ordinal: 40, total: 40 })
+    expect(markers[0]).toMatchObject({ id: "message-1", ordinal: 1, total: 20 })
+    expect(markers.at(-1)).toMatchObject({ id: "message-39", ordinal: 20, total: 20 })
     expect(JSON.stringify(markers)).not.toContain("never summarize this")
   })
 })

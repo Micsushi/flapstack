@@ -93,6 +93,42 @@ export type CrossProviderDelegationReference = {
   created: boolean
 }
 
+export type RuntimeRecoverySweep = {
+  attempted: number
+  failed: number
+  remaining: number
+  quarantined: number
+  retryAfterMs: number | null
+}
+
+// A running attempt whose provider reconcile and terminalization both keep failing used to be
+// retried on every drain tick forever. Recovery failures are therefore backed off per attempt and
+// quarantined after a bounded number of consecutive failures. Quarantine is deliberately process
+// local: the attempt row stays 'running' and is retried from scratch on the next app start.
+const RECOVERY_RETRY_BASE_MS = 10_000
+const RECOVERY_RETRY_MAX_MS = 300_000
+const RECOVERY_MAX_FAILURES = 5
+const RECOVERY_MINIMUM_INTERVAL_MS = 5_000
+
+type RecoveryFailureState = { failures: number; retryAt: number; quarantined: boolean }
+
+type RecoverySweepProgress = {
+  actionable: number
+  earliestRetryAt: number | null
+  observedFailures: Set<string>
+}
+
+export function nextRuntimeRecoverySchedule(
+  sweep: RuntimeRecoverySweep,
+  now: number,
+  minimumIntervalMs = RECOVERY_MINIMUM_INTERVAL_MS,
+): { pending: boolean; nextAttemptAt: number } {
+  if (sweep.remaining <= 0 || sweep.retryAfterMs === null) {
+    return { pending: false, nextAttemptAt: now }
+  }
+  return { pending: true, nextAttemptAt: now + Math.max(minimumIntervalMs, sweep.retryAfterMs) }
+}
+
 export class CrossProviderDelegationError extends Error {
   constructor(
     readonly code:
@@ -114,6 +150,8 @@ export class CrossProviderDelegationError extends Error {
 export class CrossProviderDelegationService {
   private recoveryCursor = ""
   private recoveryUpperBound: string | null | undefined
+  private readonly recoveryFailures = new Map<string, RecoveryFailureState>()
+  private recoverySweep: RecoverySweepProgress = newRecoverySweepProgress()
 
   constructor(
     private readonly databasePath: string,
@@ -458,11 +496,7 @@ export class CrossProviderDelegationService {
     return await this.reconcile(attemptId)
   }
 
-  async recoverRunningAttempts(limit = 128): Promise<{
-    attempted: number
-    failed: number
-    remaining: number
-  }> {
+  async recoverRunningAttempts(limit = 128): Promise<RuntimeRecoverySweep> {
     const requestedLimit = Number.isFinite(limit) ? Math.trunc(limit) : 128
     const boundedLimit = Math.max(1, Math.min(requestedLimit, 1_000))
     if (this.recoveryUpperBound === undefined) {
@@ -476,6 +510,7 @@ export class CrossProviderDelegationService {
             .get() as { attempt_id: string | null }
         ).attempt_id
         this.recoveryCursor = ""
+        this.recoverySweep = newRecoverySweepProgress()
       } finally {
         snapshotDb.close()
       }
@@ -504,20 +539,45 @@ export class CrossProviderDelegationService {
       }
     }
 
+    const sweep = this.recoverySweep
+    let attempted = 0
     let failed = 0
     for (const attemptId of attemptIds) {
+      const blocked = this.recoveryFailures.get(attemptId)
+      if (blocked) sweep.observedFailures.add(attemptId)
+      if (blocked?.quarantined) continue
+      if (blocked && blocked.retryAt > Date.now()) {
+        sweep.earliestRetryAt = earlier(sweep.earliestRetryAt, blocked.retryAt)
+        continue
+      }
+      attempted += 1
       try {
         await this.reconcile(attemptId)
+        this.clearRecoveryFailure(attemptId, sweep)
+        sweep.actionable += 1
       } catch {
         try {
           await this.finalize(attemptId, "uncertain")
+          this.clearRecoveryFailure(attemptId, sweep)
+          sweep.actionable += 1
         } catch {
           failed += 1
+          const state = this.recordRecoveryFailure(attemptId, sweep)
+          if (!state.quarantined) {
+            sweep.earliestRetryAt = earlier(sweep.earliestRetryAt, state.retryAt)
+          }
         }
       }
     }
     if (attemptIds.length > 0) this.recoveryCursor = attemptIds.at(-1)!
-    if (!hasMore) this.recoveryUpperBound = undefined
+    if (!hasMore) {
+      this.recoveryUpperBound = undefined
+      // The completed sweep saw every running attempt, so failure state it never observed
+      // belongs to an attempt that has since become terminal.
+      for (const attemptId of this.recoveryFailures.keys()) {
+        if (!sweep.observedFailures.has(attemptId)) this.recoveryFailures.delete(attemptId)
+      }
+    }
 
     const remainingDb = this.open()
     try {
@@ -528,10 +588,55 @@ export class CrossProviderDelegationService {
           )
           .get() as { count: number }
       ).count
-      return { attempted: attemptIds.length, failed, remaining }
+      return {
+        attempted,
+        failed,
+        remaining,
+        quarantined: this.quarantinedCount(),
+        retryAfterMs: this.recoveryRetryAfterMs(remaining, hasMore, sweep),
+      }
     } finally {
       remainingDb.close()
     }
+  }
+
+  private recoveryRetryAfterMs(
+    remaining: number,
+    hasMore: boolean,
+    sweep: RecoverySweepProgress,
+  ): number | null {
+    if (remaining <= 0) return null
+    if (hasMore || sweep.actionable > 0) return 0
+    if (sweep.earliestRetryAt === null) return null
+    return Math.max(0, sweep.earliestRetryAt - Date.now())
+  }
+
+  private recordRecoveryFailure(
+    attemptId: string,
+    sweep: RecoverySweepProgress,
+  ): RecoveryFailureState {
+    const failures = (this.recoveryFailures.get(attemptId)?.failures ?? 0) + 1
+    const quarantined = failures >= RECOVERY_MAX_FAILURES
+    const backoff = Math.min(RECOVERY_RETRY_MAX_MS, RECOVERY_RETRY_BASE_MS * 2 ** (failures - 1))
+    const state: RecoveryFailureState = {
+      failures,
+      quarantined,
+      retryAt: Date.now() + backoff,
+    }
+    this.recoveryFailures.set(attemptId, state)
+    sweep.observedFailures.add(attemptId)
+    return state
+  }
+
+  private clearRecoveryFailure(attemptId: string, sweep: RecoverySweepProgress): void {
+    this.recoveryFailures.delete(attemptId)
+    sweep.observedFailures.delete(attemptId)
+  }
+
+  private quarantinedCount(): number {
+    let count = 0
+    for (const state of this.recoveryFailures.values()) if (state.quarantined) count += 1
+    return count
   }
 
   private launch(runId: string): void {
@@ -743,6 +848,14 @@ export class CrossProviderDelegationService {
     db.pragma("busy_timeout = 5000")
     return db
   }
+}
+
+function newRecoverySweepProgress(): RecoverySweepProgress {
+  return { actionable: 0, earliestRetryAt: null, observedFailures: new Set() }
+}
+
+function earlier(current: number | null, candidate: number): number {
+  return current === null ? candidate : Math.min(current, candidate)
 }
 
 function rebuildPreview(

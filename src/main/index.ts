@@ -24,7 +24,10 @@ import {
   withDatabaseOperation,
 } from "./lib/db"
 import { getMainRuntimeLaunchService } from "./lib/main-run-launcher"
-import { CrossProviderDelegationService } from "./lib/agent-runtime/cross-provider-delegation"
+import {
+  CrossProviderDelegationService,
+  nextRuntimeRecoverySchedule,
+} from "./lib/agent-runtime/cross-provider-delegation"
 import { createAgentOrchestrationService } from "./lib/agent-orchestration/service"
 import {
   advancePendingWorkflows,
@@ -1174,10 +1177,17 @@ if (gotTheLock) {
                     ) {
                       nextRuntimeCompositionRecoveryAt = Date.now() + 5_000
                       const recovery = await runtimeComposition.recoverRunningAttempts()
-                      runtimeCompositionRecoveryPending = recovery.remaining > 0
+                      const schedule = nextRuntimeRecoverySchedule(recovery, Date.now())
+                      runtimeCompositionRecoveryPending = schedule.pending
+                      nextRuntimeCompositionRecoveryAt = schedule.nextAttemptAt
                       if (recovery.failed > 0) {
                         console.error(
                           `[App] ${recovery.failed}/${recovery.attempted} Runtime composition recoveries failed.`,
+                        )
+                      }
+                      if (!schedule.pending && recovery.quarantined > 0) {
+                        console.error(
+                          `[App] ${recovery.quarantined} Runtime composition attempt(s) stayed running after repeated failed recovery; retrying on the next app start.`,
                         )
                       }
                     }

@@ -22,7 +22,6 @@ import {
   selectedAgentChatsCountAtom,
   isDesktopAtom,
   isFullscreenAtom,
-  showOfflineModeFeaturesAtom,
   chatSourceModeAtom,
   selectedTeamIdAtom,
   type ChatSourceMode,
@@ -144,8 +143,6 @@ import {
   type SelectedChatScope,
   type UndoItem,
 } from "../agents/atoms"
-import { NetworkStatus } from "../../components/ui/network-status"
-import flapstackAppIcon from "../../../../build/icons/24x24.png"
 import { useAgentSubChatStore, OPEN_SUB_CHATS_CHANGE_EVENT } from "../agents/stores/sub-chat-store"
 import { getWindowId } from "../../contexts/WindowContext"
 import { AgentsHelpPopover } from "../agents/components/agents-help-popover"
@@ -2901,7 +2898,6 @@ const SidebarHeader = memo(function SidebarHeader({
   handleSidebarMouseLeave,
   closeButtonRef,
 }: SidebarHeaderProps) {
-  const showOfflineFeatures = useAtomValue(showOfflineModeFeaturesAtom)
   const toggleSidebarHotkey = useResolvedHotkeyDisplay("toggle-sidebar")
 
   return (
@@ -2963,21 +2959,6 @@ const SidebarHeader = memo(function SidebarHeader({
 
       {/* Spacer for macOS traffic lights */}
       <TrafficLightSpacer isFullscreen={isFullscreen} isDesktop={isDesktop} />
-
-      {/* Static product branding - below traffic lights */}
-      <div className="px-2 pt-2 pb-2">
-        <div className="flex h-6 min-w-0 items-center gap-1.5 px-1.5">
-          <img src={flapstackAppIcon} alt="" aria-hidden="true" className="h-4 w-4 flex-shrink-0" />
-          <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-            Flapstack
-          </div>
-          {showOfflineFeatures && (
-            <div className="flex-shrink-0">
-              <NetworkStatus />
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   )
 })
@@ -6840,8 +6821,8 @@ export function AgentsSidebar({
       />
 
       {/* Global search stays directly below the product name. */}
-      <div className="flex-shrink-0 px-2 pb-3">
-        <div className="relative">
+      <div className="relative flex flex-shrink-0 items-center gap-1 px-2 pb-2 pt-1">
+        <div className="relative min-w-0 flex-1">
           <SearchIcon className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={searchInputRef}
@@ -6888,8 +6869,22 @@ export function AgentsSidebar({
             )}
           />
         </div>
+        {!isMobileFullscreen && (
+          <ButtonCustom
+            variant="ghost"
+            size="icon"
+            onClick={onToggleSidebar}
+            className="h-7 w-7 shrink-0 rounded-md text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+            aria-label="Close sidebar"
+          >
+            <IconDoubleChevronLeft className="h-4 w-4" />
+          </ButtonCustom>
+        )}
         {(isSearchFocused || searchQuery.trim().length > 0) && (
-          <div className="pt-2" onMouseDown={(event) => event.preventDefault()}>
+          <div
+            className="absolute inset-x-2 top-full z-30 pt-2"
+            onMouseDown={(event) => event.preventDefault()}
+          >
             <ScopedSearchPanel
               selectedChatId={selectedLocalChat?.id ?? null}
               selectedProjectId={selectedLocalChat?.projectId ?? null}
@@ -7104,71 +7099,69 @@ export function AgentsSidebar({
                 chats: starredAgents,
                 tasks: starredTasks,
               },
-            ]
-              .filter((section) => section.chats.length > 0 || section.tasks.length > 0)
-              .map((section) => (
-                <div
-                  key={section.kind}
-                  className="mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150"
-                >
-                  <ChatListSection
-                    {...sharedChatListSectionProps}
-                    title={section.title}
-                    sectionId={section.kind}
-                    kind={section.kind}
-                    projectColor={null}
-                    projectColorsById={projectColorsById}
-                    showWhenEmpty={section.tasks.length > 0}
-                    isCollapsed={collapsedSectionIds.has(section.kind)}
-                    draggingKind={draggingItem?.kind}
-                    draggingId={draggingItem?.id}
-                    dragOverKind={dragOverItem?.kind}
-                    dragOverId={dragOverItem?.id}
-                    dragOverPosition={dragOverItem?.position}
-                    chats={section.chats}
-                    onCreateGlobalChat={openNewGlobalChat}
-                    onCreateProjectChat={openNewProjectChat}
-                    onCreateProjectTask={createProjectTask}
-                    onChangeProjectColor={handleChangeProjectColor}
-                    lifecyclePending={
-                      pinProjectMutation.isPending ||
-                      unpinProjectMutation.isPending ||
-                      archiveProjectMutation.isPending ||
-                      pinTaskMutation.isPending ||
-                      unpinTaskMutation.isPending ||
-                      archiveTaskMutation.isPending
-                    }
-                  />
-                  {!collapsedSectionIds.has(section.kind) &&
-                    section.tasks.map((task) => (
-                      <ChatListSection
-                        {...sharedChatListSectionProps}
-                        key={`${section.kind}-task-${task.taskId}`}
-                        title={task.title}
-                        sectionId={`${section.kind}-task-${task.taskId}`}
-                        kind="task"
-                        projectColor={task.projectColor}
-                        isCollapsed={collapsedSectionIds.has(`${section.kind}-task-${task.taskId}`)}
-                        lifecycleTarget={{
-                          type: "task",
-                          id: task.taskId,
-                          isPinned: task.isPinned,
-                          isStarred: task.isStarred,
-                        }}
-                        parentProjectId={task.projectId}
-                        chats={task.chats}
-                        lifecyclePending={
-                          pinTaskMutation.isPending ||
-                          unpinTaskMutation.isPending ||
-                          archiveTaskMutation.isPending
-                        }
-                      />
-                    ))}
-                </div>
-              ))}
+            ].map((section) => (
+              <div
+                key={section.kind}
+                className="mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150"
+              >
+                <ChatListSection
+                  {...sharedChatListSectionProps}
+                  title={section.title}
+                  sectionId={section.kind}
+                  kind={section.kind}
+                  projectColor={null}
+                  projectColorsById={projectColorsById}
+                  showWhenEmpty
+                  isCollapsed={collapsedSectionIds.has(section.kind)}
+                  draggingKind={draggingItem?.kind}
+                  draggingId={draggingItem?.id}
+                  dragOverKind={dragOverItem?.kind}
+                  dragOverId={dragOverItem?.id}
+                  dragOverPosition={dragOverItem?.position}
+                  chats={section.chats}
+                  onCreateGlobalChat={openNewGlobalChat}
+                  onCreateProjectChat={openNewProjectChat}
+                  onCreateProjectTask={createProjectTask}
+                  onChangeProjectColor={handleChangeProjectColor}
+                  lifecyclePending={
+                    pinProjectMutation.isPending ||
+                    unpinProjectMutation.isPending ||
+                    archiveProjectMutation.isPending ||
+                    pinTaskMutation.isPending ||
+                    unpinTaskMutation.isPending ||
+                    archiveTaskMutation.isPending
+                  }
+                />
+                {!collapsedSectionIds.has(section.kind) &&
+                  section.tasks.map((task) => (
+                    <ChatListSection
+                      {...sharedChatListSectionProps}
+                      key={`${section.kind}-task-${task.taskId}`}
+                      title={task.title}
+                      sectionId={`${section.kind}-task-${task.taskId}`}
+                      kind="task"
+                      projectColor={task.projectColor}
+                      isCollapsed={collapsedSectionIds.has(`${section.kind}-task-${task.taskId}`)}
+                      lifecycleTarget={{
+                        type: "task",
+                        id: task.taskId,
+                        isPinned: task.isPinned,
+                        isStarred: task.isStarred,
+                      }}
+                      parentProjectId={task.projectId}
+                      chats={task.chats}
+                      lifecyclePending={
+                        pinTaskMutation.isPending ||
+                        unpinTaskMutation.isPending ||
+                        archiveTaskMutation.isPending
+                      }
+                    />
+                  ))}
+              </div>
+            ))}
 
           {/* Drafts Section - always show regardless of chat source mode */}
-          {drafts.length > 0 && !searchQuery && !collapsedSectionIds.has("quick-access") && (
+          {!searchQuery && !collapsedSectionIds.has("quick-access") && (
             <div className="mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150">
               <div
                 onClick={() => handleToggleSection("drafts")}
@@ -7201,6 +7194,11 @@ export function AgentsSidebar({
               </div>
               {!collapsedSectionIds.has("drafts") && (
                 <div className="list-none p-0 m-0 mb-1 ml-4 pl-2">
+                  {drafts.length === 0 && (
+                    <div className="flex h-7 items-center text-xs text-muted-foreground/60">
+                      No drafts
+                    </div>
+                  )}
                   {drafts.map((draft) => (
                     <DraftItem
                       key={draft.id}

@@ -211,6 +211,9 @@ export const api = {
         return {
           data: transformedData,
           isLoading: result.isLoading,
+          isFetching: result.isFetching,
+          error: result.error,
+          refetch: result.refetch,
         }
       },
     },

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import type {
   AgentRuntimePreference,
   HarnessAdapter,
@@ -434,10 +435,29 @@ function assertPackContext(
   }
 }
 
+// No provider adapter exposes a system/developer-instruction channel: HarnessAdapter.startTurn
+// carries one prompt string and every provider ignores context.instructions, which is why these
+// packs declare the system-instruction-channel loss. The markers below only keep the harness
+// instructions and the user request separable; they carry no authority of their own. A per-turn
+// boundary the caller cannot predict is what stops prompt bytes from closing or reopening the
+// outer framing, so fixed marker text is never reused.
 function translatedPrompt(context: RuntimeAdapterContext, prompt: string): string {
   const instructions = context.instructions?.trim()
   if (!instructions) return prompt
-  return `${instructions}\n\n--- USER REQUEST ---\n${prompt}\n--- END USER REQUEST ---`
+  const boundary = unusedBoundary(`${instructions}\n${prompt}`)
+  return [
+    instructions,
+    "",
+    `--- BEGIN USER REQUEST ${boundary} ---`,
+    prompt,
+    `--- END USER REQUEST ${boundary} ---`,
+  ].join("\n")
+}
+
+function unusedBoundary(text: string): string {
+  let boundary = randomBytes(16).toString("hex")
+  while (text.includes(boundary)) boundary = randomBytes(16).toString("hex")
+  return boundary
 }
 
 function withoutComposition(
