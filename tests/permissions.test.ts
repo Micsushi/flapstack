@@ -240,6 +240,8 @@ describe("permissions", () => {
         expect.objectContaining({ control: "mcp" }),
       ]),
     )
+    expect(application.warnings.join(" ")).toMatch(/per-tool approval bridge/i)
+    expect(application.warnings.join(" ")).not.toMatch(/does not present|not wired/i)
   })
 
   it.each([

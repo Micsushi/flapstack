@@ -61,10 +61,36 @@ export function startProductTour(): void {
 function findAvailableStep(start: number, direction: 1 | -1): number {
   for (let index = start; index >= 0 && index < PRODUCT_TOUR_STEPS.length; index += direction) {
     const target = document.querySelector<HTMLElement>(PRODUCT_TOUR_STEPS[index].selector)
-    const rect = target?.getBoundingClientRect()
-    if (target?.isConnected && rect && rect.width > 0 && rect.height > 0) return index
+    if (isAvailableTarget(target)) return index
   }
   return -1
+}
+
+function isAvailableTarget(target: HTMLElement | null): target is HTMLElement {
+  const rect = target?.getBoundingClientRect()
+  return Boolean(target?.isConnected && rect && rect.width > 0 && rect.height > 0)
+}
+
+function restoreTourFocus(preferred: HTMLElement | null): void {
+  window.setTimeout(() => {
+    const settings = document.querySelector<HTMLElement>('[data-tour="settings"]')
+    const firstStep = findAvailableStep(0, 1)
+    const firstTarget =
+      firstStep >= 0
+        ? document.querySelector<HTMLElement>(PRODUCT_TOUR_STEPS[firstStep].selector)
+        : null
+    const target = preferred?.isConnected
+      ? preferred
+      : isAvailableTarget(settings)
+        ? settings
+        : firstTarget?.isConnected
+          ? firstTarget
+          : document.body
+    if (!target.hasAttribute("tabindex") && !target.matches("button, a, input, select, textarea")) {
+      target.tabIndex = -1
+    }
+    target.focus({ preventScroll: true })
+  }, 0)
 }
 
 export function ProductTour() {
@@ -85,7 +111,11 @@ export function ProductTour() {
     setSidebarOpen(true)
     window.setTimeout(() => {
       const firstStep = findAvailableStep(0, 1)
-      if (firstStep < 0) return
+      if (firstStep < 0) {
+        restoreTourFocus(restoreFocusRef.current)
+        restoreFocusRef.current = null
+        return
+      }
       setStepIndex(firstStep)
       setIsOpen(true)
     }, 0)
@@ -95,7 +125,8 @@ export function ProductTour() {
     writeProductTourState(localStorage, status)
     setIsOpen(false)
     setTargetRect(null)
-    window.setTimeout(() => restoreFocusRef.current?.focus(), 0)
+    restoreTourFocus(restoreFocusRef.current)
+    restoreFocusRef.current = null
   }, [])
 
   const goNext = useCallback(() => {

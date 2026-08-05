@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import {
   CLAUDE_PROVIDER_TO_CODEX_CONTRACT,
   CODEX_PROVIDER_TO_CLAUDE_CONTRACT,
+  LOCAL_PROVIDER_TO_CODEX_CONTRACT,
   TranslatedRuntimeAdapterError,
   createTranslatedRuntimeAdapterPackFactory,
 } from "../src/main/lib/agent-runtime/translated-adapter-pack"
@@ -69,6 +70,112 @@ describe("translated Runtime adapter packs", () => {
       })
     },
   )
+
+  it("declares the generic local pack's exact unsupported features", async () => {
+    const seen: Array<{ operation: string; context: RuntimeAdapterContext; value?: unknown }> = []
+    const provider = adapter("flapstack-native", seen)
+    provider.probe = async () => {
+      const probe = availableProbe("flapstack-native", "local")
+      return {
+        ...probe,
+        capabilities: {
+          ...probe.capabilities,
+          execution: {
+            ...probe.capabilities.execution!,
+            structuredOutput: { supported: false, reason: "No local output-schema contract." },
+          },
+        },
+      }
+    }
+    const pack = createTranslatedRuntimeAdapterPackFactory(
+      LOCAL_PROVIDER_TO_CODEX_CONTRACT,
+      () => provider,
+    )()
+
+    const probe = await pack.probe("local")
+
+    expect(probe).toMatchObject({
+      runtime: "codex",
+      harness: "local",
+      available: true,
+      capabilities: {
+        composition: {
+          providerRuntime: "flapstack-native",
+          capabilities: {
+            toolLoop: "available",
+            mcp: "unavailable",
+            skills: "unavailable",
+            hooks: "unavailable",
+            sessionResume: "unavailable",
+            attachments: "unavailable",
+            reasoning: "unavailable",
+            structuredOutput: "unavailable",
+            cancellation: "available",
+            recovery: "unavailable",
+          },
+        },
+      },
+    })
+
+    const launch = translatedLaunch(probe)
+    const unsupported = contextFor(launch)
+    unsupported.outputSchema = { type: "object" }
+    await expect(pack.startSession(unsupported)).rejects.toThrow(/structured output/i)
+    expect(seen).toEqual([])
+  })
+
+  it("dispatches the generic local pack through the Flapstack Native provider adapter", async () => {
+    const seen: Array<{ operation: string; context: RuntimeAdapterContext; value?: unknown }> = []
+    const provider = adapter("flapstack-native", seen)
+    provider.probe = async (harness) => {
+      seen.push({
+        operation: "probe",
+        context: contextFor(nativeLaunch("flapstack-native", harness)),
+      })
+      const probe = availableProbe("flapstack-native", harness)
+      return {
+        ...probe,
+        capabilities: {
+          ...probe.capabilities,
+          execution: {
+            ...probe.capabilities.execution!,
+            structuredOutput: { supported: false, reason: "No local output-schema contract." },
+          },
+        },
+      }
+    }
+    const registry = createAgentRuntimeRegistry([
+      {
+        runtime: "codex",
+        harness: "local",
+        factory: createTranslatedRuntimeAdapterPackFactory(
+          LOCAL_PROVIDER_TO_CODEX_CONTRACT,
+          () => provider,
+        ),
+      },
+    ])
+    const probe = await registry.probe("codex", "local")
+    const coordinator = new RuntimeLaunchCoordinator(registry, { persistIntent: vi.fn() })
+
+    await coordinator.launch({
+      runId: "local-translated-run",
+      chatId: "local-chat",
+      subChatId: "local-subchat",
+      launch: translatedLaunch(probe),
+      prompt: "Inspect locally.",
+      instructions: "Use the reviewed Codex contract.",
+      outputSchema: null,
+    })
+
+    expect(seen.find(({ operation }) => operation === "startTurn")).toMatchObject({
+      context: {
+        launch: { harness: "local", resolvedRuntime: "flapstack-native" },
+        outputSchema: null,
+      },
+      value:
+        "Use the reviewed Codex contract.\n\n--- USER REQUEST ---\nInspect locally.\n--- END USER REQUEST ---",
+    })
+  })
 
   it("preserves authority and translates prompt, schema, tools, and reasoning controls into the selected provider adapter", async () => {
     const seen: Array<{ operation: string; context: RuntimeAdapterContext; value?: unknown }> = []

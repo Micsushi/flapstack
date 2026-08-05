@@ -70,6 +70,7 @@ import {
   type ManagedHookRuntimeExecutor,
 } from "./extension-management"
 import { probeCursorCapabilities, probeOpencodeCapabilities } from "./harness/provider-capabilities"
+import { probeLocalModelCatalog } from "./harness/local-model-catalog"
 import { PINNED_OPENCODE_VERSION } from "./harness/opencode-sidecar/binary"
 import { assertRegisteredFilesystemRoot } from "./git/security/path-validation"
 import {
@@ -113,6 +114,7 @@ import { isFrozenAgentProfileToolAllowed } from "./agent-profiles/runtime-author
 import {
   CLAUDE_PROVIDER_TO_CODEX_CONTRACT,
   CODEX_PROVIDER_TO_CLAUDE_CONTRACT,
+  LOCAL_PROVIDER_TO_CODEX_CONTRACT,
   createTranslatedRuntimeAdapterPackFactory,
   translatedRuntimeCompositionIdentity,
 } from "./agent-runtime/translated-adapter-pack"
@@ -126,6 +128,7 @@ export type MainRunLauncherOptions = {
   enableClaudeCode?: boolean
   enableClaudeProviderCodexContract?: boolean
   enableCodexProviderClaudeContract?: boolean
+  enableLocalProviderCodexContract?: boolean
   permissionHandler?: (runId: string, request: unknown) => Promise<unknown>
   inputHandler?: (runId: string, request: unknown) => Promise<unknown>
   hookStore?: HookStateStore
@@ -265,6 +268,17 @@ export class MainRuntimeLaunchService {
           ),
           composition: translatedRuntimeCompositionIdentity(CODEX_PROVIDER_TO_CLAUDE_CONTRACT),
           enabled: options.enableCodexProviderClaudeContract ?? false,
+          disabledReason: TRANSLATED_RUNTIME_RELEASE_REASON,
+        },
+        {
+          runtime: "codex",
+          harness: "local",
+          factory: createTranslatedRuntimeAdapterPackFactory(
+            LOCAL_PROVIDER_TO_CODEX_CONTRACT,
+            nativeFactory,
+          ),
+          composition: translatedRuntimeCompositionIdentity(LOCAL_PROVIDER_TO_CODEX_CONTRACT),
+          enabled: options.enableLocalProviderCodexContract ?? false,
           disabledReason: TRANSLATED_RUNTIME_RELEASE_REASON,
         },
         { runtime: "flapstack-native", factory: nativeFactory },
@@ -1397,6 +1411,26 @@ async function probeLegacyProviderPath(
           }),
     }
   }
+  if (harness === "local") {
+    const catalog = await probeLocalModelCatalog()
+    const available =
+      catalog.state === "ready" &&
+      catalog.models.some(
+        (model) =>
+          model.capabilities.chat.state === "supported" &&
+          model.capabilities.streaming.state === "supported",
+      )
+    return {
+      available,
+      ...(available
+        ? {}
+        : {
+            reason:
+              catalog.limitations[0]?.message ??
+              "Ollama has no installed model with declared chat and streaming support.",
+          }),
+    }
+  }
   return {
     available: false,
     reason: `${harness} requires a model-scoped provider probe before Runtime composition.`,
@@ -1500,7 +1534,7 @@ async function launchLocalModelStream(
     run.permissionMode as Parameters<typeof resolveLocalModelToolTiers>[1],
     customPermissions,
   )
-  const required = run.requiredLocalToolTiers ?? []
+  const required = requiredLocalToolTiers(run)
   const mismatch = findUnavailableLocalModelTier(required, tiers)
   if (mismatch) {
     throw new Error(
@@ -1518,6 +1552,22 @@ async function launchLocalModelStream(
     cwd,
     ...(run.projectPath ? { projectPath: run.projectPath } : {}),
   })
+}
+
+function requiredLocalToolTiers(
+  run: QueuedAgentRun,
+): Array<"read" | "project-write" | "shell" | "git" | "network"> {
+  const required = new Set(run.requiredLocalToolTiers ?? [])
+  const composition = run.runtimeLaunch?.capabilities.composition
+  if (
+    run.harness === "local" &&
+    run.runtimeLaunch?.resolvedRuntime === "codex" &&
+    composition?.runtimeMode === "translated" &&
+    composition.adapterChain.some(({ id }) => id === LOCAL_PROVIDER_TO_CODEX_CONTRACT.id)
+  ) {
+    required.add("read")
+  }
+  return [...required]
 }
 
 function parseRuntimeCustomPermissions(value: string | null) {

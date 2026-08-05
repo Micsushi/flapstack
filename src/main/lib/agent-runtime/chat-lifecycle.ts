@@ -117,6 +117,18 @@ export class RuntimeChatLifecycleService {
     }
   }
 
+  preferenceIdentity(input: { chatId: string; preference: AgentRuntimePreference }): {
+    harness: string
+    runtime: ResolvedAgentRuntime
+  } {
+    const chat = this.requireChat(input.chatId)
+    const harness = String(chat.harness ?? "generic")
+    return {
+      harness,
+      runtime: runtimeAdapterForPreference(input.preference) ?? productRuntimeForHarness(harness),
+    }
+  }
+
   setEmptyChatPreference(input: { chatId: string; preference: AgentRuntimePreference }): {
     chatId: string
     runtimePreference: AgentRuntimePreference
@@ -131,7 +143,10 @@ export class RuntimeChatLifecycleService {
             "Started chats cannot change Runtime in place. Continue with the selected Runtime instead.",
           )
         }
-        assertCompatible(String(chat.harness ?? "generic"), input.preference)
+        const harness = String(chat.harness ?? "generic")
+        const runtime =
+          runtimeAdapterForPreference(input.preference) ?? productRuntimeForHarness(harness)
+        assertCompatible(harness, input.preference, this.resolveProbe(harness, runtime), true)
         this.sqlite
           .prepare("UPDATE chats SET runtime_preference = ?, updated_at = ? WHERE id = ?")
           .run(input.preference, millisecondsToEpochSeconds(Date.now()), input.chatId)
@@ -541,9 +556,18 @@ function assertCompatible(
   harness: string,
   preference: AgentRuntimePreference,
   probe?: RuntimeAdapterProbe | null,
+  requireAvailable = false,
 ): void {
   const runtime = runtimeAdapterForPreference(preference) ?? productRuntimeForHarness(harness)
   const exactProbe = probe?.harness === harness && probe.runtime === runtime ? probe : null
+  const nativeCompatibility = checkRuntimeCompatibility(harness, runtime)
+  if (nativeCompatibility.compatible) return
+  if (!exactProbe || (requireAvailable && !exactProbe.available)) {
+    throw new RuntimeChatLifecycleError(
+      "runtime-incompatible",
+      exactProbe?.reason?.message ?? nativeCompatibility.reason.message,
+    )
+  }
   const compatibility = checkRuntimeCompatibility(
     harness,
     runtime,

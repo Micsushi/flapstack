@@ -159,6 +159,7 @@ describe("cross-provider Runtime delegation", () => {
       const created = service.delegate({ ...request, confirmedPreviewDigest: preview.digest })
 
       expect(runtime.launches).toHaveLength(1)
+      expect(runtime.launches[0]?.outputSchema).toEqual(request.outputSchema)
       expect(runtime.launches[0]?.runtimeLaunch).toMatchObject({
         harness: targetHarness,
         resolvedRuntime: preference,

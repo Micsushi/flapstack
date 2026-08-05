@@ -115,6 +115,68 @@ export const CODEX_PROVIDER_TO_CLAUDE_CONTRACT: TranslatedRuntimeAdapterPackDesc
   ],
 }
 
+export const LOCAL_PROVIDER_TO_CODEX_CONTRACT: TranslatedRuntimeAdapterPackDescriptor = {
+  id: "local-provider-to-codex-contract",
+  version: "1",
+  providerHarness: "local",
+  providerRuntime: "flapstack-native",
+  contractRuntime: "codex",
+  capabilities: {
+    promptSystem: "lossy",
+    instructionFiles: "unavailable",
+    toolLoop: "available",
+    tools: "lossy",
+    permissions: "available",
+    mcp: "unavailable",
+    skills: "unavailable",
+    hooks: "unavailable",
+    sessionResume: "unavailable",
+    sessionFork: "unavailable",
+    attachments: "unavailable",
+    reasoning: "unavailable",
+    events: "lossy",
+    structuredOutput: "unavailable",
+    usage: "available",
+    cancellation: "available",
+    recovery: "unavailable",
+  },
+  losses: [
+    {
+      code: "system-instruction-channel",
+      summary:
+        "Codex system instructions are mapped into explicit local-model turn context instead of a native developer-instruction channel.",
+    },
+    {
+      code: "native-instruction-files",
+      summary: "The local provider does not claim Codex AGENTS.md discovery semantics.",
+    },
+    {
+      code: "tool-schema-semantics",
+      summary:
+        "The Flapstack local tool loop keeps its declared schemas and permission tiers; Codex-native tool names are not relabeled.",
+    },
+    {
+      code: "model-scoped-tool-capability",
+      summary:
+        "Pack availability is provider-wide; the selected local model must still prove tool support during pre-intent launch validation.",
+    },
+    {
+      code: "native-session-identity",
+      summary:
+        "Ordinary local-model streams have no resumable Codex thread, fork, or archive identity.",
+    },
+    {
+      code: "reasoning-semantics",
+      summary:
+        "The local provider does not claim Codex reasoning-section or summary-index semantics.",
+    },
+    {
+      code: "structured-output-unavailable",
+      summary: "The local provider has no native output-schema enforcement contract.",
+    },
+  ],
+}
+
 export class TranslatedRuntimeAdapterError extends Error {
   readonly cause: unknown
 
@@ -363,6 +425,11 @@ function assertPackContext(
   ) {
     throw new Error(
       `Launch snapshot does not match selected translated adapter pack ${descriptor.id}/${descriptor.version}.`,
+    )
+  }
+  if (context.outputSchema && composition.capabilities.structuredOutput !== "available") {
+    throw new Error(
+      `Translated adapter pack ${descriptor.id} cannot enforce structured output for this provider.`,
     )
   }
 }

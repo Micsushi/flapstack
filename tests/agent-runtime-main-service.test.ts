@@ -46,6 +46,7 @@ beforeEach(() => {
 
 afterEach(() => {
   resetMainRuntimeLaunchServicesForTests()
+  vi.unstubAllGlobals()
   sqlite.close()
   rmSync(directory, { recursive: true, force: true })
 })
@@ -101,6 +102,7 @@ describe("process-wide Runtime launch service", () => {
       }),
       expect.objectContaining({ runtime: "codex", harness: "claude-code", enabled: false }),
       expect.objectContaining({ runtime: "claude-code", harness: "codex", enabled: false }),
+      expect.objectContaining({ runtime: "codex", harness: "local", enabled: false }),
       expect.objectContaining({ runtime: "flapstack-native", harness: null, enabled: true }),
     ])
     expect(() => first.registry.get("codex", "codex")).not.toThrow()
@@ -220,6 +222,58 @@ describe("process-wide Runtime launch service", () => {
       capabilities: {
         composition: {
           adapterChain: [{ id: "claude-provider-to-codex-contract", version: "1" }],
+        },
+      },
+    })
+  })
+
+  it("probes the implemented local provider and composes its Codex-contract pack", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString())
+        if (url.pathname === "/api/tags") {
+          return Response.json({
+            models: [
+              {
+                name: "tool-model:latest",
+                model: "tool-model:latest",
+                digest: "digest",
+                modified_at: "2026-08-05T00:00:00.000Z",
+              },
+            ],
+          })
+        }
+        if (url.pathname === "/api/version") return Response.json({ version: "0.9.1" })
+        if (url.pathname === "/api/show") {
+          expect(JSON.parse(String(init?.body))).toEqual({
+            model: "tool-model:latest",
+            verbose: false,
+          })
+          return Response.json({ capabilities: ["completion", "tools"] })
+        }
+        return Response.json({ error: "not found" }, { status: 404 })
+      }),
+    )
+    const service = getMainRuntimeLaunchService(path, {
+      enableLocalProviderCodexContract: true,
+    })
+
+    await expect(service.probe("flapstack-native", "local")).resolves.toMatchObject({
+      available: true,
+      capabilities: { execution: { cancellation: { supported: true } } },
+    })
+    await expect(service.probe("codex", "local")).resolves.toMatchObject({
+      available: true,
+      capabilities: {
+        composition: {
+          providerRuntime: "flapstack-native",
+          adapterChain: [{ id: "local-provider-to-codex-contract", version: "1" }],
+          capabilities: {
+            toolLoop: "available",
+            mcp: "unavailable",
+            structuredOutput: "unavailable",
+          },
         },
       },
     })

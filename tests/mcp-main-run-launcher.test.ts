@@ -135,6 +135,62 @@ describe("MCP main run launcher", () => {
     expect(harnessMocks.localChat).toHaveBeenCalledTimes(1)
   })
 
+  it("requires model-scoped tool support before a translated local Codex contract dispatches", async () => {
+    const service = new MainRuntimeLaunchService({
+      databasePath: path,
+      flapstackNativeProbe: () => ({ available: true }),
+      enableLocalProviderCodexContract: true,
+    })
+    const probe = await service.probe("codex", "local")
+    const run = {
+      ...queuedRun("translated-local", "local"),
+      model: "local-tools",
+      runtimeLaunch: {
+        schemaVersion: 1 as const,
+        harness: "local",
+        model: "local-tools",
+        requestedPreference: "codex" as const,
+        preferenceSource: "chat" as const,
+        resolvedRuntime: "codex" as const,
+        compatibility: {
+          compatible: true as const,
+          harness: "local",
+          runtime: "codex" as const,
+          reason: null,
+        },
+        versions: probe.versions,
+        capabilities: probe.capabilities,
+        controls: {
+          schemaVersion: 1 as const,
+          modelEffort: null,
+          serviceTier: null,
+          modelThinking: false,
+          reasoningDisplay: false,
+          subagentActivity: false,
+          hookDiagnostics: false,
+        },
+        permission: { mode: "full-access" as const },
+      },
+    }
+    harnessMocks.localCatalog.mockResolvedValue(localCatalog(false))
+
+    await expect(service.launch(run)).rejects.toThrow(
+      /preflight failed for read.*no cloud fallback/i,
+    )
+    expect(harnessMocks.localChat).not.toHaveBeenCalled()
+
+    harnessMocks.localCatalog.mockResolvedValue(localCatalog(true))
+    const supportedRun = {
+      ...queuedRun("translated-local-tools", "local"),
+      model: "local-tools",
+      runtimeLaunch: run.runtimeLaunch,
+    }
+    await expect(service.launch(supportedRun)).resolves.toBeUndefined()
+    expect(harnessMocks.localChat).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "translated-local-tools", model: "local-tools" }),
+    )
+  })
+
   it("dispatches NanoGPT queued runs through the normal OpenCode router", async () => {
     const launch = testLauncher()
     await launch({ ...queuedRun("queued-nanogpt", "nanogpt"), model: "deepseek-chat" })

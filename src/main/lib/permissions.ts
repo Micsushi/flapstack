@@ -802,12 +802,12 @@ function getClaudePermissionLimitations(
         limitation(
           "filesystem-write-scope",
           "ask before edits",
-          "Ask-before-edits is delegated to Claude Code SDK behavior; Flapstack does not present its own edit approval UI yet.",
+          "Flapstack routes Claude edit requests through its per-tool approval bridge; approval does not create an operating-system sandbox.",
         ),
         limitation(
           "mcp",
           "ask before mutating MCP tools",
-          "MCP approval is not wired to the chat permission selector yet.",
+          "Claude MCP calls use the same per-tool approval bridge; Flapstack cannot prove or sandbox server-side effects after approval.",
         ),
       ]
     case "auto-edit-project-only":

@@ -106,4 +106,51 @@ describe("ProductTour interactions", () => {
     expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: "auto" }))
     expect(scrollIntoView.mock.instances.at(-1)).toBe(sidebar)
   })
+
+  it("restores Settings rerun focus to the main-page Settings control", async () => {
+    const rerun = document.createElement("button")
+    rerun.textContent = "Run tutorial"
+    document.body.append(rerun)
+    rerun.focus()
+
+    act(() => startProductTour())
+    rerun.remove()
+    const settings = document.createElement("button")
+    settings.dataset.tour = "settings"
+    settings.getBoundingClientRect = () => new DOMRect(20, 20, 100, 30)
+    document.body.append(settings)
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 10))
+    })
+    act(() => document.querySelector<HTMLButtonElement>('[aria-label="Close tutorial"]')!.click())
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+
+    expect(document.activeElement).toBe(settings)
+  })
+
+  it("restores focus safely when no tour anchor is rendered", async () => {
+    document.querySelector<HTMLElement>('[data-tour="workspace"]')!.remove()
+    const bodyFocus = vi.spyOn(document.body, "focus")
+    const rerun = document.createElement("button")
+    document.body.append(rerun)
+    rerun.focus()
+
+    act(() => startProductTour())
+    rerun.remove()
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 10))
+    })
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0))
+    })
+
+    expect(document.querySelector("[role=dialog]")).toBeNull()
+    expect(bodyFocus).toHaveBeenCalledOnce()
+    expect(document.activeElement).toBe(document.body)
+  })
 })

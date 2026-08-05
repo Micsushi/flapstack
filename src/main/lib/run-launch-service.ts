@@ -19,6 +19,10 @@ import {
 } from "../../shared/agent-orchestration"
 import { parseCustomPermissionCapabilities } from "../../shared/permission-capabilities"
 import { normalizeChatMode, type ChatMode } from "../../shared/chat-mode"
+import {
+  crossProviderTaskEnvelopeSchema,
+  type CrossProviderTaskEnvelope,
+} from "../../shared/runtime-composition"
 import { resolveAgentHotlineEnabled } from "../../shared/agent-hotline"
 import { readDurableAgentProfileRuntimeAuthority } from "./agent-profiles/runtime-authority"
 import { canonicalJson } from "./agent-profiles/values"
@@ -91,12 +95,14 @@ export function loadRunningAgentRun(databasePath: string, runId: string): Queued
         `SELECT r.id, r.chat_id, r.sub_chat_id, r.harness, r.model, r.permission_mode,
           r.custom_permissions, ${runtimeProjection}, r.worktree_path, r.prompt_message_id,
           r.initial_prompt, s.messages, s.mode chat_mode, c.project_id, p.path project_path,
-          oa.definition orchestration_definition
+          oa.definition orchestration_definition,
+          rca.task_envelope runtime_composition_task_envelope
          FROM agent_runs r
          JOIN chats c ON c.id = r.chat_id
          JOIN sub_chats s ON s.id = r.sub_chat_id
          LEFT JOIN projects p ON p.id = c.project_id
          LEFT JOIN orchestration_agents oa ON oa.run_id = r.id
+         LEFT JOIN runtime_composition_attempts rca ON rca.run_id = r.id
          WHERE r.id = ? AND r.status = 'running' AND r.completed_at IS NULL`,
       )
       .get(runId) as Row | undefined
@@ -125,12 +131,14 @@ export async function recoverInterruptedMcpRuns(
         `SELECT r.id, r.chat_id, r.sub_chat_id, r.harness, r.model, r.permission_mode,
           r.custom_permissions, ${runtimeProjection}, r.worktree_path, r.prompt_message_id,
           r.initial_prompt, s.messages, s.mode chat_mode, c.project_id, p.path project_path,
-          oa.definition orchestration_definition
+          oa.definition orchestration_definition,
+          rca.task_envelope runtime_composition_task_envelope
          FROM agent_runs r
          JOIN chats c ON c.id = r.chat_id
          JOIN sub_chats s ON s.id = r.sub_chat_id
          LEFT JOIN projects p ON p.id = c.project_id
          LEFT JOIN orchestration_agents oa ON oa.run_id = r.id
+         LEFT JOIN runtime_composition_attempts rca ON rca.run_id = r.id
          WHERE r.status = 'running' AND r.completed_at IS NULL`,
       )
       .all() as Row[]
@@ -223,12 +231,14 @@ export async function drainPendingMcpRuns(
           r.custom_permissions, ${runtimeProjection},
           r.worktree_path, r.prompt_message_id, r.initial_prompt, s.messages, s.mode chat_mode,
           c.project_id, p.path project_path,
-          oa.definition orchestration_definition
+          oa.definition orchestration_definition,
+          rca.task_envelope runtime_composition_task_envelope
          FROM agent_runs r
          JOIN chats c ON c.id = r.chat_id
          JOIN sub_chats s ON s.id = r.sub_chat_id
          LEFT JOIN projects p ON p.id = c.project_id
          LEFT JOIN orchestration_agents oa ON oa.run_id = r.id
+         LEFT JOIN runtime_composition_attempts rca ON rca.run_id = r.id
          WHERE r.status = 'pending' AND r.prompt_message_id LIKE 'mcp-%'
            AND NOT EXISTS (
              SELECT 1 FROM orchestration_transition_events workflow_owner
@@ -409,6 +419,9 @@ function queuedRun(db: Database.Database, row: Row): QueuedAgentRun | null {
     findPrompt(row.messages, row.prompt_message_id)
   if (!prompt) return null
   const durableDefinition = parseDurableOrchestrationDefinition(row.orchestration_definition)
+  const taskEnvelope = parseDurableRuntimeCompositionTaskEnvelope(
+    row.runtime_composition_task_envelope,
+  )
   const profileAuthority = readDurableAgentProfileRuntimeAuthority(db, String(row.id))
   if (profileAuthority.kind === "invalid") {
     throw new Error("Durable run has invalid frozen Agent Profile provenance.")
@@ -439,10 +452,23 @@ function queuedRun(db: Database.Database, row: Row): QueuedAgentRun | null {
     worktreePath: typeof row.worktree_path === "string" ? row.worktree_path : null,
     projectPath: typeof row.project_path === "string" ? row.project_path : null,
     ...localInputs,
+    ...(taskEnvelope ? { outputSchema: taskEnvelope.outputSchema } : {}),
     ...(profileAuthority.kind === "authority"
       ? { profileRuntimeAuthority: profileAuthority.authority }
       : {}),
     runtimeLaunch: resolvedLaunchFromSnapshotRow(row),
+  }
+}
+
+function parseDurableRuntimeCompositionTaskEnvelope(
+  value: unknown,
+): CrossProviderTaskEnvelope | null {
+  if (value === null || value === undefined) return null
+  try {
+    if (typeof value !== "string") throw new Error("task envelope is not text")
+    return crossProviderTaskEnvelopeSchema.parse(JSON.parse(value))
+  } catch {
+    throw new Error("Durable Runtime composition task envelope is malformed.")
   }
 }
 

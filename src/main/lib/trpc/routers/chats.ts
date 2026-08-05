@@ -48,7 +48,10 @@ import { getNextChatForkName } from "../../chat-fork-name"
 import { formatChatHandoff } from "../../chat-handoff"
 import { getPermissionPreferences } from "../../permissions"
 import { omitHiddenFileContentFromMessage } from "../../../../shared/chat-visible-content"
-import { agentRuntimePreferenceSchema } from "../../../../shared/agent-runtime"
+import {
+  agentRuntimePreferenceSchema,
+  type AgentRuntimePreference,
+} from "../../../../shared/agent-runtime"
 import { customPermissionCapabilitiesSchema } from "../../../../shared/permission-capabilities"
 import { createRuntimeChatLifecycleService } from "../../agent-runtime/chat-lifecycle"
 import { CrossProviderDelegationService } from "../../agent-runtime/cross-provider-delegation"
@@ -109,6 +112,21 @@ const runtimeDelegationInputSchema = z.object({
 function runtimeDelegationService() {
   const databasePath = getDatabasePath()
   return new CrossProviderDelegationService(databasePath, getMainRuntimeLaunchService(databasePath))
+}
+
+async function probedRuntimePreferenceLifecycle(input: {
+  chatId: string
+  preference: AgentRuntimePreference
+}) {
+  const database = getDatabase()
+  const identity = createRuntimeChatLifecycleService(database).preferenceIdentity(input)
+  const probe = await getMainRuntimeLaunchService(getDatabasePath()).probe(
+    identity.runtime,
+    identity.harness,
+  )
+  return createRuntimeChatLifecycleService(database, (harness, runtime) =>
+    harness === identity.harness && runtime === identity.runtime ? probe : null,
+  )
 }
 
 async function probedRuntimeLifecycle(
@@ -1334,8 +1352,8 @@ export const chatsRouter = router({
         preference: agentRuntimePreferenceSchema,
       }),
     )
-    .mutation(({ input }) =>
-      createRuntimeChatLifecycleService(getDatabase()).setEmptyChatPreference(input),
+    .mutation(async ({ input }) =>
+      (await probedRuntimePreferenceLifecycle(input)).setEmptyChatPreference(input),
     ),
 
   previewRuntimeContinuation: publicProcedure

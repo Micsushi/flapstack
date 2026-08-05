@@ -4,6 +4,7 @@ import {
   RuntimeChatLifecycleError,
   createRuntimeChatLifecycleService,
 } from "../src/main/lib/agent-runtime/chat-lifecycle"
+import type { RuntimeAdapterProbe } from "../src/shared/agent-runtime"
 import {
   createRuntimeChatLifecycleDatabase,
   seedRuntimeChat,
@@ -65,6 +66,34 @@ describe("Agent Runtime chat selection", () => {
     )
   })
 
+  it("accepts an empty-chat Runtime when an enabled translated pack probe authorizes it", () => {
+    const chat = seedRuntimeChat(database, { chatId: "translated", harness: "claude-code" })
+    const probe = translatedChatProbe()
+    const service = createRuntimeChatLifecycleService(database, () => probe)
+
+    expect(service.setEmptyChatPreference({ chatId: chat.chatId, preference: "codex" })).toEqual({
+      chatId: chat.chatId,
+      runtimePreference: "codex",
+    })
+  })
+
+  it("rejects an empty-chat translated Runtime when its exact pack probe is unavailable", () => {
+    const chat = seedRuntimeChat(database, {
+      chatId: "translated-disabled",
+      harness: "claude-code",
+    })
+    const probe = translatedChatProbe(false)
+    expect(() =>
+      createRuntimeChatLifecycleService(database, () => probe).setEmptyChatPreference({
+        chatId: chat.chatId,
+        preference: "codex",
+      }),
+    ).toThrow(probe.reason!.message)
+    expect(
+      database.prepare("SELECT runtime_preference FROM chats WHERE id = ?").get(chat.chatId),
+    ).toEqual({ runtime_preference: "auto" })
+  })
+
   it("blocks active and started chats and rejects incompatible choices", () => {
     const active = seedRuntimeChat(database, { chatId: "active" })
     database
@@ -99,3 +128,68 @@ describe("Agent Runtime chat selection", () => {
     )
   })
 })
+
+function translatedChatProbe(available = true): RuntimeAdapterProbe {
+  const reason = available
+    ? null
+    : {
+        code: "adapter-disabled" as const,
+        harness: "claude-code",
+        runtime: "codex" as const,
+        message: "Claude provider adapter pack is disabled.",
+        repair: "Enable the reviewed translated adapter pack.",
+      }
+  const supported = { supported: available, reason: reason?.message ?? null }
+  return {
+    runtime: "codex",
+    harness: "claude-code",
+    available,
+    versions: { adapterVersion: "translated/1", protocolVersion: "claude" },
+    capabilities: {
+      schemaVersion: 1,
+      status: available ? "available" : "unavailable",
+      capturedAt: "2026-08-05T00:00:00.000Z",
+      controls: {
+        modelThinking: supported,
+        reasoningDisplay: supported,
+        subagentActivity: supported,
+        hookDiagnostics: supported,
+      },
+      execution: {
+        continuation: supported,
+        delegation: supported,
+        structuredOutput: supported,
+        cancellation: supported,
+      },
+      composition: {
+        runtimeMode: "translated",
+        providerRuntime: "claude-code",
+        providerVersions: { adapterVersion: "claude", protocolVersion: "sdk" },
+        adapterChain: [{ id: "claude-provider-to-codex-contract", version: "1" }],
+        capabilities: {
+          promptSystem: "lossy",
+          instructionFiles: "lossy",
+          toolLoop: available ? "available" : "unavailable",
+          tools: "lossy",
+          permissions: available ? "available" : "unavailable",
+          mcp: "lossy",
+          skills: "lossy",
+          hooks: "lossy",
+          sessionResume: "lossy",
+          sessionFork: "unavailable",
+          attachments: "unknown",
+          reasoning: "lossy",
+          events: "lossy",
+          structuredOutput: available ? "available" : "unavailable",
+          usage: available ? "available" : "unavailable",
+          cancellation: available ? "available" : "unavailable",
+          recovery: available ? "available" : "unavailable",
+        },
+        losses: [],
+      },
+      limitations: reason ? [reason.message] : [],
+      unavailableReason: reason,
+    },
+    reason,
+  }
+}
