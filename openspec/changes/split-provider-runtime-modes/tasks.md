@@ -1,14 +1,12 @@
 # Runtime parity/enhanced split
 
-Current status 2026-08-05: implementation and full-gate evidence exist on the
-reviewed local branch `codex/runtime-provider-tier2-4719` at `7573f48`, which is
-seven commits ahead of `main`. These completion boxes remain open in `main`
-until that branch is intentionally integrated; documentation must not present
-branch-only code as shipped main behavior.
+Current status 2026-08-05: implementation and full-gate evidence are integrated
+into `main` at `fa3e02a`. The reviewed runtime/provider work from `7573f48` is
+now shipped main behavior, so the integration-gated completion boxes are closed.
 
 ### S4-F11A-T1 — Freeze preference and transport contracts
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11A
 - Outcome: Parity, enhanced, and Native behavior resolve deterministically onto
   three transport adapters.
@@ -25,7 +23,7 @@ branch-only code as shipped main behavior.
 
 ### S4-F11A-T2 — Migrate stored Runtime preferences safely
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11A
 - Outcome: Existing databases accept enhanced preferences without reinterpreting
   historical runs.
@@ -41,7 +39,7 @@ branch-only code as shipped main behavior.
 
 ### S4-F11A-T3 — Separate provider parity from Flapstack enhancements
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11A
 - Outcome: Codex and Claude Code parity omit Flapstack prompt/extension additions;
   Enhanced modes retain them over the same native adapters.
@@ -60,7 +58,7 @@ branch-only code as shipped main behavior.
 
 ### S4-F11A-T4 — Expose the split in Settings and Chat controls
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11A
 - Outcome: Users can select and understand provider parity, provider enhanced,
   and Flapstack Native choices.
@@ -75,7 +73,7 @@ branch-only code as shipped main behavior.
 
 ### S4-F11A-T5 — Verify exact provider and package behavior
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11A
 - Outcome: Parity and Enhanced modes have direct fixture, live-provider, restart,
   UI, and package evidence without overstating closed-provider parity.

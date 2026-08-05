@@ -1,9 +1,10 @@
 # Stage 5 UI Polish and Guided-Tour Patch
 
 Reconciled 2026-08-05: P1 through P8 are implemented and covered by the
-accepted Stage 6 core gates. P9 remains open because the owner's latest manual
-UI review found follow-up defects now being repaired in the isolated
-`codex/manual-ui-fixes` worktree.
+accepted Stage 6 core gates. The follow-up defects from the owner's latest UI
+review are repaired and integrated into `main`; P9 remains open for the final
+owner walkthrough and its recorded evidence. The live development instance
+still runs from the clean `codex/manual-ui-fixes` worktree.
 
 ### S5-P1 — Lock patch scope and ownership
 
