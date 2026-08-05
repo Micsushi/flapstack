@@ -3,6 +3,8 @@ import { createHash } from "node:crypto"
 import {
   runtimeAdapterForPreference,
   type AgentRuntimePreference,
+  type ResolvedAgentRuntime,
+  type RuntimeAdapterProbe,
 } from "../../../shared/agent-runtime"
 import type { RunPermissionMode } from "../../../shared/harness-types"
 import {
@@ -93,8 +95,26 @@ export type RuntimeContinuationPreview = RuntimeCompositionPreview & {
 export class RuntimeChatLifecycleService {
   private readonly sqlite: Sqlite
 
-  constructor(database: DatabaseLike) {
+  constructor(
+    database: DatabaseLike,
+    private readonly resolveProbe: (
+      harness: string,
+      runtime: ResolvedAgentRuntime,
+    ) => RuntimeAdapterProbe | null = () => null,
+  ) {
     this.sqlite = rawClient(database)
+  }
+
+  targetIdentity(input: RuntimeContinuationInput): {
+    harness: string
+    runtime: ResolvedAgentRuntime
+  } {
+    const source = this.requireChat(input.sourceChatId)
+    const harness = input.targetHarness?.trim() || String(source.harness ?? "generic")
+    return {
+      harness,
+      runtime: runtimeAdapterForPreference(input.preference) ?? productRuntimeForHarness(harness),
+    }
   }
 
   setEmptyChatPreference(input: { chatId: string; preference: AgentRuntimePreference }): {
@@ -146,21 +166,44 @@ export class RuntimeChatLifecycleService {
         artifactRefs: input.selectedArtifactRefs,
       },
     })
-    const targetSnapshot = executionTarget(this.sqlite, source, {
-      targetHarness,
-      targetModel,
-      preference: input.preference,
-    })
+    const targetSnapshot = executionTarget(
+      this.sqlite,
+      source,
+      {
+        targetHarness,
+        targetModel,
+        preference: input.preference,
+      },
+      this.resolveProbe,
+    )
+    const requiredCapabilities = [
+      ...new Set([
+        input.mode === "delegate" ? "delegation" : "continuation",
+        ...(input.requiredCapabilities ?? []),
+        ...(input.outputSchema ? ["structuredOutput"] : []),
+      ]),
+    ]
+    const missing = requiredCapabilities.filter(
+      (capability) => targetSnapshot.capabilities.capabilities[capability] !== "available",
+    )
+    const availability =
+      missing.length > 0
+        ? {
+            state: "blocked" as const,
+            reason: `Target lacks required capabilities: ${missing.join(", ")}.`,
+            repair: "Probe a compatible target that advertises every required capability.",
+          }
+        : worktreeAvailability(this.sqlite, source)
     const preview = createRuntimeCompositionPreview({
       mode: input.mode,
       objective: input.objective,
-      requiredCapabilities: input.requiredCapabilities,
+      requiredCapabilities,
       outputSchema: input.outputSchema,
       targetSnapshot,
       visibleContextManifest: exported.manifest,
       authorityCeiling: authorityCeiling(this.sqlite, source, targetSnapshot),
       worktreeLease: worktreeLease(source),
-      availability: worktreeAvailability(this.sqlite, source),
+      availability,
     })
     return {
       ...preview,
@@ -471,8 +514,9 @@ export class RuntimeChatLifecycleService {
 
 export function createRuntimeChatLifecycleService(
   database: DatabaseLike,
+  resolveProbe?: (harness: string, runtime: ResolvedAgentRuntime) => RuntimeAdapterProbe | null,
 ): RuntimeChatLifecycleService {
-  return new RuntimeChatLifecycleService(database)
+  return new RuntimeChatLifecycleService(database, resolveProbe)
 }
 
 function assertCompatible(harness: string, preference: AgentRuntimePreference): void {
@@ -577,6 +621,7 @@ function executionTarget(
     targetModel: string | null
     preference: AgentRuntimePreference
   },
+  resolveProbe: (harness: string, runtime: ResolvedAgentRuntime) => RuntimeAdapterProbe | null,
 ): ExecutionTarget {
   const runtime =
     runtimeAdapterForPreference(input.preference) ?? productRuntimeForHarness(input.targetHarness)
@@ -590,14 +635,12 @@ function executionTarget(
     input.targetHarness === String(source.harness)
       ? readAgentProfileBinding(sqlite, String(source.id))
       : null
+  const probe = resolveProbe(input.targetHarness, runtime)
+  const matchedProbe =
+    probe?.harness === input.targetHarness && probe.runtime === runtime ? probe : null
   const capabilities = {
     schemaVersion: 1 as const,
-    capabilities: {
-      continuation: "available" as const,
-      delegation: "available" as const,
-      structuredOutput: "available" as const,
-      cancellation: "available" as const,
-    },
+    capabilities: executionCapabilities(matchedProbe),
   }
   const permissionMode = String(source.permission_mode) as RunPermissionMode
   const customPermissions =
@@ -624,10 +667,32 @@ function executionTarget(
     },
     capabilities: {
       ...capabilities,
-      fingerprint: sha256(canonicalJson(capabilities)),
+      fingerprint: sha256(
+        canonicalJson({
+          ...capabilities,
+          versions: matchedProbe?.versions ?? null,
+          available: matchedProbe?.available ?? false,
+        }),
+      ),
     },
-    losses: [],
+    losses: (matchedProbe?.capabilities.limitations ?? []).slice(0, 64).map((summary, index) => ({
+      code: `runtime-probe-${index + 1}`,
+      summary,
+    })),
   })
+}
+
+function executionCapabilities(
+  probe: RuntimeAdapterProbe | null,
+): Record<string, "available" | "unavailable" | "unknown" | "lossy"> {
+  const names = ["continuation", "delegation", "structuredOutput", "cancellation"] as const
+  if (!probe) return Object.fromEntries(names.map((name) => [name, "unknown"]))
+  if (!probe.available) return Object.fromEntries(names.map((name) => [name, "unavailable"]))
+  const execution = probe.capabilities.execution
+  if (!execution) return Object.fromEntries(names.map((name) => [name, "unknown"]))
+  return Object.fromEntries(
+    names.map((name) => [name, execution[name].supported ? "available" : "unavailable"]),
+  )
 }
 
 function authorityCeiling(

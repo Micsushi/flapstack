@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   buildClaudePermissionApplication,
   buildCodexPermissionApplication,
@@ -15,6 +15,7 @@ import {
   mapClaudeSdkPermissionMode,
   resolvePermission,
   resolveClaudeRuntimeToolPermission,
+  resolveClaudeRuntimeToolPermissionWithBridge,
   resolveClaudeRuntimeToolPermissionWithoutBridge,
   setPermissionChangeBehavior,
   setGlobalDefault,
@@ -351,5 +352,39 @@ describe("permissions", () => {
       behavior: "deny",
       message: expect.stringMatching(/approval bridge/i),
     })
+  })
+
+  it("allows exactly one legacy Claude tool use through a successful bridge", async () => {
+    const toolInput = { file_path: join("src", "inside.ts") }
+    const bridge = vi.fn(async () => true)
+    await expect(
+      resolveClaudeRuntimeToolPermissionWithBridge(
+        {
+          mode: "ask-before-edits",
+          cwd: configDir,
+          toolName: "Write",
+          toolInput,
+        },
+        bridge,
+      ),
+    ).resolves.toEqual({ behavior: "allow", updatedInput: toolInput })
+    expect(bridge).toHaveBeenCalledOnce()
+  })
+
+  it("fails closed when the legacy Claude approval bridge denies or fails", async () => {
+    const input = {
+      mode: "ask-before-edits" as const,
+      cwd: configDir,
+      toolName: "Bash",
+      toolInput: { command: "git status" },
+    }
+    await expect(
+      resolveClaudeRuntimeToolPermissionWithBridge(input, async () => false),
+    ).resolves.toMatchObject({ behavior: "deny" })
+    await expect(
+      resolveClaudeRuntimeToolPermissionWithBridge(input, async () => {
+        throw new Error("bridge unavailable")
+      }),
+    ).resolves.toMatchObject({ behavior: "deny" })
   })
 })

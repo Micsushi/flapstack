@@ -11,12 +11,43 @@ import {
   type RuntimeDelegationLaunchPort,
 } from "../src/main/lib/agent-runtime/cross-provider-delegation"
 import type { QueuedAgentRun } from "../src/main/lib/run-launch-service"
+import type { ResolvedAgentRuntime, RuntimeAdapterProbe } from "../src/shared/agent-runtime"
 
 class RuntimeStub implements RuntimeDelegationLaunchPort {
   launches: QueuedAgentRun[] = []
   cancellations: string[] = []
   state: "running" | "completed" | "cancelled" | "failed" | "uncertain" = "running"
   structuredOutput: unknown = { verdict: "pass" }
+
+  compositionProbe(harness: string, runtime: ResolvedAgentRuntime): RuntimeAdapterProbe {
+    const supported = { supported: true, reason: null }
+    return {
+      runtime,
+      harness,
+      available: true,
+      versions: { adapterVersion: "test", protocolVersion: "test" },
+      capabilities: {
+        schemaVersion: 1,
+        status: "available",
+        capturedAt: "2026-01-01T00:00:00.000Z",
+        controls: {
+          modelThinking: supported,
+          reasoningDisplay: supported,
+          subagentActivity: supported,
+          hookDiagnostics: supported,
+        },
+        execution: {
+          continuation: supported,
+          delegation: supported,
+          structuredOutput: supported,
+          cancellation: supported,
+        },
+        limitations: [],
+        unavailableReason: null,
+      },
+      reason: null,
+    }
+  }
 
   async launch(run: QueuedAgentRun) {
     this.launches.push(run)
@@ -89,6 +120,13 @@ describe("cross-provider Runtime delegation", () => {
       })
       expect(runtime.launches).toHaveLength(1)
       const db = new Database(fixture.path)
+      expect(
+        db
+          .prepare(
+            "SELECT runtime_adapter_version, runtime_protocol_version FROM agent_runs WHERE id = ?",
+          )
+          .get(created.runId),
+      ).toEqual({ runtime_adapter_version: "test", runtime_protocol_version: "test" })
       const child = db
         .prepare(
           `SELECT c.parent_chat_id, c.harness, s.session_id

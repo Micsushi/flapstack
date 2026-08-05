@@ -9,6 +9,7 @@ import type {
 } from "../../../shared/agent-runtime"
 import { AgentRuntimeRegistry, RuntimeRegistryError } from "./registry"
 import { sanitizeRuntimeText } from "./sanitizer"
+import { canonicalJson } from "./context-manifest"
 
 export type RuntimeLaunchIdentity = {
   runId: string
@@ -21,6 +22,7 @@ export type RuntimeLaunchRequest = RuntimeLaunchIdentity & {
   launch: ResolvedRuntimeLaunch
   prompt: string
   instructions?: string | null
+  outputSchema?: Record<string, unknown> | null
   persistedSession?: RuntimeAdapterSession | null
   signal?: AbortSignal
 }
@@ -128,19 +130,24 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       request.launch.resolvedRuntime,
       request.launch.harness,
     )
-    const probe = await this.registry.probe(request.launch.resolvedRuntime, request.launch.harness)
-    if (!probe.available) {
-      throw new RuntimeRegistryError(
-        probe.reason ?? {
-          code: "runtime-unavailable",
-          harness: request.launch.harness,
-          runtime: request.launch.resolvedRuntime,
-          message: `${request.launch.resolvedRuntime} Runtime is unavailable.`,
-          repair: "Repair the adapter probe or explicitly choose another compatible Runtime.",
-        },
+    if (request.launch.preferenceSource !== "legacy") {
+      const probe = await this.registry.probe(
+        request.launch.resolvedRuntime,
+        request.launch.harness,
       )
+      if (!probe.available) {
+        throw new RuntimeRegistryError(
+          probe.reason ?? {
+            code: "runtime-unavailable",
+            harness: request.launch.harness,
+            runtime: request.launch.resolvedRuntime,
+            message: `${request.launch.resolvedRuntime} Runtime is unavailable.`,
+            repair: "Repair the adapter probe or explicitly choose another compatible Runtime.",
+          },
+        )
+      }
+      assertProbeMatchesSnapshot(request, probe)
     }
-    assertProbeMatchesSnapshot(request, probe)
     await this.hooks.onLifecycle?.(request, "validated")
 
     const pendingCancellation = this.pendingCancellations.get(request.runId)
@@ -170,6 +177,7 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       subChatId: request.subChatId,
       launch: request.launch,
       instructions: request.instructions?.trim() || null,
+      outputSchema: request.outputSchema ?? null,
       signal: controller.signal,
     }
     const active: ActiveLaunch<TActivity> = {
@@ -491,6 +499,14 @@ function assertProbeMatchesSnapshot(
     throw new Error(
       `Runtime adapter version changed after snapshot (${versions.adapterVersion}/${versions.protocolVersion} -> ${probe.versions.adapterVersion}/${probe.versions.protocolVersion}).`,
     )
+  }
+  if (
+    request.launch.preferenceSource !== "legacy" &&
+    request.launch.capabilities.execution &&
+    canonicalJson({ ...request.launch.capabilities, capturedAt: null }) !==
+      canonicalJson({ ...probe.capabilities, capturedAt: null })
+  ) {
+    throw new Error("Runtime adapter capabilities changed after snapshot.")
   }
 }
 

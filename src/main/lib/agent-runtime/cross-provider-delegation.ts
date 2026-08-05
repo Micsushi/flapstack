@@ -1,6 +1,11 @@
 import Database from "better-sqlite3"
 import { createHash } from "node:crypto"
-import type { AgentRuntimePreference } from "../../../shared/agent-runtime"
+import {
+  runtimeAdapterForPreference,
+  type AgentRuntimePreference,
+  type ResolvedAgentRuntime,
+  type RuntimeAdapterProbe,
+} from "../../../shared/agent-runtime"
 import {
   customPermissionCapabilitiesSchema,
   customPermissionCapabilityKeys,
@@ -37,6 +42,7 @@ import {
   type RuntimeContinuationInput,
   type RuntimeContinuationPreview,
 } from "./chat-lifecycle"
+import { productRuntimeForHarness } from "./compatibility"
 
 type Row = Record<string, unknown>
 
@@ -50,6 +56,7 @@ export interface RuntimeDelegationLaunchPort {
     value: unknown
     activityReference: { runId: string; eventId: string; sequence: number }
   } | null>
+  compositionProbe?(harness: string, runtime: ResolvedAgentRuntime): RuntimeAdapterProbe | null
 }
 
 export type CrossProviderDelegationInput = Omit<
@@ -113,7 +120,10 @@ export class CrossProviderDelegationService {
     private readonly runtime: RuntimeDelegationLaunchPort,
   ) {}
 
-  preview(input: CrossProviderDelegationInput): RuntimeContinuationPreview {
+  preview(
+    input: CrossProviderDelegationInput,
+    probe?: RuntimeAdapterProbe | null,
+  ): RuntimeContinuationPreview {
     assertDelegationObjectiveSafe(input.objective)
     const db = this.open()
     try {
@@ -131,7 +141,13 @@ export class CrossProviderDelegationService {
           ...(input.outputSchema ? ["structuredOutput"] : []),
         ]),
       ]
-      const base = createRuntimeChatLifecycleService(db).previewContinuation({
+      const targetRuntime =
+        runtimeAdapterForPreference(input.preference) ?? productRuntimeForHarness(targetHarness)
+      const targetProbe =
+        probe ?? this.runtime.compositionProbe?.(targetHarness, targetRuntime) ?? null
+      const base = createRuntimeChatLifecycleService(db, (harness, runtime) =>
+        targetProbe?.harness === harness && targetProbe.runtime === runtime ? targetProbe : null,
+      ).previewContinuation({
         ...input,
         mode: "delegate",
         requiredCapabilities,
@@ -155,14 +171,17 @@ export class CrossProviderDelegationService {
     }
   }
 
-  delegate(input: CrossProviderDelegationInput): CrossProviderDelegationReference {
+  delegate(
+    input: CrossProviderDelegationInput,
+    probe?: RuntimeAdapterProbe | null,
+  ): CrossProviderDelegationReference {
     if (!input.confirmedPreviewDigest) {
       throw new CrossProviderDelegationError(
         "preview-required",
         "Cross-provider delegation requires confirmation of the exact preview digest.",
       )
     }
-    const preview = this.preview(input)
+    const preview = this.preview(input, probe)
     if (preview.digest !== input.confirmedPreviewDigest) {
       throw new CrossProviderDelegationError(
         "preview-mismatch",
@@ -173,6 +192,20 @@ export class CrossProviderDelegationService {
       throw new CrossProviderDelegationError(
         "capability-missing",
         preview.availability.reason ?? "Delegation target is unavailable.",
+      )
+    }
+    const target = preview.targetSnapshot
+    const confirmedProbe =
+      probe ?? this.runtime.compositionProbe?.(target.harness, target.runtime) ?? null
+    if (
+      !confirmedProbe ||
+      confirmedProbe.harness !== target.harness ||
+      confirmedProbe.runtime !== target.runtime ||
+      !confirmedProbe.available
+    ) {
+      throw new CrossProviderDelegationError(
+        "preview-mismatch",
+        "Delegation requires the exact available capability probe confirmed by the preview.",
       )
     }
 
@@ -217,7 +250,6 @@ export class CrossProviderDelegationService {
             )
           }
           const now = nowEpochSeconds()
-          const target = preview.targetSnapshot
           const customPermissions = preview.authorityCeiling.customPermissions
           const name =
             input.name?.trim() || `${String(source.name ?? "Chat")} · Delegate to ${target.harness}`
@@ -274,6 +306,7 @@ export class CrossProviderDelegationService {
               preview.authorityCeiling.permissionMode,
               customPermissions,
             ),
+            adapterProbes: { [target.runtime]: confirmedProbe },
           })
           if (runtimeSnapshot.resolvedRuntime !== target.runtime) {
             throw new CrossProviderDelegationError(

@@ -21,6 +21,7 @@ import type {
 } from "../../../../shared/harness-types"
 import type { CustomPermissionToggles, PermissionMode } from "../../permissions"
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
+import { FLAPSTACK_MCP_SERVER_NAME } from "../../mcp-control/registration"
 import type { SidecarApprovalDecision } from "./contract"
 
 /** OpenCode per-tool permission verb. */
@@ -146,7 +147,29 @@ export function decideAutoApproval(
   patterns: readonly string[] = [],
   correlationId = permission,
   customPermissions?: CustomPermissionToggles | null,
+  productMcpRegistered = false,
 ): SidecarApprovalDecision | null {
+  const productPrefix = `${FLAPSTACK_MCP_SERVER_NAME}_`
+  if (productMcpRegistered && permission.startsWith(productPrefix)) {
+    const toolName = permission.slice(productPrefix.length)
+    if (!toolName) {
+      return { reply: "reject", message: "Product MCP permission omitted its tool identity." }
+    }
+    const productDecision = resolveProviderMcpPermission({
+      permissionMode: mode,
+      correlationId,
+      serverName: FLAPSTACK_MCP_SERVER_NAME,
+      toolName,
+      trustedProductServerName: FLAPSTACK_MCP_SERVER_NAME,
+      customPermissions,
+    })
+    if (productDecision?.decision === "deny") {
+      return { reply: "reject", message: productDecision.reason }
+    }
+    if (productDecision?.decision === "allow") return { reply: "once" }
+    if (productDecision?.decision === "provider-approval") return null
+  }
+
   for (const providerToolName of [permission, ...patterns]) {
     const mcpDecision = resolveProviderMcpPermission({
       permissionMode: mode,

@@ -210,6 +210,10 @@ export function flapstackNativeCapabilitySnapshot(input: {
 }): RuntimeCapabilitySnapshot {
   const diagnostics = getFlapstackNativeDiagnostics(input.harness)
   const claude = input.harness === "claude-code"
+  const supported = (value: boolean, reason: string) => ({
+    supported: input.available && value,
+    reason: input.available && value ? null : (input.unavailableReason?.message ?? reason),
+  })
   return {
     schemaVersion: 1,
     status: input.available ? "available" : "unavailable",
@@ -230,6 +234,18 @@ export function flapstackNativeCapabilitySnapshot(input: {
         supported: claude,
         reason: claude ? null : "The Stage 3 provider path has no separate hook control.",
       },
+    },
+    execution: {
+      continuation: supported(true, "The provider path is unavailable."),
+      delegation: supported(true, "The provider path is unavailable."),
+      structuredOutput: supported(
+        claude,
+        "This Flapstack Native provider path has no native output-schema contract.",
+      ),
+      cancellation: supported(
+        diagnostics.capabilities.cancellation === "supported",
+        "The provider path cannot prove cancellation support.",
+      ),
     },
     limitations: diagnostics.limitations.map(
       (limitation) => `${limitation.code}: ${limitation.message}`,

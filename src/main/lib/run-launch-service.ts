@@ -43,6 +43,7 @@ export type QueuedAgentRun = {
   requiredLocalToolTiers?: Array<"read" | "project-write" | "shell" | "git" | "network">
   runtimeLaunch?: ResolvedRuntimeLaunch
   profileRuntimeAuthority?: AgentProfileRuntimeAuthority
+  outputSchema?: Record<string, unknown> | null
 }
 
 export type AgentRunLauncher = (run: QueuedAgentRun) => Promise<void>

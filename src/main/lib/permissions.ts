@@ -731,6 +731,25 @@ export async function resolveClaudeRuntimeToolPermissionWithoutBridge(
   )
 }
 
+export async function resolveClaudeRuntimeToolPermissionWithBridge(
+  input: Parameters<typeof resolveClaudeRuntimeToolPermission>[0],
+  requestApproval: () => Promise<boolean>,
+  options: { requireApproval?: boolean } = {},
+): Promise<ClaudeRuntimeToolDecision> {
+  const decision = options.requireApproval ? null : await resolveClaudeRuntimeToolPermission(input)
+  if (decision) return decision
+  try {
+    return (await requestApproval())
+      ? { behavior: "allow", updatedInput: input.toolInput }
+      : { behavior: "deny", message: "User denied the tool request." }
+  } catch {
+    return {
+      behavior: "deny",
+      message: "Tool approval failed closed because the Flapstack approval bridge was unavailable.",
+    }
+  }
+}
+
 function claudeWritePath(toolInput: Record<string, unknown>): string {
   for (const key of ["file_path", "notebook_path", "path"] as const) {
     const value = toolInput[key]

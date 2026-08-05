@@ -111,6 +111,23 @@ function runtimeDelegationService() {
   return new CrossProviderDelegationService(databasePath, getMainRuntimeLaunchService(databasePath))
 }
 
+async function probedRuntimeLifecycle(
+  input: Parameters<ReturnType<typeof createRuntimeChatLifecycleService>["targetIdentity"]>[0],
+) {
+  const database = getDatabase()
+  const identity = createRuntimeChatLifecycleService(database).targetIdentity(input)
+  const probe = await getMainRuntimeLaunchService(getDatabasePath()).probe(
+    identity.runtime,
+    identity.harness,
+  )
+  return {
+    lifecycle: createRuntimeChatLifecycleService(database, (harness, runtime) =>
+      harness === identity.harness && runtime === identity.runtime ? probe : null,
+    ),
+    probe,
+  }
+}
+
 type CheckoutRepairResult =
   | {
       status: "repaired"
@@ -1337,9 +1354,10 @@ export const chatsRouter = router({
         selectedArtifactRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
       }),
     )
-    .query(({ input }) =>
-      createRuntimeChatLifecycleService(getDatabase()).previewContinuation(input),
-    ),
+    .query(async ({ input }) => {
+      const { lifecycle } = await probedRuntimeLifecycle(input)
+      return lifecycle.previewContinuation(input)
+    }),
 
   continueWithRuntime: publicProcedure
     .input(
@@ -1361,17 +1379,24 @@ export const chatsRouter = router({
           .optional(),
       }),
     )
-    .mutation(({ input }) =>
-      createRuntimeChatLifecycleService(getDatabase()).continueWithRuntime(input),
-    ),
+    .mutation(async ({ input }) => {
+      const { lifecycle } = await probedRuntimeLifecycle(input)
+      return lifecycle.continueWithRuntime(input)
+    }),
 
   previewRuntimeDelegation: publicProcedure
     .input(runtimeDelegationInputSchema.omit({ confirmedPreviewDigest: true }))
-    .query(({ input }) => runtimeDelegationService().preview(input)),
+    .query(async ({ input }) => {
+      const { probe } = await probedRuntimeLifecycle(input)
+      return runtimeDelegationService().preview(input, probe)
+    }),
 
   delegateToRuntime: publicProcedure
     .input(runtimeDelegationInputSchema)
-    .mutation(({ input }) => runtimeDelegationService().delegate(input)),
+    .mutation(async ({ input }) => {
+      const { probe } = await probedRuntimeLifecycle(input)
+      return runtimeDelegationService().delegate(input, probe)
+    }),
 
   reconcileRuntimeDelegation: publicProcedure
     .input(z.object({ attemptId: z.string().trim().min(1).max(512) }))

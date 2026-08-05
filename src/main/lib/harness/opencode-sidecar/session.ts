@@ -332,6 +332,7 @@ export async function handlePermissionRequest(
     request.patterns,
     request.requestId,
     input.customPermissions,
+    Boolean(input.productMcp),
   )
   const resolution: Omit<SidecarPermissionResolution, "replyStatus"> =
     remembered ??

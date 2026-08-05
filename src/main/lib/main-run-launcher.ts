@@ -36,6 +36,7 @@ import {
 import { AgentRuntimeRegistry, createAgentRuntimeRegistry } from "./agent-runtime/registry"
 import { createAgentActivityStore } from "./agent-runtime/activity-store"
 import { createCodexRuntimeAdapterFactory } from "./agent-runtime/codex"
+import { resolveCodexRuntimeCommand } from "./agent-runtime/codex/binary"
 import {
   CLAUDE_AGENT_SDK_VERSION,
   CLAUDE_CODE_VERSION,
@@ -50,6 +51,7 @@ import * as schema from "./db/schema"
 import { nowEpochSeconds } from "./db/timestamps"
 import {
   createFlapstackNativeAdapterFactory,
+  type FlapstackNativeDelegationProbe,
   type FlapstackNativeProviderDelegation,
 } from "./agent-runtime/flapstack-native"
 import {
@@ -67,6 +69,8 @@ import {
   type HookStateStore,
   type ManagedHookRuntimeExecutor,
 } from "./extension-management"
+import { probeCursorCapabilities, probeOpencodeCapabilities } from "./harness/provider-capabilities"
+import { PINNED_OPENCODE_VERSION } from "./harness/opencode-sidecar/binary"
 import { assertRegisteredFilesystemRoot } from "./git/security/path-validation"
 import {
   getMergedGlobalMcpServers,
@@ -118,6 +122,9 @@ export type MainRunLauncherOptions = {
   inputHandler?: (runId: string, request: unknown) => Promise<unknown>
   hookStore?: HookStateStore
   hookRuntimeExecutor?: ManagedHookRuntimeExecutor
+  flapstackNativeProbe?: (
+    harness: string,
+  ) => Promise<FlapstackNativeDelegationProbe> | FlapstackNativeDelegationProbe
 }
 
 export type RuntimeStructuredOutput = Readonly<{
@@ -154,7 +161,14 @@ export class MainRuntimeLaunchService {
     this.inputHandler = options.inputHandler
     const nativeFactory = createFlapstackNativeAdapterFactory({
       resolveDelegation: (harness) =>
-        createLegacyDelegation(harness, this.caller, this.runs, this.streams, this.states),
+        createLegacyDelegation(
+          harness,
+          this.caller,
+          this.runs,
+          this.streams,
+          this.states,
+          options.flapstackNativeProbe ?? probeLegacyProviderPath,
+        ),
       appendActivity: (runId, events) => this.appendActivity(runId, events),
       onProjectionError: (context, diagnostic) =>
         this.appendDiagnostic(context.runId, diagnostic.code, diagnostic.message),
@@ -250,6 +264,7 @@ export class MainRuntimeLaunchService {
         launch: resolvedLaunch,
         prompt: resolveRuntimeTurnPrompt(run, resolvedLaunch),
         instructions,
+        outputSchema: run.outputSchema,
         persistedSession: await this.loadPersistedSession(run.runId),
       })
     } catch (error) {
@@ -1227,10 +1242,13 @@ function createLegacyDelegation(
   runs: Map<string, QueuedAgentRun>,
   streams: Map<string, unknown>,
   states: Map<string, "running" | "completed" | "uncertain">,
+  probeProvider: (
+    harness: string,
+  ) => Promise<FlapstackNativeDelegationProbe> | FlapstackNativeDelegationProbe,
 ): FlapstackNativeProviderDelegation<unknown> | null {
   if (!isAgentHarness(harness)) return null
   return {
-    probe: () => ({ available: true }),
+    probe: () => probeProvider(harness),
     async startSession() {
       return { providerSessionId: null, providerThreadId: null }
     },
@@ -1302,6 +1320,55 @@ function createLegacyDelegation(
   }
 }
 
+async function probeLegacyProviderPath(
+  harness: string,
+): Promise<{ available: boolean; reason?: string | null }> {
+  if (harness === "codex") {
+    try {
+      return { available: existsSync(resolveCodexRuntimeCommand()) }
+    } catch (error) {
+      return { available: false, reason: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  if (harness === "claude-code") {
+    const binary = await resolveBundledClaudePath()
+    return {
+      available: existsSync(binary),
+      ...(existsSync(binary) ? {} : { reason: "Bundled Claude Code binary is missing." }),
+    }
+  }
+  if (harness === "cursor-agent") {
+    const snapshot = await probeCursorCapabilities()
+    const available = Boolean(snapshot.probes.version?.ok && snapshot.probes.status?.ok)
+    return {
+      available,
+      ...(available
+        ? {}
+        : { reason: snapshot.limitations.join(" ") || "Cursor capability probe failed." }),
+    }
+  }
+  if (harness === "openrouter" || harness === "nanogpt") {
+    const snapshot = await probeOpencodeCapabilities()
+    const available = Boolean(
+      snapshot.probes.version?.ok && snapshot.version?.includes(PINNED_OPENCODE_VERSION),
+    )
+    return {
+      available,
+      ...(available
+        ? {}
+        : {
+            reason:
+              snapshot.limitations.join(" ") ||
+              `Pinned OpenCode ${PINNED_OPENCODE_VERSION} is unavailable.`,
+          }),
+    }
+  }
+  return {
+    available: false,
+    reason: `${harness} requires a model-scoped provider probe before Runtime composition.`,
+  }
+}
+
 async function launchLegacyStream(
   caller: ReturnType<ReturnType<typeof createAppRouter>["createCaller"]>,
   run: QueuedAgentRun,
@@ -1342,6 +1409,7 @@ async function launchLegacyStream(
         ...(model ? { model } : {}),
         mode: chatMode,
         reasoningEnabled,
+        ...(run.outputSchema ? { outputSchema: run.outputSchema } : {}),
         ...(legacyClaudeEffort(run.reasoningEffort)
           ? { effort: legacyClaudeEffort(run.reasoningEffort)! }
           : {}),

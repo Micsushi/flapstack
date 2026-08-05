@@ -948,6 +948,62 @@ describe("chunk mapper", () => {
 })
 
 describe("approval bridge", () => {
+  it("recognizes only launch-owned OpenCode product MCP permission names", async () => {
+    const replies: unknown[][] = []
+    const client = {
+      replyPermission: async (...args: unknown[]) => replies.push(args),
+    } as unknown as OpencodeClient
+    const onApproval = vi.fn(async () => ({ reply: "reject" as const }))
+    const request = {
+      kind: "permission-asked" as const,
+      requestId: "product-request",
+      toolCallId: "product-call",
+      permission: "flapstack_create_task",
+      patterns: [],
+    }
+
+    await expect(
+      handlePermissionRequest(
+        client,
+        {
+          provider: "openrouter",
+          model: "openrouter/test-model",
+          prompt: "test",
+          cwd: "/repo",
+          permissionMode: "ask-before-edits",
+          reasoningEnabled: false,
+          reasoningEffort: "medium",
+          reasoningSupported: null,
+          productMcp: { command: "/product-mcp", args: [], env: {} },
+        },
+        onApproval,
+        request,
+      ),
+    ).resolves.toMatchObject({ decision: { reply: "once" }, source: "policy" })
+    expect(onApproval).not.toHaveBeenCalled()
+
+    await handlePermissionRequest(
+      client,
+      {
+        provider: "openrouter",
+        model: "openrouter/test-model",
+        prompt: "test",
+        cwd: "/repo",
+        permissionMode: "ask-before-edits",
+        reasoningEnabled: false,
+        reasoningEffort: "medium",
+        reasoningSupported: null,
+      },
+      onApproval,
+      { ...request, requestId: "third-party-request" },
+    )
+    expect(onApproval).toHaveBeenCalledOnce()
+    expect(replies).toEqual([
+      ["product-request", "once"],
+      ["third-party-request", "reject", undefined],
+    ])
+  })
+
   it("passes exact command and patterns to the approver before replying", async () => {
     const replies: unknown[][] = []
     const client = {

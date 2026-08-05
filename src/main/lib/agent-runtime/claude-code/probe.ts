@@ -66,6 +66,12 @@ export function probeClaudeCodeRuntime(input: ClaudeRuntimeProbeInput): RuntimeA
         subagentActivity: supported(reason),
         hookDiagnostics: supported(reason),
       },
+      execution: {
+        continuation: supported(reason),
+        delegation: supported(reason),
+        structuredOutput: supported(reason),
+        cancellation: supported(reason),
+      },
       limitations,
       unavailableReason: reason,
     },

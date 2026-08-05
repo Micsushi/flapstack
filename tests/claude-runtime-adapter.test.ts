@@ -41,6 +41,11 @@ describe("Claude Code Runtime adapter", () => {
     })
     const adapter = createClaudeCodeRuntimeAdapter(dependencies)
     const context = runtimeContext()
+    context.outputSchema = {
+      type: "object",
+      properties: { result: { type: "string" } },
+      required: ["result"],
+    }
     const session = await adapter.startSession(context)
     const turn = await adapter.startTurn(context, session, "FIXTURE_PROMPT")
     const activities = await collect(adapter.streamActivity(context, session, turn))
@@ -51,6 +56,7 @@ describe("Claude Code Runtime adapter", () => {
       thinking: { type: "adaptive", display: "summarized" },
       forwardSubagentText: true,
       includeHookEvents: true,
+      outputFormat: { type: "json_schema", schema: context.outputSchema },
     })
     expect(persistedSessions).toEqual(["session-1"])
     expect(persistedUuids).toEqual(["assistant-uuid-1", "assistant-child-uuid-1"])

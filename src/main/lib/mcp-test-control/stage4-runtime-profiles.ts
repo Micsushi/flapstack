@@ -1,5 +1,10 @@
 import type Database from "better-sqlite3"
-import type { AgentRuntimePreference, RuntimeDefaultScope } from "../../../shared/agent-runtime"
+import type {
+  AgentRuntimePreference,
+  ResolvedAgentRuntime,
+  RuntimeAdapterProbe,
+  RuntimeDefaultScope,
+} from "../../../shared/agent-runtime"
 import type { AgentProfileVersionRef } from "../../../shared/agent-profiles"
 import { createAgentActivityStore, type AgentActivityStore } from "../agent-runtime/activity-store"
 import { createRuntimeChatLifecycleService } from "../agent-runtime/chat-lifecycle"
@@ -107,7 +112,7 @@ export function mutateStage4Runtime(
 ) {
   const payload = boundedPayload(input.payload)
   const defaults = createRuntimeDefaultsService(database)
-  const lifecycle = createRuntimeChatLifecycleService(database)
+  const lifecycle = createRuntimeChatLifecycleService(database, stage4FixtureProbe)
   const fixture = createDevRuntimeActivityFixtureService(database, activityStore, { enabled: true })
   switch (input.action) {
     case "write-default":
@@ -137,6 +142,36 @@ export function mutateStage4Runtime(
       return fixture.seed(activityFixtureInput(payload))
     case "cleanup-activity":
       return fixture.reset(activityFixtureInput(payload))
+  }
+}
+
+function stage4FixtureProbe(harness: string, runtime: ResolvedAgentRuntime): RuntimeAdapterProbe {
+  const supported = { supported: true, reason: null }
+  return {
+    runtime,
+    harness,
+    available: true,
+    versions: { adapterVersion: "mcp-test-control", protocolVersion: "fixture-v1" },
+    capabilities: {
+      schemaVersion: 1,
+      status: "available",
+      capturedAt: null,
+      controls: {
+        modelThinking: supported,
+        reasoningDisplay: supported,
+        subagentActivity: supported,
+        hookDiagnostics: supported,
+      },
+      execution: {
+        continuation: supported,
+        delegation: supported,
+        structuredOutput: supported,
+        cancellation: supported,
+      },
+      limitations: ["Deterministic MCP test-control capability fixture."],
+      unavailableReason: null,
+    },
+    reason: null,
   }
 }
 

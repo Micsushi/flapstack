@@ -140,6 +140,57 @@ describe("process-wide Runtime launch service", () => {
     expect(value.reconcile).not.toHaveBeenCalled()
   })
 
+  it("forwards the workflow output schema into the provider adapter context", async () => {
+    seedDirectRun("schema")
+    const value = directAdapter()
+    let receivedSchema: Record<string, unknown> | null | undefined
+    value.startTurn = async (context) => {
+      receivedSchema = context.outputSchema
+      return { providerTurnId: `turn-${context.runId}` }
+    }
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory: () => value,
+      enableCodex: true,
+    })
+    const outputSchema = {
+      type: "object",
+      properties: { verdict: { type: "string" } },
+      required: ["verdict"],
+    }
+
+    await service.launch({ ...queued("schema"), outputSchema })
+
+    expect(receivedSchema).toEqual(outputSchema)
+  })
+
+  it("blocks before provider intent when probed capabilities drift from the snapshot", async () => {
+    seedDirectRun("capability-drift")
+    const value = directAdapter()
+    value.probe = async () => {
+      const probe = availableProbe()
+      return {
+        ...probe,
+        capabilities: {
+          ...probe.capabilities,
+          controls: {
+            ...probe.capabilities.controls,
+            modelThinking: { supported: false, reason: "provider changed" },
+          },
+        },
+      }
+    }
+    value.startSession = vi.fn(value.startSession)
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory: () => value,
+      enableCodex: true,
+    })
+
+    await expect(service.launch(queued("capability-drift"))).rejects.toThrow(
+      /capabilities changed after snapshot/i,
+    )
+    expect(value.startSession).not.toHaveBeenCalled()
+  })
+
   it("fails closed before Codex can run profile tools without an approval callback", async () => {
     seedDirectRun("profile-codex")
     const factory = vi.fn(() => directAdapter())
@@ -1352,6 +1403,12 @@ function availableProbe() {
         reasoningDisplay: { supported: true, reason: null },
         subagentActivity: { supported: true, reason: null },
         hookDiagnostics: { supported: true, reason: null },
+      },
+      execution: {
+        continuation: { supported: true, reason: null },
+        delegation: { supported: true, reason: null },
+        structuredOutput: { supported: true, reason: null },
+        cancellation: { supported: true, reason: null },
       },
       limitations: [],
       unavailableReason: null,

@@ -73,7 +73,7 @@ import {
   prependStartupContext,
 } from "../../harness/launch-context"
 import { getAgentInputCapability } from "../../harness/input-capabilities"
-import type { AgentInputRequest } from "../../../../shared/agent-input"
+import type { AgentInputRequest, AgentInputResolution } from "../../../../shared/agent-input"
 import {
   applyChatModeInstruction,
   CHAT_MODES,
@@ -105,7 +105,8 @@ import {
   parseCustomPermissionToggles,
   parsePermissionMode,
   resolveForRun,
-  resolveClaudeRuntimeToolPermissionWithoutBridge,
+  resolveClaudeRuntimeToolPermission,
+  resolveClaudeRuntimeToolPermissionWithBridge,
   type PermissionMode,
 } from "../../permissions"
 import { updateSubChatRunStatusIfAuthoritative } from "../../run-status-authority"
@@ -1060,6 +1061,7 @@ export const claudeRouter = router({
         model: z.string().optional(),
         effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
         reasoningEnabled: z.boolean().default(true),
+        outputSchema: z.record(z.unknown()).nullable().optional(),
         images: z.array(imageAttachmentSchema).optional(), // Image attachments
         historyEnabled: z.boolean().optional(),
         offlineModeEnabled: z.boolean().optional(), // Whether offline mode (Ollama) is enabled in settings
@@ -2192,6 +2194,9 @@ ${prompt}
                   allowDangerouslySkipPermissions: sdkPermission.allowDangerouslySkipPermissions,
                 }),
                 includePartialMessages: true,
+                ...(input.outputSchema
+                  ? { outputFormat: { type: "json_schema" as const, schema: input.outputSchema } }
+                  : {}),
                 // Load skills from project and user directories (skip for Ollama - not supported)
                 ...(!isUsingOllama && {
                   settingSources: ["project" as const, "user" as const],
@@ -2281,21 +2286,19 @@ ${prompt}
                   if (providerMcpDecision?.decision === "allow") {
                     return { behavior: "allow", updatedInput: toolInput }
                   }
-                  if (providerMcpDecision?.decision === "provider-approval") {
-                    return {
-                      behavior: "deny",
-                      message: "Third-party MCP requires a provider approval bridge.",
-                    }
-                  }
-
-                  const toolPermission = await resolveClaudeRuntimeToolPermissionWithoutBridge({
+                  const providerApprovalRequired =
+                    providerMcpDecision?.decision === "provider-approval"
+                  const permissionInput = {
                     mode: resolvedPermissionMode,
                     customPermissions,
                     cwd: input.cwd,
                     toolName,
                     toolInput,
-                  })
-                  if (toolPermission.behavior === "deny") return toolPermission
+                  }
+                  const toolPermission = providerApprovalRequired
+                    ? null
+                    : await resolveClaudeRuntimeToolPermission(permissionInput)
+                  if (toolPermission?.behavior === "deny") return toolPermission
 
                   if (input.mode === "plan") {
                     if (toolName === "Edit" || toolName === "Write") {
@@ -2394,7 +2397,83 @@ ${prompt}
                       updatedInput: { questions: (toolInput as any).questions, answers },
                     }
                   }
-                  return toolPermission
+                  if (toolPermission) return toolPermission
+
+                  return resolveClaudeRuntimeToolPermissionWithBridge(
+                    permissionInput,
+                    async () => {
+                      const createdAt = Date.now()
+                      const request: AgentInputRequest = {
+                        requestId: options.toolUseID,
+                        chatId: input.subChatId,
+                        runId: agentRunId ?? input.runId ?? streamId,
+                        origin: {
+                          harness: HARNESS,
+                          provider: "anthropic",
+                          ...(resolvedModel ? { model: resolvedModel } : {}),
+                          toolName,
+                        },
+                        capability: getAgentInputCapability(HARNESS),
+                        questions: [
+                          {
+                            id: "permission",
+                            header: "Permission",
+                            question: `Allow Claude to use ${toolName} once?`,
+                            options: [
+                              { id: "allow-once", label: "Allow once" },
+                              { id: "deny", label: "Deny" },
+                            ],
+                            multiSelect: false,
+                            allowCustom: false,
+                          },
+                        ],
+                        status: "pending",
+                        createdAt,
+                        expiresAt: createdAt + 15 * 60_000,
+                      }
+                      if (!safeEmit({ type: "agent-input-request", request } as UIMessageChunk)) {
+                        return false
+                      }
+                      let resolution: AgentInputResolution
+                      try {
+                        resolution = await agentInputLifecycle.create(request, {
+                          timeoutMs: 15 * 60_000,
+                          signal: abortController.signal,
+                        })
+                      } catch (error) {
+                        safeEmit({
+                          type: "agent-input-status",
+                          event: {
+                            requestId: request.requestId,
+                            chatId: request.chatId,
+                            runId: request.runId,
+                            status: "interrupted",
+                            at: Date.now(),
+                            message: "Tool approval bridge was unavailable.",
+                          },
+                        } as UIMessageChunk)
+                        throw error
+                      }
+                      safeEmit({
+                        type: "agent-input-status",
+                        event: {
+                          requestId: request.requestId,
+                          chatId: request.chatId,
+                          runId: request.runId,
+                          status: resolution.status,
+                          at: Date.now(),
+                          ...(resolution.status === "answered"
+                            ? { response: resolution.response }
+                            : { message: resolution.message }),
+                        },
+                      } as UIMessageChunk)
+                      return (
+                        resolution.status === "answered" &&
+                        resolution.response.answers.permission?.[0] === "Allow once"
+                      )
+                    },
+                    { requireApproval: providerApprovalRequired },
+                  )
                 },
                 stderr: (data: string) => {
                   stderrLines.push(data)

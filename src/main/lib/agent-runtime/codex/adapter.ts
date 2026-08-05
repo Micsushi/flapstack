@@ -256,6 +256,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
           input,
           model: context.launch.model,
           effort: context.launch.controls.modelEffort,
+          ...(context.outputSchema ? { outputSchema: context.outputSchema } : {}),
           ...(context.launch.controls.serviceTier
             ? { serviceTier: context.launch.controls.serviceTier }
             : {}),
@@ -695,6 +696,12 @@ function capabilities(now: Date): RuntimeCapabilitySnapshot {
       reasoningDisplay: { supported: true, reason: null },
       subagentActivity: { supported: true, reason: null },
       hookDiagnostics: { supported: true, reason: null },
+    },
+    execution: {
+      continuation: { supported: true, reason: null },
+      delegation: { supported: true, reason: null },
+      structuredOutput: { supported: true, reason: null },
+      cancellation: { supported: true, reason: null },
     },
     limitations: [
       "Private or encrypted reasoning is metadata-only.",

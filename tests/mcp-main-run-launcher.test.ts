@@ -68,9 +68,16 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true })
 })
 
+function testLauncher() {
+  return createMainRunLauncher({
+    databasePath: path,
+    flapstackNativeProbe: () => ({ available: true }),
+  })
+}
+
 describe("MCP main run launcher", () => {
   it("reuses the queued run identity for Codex and Claude launches", async () => {
-    const launch = createMainRunLauncher({ databasePath: path })
+    const launch = testLauncher()
     await launch(queuedRun("queued-codex", "codex"))
     await launch(queuedRun("queued-claude", "claude-code"))
 
@@ -98,7 +105,7 @@ describe("MCP main run launcher", () => {
   })
 
   it("launches eligible local workers and fails tool mismatch before provider work", async () => {
-    const launch = createMainRunLauncher({ databasePath: path })
+    const launch = testLauncher()
     await launch({
       ...queuedRun("queued-local", "local"),
       model: "local-tools",
@@ -129,7 +136,7 @@ describe("MCP main run launcher", () => {
   })
 
   it("dispatches NanoGPT queued runs through the normal OpenCode router", async () => {
-    const launch = createMainRunLauncher({ databasePath: path })
+    const launch = testLauncher()
     await launch({ ...queuedRun("queued-nanogpt", "nanogpt"), model: "deepseek-chat" })
 
     expect(harnessMocks.opencode).toHaveBeenCalledWith(
@@ -142,7 +149,7 @@ describe("MCP main run launcher", () => {
   })
 
   it("passes durable per-worker reasoning effort to supported harness launches", async () => {
-    const launch = createMainRunLauncher({ databasePath: path })
+    const launch = testLauncher()
     await launch({
       ...queuedRun("effort-codex", "codex"),
       model: "gpt-5.3-codex-spark",
@@ -164,7 +171,7 @@ describe("MCP main run launcher", () => {
   })
 
   it("uses the normal Cursor and OpenCode-backed launch paths", async () => {
-    const launch = createMainRunLauncher({ databasePath: path })
+    const launch = testLauncher()
     await launch({ ...queuedRun("queued-cursor", "cursor-agent"), model: "cursor-model" })
     await launch({ ...queuedRun("queued-openrouter", "openrouter"), model: "openai/gpt-5" })
 
@@ -186,7 +193,7 @@ describe("MCP main run launcher", () => {
   })
 
   it("maps disabled Codex reasoning to the lowest provider-supported model variant", async () => {
-    const launch = createMainRunLauncher({ databasePath: path })
+    const launch = testLauncher()
     await launch({
       ...queuedRun("minimal-codex", "codex"),
       model: "gpt-5.3-codex-spark",
@@ -203,7 +210,7 @@ describe("MCP main run launcher", () => {
   })
 
   it("replaces stale Codex model effort suffixes with the durable run effort", async () => {
-    const launch = createMainRunLauncher({ databasePath: path })
+    const launch = testLauncher()
     await launch({
       ...queuedRun("stale-slash-effort", "codex"),
       model: "gpt-5.3-codex-spark/low",
@@ -525,7 +532,7 @@ describe("MCP main run launcher", () => {
         .get(),
     ).toEqual({ status: "failure", run_status: "failure" })
     await expect(
-      drainPendingMcpRuns(path, createMainRunLauncher({ databasePath: path }), {
+      drainPendingMcpRuns(path, testLauncher(), {
         waitForCompletion: true,
       }),
     ).resolves.toBe(0)
@@ -635,7 +642,7 @@ describe("MCP main run launcher", () => {
       }
       const routed = harness === "codex" ? harnessMocks.codex : harnessMocks.claude
       routed.mockImplementation(route)
-      const launch = createMainRunLauncher({ databasePath: path })
+      const launch = testLauncher()
 
       expect(await drainPendingMcpRuns(path, launch, { waitForCompletion: true })).toBe(1)
       expect(await drainPendingMcpRuns(path, launch, { waitForCompletion: true })).toBe(1)
@@ -665,7 +672,7 @@ describe("MCP main run launcher", () => {
       .run(JSON.stringify({ runId: "auth-failure" }))
     harnessMocks.codex.mockResolvedValue(authErrorStream())
 
-    await drainPendingMcpRuns(path, createMainRunLauncher({ databasePath: path }), {
+    await drainPendingMcpRuns(path, testLauncher(), {
       waitForCompletion: true,
     })
 
@@ -709,7 +716,7 @@ describe("MCP main run launcher", () => {
       )
       .run(JSON.stringify({ runId: "orchestrated-run" }))
 
-    await drainPendingMcpRuns(path, createMainRunLauncher({ databasePath: path }), {
+    await drainPendingMcpRuns(path, testLauncher(), {
       waitForCompletion: true,
     })
 

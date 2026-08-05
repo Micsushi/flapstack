@@ -166,6 +166,11 @@ describe("direct Codex Runtime adapter", () => {
       createClient: () => client,
     })()
     const context = runtimeContext()
+    context.outputSchema = {
+      type: "object",
+      properties: { result: { type: "string" } },
+      required: ["result"],
+    }
     const session = await adapter.startSession(context)
     const turn = await adapter.startTurn(context, session, "PROMPT_A")
     client.queue.emit({
@@ -193,6 +198,7 @@ describe("direct Codex Runtime adapter", () => {
       config: { mcp_servers: { fixture: { command: "/mcp" } } },
     })
     const turnStart = client.requests.find((request) => request.method === "turn/start")
+    expect(turnStart?.params?.outputSchema).toEqual(context.outputSchema)
     expect(turnStart?.params?.input).toEqual([
       { type: "text", text: "PROMPT_A", text_elements: [] },
       { type: "image", url: "data:image/png;base64,REDACTED" },

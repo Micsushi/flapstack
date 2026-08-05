@@ -175,6 +175,9 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
       ...baseOptions,
       abortController: state.abortController,
       ...buildClaudeRuntimeSdkControls(context.launch.controls),
+      ...(context.outputSchema
+        ? { outputFormat: { type: "json_schema" as const, schema: context.outputSchema } }
+        : {}),
     }
     applyClaudeRuntimeResumeOptions(options, state.resume)
     const providerPrompt = this.dependencies.resolvePrompt

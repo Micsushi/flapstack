@@ -8,6 +8,41 @@ import {
   createRuntimeChatLifecycleDatabase,
   seedRuntimeChat,
 } from "./agent-runtime-chat-lifecycle-test-db"
+import type { ResolvedAgentRuntime, RuntimeAdapterProbe } from "../src/shared/agent-runtime"
+
+function availableProbe(harness: string, runtime: ResolvedAgentRuntime): RuntimeAdapterProbe {
+  const supported = { supported: true, reason: null }
+  return {
+    runtime,
+    harness,
+    available: true,
+    versions: { adapterVersion: "test", protocolVersion: "test" },
+    capabilities: {
+      schemaVersion: 1,
+      status: "available",
+      capturedAt: "2026-01-01T00:00:00.000Z",
+      controls: {
+        modelThinking: supported,
+        reasoningDisplay: supported,
+        subagentActivity: supported,
+        hookDiagnostics: supported,
+      },
+      execution: {
+        continuation: supported,
+        delegation: supported,
+        structuredOutput: supported,
+        cancellation: supported,
+      },
+      limitations: [],
+      unavailableReason: null,
+    },
+    reason: null,
+  }
+}
+
+function createService(database: Database.Database) {
+  return createRuntimeChatLifecycleService(database, availableProbe)
+}
 
 describe("Agent Runtime continuation", () => {
   let database: Database.Database
@@ -51,7 +86,7 @@ describe("Agent Runtime continuation", () => {
           },
         ]),
       )
-    const service = createRuntimeChatLifecycleService(database)
+    const service = createService(database)
     const first = service.continueWithRuntime({
       sourceChatId: chatId,
       preference: "flapstack-native",
@@ -103,7 +138,7 @@ describe("Agent Runtime continuation", () => {
         "INSERT INTO agent_runs (id, chat_id, status, started_at) VALUES ('active', ?, 'running', 1)",
       )
       .run(chatId)
-    const service = createRuntimeChatLifecycleService(database)
+    const service = createService(database)
     expect(() =>
       service.continueWithRuntime({
         sourceChatId: chatId,
@@ -136,7 +171,7 @@ describe("Agent Runtime continuation", () => {
       harness: "local",
       sessionId: "local-source-session",
     })
-    const continued = createRuntimeChatLifecycleService(database).continueWithRuntime({
+    const continued = createService(database).continueWithRuntime({
       sourceChatId: chatId,
       preference: "flapstack-native",
       requestId: "local-continuation",
@@ -145,6 +180,41 @@ describe("Agent Runtime continuation", () => {
     expect(
       database.prepare("SELECT mcp_exposure_enabled FROM chats WHERE id = ?").get(continued.chatId),
     ).toEqual({ mcp_exposure_enabled: 0 })
+  })
+
+  it("blocks before mutation when the native capability probe is unavailable", () => {
+    const { chatId } = seedRuntimeChat(database, { sessionId: "source-session" })
+    const service = createRuntimeChatLifecycleService(database, (harness, runtime) => {
+      const probe = availableProbe(harness, runtime)
+      return {
+        ...probe,
+        available: false,
+        capabilities: {
+          ...probe.capabilities,
+          status: "unavailable",
+          execution: {
+            continuation: { supported: false, reason: "provider missing" },
+            delegation: { supported: false, reason: "provider missing" },
+            structuredOutput: { supported: false, reason: "provider missing" },
+            cancellation: { supported: false, reason: "provider missing" },
+          },
+        },
+      }
+    })
+    const request = {
+      sourceChatId: chatId,
+      preference: "flapstack-native" as const,
+      requestId: "unavailable-probe",
+    }
+
+    expect(service.previewContinuation(request).availability).toMatchObject({
+      state: "blocked",
+      reason: expect.stringContaining("continuation"),
+    })
+    expect(() => service.continueWithRuntime(request)).toThrowError(
+      expect.objectContaining<Partial<RuntimeChatLifecycleError>>({ code: "preview-mismatch" }),
+    )
+    expect(database.prepare("SELECT count(*) count FROM chats").get()).toEqual({ count: 1 })
   })
 
   it.each([
@@ -166,7 +236,7 @@ describe("Agent Runtime continuation", () => {
         sessionId: `${sourceHarness}-session`,
       })
 
-      const service = createRuntimeChatLifecycleService(database)
+      const service = createService(database)
       const request = {
         sourceChatId: chatId,
         targetHarness,
@@ -255,7 +325,7 @@ describe("Agent Runtime continuation", () => {
     database
       .prepare("UPDATE sub_chats SET name = ? WHERE id = ?")
       .run("xoxb-subchatnameabcdefghijklmnopqrstuvwxyz123456", `${chatId}-conversation`)
-    const service = createRuntimeChatLifecycleService(database)
+    const service = createService(database)
     const request = {
       sourceChatId: chatId,
       targetHarness: "claude-code",

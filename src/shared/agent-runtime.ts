@@ -87,6 +87,12 @@ export type RuntimeCapabilitySnapshot = {
     subagentActivity: RuntimeControlCapability
     hookDiagnostics: RuntimeControlCapability
   }
+  execution?: {
+    continuation: RuntimeControlCapability
+    delegation: RuntimeControlCapability
+    structuredOutput: RuntimeControlCapability
+    cancellation: RuntimeControlCapability
+  }
   limitations: string[]
   unavailableReason: RuntimeBlockReason | null
 }
@@ -150,6 +156,7 @@ export type RuntimeAdapterContext = {
   subChatId: string | null
   launch: ResolvedRuntimeLaunch
   instructions?: string | null
+  outputSchema?: Record<string, unknown> | null
   signal: AbortSignal
 }
 
