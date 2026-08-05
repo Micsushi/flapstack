@@ -1,5 +1,8 @@
 # S4-F1 feature-owner packet
 
+Historical implementation packet. S4-F1 core is now accepted at Tier 2; dated
+open-task statements below describe an earlier candidate.
+
 Date: 2026-07-14
 
 ## Scope and state

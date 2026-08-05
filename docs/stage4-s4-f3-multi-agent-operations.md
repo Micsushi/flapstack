@@ -1,5 +1,8 @@
 # S4-F3 Multi-Agent Operations — re-review packet
 
+Historical implementation packet. S4-F3 core is now accepted at Tier 2;
+provider capability certification remains separate in the Stage 4 matrix.
+
 ## F3-owned implementation
 
 - `0037_multi_agent_operations` and its schema/snapshot: policies, templates,

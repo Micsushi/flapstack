@@ -1,5 +1,9 @@
 # S4-F1 — Unified Skills and Hooks Manager
 
+Reconciled 2026-08-05: every `T2-core` task below is accepted. Dated partial
+evidence remains historical; optional capability certification stays in the
+Stage 4 matrix.
+
 ### S4-F1-T1 — Reconcile the Stage 3 extension baseline
 
 - Evidence class: `T2-core`.
@@ -56,7 +60,7 @@
 ### S4-F1-T3 — Add project and task enablement policy
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
 - Outcome: Runs resolve extension policy from user default through project and task scope.
 - Scope: Additive policy storage, resolver, resolved-state API, run-context integration, and restart migration.
@@ -112,7 +116,7 @@
 ### S4-F1-T5 — Build the unified manager UI
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
 - Outcome: One Settings surface filters and manages extensions by harness, kind, source, and scope.
 - Scope: Inventory, support badges, source paths, resolved policy, create/edit/copy/disable flows, search, keyboard and screen-reader behavior.
@@ -144,7 +148,7 @@
 ### S4-F1-T6 — Add hook validation, dry-run, and enablement
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
 - Outcome: Supported hooks can be inspected and tested without silent execution.
 - Scope: Hook inventory, schema validation, exact command preview, bounded dry-run, explicit enable/disable, import-default-off, audit redaction.
@@ -170,7 +174,7 @@
 ### S4-F1-T7 — Close unified extension acceptance
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
 - Outcome: Supported extension management works after restart in verified Dev.
 - Scope: Run focused tests, Node 22 full gate, matrix S4-SH01 through S4-SH04, docs, and limitation review.

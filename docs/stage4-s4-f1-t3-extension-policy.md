@@ -1,5 +1,8 @@
 # S4-F1-T3 extension enablement policy
 
+Historical implementation evidence. S4-F1 core is now accepted at Tier 2;
+dated statements that its core checkbox stays open are superseded.
+
 Code-ready evidence only. No live UI, provider, package, device, or external
 harness mutation evidence is claimed.
 

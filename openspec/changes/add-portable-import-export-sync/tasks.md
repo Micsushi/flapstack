@@ -1,5 +1,9 @@
 # S4-F8 — Import/Export and Private Sync
 
+Reconciled 2026-08-05: every `T2-core` or mixed-core task below is accepted.
+The pure private-sync capability task remains open. Dated partial evidence
+remains historical; current certification stays in the Stage 4 matrix.
+
 ### S4-F8-T1 — Define the bundle and scope registry
 
 - Evidence class: `T2-core`.
@@ -18,7 +22,7 @@
 ### S4-F8-T2 — Add secret classification and exclusion reporting
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Export/import/sync pipelines share one fail-closed secret boundary.
 - Scope: Sensitive field registry; structured redaction; text secret scan; credential/session/webhook exclusions; placeholders; category-only report; false-positive override without value disclosure.
@@ -33,7 +37,7 @@
 ### S4-F8-T3 — Implement consistent selective export
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Selected scopes produce an integrity-checked bundle from one consistent snapshot.
 - Scope: Export plan; project filtering; SQLite backup API; file staging/copy; dependency closure; checksums; exclusion report; cancellation; cleanup; advanced usage CSV/JSON inclusion.
@@ -48,7 +52,7 @@
 ### S4-F8-T4 — Implement staged import verification, migration, and diff
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Any bundle can be evaluated fully before live state changes.
 - Scope: Manifest/checksum verification; staging database/files; per-scope migrations; identity mapping; create/update/conflict/skip diff; no implicit deletes; unsupported version reporting; dry-run result persistence.
@@ -63,7 +67,7 @@
 ### S4-F8-T5 — Apply imports transactionally with rollback and recovery
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Confirmed import plans publish one valid state or restore the prior state.
 - Scope: Plan fingerprint/revalidation; pre-import backup; operation journal; DB transaction/replacement; staged atomic file swaps; service pause/restart; rollback; startup recovery; post-apply integrity.
@@ -94,7 +98,7 @@
 
 - Evidence classes: `T2-core` for portability UI;
   `T2-capability:private-sync` for sync UI.
-- [ ] Completion: portability UI acceptance and verification passed
+- [x] Completion: portability UI acceptance and verification passed
 - Separate certification: Private-sync UI remains with S4-IE03.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Users select scopes, review exclusions/diffs/conflicts, apply/restore, and manage private sync.
@@ -113,7 +117,7 @@
 
 - Evidence classes: `T2-core` for S4-IE01 and S4-IE02;
   `T2-capability:private-sync` for S4-IE03.
-- [ ] Completion: S4-IE01 and S4-IE02 are accepted
+- [x] Completion: S4-IE01 and S4-IE02 are accepted
 - Separate certification: S4-IE03 retains independent private-sync status.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Export, import, recovery, and private sync pass automated/live/package evidence.

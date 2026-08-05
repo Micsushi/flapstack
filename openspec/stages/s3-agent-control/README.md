@@ -1,5 +1,9 @@
 # S3 — Safe Agent Control
 
+Status: complete at Tier 2. All 203 task records and all 48 current integrated
+matrix rows are accepted. The links below are retained as the historical
+feature map.
+
 1. [S3-F1 TypeScript and engineering debt](features/s3-f1-typescript-debt/README.md)
 2. [S3-F2 MCP implementation](features/s3-f2-mcp-implementation/README.md)
 3. [S3-F3 Permissions and approvals](features/s3-f3-permissions-approvals/README.md)
@@ -21,9 +25,9 @@
 These are navigation links only. Completion state lives only in linked
 OpenSpec `tasks.md` files.
 
-Supporting active changes already present on the Stage 3 base keep their own
+Supporting changes present on the Stage 3 base keep their own archived
 authoritative boards: `add-agent-question-dialog`,
 `add-agent-change-undo-review`, `add-copy-chat-history`,
 `add-message-timestamps`, `add-model-tuning-dropdown`,
-`improve-agent-context-and-evidence`, and `remove-visible-sub-chats`. Their open
-exit rows block S3-F17 but do not create duplicate feature task checklists here.
+`improve-agent-context-and-evidence`, and `remove-visible-sub-chats`. They do not
+create duplicate feature task checklists here.

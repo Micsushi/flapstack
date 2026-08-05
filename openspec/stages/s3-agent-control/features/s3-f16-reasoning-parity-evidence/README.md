@@ -1,10 +1,12 @@
 # S3-F16 — Reasoning Parity and Evidence
 
-- Change: `openspec/changes/prove-reasoning-parity/`
-- Design: `openspec/changes/prove-reasoning-parity/design.md`
+Status: complete at Tier 2.
+
+- Change: `openspec/changes/archive/2026-07-14-prove-reasoning-parity/`
+- Design: `openspec/changes/archive/2026-07-14-prove-reasoning-parity/design.md`
 - Specification:
-  `openspec/changes/prove-reasoning-parity/specs/reasoning-parity-evidence/spec.md`
-- Tasks: `openspec/changes/prove-reasoning-parity/tasks.md`
+  `openspec/specs/reasoning-parity-evidence/spec.md`
+- Tasks: `openspec/changes/archive/2026-07-14-prove-reasoning-parity/tasks.md`
 - Task IDs:
   - S3-F16-T1 — Freeze the reasoning capability and evidence matrix
   - S3-F16-T2 — Close normalization, classification, and fallback tests

@@ -1,5 +1,9 @@
 # S6 — Product Polish, Personalization, and Reach
 
+Status: core implementation and Tier 2 acceptance complete. All 60 `T2-core`
+matrix rows are accepted. Ten optional capability rows and sixteen release
+rows remain open and are not claims of missing core code.
+
 Stage 6 builds on the Stage 5 Windows `T2-core` implementation baseline to
 create an approachable, refined, cross-device, cross-platform product ready for
 wider distribution.
@@ -43,11 +47,12 @@ Dependency spine:
   F9 budgets, and F10 native package evidence.
 - F11 begins only after F1 through F10 and F12 feature exits.
 
-Stage verification: docs/stage6-full-feature-test-matrix.md, Node 22 npm run
-check, strict validation of every Stage 6 OpenSpec change, verified Flapstack
-Dev walkthroughs, signed/notarized macOS proof, native Windows/Linux package
-proof, real mobile-device and Obsidian interoperability coverage,
-accessibility/usability review, performance budgets, and independent release review.
+Stage verification is split by evidence class in
+`docs/stage6-full-feature-test-matrix.md`. Node 22 checks, strict OpenSpec,
+deterministic/live core workflows, performance, and independent core review
+closed Tier 2. Signed/notarized macOS, native promoted packages, real optional
+devices/providers, assistive technology, Obsidian interop, and long observation
+remain capability or release certification.
 
 These files are navigation only. Task status lives only in linked OpenSpec
 tasks.md files.

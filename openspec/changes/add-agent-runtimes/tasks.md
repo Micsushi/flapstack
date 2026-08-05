@@ -1,5 +1,9 @@
 # S4-F11 — Agent Runtimes
 
+Reconciled 2026-08-05: every `T2-core` or mixed-core task below is accepted.
+Pure direct-provider Runtime capability tasks remain open. Dated partial
+evidence remains historical; current certification stays in the Stage 4 matrix.
+
 Shared pickup context: `implementation-context.md`. Every task owner must read
 that file plus `proposal.md`, `design.md`, and the delta spec before editing.
 
@@ -275,7 +279,7 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
 ### S4-F11-T8 — Add Runtime Settings, chat selection, and safe continuation
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11
 - Owner lane: User configuration and chat lifecycle UX.
 - Outcome: Users can set Runtime defaults per harness/project, choose per chat, understand the resolved value, and continue a started chat under another Runtime without session corruption.
@@ -315,7 +319,7 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
 
 - Evidence classes: `T2-core` for registry/resolution authority;
   `T2-capability:mixed-runtime-providers` for real mixed-provider launch.
-- [ ] Completion: registry and resolution authority acceptance passed
+- [x] Completion: registry and resolution authority acceptance passed
 - Separate certification: Real mixed-provider launch remains with S4-AR09.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11
 - Owner lane: Central launch integration; sole owner of the adapter registry and Runtime/orchestration boundary.
@@ -360,7 +364,7 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
   S4-AR10; `T2-capability:codex-runtime`, `T2-capability:claude-runtime`,
   `T2-capability:flapstack-native-runtime`, and
   `T2-capability:mixed-runtime-providers` for the remaining rows.
-- [ ] Completion: S4-AR01, S4-AR02, S4-AR06, S4-AR08, and S4-AR10 are accepted
+- [x] Completion: S4-AR01, S4-AR02, S4-AR06, S4-AR08, and S4-AR10 are accepted
 - Separate certifications: Provider-specific rows retain independent
   capability status.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11

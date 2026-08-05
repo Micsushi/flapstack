@@ -1,5 +1,7 @@
 # S4-F1-T2 safe native extension adapters
 
+Historical implementation evidence. S4-F1 core is now accepted at Tier 2.
+
 Code-ready headless evidence only. No live UI, package, provider-spend, device,
 or runtime-consumption evidence is claimed.
 

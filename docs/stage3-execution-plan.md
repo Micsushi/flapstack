@@ -1,7 +1,8 @@
 # Stage 3 execution plan
 
-Status: active. Integration target: `codex/stage3-integration`. `main` remains
-clean and is changed only by the user's final squash merge.
+Status: complete and historical. Stage 3 closed at 203/203 tasks and 48/48
+integrated rows. The branch and lane instructions below document the completed
+execution, not current work.
 
 ## Outcome
 

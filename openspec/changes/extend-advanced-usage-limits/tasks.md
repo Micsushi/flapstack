@@ -1,5 +1,9 @@
 # S4-F7 — Advanced Usage and Limits
 
+Reconciled 2026-08-05: every `T2-core` task below is accepted. Dated partial
+evidence remains historical; optional capability certification stays in the
+Stage 4 matrix.
+
 ### S4-F7-T1 — Add attribution and budget contracts
 
 - Evidence class: `T2-core`.
@@ -89,7 +93,7 @@
 ### S4-F7-T7 — Close advanced usage acceptance
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: Attribution, rollups, budgets, forecasts, alerts, and export pass integrated evidence.
 - Scope: Full gate; matrix S4-UL01–S4-UL03; backfill/restart; UI-closed

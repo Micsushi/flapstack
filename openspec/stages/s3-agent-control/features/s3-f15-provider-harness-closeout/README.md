@@ -1,10 +1,12 @@
 # S3-F15 — Provider Harness Closeout
 
-- Change: `openspec/changes/close-provider-harnesses/`
-- Design: `openspec/changes/close-provider-harnesses/design.md`
+Status: complete at Tier 2.
+
+- Change: `openspec/changes/archive/2026-07-14-close-provider-harnesses/`
+- Design: `openspec/changes/archive/2026-07-14-close-provider-harnesses/design.md`
 - Specification:
-  `openspec/changes/close-provider-harnesses/specs/provider-harness-closeout/spec.md`
-- Tasks: `openspec/changes/close-provider-harnesses/tasks.md`
+  `openspec/specs/provider-harness-closeout/spec.md`
+- Tasks: `openspec/changes/archive/2026-07-14-close-provider-harnesses/tasks.md`
 - Task IDs:
   - S3-F15-T1 — Reconcile provider contracts and freeze the closeout matrix
   - S3-F15-T2 — Close Cursor auth, lifecycle, and persistence behavior

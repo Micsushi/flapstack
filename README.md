@@ -8,29 +8,22 @@ and agent runs across tools like Codex and Claude Code.
 
 ## Current Status
 
-Flapstack `0.1.0` is the first macOS beta target. It combines the completed
-Stage 3 core with the Stage 4 feature-code pass. Advanced Stage 4 workflows are
-optional and default off under **Settings → Beta Features**. The release is not
-public until the unsigned DMG package gate and clean first-run Claude/Codex
-connection checks pass. macOS will warn because this beta is not signed or
-notarized by Apple. See the [0.1.0 beta notes](docs/releases/0.1.0.md) and
-[macOS release runbook](docs/releasing-macos.md).
+Stages 0 through 6 are implementation-complete at the `T2-core` level under the
+[completion model](docs/completion-tiers.md). Stage 6 has 60/60 core matrix rows
+accepted. Optional provider, device, assistive-technology, native-host,
+signing, notarization, installer, hosted-CI, and public-distribution evidence
+remains open in the stage matrices; those rows are certification work, not
+known missing core implementation.
 
-Stages 0 through 3 are implementation-complete under the three-tier completion
-model. The historical exit contract is the
-[Stage 3 full-feature matrix](docs/stage3-full-feature-test-matrix.md); the
-[release candidate ledger](docs/stage3-release-candidate-ledger.md) and
-[integrated candidate release notes](docs/stage3-release-notes.md) record the
-current gate truth; the [release lane handoff](docs/stage3-release-handoff.md)
-records remaining release authority and cleanup.
-[Stage 2 matrix](docs/stage2-full-feature-test-matrix.md) is retained as a
-historical criteria record and crosswalk.
+Flapstack is still private and has no certified public release. The `0.1.0`
+macOS notes remain the first beta packaging reference, but they are not the
+current implementation boundary. See the
+[Stage 1-6 status snapshot](docs/stage1-5-acceptance-status.md),
+[Stage 6 matrix](docs/stage6-full-feature-test-matrix.md), and
+[owner manual backlog](docs/owner-manual-testing-backlog.md) for current truth.
 Stage 4 portability behavior and operating limits are documented in
-[Portability and Private Sync](docs/portability-and-private-sync.md).
-Stage 4 plan-source, task-board, promotion, proposal, and concurrency contracts
-are documented in [Plan and Kanban](docs/plan-and-kanban.md).
-The research-only dynamic-vocabulary architecture is explicitly deferred: it is
-not an approved Stage 2 requirement and is not claimed as implemented.
+[Portability and Private Sync](docs/portability-and-private-sync.md), and the
+Plan/Kanban contracts are documented in [Plan and Kanban](docs/plan-and-kanban.md).
 
 - Base code: 1Code, rebranded to Flapstack
 - Repo visibility: private for now
@@ -39,15 +32,12 @@ not an approved Stage 2 requirement and is not claimed as implemented.
   runs, permission modes with copy-on-create inheritance, worktree defaults,
   file/pasted-text attachments, scoped search, pin/archive, and before/after
   checkpoints with per-run file-change manifests
-- Stage 3 integration is based on current `main` and combines production MCP
-  control, Settings reliability, the remaining Stage 2 voice/usage/provider/
-  reasoning closeout, and one final regression/release gate. Human macOS/
-  Windows, credentialed-provider, daemon, reasoning, and deep-count evidence
-  remains open until recorded in the Stage 3 matrix.
-- Each chat item in the left sidebar is one visible conversation. The inherited
-  sub-chat tabs, nested-chat creation, history switcher, and split view are not
-  part of the Flapstack product model. Existing `sub_chats` rows remain only as
-  non-destructive internal storage compatibility.
+- Stage 3 production MCP, Settings, voice/usage/provider/reasoning closeout, and
+  integrated evidence are complete at 203/203 tasks and 48/48 matrix rows.
+- Each sidebar Chat is one durable conversation. The inherited nested sub-chat
+  model stays removed. Stage 6 adds up to four independent top-level Chat panes
+  and bounded floating workbench windows without reviving nested conversations.
+  Existing `sub_chats` rows remain internal storage compatibility.
 
 ## Product Direction
 
@@ -113,9 +103,9 @@ sidebar Chat.
 
 ### Stage 2: Voice, Usage, Cursor, OpenRouter, NanoGPT, and Fixes
 
-Implementation baseline complete; unfinished exit work is now routed into Stage
-3 features F9 and F14-F17. This section describes the delivered foundation, not
-an active release gate.
+Implementation and exit work later completed through Stage 3 features F9 and
+F14-F17. This section describes the delivered foundation, not an active release
+gate.
 
 Voice (reuses Agent Hotline):
 
@@ -123,8 +113,8 @@ Voice (reuses Agent Hotline):
 - Read-aloud output: system voice plus offline Kokoro, no API key required.
 - Spoken/displayed response separation inspired by Agent Hotline.
 - Per-OS speech adapters with an offline/local path kept as a supported default.
-- Dynamic speech vocabulary is planned in Stage 6 S6-F1 as part of voice-input
-  usability and language polish.
+- Dynamic speech vocabulary was implemented in Stage 6 S6-F1 as part of
+  voice-input usability and language polish.
 
 Usage tracking (reuses onWatch):
 
@@ -218,10 +208,11 @@ Its eleven OpenSpec feature boards contain 87 bounded tasks; see the
 [Stage 4 router](openspec/stages/s4-knowledge-workspaces-operations/README.md)
 and [execution plan](docs/stage4-execution-plan.md).
 
-The Stage 4 feature-code pass ships in the `0.1.0` macOS beta. Project Memory,
+Stage 4 core implementation and AI acceptance are complete. Project Memory,
 Orchestration, Saved Workspaces, Automations, and Planning & Task Board remain
-explicit opt-ins. Their unfinished provider, UI, package, and platform evidence
-is beta work, not a stable-support claim.
+explicit opt-ins. Twelve optional capability rows and one packaged macOS
+release row remain uncertified, so exposed Stage 4 behavior is not yet a
+stable public-support claim.
 
 ### Stage 5: Native Windows Compatibility
 
@@ -244,8 +235,10 @@ is beta work, not a stable-support claim.
 - Add Authenticode-ready signing, hashes, manifests, dependency/license inventory,
   malware/secret gates, support docs, and one exact-SHA integrated release gate.
 
-Stage 5 starts after full Stage 4 acceptance. Its nine features contain 76
-bounded tasks; see the
+Stage 5 core implementation and AI acceptance are complete: all 50
+implementation-gating task scopes and all 40 `T2-core` matrix rows passed.
+Twenty-one optional capability rows and fourteen distributable-release rows
+remain open. Its nine features contain 76 work records; see the
 [Stage 5 router](openspec/stages/s5-windows-compatibility/README.md),
 [execution plan](docs/stage5-execution-plan.md),
 [test matrix](docs/stage5-full-feature-test-matrix.md), and
@@ -274,8 +267,10 @@ commands live in the [Windows development guide](docs/windows-development.md).
   nodes/folders, Wikilinks/backlinks, graph views, and same-folder Obsidian opening.
 - One integrated exact-SHA Stage 6 release gate.
 
-Stage 6 starts only after full Stage 5 Windows acceptance. Its twelve OpenSpec feature
-boards contain 97 pickup-ready tasks; see the
+Stage 6 core implementation and AI acceptance are complete: all 60 `T2-core`
+matrix rows passed. Ten optional capability rows and sixteen release-evidence
+rows remain open. Its twelve OpenSpec feature boards contain 100 work records;
+see the
 [Stage 6 router](openspec/stages/s6-product-polish-personalization-reach/README.md),
 [execution plan](docs/stage6-execution-plan.md), and
 [test matrix](docs/stage6-full-feature-test-matrix.md).

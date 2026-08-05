@@ -3,7 +3,9 @@
 Historical as of 2026-07-13. Stage 2 testing is closed as a separate gate;
 unfinished implementation and evidence are migrated to Stage 3 S3-F9 and
 S3-F14 through S3-F17. Use `docs/stage3-full-feature-test-matrix.md` for active
-status. Statements below describe the earlier checkpoint only.
+status. Statements below describe the earlier checkpoint only. The dynamic
+speech-vocabulary work mentioned as future below was later implemented in
+Stage 6 core.
 
 Status: **the integrated automated baseline is green and the implemented feature rows are ready for manual testing; Stage 2 exit is not yet proven.**
 
@@ -188,7 +190,7 @@ All five were repaired in this pass.
 - Codex saved reasoning summary is largely end-of-run backfill rather than a proven live provider bridge.
 - Terminal title sanitization removes control characters but must be tested with secret-shaped commands; do not assume it redacts credentials.
 - Remote-stats policy and several OpenSpec task checkboxes remain administratively stale.
-- Dynamic vocabulary was deferred/out of Stage 2 and is now planned under the
+- Dynamic vocabulary was deferred/out of Stage 2 and was later implemented under the
   approved Stage 6 S6-F1 product-polish change.
 
 ## 5. Repairs completed during this review

@@ -1,15 +1,20 @@
 # Stage 5 UI Polish and Guided-Tour Patch
 
+Reconciled 2026-08-05: P1 through P8 are implemented and covered by the
+accepted Stage 6 core gates. P9 remains open because the owner's latest manual
+UI review found follow-up defects now being repaired in the isolated
+`codex/manual-ui-fixes` worktree.
+
 ### S5-P1 — Lock patch scope and ownership
 
-- [ ] Completion: proposal, design, specs, and Stage 5/6 routing validate
+- [x] Completion: proposal, design, specs, and Stage 5/6 routing validate
 - Outcome: Stage 5 owns the product tour and listed native polish defects;
   Stage 6 owns only feature-visibility questionnaire/setup behavior.
 - Verification: strict OpenSpec validation and documentation link review.
 
 ### S5-P2 — Update new-chat model defaults
 
-- [ ] Completion: Opus 5 and GPT-5.6 Sol catalog/default tests pass
+- [x] Completion: Opus 5 and GPT-5.6 Sol catalog/default tests pass
 - Outcome: New Claude chats select Opus 5 and new Codex API-key chats select
   GPT-5.6 Sol; explicit older models remain unchanged.
 - Verification: model catalog, runtime-default, migration, and live provider
@@ -17,7 +22,7 @@
 
 ### S5-P3 — Refine the empty shell and navigation motion
 
-- [ ] Completion: in-shell home, static chat switching, stable status phrases,
+- [x] Completion: in-shell home, static chat switching, stable status phrases,
       and reduced-motion tests pass
 - Outcome: Flapstack opens into its normal shell and chat navigation feels
   immediate and professional.
@@ -25,7 +30,7 @@
 
 ### S5-P4 — Refine sidebar and mode controls
 
-- [ ] Completion: sidebar sizing/divider, disclosure, row geometry, and
+- [x] Completion: sidebar sizing/divider, disclosure, row geometry, and
       Write/Plan/Review interaction tests pass
 - Outcome: Navigation density and mode selection are consistent, accessible,
   and migration-safe.
@@ -34,7 +39,7 @@
 
 ### S5-P5 — Refine Windows chrome and chat header
 
-- [ ] Completion: window icon, titlebar spacing, header actions, title/icon
+- [x] Completion: window icon, titlebar spacing, header actions, title/icon
       baseline, and chip alignment tests pass
 - Outcome: Windows chrome is branded and shared header geometry remains correct
   on Windows and macOS.
@@ -43,14 +48,14 @@
 
 ### S5-P6 — Make Open In truthful
 
-- [ ] Completion: platform/install matrices and renderer menu tests pass
+- [x] Completion: platform/install matrices and renderer menu tests pass
 - Outcome: The menu shows the native folder action and only installed,
   platform-valid applications.
 - Verification: unit tests plus Windows and macOS package walkthroughs.
 
 ### S5-P7 — Deep-link completion notifications
 
-- [ ] Completion: same-project, cross-project, subchat, settings, and cold
+- [x] Completion: same-project, cross-project, subchat, settings, and cold
       renderer cases pass
 - Outcome: Clicking a completion notification focuses Flapstack and opens the
   exact conversation.
@@ -59,7 +64,7 @@
 
 ### S5-P8 — Add the versioned main-page product tour
 
-- [ ] Completion: state, coachmark, accessibility, and Settings rerun tests pass
+- [x] Completion: state, coachmark, accessibility, and Settings rerun tests pass
 - Outcome: A new normal packaged profile sees one short tour; dev/test profiles
   do not auto-run it; Settings can rerun it.
 - Verification: unit/component tests and fresh/existing/dev/test profile matrix.

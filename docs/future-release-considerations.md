@@ -1,12 +1,10 @@
-# Future Work Promoted to Stage 6
+# Former Future Work Promoted to Stage 6
 
 This file is a compatibility router for links created before Stage 6 existed.
-It is no longer an independent backlog. Every previously parked item is now
-planned under **Stage 6 — Product Polish, Personalization, and Reach**.
-
-Stage 6 remains planned, not active. It starts only after Stage 5 native
-Windows acceptance closes on one exact SHA with required automated, live,
-package, credential, upgrade, security, and documentation evidence.
+It is no longer an independent backlog. Every previously parked item was
+promoted into **Stage 6: Product Polish, Personalization, and Reach** and is
+implemented at the `T2-core` level. Remaining optional capability and
+distribution evidence stays open only in the Stage 6 matrix.
 
 ## Promotion map
 
@@ -26,9 +24,9 @@ package, credential, upgrade, security, and documentation evidence.
 | Six seed notes, custom Markdown nodes/folders, Wikilinks/backlinks, graph/list views, and same-folder Obsidian opening | S6-F12 — Obsidian-compatible project knowledge graph |
 | One integrated release candidate and public support statement                                                          | S6-F11 — Integrated Stage 6 release                  |
 
-The preserved mobile implementation remains on
-`codex/future-mobile-companion` at `65169c6`; S6-F4 must rebase and audit that
-work instead of treating it as accepted evidence.
+The former mobile branch is historical implementation input only. The accepted
+S6-F4 core now lives in the current repository history; no future task depends
+on rebasing that old branch.
 
 ## Authoritative planning
 

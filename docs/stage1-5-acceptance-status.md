@@ -1,6 +1,7 @@
-# Stage 1–5 implementation and acceptance status
+# Stage 1–6 implementation and acceptance status
 
-Snapshot: 2026-07-26. Completion terminology comes from
+Snapshot: 2026-08-05. The filename is retained for existing links. Completion
+terminology comes from
 [`completion-tiers.md`](completion-tiers.md). Tier 3 owner checks are kept in
 [`owner-manual-testing-backlog.md`](owner-manual-testing-backlog.md) and do not
 change whether implementation is complete unless explicitly labeled
@@ -15,6 +16,7 @@ change whether implementation is complete unless explicitly labeled
 | Stage 3 | 100%        |               100% |                  n/a |               n/a | Implementation and current integrated matrix are complete (48/48).                                                          |
 | Stage 4 | 100%        |              52/52 |                 0/12 |               0/1 | Implementation complete at Tier 2. Optional providers/remotes and the packaged macOS release remain separately uncertified. |
 | Stage 5 | 100%        |              40/40 |                 0/21 |              0/14 | Implementation complete at Tier 2; optional capabilities and distributable-release certification remain separate.           |
+| Stage 6 | 100%        |              60/60 |                 0/10 |              0/16 | Implementation complete at Tier 2; optional capabilities and public-distribution evidence remain separately uncertified.    |
 
 These are evidence-row counts, not completion percentages. The former Stage 4
 `5/65` and Stage 5 `15/69` aggregates mixed core implementation, optional
@@ -25,18 +27,18 @@ OpenSpec task-board checkbox ratios are also not code percentages. A task
 checkbox closes when its `T2-core` acceptance passes. Capability and release
 certification stay in the matrices and do not hold implementation checkboxes
 open. Stage 4 has 73 implementation-gating task checkboxes among 87 work
-records; Stage 5 has 50 among 76. The remaining task records are explicitly
-capability-only, release-only, combined capability/release, or tracking-only.
+records; Stage 5 has 50 among 76; Stage 6 has 91 tasks with a core scope among
+100 work records. The remaining task records are explicitly capability-only,
+release-only, combined capability/release, or tracking-only.
 
 ## What is not code-complete
 
-Stages 1–3 have no known missing in-scope implementation.
-
-Stages 4 and 5 have no known missing in-scope core implementation. Their exact
-final working tree passed the relevant automated, real-app MCP, restart,
-persistence, native Windows, package, and independent-review gates. Provider,
-device, hardware, remote, VM, hosted-CI, signing, malware, and packaged-release
-evidence is classified separately and is not evidence of missing core code.
+Stages 1–6 have no known missing in-scope core implementation. Their accepted
+candidates passed the relevant automated, real-app MCP, restart, persistence,
+native Windows, package, performance, and independent-review gates. Provider,
+device, hardware, remote, VM, hosted-CI, signing, notarization, malware, and
+packaged-release evidence is classified separately and is not evidence of
+missing core code.
 
 Stage 5 release certification still needs:
 
@@ -51,13 +53,21 @@ The missing signing identity and unrun release environments are external
 authority/evidence, not known implementation defects in the unsigned Preview
 path. A failed acceptance run can still reopen Tier 1 if it exposes a defect.
 
+Stage 6 release certification still needs the sixteen release-evidence rows in
+[`stage6-full-feature-test-matrix.md`](stage6-full-feature-test-matrix.md),
+including promoted native artifacts, signing/notarization, hosted CI, package
+lifecycle, and public support review. Ten optional capability rows also remain
+open for real devices/providers, assistive technology, Obsidian interop, and
+long host observation.
+
 ## What is not AI-accepted
 
-No `T2-core` row remains open in Stages 1 through 5. The exact final working
-tree passed a clean `npm ci --legacy-peer-deps` from an empty npm cache, strict
-OpenSpec 54/54, and the full Node 22 gate: lint, formatting, TypeScript, native
-ABI validation, 313 test files with 2,575 tests passed and 33 skipped (2,608
-total), and the production build.
+No `T2-core` row remains open in Stages 1 through 6. The accepted gates include
+clean install coverage, strict OpenSpec validation, Node 22 lint, formatting,
+TypeScript, native ABI validation, repository tests, production builds,
+Stage 6 ledger validation, bounded performance checks, live app workflows, and
+independent review. Exact historical counts remain in the stage ledgers and
+local evidence instead of being copied into this status page.
 
 Real-app evidence covered Stage 4 operational MCP flows, deterministic
 orchestration, Runtime/Profile lifecycle and forced-restart persistence, and
@@ -67,11 +77,9 @@ paths. Independent review found no remaining P0/P1 defect after the discovered
 runtime-failure and cancellation-race defects were fixed and regression-tested.
 
 Still uncertified are Stage 4's 12 optional provider/remote capability rows and
-one macOS release row, plus Stage 5's 21 optional
-provider/device/environment rows and 14 release rows. These include external
-provider quotas, the private-sync remote, audio hardware, macOS regression,
-clean-VM installer lifecycle, production signing, approved malware evidence,
-and hosted Windows CI. They do not block core completion.
+one macOS release row; Stage 5's 21 optional provider/device/environment rows
+and 14 release rows; and Stage 6's 10 optional capability rows and 16 release
+rows. They do not block core completion.
 
 ## Owner testing
 

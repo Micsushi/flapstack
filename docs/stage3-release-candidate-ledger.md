@@ -1,5 +1,8 @@
 # Stage 3 release candidate ledger
 
+Historical candidate ledger. Stage 3 later closed at 203/203 tasks and 48/48
+matrix rows. Dated open IDs below record intermediate candidates only.
+
 Status: Stage 3 complete. Exact-candidate automation, provider, Voice, Usage,
 Dev, macOS package, review, and cleanup evidence pass.
 

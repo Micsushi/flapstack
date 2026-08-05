@@ -1,5 +1,7 @@
 # S4-F3-T6 coordination engine and profile boundary
 
+Historical implementation evidence. S4-F3 core is now accepted at Tier 2.
+
 ## Coordination engine contract
 
 One orchestration resolves `workflow`, `codex-v2`, or `codex-v1` from

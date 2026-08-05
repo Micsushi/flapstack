@@ -1,5 +1,9 @@
 # S4-F4 — Saved Workspaces
 
+Reconciled 2026-08-05: every `T2-core` task below is accepted. Dated partial
+evidence remains historical; optional capability certification stays in the
+Stage 4 matrix.
+
 ### S4-F4-T1 — Define and migrate the saved workspace model
 
 - Evidence class: `T2-core`.
@@ -110,7 +114,7 @@
 ### S4-F4-T6 — Add orchestration-owned operation workspaces
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F4
 - Outcome: Starting multi-agent work opens one durable workspace containing the lead and every descendant agent chat.
 - Scope: Transactional/recoverable orchestration link, initiating-chat roster, dynamic descendant roster, lead/navigator/selected-agent/activity default layout, workspace open/focus, status and artifact bindings, large-team overflow, archive/delete impact preview, and lineage-based regeneration.
@@ -146,7 +150,7 @@
 ### S4-F4-T7 — Close saved workspace acceptance
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F4
 - Outcome: A real project/task operating surface restores safely in verified
   Dev.

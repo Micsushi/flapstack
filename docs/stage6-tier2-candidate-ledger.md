@@ -1,12 +1,16 @@
 # Stage 6 Tier 2 Candidate Ledger
 
+Status update 2026-08-05: the final Stage 6 core gate completed and all 60
+`T2-core` rows remain accepted. This ledger is now the historical evidence map
+for that decision. The 10 capability and 16 release overlays listed below stay
+open and must not be inferred from core acceptance.
+
 This ledger maps every Stage 6 `[T2-core]` acceptance row to its implementation
 evidence and required independent review lane. OpenSpec task boards split their
-core completion from capability and release certification. Checked core task and
-matrix rows are candidate claims, not evidence that the final gates already
-passed. They become Tier 2 accepted only when the final exact-candidate run
-succeeds against one clean SHA. Capability and distribution-release evidence
-remains open and nonblocking for Tier 2.
+core completion from capability and release certification. Checked core task
+and matrix rows were candidate claims until the final exact-candidate run
+succeeded. Capability and distribution-release evidence remains open and
+nonblocking for Tier 2.
 
 The mechanical ledger gate requires this map to cover 60/60 `T2-core` matrix rows.
 

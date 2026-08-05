@@ -1,5 +1,9 @@
 # Stage 3 integrated release handoff
 
+Historical handoff. Stage 3 later closed at 203/203 tasks and 48/48 matrix
+rows. Use `stage1-5-acceptance-status.md` and the current project handoff for
+present status.
+
 Status: Stage 3 complete. Exact-candidate implementation, automation, providers,
 Voice, Usage, Dev, macOS Preview, review, and cleanup evidence are green.
 

@@ -1,5 +1,7 @@
 # S4-F1-T1 Stage 3 extension baseline
 
+Historical implementation evidence. S4-F1 core is now accepted at Tier 2.
+
 Code-ready evidence only. No live UI, package, provider-spend, device, or hook
 execution evidence is claimed.
 

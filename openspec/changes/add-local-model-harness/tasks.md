@@ -1,9 +1,13 @@
 # S4-F6 — Local Models
 
+Reconciled 2026-08-05: these are pure optional Ollama capability tasks, not
+Stage 4 core blockers. Their checkboxes remain open until the corresponding
+live capability rows are certified in the Stage 4 matrix.
+
 ### S4-F6-T1 — Define the local harness and model capability contract
 
 - Evidence class: `T2-capability:ollama`.
-- [x] Completion: acceptance and verification passed
+- [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F6
 - Outcome: `local` is a typed harness with per-model capability and limitation truth.
 - Scope: Shared harness/model DTOs; Ollama endpoint config; availability/catalog probe; capability cache/versioning; model identity; limitation codes; fixtures.
@@ -17,7 +21,7 @@
 ### S4-F6-T2 — Add streaming local chat and run persistence
 
 - Evidence class: `T2-capability:ollama`.
-- [x] Completion: acceptance and verification passed
+- [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F6
 - Outcome: Ollama chat streams through normal Flapstack messages and run lifecycle.
 - Scope: `/api/chat` adapter; normalized chunks; context assembly; session transcript strategy; abort/timeout; run creation/finalization; reconnect failure; error sanitization.
@@ -34,7 +38,7 @@
 ### S4-F6-T3 — Implement the bounded read-only tool loop
 
 - Evidence class: `T2-capability:ollama`.
-- [x] Completion: acceptance and verification passed
+- [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F6
 - Outcome: Tool-capable local models can inspect a registered project without mutation.
 - Scope: Provider-neutral loop; read/list/glob/grep tools; tool schema/normalization; iteration/call/context/output/time caps; unknown-tool denial; tool evidence.
@@ -51,7 +55,7 @@
 ### S4-F6-T4 — Add exact project-scoped edit and write tools
 
 - Evidence class: `T2-capability:ollama`.
-- [x] Completion: acceptance and verification passed
+- [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F6
 - Outcome: Authorized local runs make bounded project edits with checkpoints and manifests.
 - Scope: Edit/write/apply-patch tools; before-write revalidation; symlink/race defense; permission resolution; ask-mode approval; atomic writes; checkpoint/manifest integration.
@@ -68,7 +72,7 @@
 ### S4-F6-T5 — Add shell, git, and network tool tiers
 
 - Evidence class: `T2-capability:ollama`.
-- [x] Completion: acceptance and verification passed
+- [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F6
 - Outcome: Explicitly authorized local runs use bounded shell/git/network tools with honest limitations.
 - Scope: Tool adapters; cwd/root binding; timeout/output caps; environment/secret filtering; shell-vs-git capability mapping; network allow/ask/deny; approval and audit.
@@ -104,7 +108,7 @@
 ### S4-F6-T7 — Integrate local runs with usage, workspaces, and orchestration
 
 - Evidence class: `T2-capability:ollama`.
-- [x] Completion: acceptance and verification passed
+- [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F6
 - Outcome: Local runs behave like first-class Flapstack runs across Stage 4 consumers.
 - Scope: Usage capture/provenance; checkpoints/manifests; saved workspace binding; orchestration preflight/worker launch; cancellation; capability mismatch; result aggregation.

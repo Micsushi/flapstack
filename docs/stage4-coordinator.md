@@ -1,5 +1,9 @@
 # Stage 4 Autonomous Coordinator
 
+Historical coordination log. Stage 4 core later closed at 73/73 task scopes
+and 52/52 core matrix rows. Dated lanes, blockers, and ownership below are not
+current work assignments.
+
 This document defines the execution policy for finishing Stage 4. The eleven
 OpenSpec `tasks.md` files remain the only task-status authority. This document
 does not duplicate their checkboxes.

@@ -1,5 +1,9 @@
 # Stage 3 Secure Credential Evidence
 
+Historical Stage 3 evidence record. Stage 3 core later closed at 203/203 tasks
+and 48/48 matrix rows. Open external capability or owner checks remain
+certification evidence, not missing Stage 3 core implementation.
+
 Last run: 2026-07-13 PDT
 
 This matrix records only observed evidence. Test values are disposable local

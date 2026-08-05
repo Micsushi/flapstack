@@ -1,5 +1,9 @@
 # S4-F5 — Automation and Scheduler
 
+Reconciled 2026-08-05: every `T2-core` task below is accepted. Dated partial
+evidence remains historical; optional capability certification stays in the
+Stage 4 matrix.
+
 ### S4-F5-T1 — Add automation contracts and durable schema
 
 - Evidence class: `T2-core`.
@@ -101,7 +105,7 @@
 ### S4-F5-T8 — Close automation acceptance
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: Local automation passes automated, restart, and verified-Dev
   production-path evidence.

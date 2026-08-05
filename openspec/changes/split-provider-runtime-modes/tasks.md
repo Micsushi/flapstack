@@ -1,5 +1,11 @@
 # Runtime parity/enhanced split
 
+Current status 2026-08-05: implementation and full-gate evidence exist on the
+reviewed local branch `codex/runtime-provider-tier2-4719` at `7573f48`, which is
+seven commits ahead of `main`. These completion boxes remain open in `main`
+until that branch is intentionally integrated; documentation must not present
+branch-only code as shipped main behavior.
+
 ### S4-F11A-T1 — Freeze preference and transport contracts
 
 - [ ] Completion: acceptance and verification passed

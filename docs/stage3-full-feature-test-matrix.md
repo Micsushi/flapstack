@@ -1,5 +1,9 @@
 # Stage 3 full-feature test matrix
 
+Current disposition: complete at 48/48 rows. Dated narrative below preserves
+intermediate evidence and may mention rows that were still open at that earlier
+candidate; checkbox state is the final matrix truth.
+
 Snapshot: 2026-07-14. This is the final user-facing exit matrix for Stage 3.
 OpenSpec `tasks.md` files remain the only implementation task checklists. This
 document records integrated and manual evidence; it does not replace them.

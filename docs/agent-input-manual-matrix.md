@@ -1,5 +1,9 @@
 # Agent Input Evidence Matrix
 
+Historical Stage 3 evidence record. Stage 3 core later closed at 203/203 tasks
+and 48/48 matrix rows. Open owner/platform checks in this file do not override
+that result; current owner work belongs in `owner-manual-testing-backlog.md`.
+
 This matrix records the structured question capability implemented by the shared
 agent-input lifecycle. A provider row is not complete from fixtures alone. Live
 evidence must record the Flapstack commit, harness and model versions, request ID,

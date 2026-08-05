@@ -1,5 +1,10 @@
 # S5 - Native Windows Compatibility
 
+Status: core implementation and Tier 2 acceptance complete. All 50
+implementation-gating task scopes and all 40 `T2-core` matrix rows are
+accepted. Twenty-one optional capability rows and fourteen distributable
+release rows remain uncertified.
+
 Stage 5 turns accepted Stage 4 Flapstack into a first-class Windows 11 x64
 development and packaged application. Native PowerShell workflows require no
 WSL, Git Bash, manual source patches, or undocumented global configuration.

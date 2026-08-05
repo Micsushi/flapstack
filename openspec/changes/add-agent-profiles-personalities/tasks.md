@@ -1,18 +1,13 @@
 # S4-F12 — Agent Profiles and Personalities
 
-Implementation status: Tier 1 code-ready/headless-feature-verified. The 0/8
-Tier 2 completion board remains intentionally open until the serialized UI,
-credentialed provider, forced live-restart, accessibility, and
-packaged-preview evidence owned by the coordinator is observed. The required
-F3 pre-durable-worker materializer is registered in production before workflow
-recovery; exact snapshot reuse, standalone dispatch, and supported-harness
-product-MCP defaults have focused Node 22 coverage. Headless code and accepted
-tests must not be discarded while the Tier 2 rows remain open.
+Implementation status: `T2-core` complete. All eight core tasks are accepted.
+Optional provider, accessibility, and package certification remains separate in
+the Stage 4 matrix. Dated partial evidence below is historical.
 
 ### S4-F12-T1 — Resolve the agent-profile product contract
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: The unpolished agent-personality idea becomes a reviewed product contract with no hidden implementation guesses.
 - Scope: Compare pinned OMO/ECC agent, category, routing, workflow, schema, and catalog patterns with F3/F11; decide vocabulary, starter types, scope/inheritance/precedence, workflow and standalone UX, trust/import/sharing, memory, model/runtime compatibility, evaluation, voice ownership, and community-marketplace boundary; record recommended defaults and rejected alternatives.
@@ -26,7 +21,7 @@ tests must not be discarded while the Tier 2 rows remain open.
 ### S4-F12-T2 — Add profile, personality, and snapshot contracts
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Capability, personality, workflow binding, and runtime resolution have one typed, versioned, safe composition contract.
 - Scope: IDs/versions/scopes, one-base inheritance, capability and presentation schemas, runtime/model/skill/tool/memory/worktree/descendant references, workflow bindings, field-source provenance, precedence resolver, capability intersection, immutable resolved snapshots, migrations, DTOs, and legacy interpretation.
@@ -40,7 +35,7 @@ tests must not be discarded while the Tier 2 rows remain open.
 ### S4-F12-T3 — Add local profile lifecycle, trust, and portability
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Users safely manage reusable profiles and exchange them without secrets or inherited authority.
 - Scope: Versioned local CRUD/service/router, duplicate/archive/restore/search, optimistic updates, built-in versus user/project scope, provenance, schema compatibility, secret scanning, import parse/validate/preview, disabled unresolved references, versioned export bundle, conflict handling, audit, and restart recovery.
@@ -54,7 +49,7 @@ tests must not be discarded while the Tier 2 rows remain open.
 ### S4-F12-T4 — Build Profile Studio and resolved preview
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Users create and understand named agents without editing raw provider files or confusing personality with permission.
 - Scope: Profile list/search/filter, create blank/duplicate/compose, identity/type/description, capability editor, personality/style editor, base selection, model/runtime/skill/tool/memory/worktree/descendant controls, instruction editor, field-source diff, compatibility/evaluation state, resolved launch preview, test-without-authority-increase flow, accessibility, and multi-window invalidation.
@@ -76,7 +71,7 @@ tests must not be discarded while the Tier 2 rows remain open.
 ### S4-F12-T5 — Bind named profiles to deterministic workflows
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Workflow authors can assign reusable named specialists and personalities to steps with reproducible execution.
 - Scope: Exact profile-version references, workflow role, typed step inputs/output schema, bounded overrides, compatibility and authority preview, mixed-profile/runtime workers, snapshot persistence, checkpoint/resume, retry/fork-with-updated-profile, missing/archived profile repair, activity/lineage labels, and template import/export references.
@@ -90,7 +85,7 @@ tests must not be discarded while the Tier 2 rows remain open.
 ### S4-F12-T6 — Launch standalone named agents
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Users can spin out a named specialist/personality outside a predefined workflow and continue working with it safely.
 - Scope: Start-agent actions from task/chat/Profile Studio, profile chooser and resolved preview, durable chat/run/profile snapshot, optional orchestration/workspace membership, task and parent-chat context selection, runtime/harness launch, follow-up turns, stop/retry, Continue-with-updated-profile boundary, display identity, provenance, usage/audit, and restart recovery.
@@ -104,7 +99,7 @@ tests must not be discarded while the Tier 2 rows remain open.
 ### S4-F12-T7 — Add starter types and profile evaluation
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Flapstack ships a small trustworthy starter set and honest compatibility evidence instead of a sprawling prompt catalog.
 - Scope: Implement only T1-approved starter roles, read-only versioning, user-copy flow, behavior/capability/safety/prompt-injection fixtures, task-quality scorecard, cross-model/runtime compatibility runs, untested/tested labels, regression thresholds, update notes, and profile test runner/history.
@@ -121,7 +116,7 @@ tests must not be discarded while the Tier 2 rows remain open.
 ### S4-F12-T8 — Close agent-profile and personality acceptance
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Custom, workflow-bound, standalone, imported, and starter agents work reproducibly with safe authority and truthful compatibility.
 - Scope: Matrix S4-AP01 through S4-AP08, full automated gate, migration, custom profile lifecycle, personality/capability separation, workflow and standalone launches, runtime compatibility, import/export trust, starter evaluations, restart, automated semantic/accessibility checks, and docs.

@@ -1,5 +1,10 @@
 # Stage 4 Execution Plan
 
+Current status: Stage 4 core implementation and Tier 2 acceptance are complete
+at 73/73 core task scopes and 52/52 core matrix rows. Twelve optional capability
+rows and one macOS release row remain uncertified. The dependency waves below
+are retained as historical execution guidance, not an active core backlog.
+
 Stage 4 is the prerequisite operating-environment stage for Stage 5 Windows,
 which in turn is the prerequisite for Stage 6. Its eleven feature boards contain
 87 independently pick-up-able work records. Of those, 68 are core-only, five
@@ -13,11 +18,11 @@ Checkboxes use the Tier 2 definition in
 
 ## `0.1.0` beta release position
 
-The Stage 4 feature-code pass is part of the macOS-only `0.1.0` beta. Project
-Memory, Orchestration, Saved Workspaces, Automations, and Planning & Task Board
-ship as optional Beta Features and remain off by default. Other exposed Stage 4
-features are beta-supported, not a stable-support or completed-evidence claim.
-The exact `0.1.0` candidate still requires the open live, provider, package, and
+The Stage 4 core pass is complete. Project Memory, Orchestration, Saved
+Workspaces, Automations, and Planning & Task Board ship as optional Beta
+Features and remain off by default. Other exposed Stage 4 features remain
+beta-supported, not a stable public-support claim. The exact `0.1.0` package
+still requires the open provider, package, and
 OS evidence in the [Stage 4 full-feature matrix](stage4-full-feature-test-matrix.md)
 and the [macOS release runbook](releasing-macos.md).
 

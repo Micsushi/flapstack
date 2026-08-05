@@ -1,5 +1,9 @@
 # Provider harness closeout matrix
 
+Historical Stage 3 evidence record. Stage 3 core later closed at 203/203 tasks
+and 48/48 matrix rows. Dated open-task statements below describe earlier
+candidates and are not current task truth.
+
 Snapshot: 2026-07-13. Owner: S3-F15. Task authority remains
 `openspec/changes/close-provider-harnesses/tasks.md`.
 

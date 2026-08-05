@@ -1,5 +1,7 @@
 # S4-F3-T1 Stage 3 orchestration baseline
 
+Historical implementation evidence. S4-F3 core is now accepted at Tier 2.
+
 This is the frozen delta from the shipped Stage 3 orchestration contract to
 S4-F3 Multi-Agent Operations. It records code and fixture evidence only; it
 does not change scheduler, launch, provider, or renderer behavior.

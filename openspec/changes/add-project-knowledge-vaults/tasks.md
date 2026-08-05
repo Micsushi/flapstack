@@ -1,5 +1,9 @@
 # S4-F2 — Project Knowledge Vaults
 
+Reconciled 2026-08-05: every `T2-core` task below is accepted. Dated partial
+evidence remains historical; optional capability certification stays in the
+Stage 4 matrix.
+
 ### S4-F2-T1 — Implement and persist the vault location policy
 
 - Evidence class: `T2-core`.
@@ -32,7 +36,7 @@
 ### S4-F2-T3 — Add vault browser, editor, and search
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F2
 - Outcome: Users can inspect and edit project knowledge with honest conflicts.
 - Scope: Project entry, section tree, Markdown viewer/editor, scoped search, change indicators, conflict diff, restore, keyboard/accessibility behavior.
@@ -107,7 +111,7 @@
 ### S4-F2-T6 — Close vault acceptance and recovery
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F2
 - Outcome: Vault setup, use, export, and restore pass in verified Dev and an
   isolated fresh profile.

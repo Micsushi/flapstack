@@ -1,5 +1,9 @@
 # S4-F3 — Multi-Agent Operations
 
+Reconciled 2026-08-05: every `T2-core` or mixed-core task below is accepted.
+Pure provider capability tasks remain open. Dated partial evidence remains
+historical; current certification stays in the Stage 4 matrix.
+
 ### S4-F3-T1 — Reconcile the Stage 3 orchestration baseline
 
 - Evidence class: `T2-core`.
@@ -18,7 +22,7 @@
 ### S4-F3-T2 — Add the orchestration fleet query and view
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: Users supervise orchestrations across tasks and projects from one local view.
 - Scope: Paginated/filterable aggregate query, active/terminal filters, engine/provider/usage provenance, workflow phase or task-tree identity, blockers, operation-workspace navigation, polling/invalidation, and empty/stale states.
@@ -33,7 +37,7 @@
 ### S4-F3-T3 — Add rich lineage, messaging, and navigation
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: Spawn/replacement history, workflow phases, Codex task paths, and supported agent messages are understandable and navigable.
 - Scope: Graph/tree projection, workflow/task-tree overlays, status/role/harness/engine labels, replacement edges, stale/orphan state, mailbox/message provenance, send/follow-up/interrupt affordances when supported, keyboard navigation, and focus/open-in-workspace behavior.
@@ -48,7 +52,7 @@
 ### S4-F3-T4 — Add versioned policy and workflow templates
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: Users safely reuse and change bounded worker, workflow, and policy definitions.
 - Scope: Policy version, impact preview, tighten/relax classification, approval/audit, template CRUD, workflow script/graph and schema storage, agent definition snapshots, secret/session stripping, resolved preview, and compatibility validation.
@@ -63,7 +67,7 @@
 ### S4-F3-T5 — Harden cascading control and recovery
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: Pause/stop/cancel state remains truthful across workflow steps, provider descendants, failures, and restart.
 - Scope: Durable action intent, engine-aware descendant traversal, signal reconciliation, partial failures, orphan policy, stale leases, restart recovery, exact impact preview, and uncertain-spawn handling without replay.
@@ -94,7 +98,7 @@
 ### S4-F3-T7 — Implement the deterministic workflow engine
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: The default engine runs inspectable, restart-safe multi-agent workflows without putting orchestration state in the lead model context.
 - Scope: Restricted versioned runtime, agent/parallel/pipeline primitives, typed variables and output schemas, branches/loops/barriers, concurrency and total-agent caps, phase checkpoints, retries/timeouts, pause/resume/stop, human-gate segmentation, preview, scale warnings, and final synthesis.
@@ -141,7 +145,7 @@
 - Evidence classes: `T2-core` for S4-MA01 through S4-MA07;
   `T2-capability:codex-v2`, `T2-capability:codex-v1`, and
   `T2-capability:mixed-runtime-providers` for S4-MA08 through S4-MA10.
-- [ ] Completion: S4-MA01 through S4-MA07 are accepted
+- [x] Completion: S4-MA01 through S4-MA07 are accepted
 - Separate certifications: S4-MA08 through S4-MA10 retain independent
   capability status.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3

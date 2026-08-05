@@ -1,5 +1,10 @@
 # Stage 5 Windows Compatibility Execution Plan
 
+Current status: Stage 5 core implementation and Tier 2 acceptance are complete
+at 50/50 core task scopes and 40/40 core matrix rows. Twenty-one optional
+capability rows and fourteen release rows remain uncertified. The execution
+order below is retained as the completed stage record.
+
 Roadmap note: former Stage 5 product-polish work moved intact to Stage 6. Stage
 5 owns native Windows development, runtime, packaging, and acceptance. A
 focused post-acceptance patch at

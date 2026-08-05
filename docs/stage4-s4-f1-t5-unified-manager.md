@@ -1,5 +1,7 @@
 # S4-F1-T5 unified extension manager
 
+Historical implementation evidence. S4-F1 core is now accepted at Tier 2.
+
 ## Headless code-ready evidence
 
 - One shared Settings component now inventories native extensions, plugin inventory, and managed hooks.

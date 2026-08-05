@@ -1,10 +1,12 @@
 # S3-F17 — Integrated Regression and Release
 
-- Change: `openspec/changes/validate-stage3-release/`
-- Design: `openspec/changes/validate-stage3-release/design.md`
+Status: complete at Tier 2. Stage 3 closed at 48/48 integrated rows.
+
+- Change: `openspec/changes/archive/2026-07-14-validate-stage3-release/`
+- Design: `openspec/changes/archive/2026-07-14-validate-stage3-release/design.md`
 - Specification:
-  `openspec/changes/validate-stage3-release/specs/integrated-stage3-release/spec.md`
-- Tasks: `openspec/changes/validate-stage3-release/tasks.md`
+  `openspec/specs/integrated-stage3-release/spec.md`
+- Tasks: `openspec/changes/archive/2026-07-14-validate-stage3-release/tasks.md`
 - Task IDs:
   - S3-F17-T1 — Freeze the release manifest and unified evidence ledger
   - S3-F17-T2 — Pass automated, migration, MCP, daemon, and package gates

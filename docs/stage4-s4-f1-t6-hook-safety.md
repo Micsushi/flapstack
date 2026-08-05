@@ -1,5 +1,7 @@
 # S4-F1-T6 Hook Safety Evidence
 
+Historical implementation evidence. S4-F1 core is now accepted at Tier 2.
+
 ## Implemented
 
 - Managed Claude Code and Codex hook inventory with schema-versioned, private,

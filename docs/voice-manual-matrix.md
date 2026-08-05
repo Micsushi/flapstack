@@ -1,5 +1,9 @@
 # Stage 3 Voice manual verification matrix (S3-F9)
 
+Historical Stage 3 evidence record. S3-F9 later closed at Tier 2. Remaining
+owner or platform observations belong to the current owner backlog and do not
+reopen core completion.
+
 Run this matrix from a packaged or development Electron build after the
 automated suite passes. Mark only paths actually verified on the target OS.
 

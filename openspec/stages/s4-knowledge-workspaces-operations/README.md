@@ -1,5 +1,10 @@
 # S4 — Knowledge, Workspaces, and Multi-Agent Operations
 
+Status: core implementation and Tier 2 acceptance complete. All 73
+implementation-gating task scopes and all 52 `T2-core` matrix rows are
+accepted. Twelve optional capability rows and one packaged macOS release row
+remain uncertified.
+
 Stage 4 turns Flapstack's Stage 3 control primitives into a durable daily
 operating environment.
 
@@ -49,11 +54,10 @@ Stage verification: `docs/stage4-full-feature-test-matrix.md` plus Node 22
 `Flapstack Dev` live walkthroughs. The matrix separately owns optional provider
 and private-sync capabilities and packaged macOS release certification.
 
-Stage 5 Windows planning lives at
-`openspec/stages/s5-windows-compatibility/README.md` and begins only after Stage
-4 implementation acceptance. Stage 6 product-polish planning lives at
-`openspec/stages/s6-product-polish-personalization-reach/README.md` and begins
-only after Stage 5 implementation acceptance.
+Stage 5 Windows and Stage 6 product-polish work both passed their core entry
+gates and are implemented. Their routers remain at
+`openspec/stages/s5-windows-compatibility/README.md` and
+`openspec/stages/s6-product-polish-personalization-reach/README.md`.
 
 These files are navigation only. Task status lives only in linked OpenSpec
 `tasks.md` files.

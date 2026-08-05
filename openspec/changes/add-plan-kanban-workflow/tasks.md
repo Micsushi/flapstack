@@ -1,5 +1,9 @@
 # S4-F9 — Plan and Kanban Views
 
+Reconciled 2026-08-05: every `T2-core` task below is accepted. Dated partial
+evidence remains historical; optional capability certification stays in the
+Stage 4 matrix.
+
 ### S4-F9-T1 — Add task workflow and proposal contracts
 
 - Evidence class: `T2-core`.
@@ -33,7 +37,7 @@
 ### S4-F9-T3 — Build the read-only Plan view
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Evidence: Tier 1 code-ready/Tier 2 live-verification-remaining. The production Plan route and read-only
   renderer remain wired; the Node 22 F9 headless gate passes source, selector/reducer/service,
   renderer, stale, and malformed-state coverage. The live OpenSpec/Markdown and accessibility
@@ -51,7 +55,7 @@
 ### S4-F9-T4 — Replace chat-derived Kanban with real task cards
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Evidence (code-ready; UI proof pending): Node 22
   `npx vitest run tests/task-kanban.test.ts tests/plan-kanban-schema.test.ts` passes 10 focused
   service/schema/selector/keyboard/accessibility tests; focused ESLint/Prettier and strict
@@ -76,7 +80,7 @@
 ### S4-F9-T5 — Add idempotent plan-candidate promotion
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Evidence: Tier 1 code-ready/Tier 2 live-verification-remaining. Node 22 focused
   `plan-task-promotion`, schema, source-reader, Plan-view, and task-Kanban tests pass 29 cases;
   focused ESLint, Prettier, full strict TypeScript, and strict OpenSpec validation pass. Live UI
@@ -95,7 +99,7 @@
 ### S4-F9-T6 — Add approval-gated AI task proposals
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Evidence: Tier 1 code-ready/Tier 2 live-verification-remaining. Node 22 focused
   `ai-task-proposals`, task/plan Kanban, MCP gate/audit/transport, and invalidation suites pass
   72 tests across 12 files; repo-wide ESLint, Prettier check, and strict TypeScript pass;
@@ -115,7 +119,7 @@
 ### S4-F9-T7 — Add provenance, divergence, and cross-window consistency
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Evidence: Tier 1 code-ready/Tier 2 live-verification-remaining. Node 22 full headless F9 regression passes
   101 tests across 16 suites, including source edits and recovery, linked task/proposal
   comparisons, stale two-window moves, promotion deduplication, proposal decision races,
@@ -136,7 +140,7 @@
 ### S4-F9-T8 — Close Plan and Kanban acceptance
 
 - Evidence class: `T2-core`.
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Evidence: Tier 1 code-ready/Tier 2 live-verification-remaining. The Node 22 feature-wide F9 headless gate
   passes 101 tests across 16 suites. Production Tasks routing, serialized source recovery,
   versioned reorder conflicts, and operator docs are covered. Full ESLint, strict TypeScript,

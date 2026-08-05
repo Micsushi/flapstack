@@ -1,5 +1,8 @@
 # Stage 3 Headless Integration Audit
 
+Historical intermediate audit. Stage 3 later closed at 203/203 tasks and 48/48
+matrix rows. Dated open findings below are retained as evidence chronology.
+
 Audit date: 2026-07-12. Branch baseline: `codex/stage3-integration` at
 `6174aeacf03b30ae24587ab243ec9c4924c4bb60`.
 

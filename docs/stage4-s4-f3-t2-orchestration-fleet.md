@@ -1,5 +1,7 @@
 # S4-F3-T2 orchestration fleet evidence
 
+Historical implementation evidence. S4-F3 core is now accepted at Tier 2.
+
 S4-F3-T2 adds one read-only fleet projection over the shipped Stage 3
 `task_orchestrations`, `orchestration_agents`, `agent_runs`, and `chats` rows.
 It does not add or mutate scheduler, engine, policy, workflow, lineage,

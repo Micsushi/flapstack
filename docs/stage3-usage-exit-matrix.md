@@ -1,5 +1,8 @@
 # Stage 3 Usage exit matrix
 
+Historical Stage 3 evidence record. S3-F14 later closed at Tier 2. Dated open
+statements below describe earlier candidates, not current task truth.
+
 Frozen: 2026-07-13. Authority: `harden-usage-exit` S3-F14-T1 through T5.
 
 This is the executable evidence map for migrated Usage rows U1 through U11. It

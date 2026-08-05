@@ -1,5 +1,12 @@
 # Stage 6 Execution Plan
 
+Current status: Stage 6 is `T2-core` complete. All 60 implementation-gating
+matrix rows are checked. Ten capability-evidence and sixteen release-evidence
+rows remain open because they require optional providers/devices/native hosts,
+long observation, signing/notarization, installers, hosted CI, or promoted
+distribution artifacts. This plan is retained as the execution and dependency
+record, not as an active implementation backlog.
+
 Stage 6 begins after one exact Stage 5 source state has all 50
 implementation-gating task checkboxes and all 40 `T2-core` matrix rows
 accepted. That Stage 5 baseline already inherits accepted Stage 4 behavior.
