@@ -21,6 +21,11 @@ class RuntimeStub implements RuntimeDelegationLaunchPort {
 
   compositionProbe(harness: string, runtime: ResolvedAgentRuntime): RuntimeAdapterProbe {
     const supported = { supported: true, reason: null }
+    const providerRuntime =
+      harness === "codex" ? "codex" : harness === "claude-code" ? "claude-code" : "flapstack-native"
+    const translated =
+      (harness === "codex" && runtime === "claude-code") ||
+      (harness === "claude-code" && runtime === "codex")
     return {
       runtime,
       harness,
@@ -42,6 +47,44 @@ class RuntimeStub implements RuntimeDelegationLaunchPort {
           structuredOutput: supported,
           cancellation: supported,
         },
+        ...(translated
+          ? {
+              composition: {
+                runtimeMode: "translated" as const,
+                providerRuntime,
+                providerVersions: {
+                  adapterVersion: `${providerRuntime}-test`,
+                  protocolVersion: `${providerRuntime}-test`,
+                },
+                adapterChain: [
+                  {
+                    id:
+                      runtime === "codex"
+                        ? "claude-provider-to-codex-contract"
+                        : "codex-provider-to-claude-contract",
+                    version: "1",
+                  },
+                ],
+                capabilities: {
+                  continuation: "available" as const,
+                  delegation: "available" as const,
+                  structuredOutput: "available" as const,
+                  cancellation: "available" as const,
+                  toolLoop: "available" as const,
+                  tools: "lossy" as const,
+                  permissions: "available" as const,
+                  reasoning: "lossy" as const,
+                  sessionFork: "unavailable" as const,
+                },
+                losses: [
+                  {
+                    code: "native-session-identity",
+                    summary: "Provider-native session identity is preserved without relabeling.",
+                  },
+                ],
+              },
+            }
+          : {}),
         limitations: [],
         unavailableReason: null,
       },
@@ -77,6 +120,66 @@ afterEach(() => {
 })
 
 describe("cross-provider Runtime delegation", () => {
+  it.each([
+    ["codex", "claude-code", "codex", "claude-provider-to-codex-contract"],
+    ["claude-code", "codex", "claude-code", "codex-provider-to-claude-contract"],
+  ] as const)(
+    "persists and launches translated %s-to-%s target through %s contract",
+    (sourceHarness, targetHarness, preference, packId) => {
+      const fixture = createFixture(sourceHarness)
+      const runtime = new RuntimeStub()
+      const service = new CrossProviderDelegationService(fixture.path, runtime)
+      const request = {
+        sourceChatId: "source",
+        targetHarness,
+        targetModel: `${targetHarness}-model`,
+        preference,
+        requestId: `${sourceHarness}-to-${targetHarness}-translated`,
+        objective: "Review with the translated contract.",
+        requiredCapabilities: ["toolLoop", "permissions"],
+        outputSchema: { type: "object", required: ["verdict"] },
+      }
+      const preview = service.preview(request)
+
+      expect(preview.targetSnapshot).toMatchObject({
+        harness: targetHarness,
+        runtime: preference,
+        runtimeMode: "translated",
+        adapterChain: [{ id: packId, version: "1" }],
+        capabilities: {
+          capabilities: {
+            toolLoop: "available",
+            tools: "lossy",
+            permissions: "available",
+            reasoning: "lossy",
+            sessionFork: "unavailable",
+          },
+        },
+      })
+      const created = service.delegate({ ...request, confirmedPreviewDigest: preview.digest })
+
+      expect(runtime.launches).toHaveLength(1)
+      expect(runtime.launches[0]?.runtimeLaunch).toMatchObject({
+        harness: targetHarness,
+        resolvedRuntime: preference,
+        capabilities: {
+          composition: {
+            runtimeMode: "translated",
+            adapterChain: [{ id: packId, version: "1" }],
+          },
+        },
+      })
+      const db = new Database(fixture.path)
+      const row = db
+        .prepare("SELECT runtime_capability_snapshot FROM agent_runs WHERE id = ?")
+        .get(created.runId) as { runtime_capability_snapshot: string }
+      expect(JSON.parse(row.runtime_capability_snapshot)).toMatchObject({
+        composition: { adapterChain: [{ id: packId, version: "1" }] },
+      })
+      db.close()
+    },
+  )
+
   it.each([
     ["codex", "claude-code", "claude-code"],
     ["claude-code", "codex", "codex"],
@@ -156,8 +259,8 @@ describe("cross-provider Runtime delegation", () => {
     const service = new CrossProviderDelegationService(fixture.path, new RuntimeStub())
     const incompatible = {
       sourceChatId: "source",
-      targetHarness: "claude-code" as const,
-      targetModel: "claude",
+      targetHarness: "openrouter" as const,
+      targetModel: "openrouter-model",
       preference: "codex" as const,
       requestId: "incompatible-target",
       objective: "Review.",
@@ -166,6 +269,8 @@ describe("cross-provider Runtime delegation", () => {
 
     const widening = {
       ...incompatible,
+      targetHarness: "claude-code" as const,
+      targetModel: "claude",
       preference: "claude-code" as const,
       requestId: "authority-widening",
       authorityRestrictions: {
@@ -180,9 +285,12 @@ describe("cross-provider Runtime delegation", () => {
     )
 
     const request = {
-      ...incompatible,
+      sourceChatId: "source",
+      targetHarness: "claude-code" as const,
+      targetModel: "claude",
       preference: "claude-code" as const,
       requestId: "stale-preview",
+      objective: "Review.",
     }
     const preview = service.preview(request)
     const db = new Database(fixture.path)

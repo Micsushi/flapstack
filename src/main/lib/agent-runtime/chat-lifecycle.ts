@@ -151,7 +151,10 @@ export class RuntimeChatLifecycleService {
     }
     const sourceHarness = String(source.harness ?? "generic")
     const targetHarness = input.targetHarness?.trim() || sourceHarness
-    assertCompatible(targetHarness, input.preference)
+    const targetRuntime =
+      runtimeAdapterForPreference(input.preference) ?? productRuntimeForHarness(targetHarness)
+    const targetProbe = this.resolveProbe(targetHarness, targetRuntime)
+    assertCompatible(targetHarness, input.preference, targetProbe)
     const targetModel =
       input.targetModel?.trim() ||
       (targetHarness === sourceHarness ? stringOrNull(source.model) : null)
@@ -186,8 +189,17 @@ export class RuntimeChatLifecycleService {
     const missing = requiredCapabilities.filter(
       (capability) => targetSnapshot.capabilities.capabilities[capability] !== "available",
     )
-    const availability =
-      missing.length > 0
+    const unavailableReason =
+      targetProbe && !targetProbe.available
+        ? (targetProbe.reason ?? targetProbe.capabilities.unavailableReason)
+        : null
+    const availability = unavailableReason
+      ? {
+          state: "blocked" as const,
+          reason: unavailableReason.message,
+          repair: unavailableReason.repair,
+        }
+      : missing.length > 0
         ? {
             state: "blocked" as const,
             reason: `Target lacks required capabilities: ${missing.join(", ")}.`,
@@ -225,7 +237,13 @@ export class RuntimeChatLifecycleService {
         }
         const sourceHarness = String(source.harness ?? "generic")
         const targetHarness = input.targetHarness?.trim() || sourceHarness
-        assertCompatible(targetHarness, input.preference)
+        const targetRuntime =
+          runtimeAdapterForPreference(input.preference) ?? productRuntimeForHarness(targetHarness)
+        assertCompatible(
+          targetHarness,
+          input.preference,
+          this.resolveProbe(targetHarness, targetRuntime),
+        )
         const targetModel =
           input.targetModel?.trim() ||
           (targetHarness === sourceHarness ? stringOrNull(source.model) : null)
@@ -519,9 +537,18 @@ export function createRuntimeChatLifecycleService(
   return new RuntimeChatLifecycleService(database, resolveProbe)
 }
 
-function assertCompatible(harness: string, preference: AgentRuntimePreference): void {
+function assertCompatible(
+  harness: string,
+  preference: AgentRuntimePreference,
+  probe?: RuntimeAdapterProbe | null,
+): void {
   const runtime = runtimeAdapterForPreference(preference) ?? productRuntimeForHarness(harness)
-  const compatibility = checkRuntimeCompatibility(harness, runtime)
+  const exactProbe = probe?.harness === harness && probe.runtime === runtime ? probe : null
+  const compatibility = checkRuntimeCompatibility(
+    harness,
+    runtime,
+    exactProbe?.capabilities.composition,
+  )
   if (!compatibility.compatible) {
     throw new RuntimeChatLifecycleError("runtime-incompatible", compatibility.reason.message)
   }
@@ -625,22 +652,28 @@ function executionTarget(
 ): ExecutionTarget {
   const runtime =
     runtimeAdapterForPreference(input.preference) ?? productRuntimeForHarness(input.targetHarness)
+  const probe = resolveProbe(input.targetHarness, runtime)
+  const matchedProbe =
+    probe?.harness === input.targetHarness && probe.runtime === runtime ? probe : null
+  const composition = matchedProbe?.capabilities.composition
   const runtimeMode =
-    runtime === "flapstack-native"
-      ? "flapstack-native"
-      : input.preference.endsWith("-enhanced")
-        ? "enhanced"
-        : "native"
+    composition?.runtimeMode === "translated"
+      ? "translated"
+      : runtime === "flapstack-native"
+        ? "flapstack-native"
+        : input.preference.endsWith("-enhanced")
+          ? "enhanced"
+          : "native"
   const profile =
     input.targetHarness === String(source.harness)
       ? readAgentProfileBinding(sqlite, String(source.id))
       : null
-  const probe = resolveProbe(input.targetHarness, runtime)
-  const matchedProbe =
-    probe?.harness === input.targetHarness && probe.runtime === runtime ? probe : null
   const capabilities = {
     schemaVersion: 1 as const,
-    capabilities: executionCapabilities(matchedProbe),
+    capabilities: {
+      ...executionCapabilities(matchedProbe),
+      ...(composition?.capabilities ?? {}),
+    },
   }
   const permissionMode = String(source.permission_mode) as RunPermissionMode
   const customPermissions =
@@ -650,7 +683,7 @@ function executionTarget(
     harness: input.targetHarness,
     runtime,
     runtimeMode,
-    adapterChain: [],
+    adapterChain: composition?.adapterChain ?? [],
     provider: providerForHarness(input.targetHarness),
     model: input.targetModel,
     accountId: null,
@@ -675,10 +708,12 @@ function executionTarget(
         }),
       ),
     },
-    losses: (matchedProbe?.capabilities.limitations ?? []).slice(0, 64).map((summary, index) => ({
-      code: `runtime-probe-${index + 1}`,
-      summary,
-    })),
+    losses:
+      composition?.losses ??
+      (matchedProbe?.capabilities.limitations ?? []).slice(0, 64).map((summary, index) => ({
+        code: `runtime-probe-${index + 1}`,
+        summary,
+      })),
   })
 }
 

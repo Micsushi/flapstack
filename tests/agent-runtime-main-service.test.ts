@@ -87,18 +87,35 @@ describe("process-wide Runtime launch service", () => {
     ).toContain("Review mode:")
   })
 
-  it("owns one registry/coordinator and keeps real disabled factories recoverable", () => {
+  it("owns one registry/coordinator and keeps real disabled factories recoverable", async () => {
     const first = getMainRuntimeLaunchService(path)
     const second = getMainRuntimeLaunchService(path)
 
     expect(second).toBe(first)
     expect(first.diagnostics().registry).toEqual([
-      expect.objectContaining({ runtime: "codex", enabled: false }),
-      expect.objectContaining({ runtime: "claude-code", enabled: false }),
-      expect.objectContaining({ runtime: "flapstack-native", enabled: true }),
+      expect.objectContaining({ runtime: "codex", harness: "codex", enabled: false }),
+      expect.objectContaining({
+        runtime: "claude-code",
+        harness: "claude-code",
+        enabled: false,
+      }),
+      expect.objectContaining({ runtime: "codex", harness: "claude-code", enabled: false }),
+      expect.objectContaining({ runtime: "claude-code", harness: "codex", enabled: false }),
+      expect.objectContaining({ runtime: "flapstack-native", harness: null, enabled: true }),
     ])
-    expect(() => first.registry.get("codex")).not.toThrow()
-    expect(() => first.registry.get("claude-code")).not.toThrow()
+    expect(() => first.registry.get("codex", "codex")).not.toThrow()
+    expect(() => first.registry.get("claude-code", "claude-code")).not.toThrow()
+    await expect(first.probe("codex", "claude-code")).resolves.toMatchObject({
+      available: false,
+      reason: { code: "adapter-disabled" },
+      capabilities: {
+        composition: {
+          runtimeMode: "translated",
+          providerRuntime: "claude-code",
+          adapterChain: [{ id: "claude-provider-to-codex-contract", version: "1" }],
+        },
+      },
+    })
   })
 
   it("persists intent, session, turn, activity, and terminal lifecycle", async () => {
@@ -161,6 +178,115 @@ describe("process-wide Runtime launch service", () => {
     await service.launch({ ...queued("schema"), outputSchema })
 
     expect(receivedSchema).toEqual(outputSchema)
+  })
+
+  it("does not release a translated pack when only its native provider is enabled", async () => {
+    const provider = directAdapter()
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory: () => provider,
+      enableCodex: true,
+    })
+
+    await expect(service.probe("claude-code", "codex")).resolves.toMatchObject({
+      available: false,
+      reason: {
+        code: "adapter-disabled",
+        message: expect.stringMatching(/translated/i),
+      },
+      capabilities: {
+        composition: {
+          adapterChain: [{ id: "codex-provider-to-claude-contract", version: "1" }],
+        },
+      },
+    })
+  })
+
+  it("keeps Claude native release separate from its Codex-contract pack", async () => {
+    const provider = directAdapter("claude-code")
+    const service = getMainRuntimeLaunchService(path, {
+      claudeCodeFactory: () => provider,
+      enableClaudeCode: true,
+    })
+
+    await expect(service.probe("claude-code", "claude-code")).resolves.toMatchObject({
+      available: true,
+    })
+    await expect(service.probe("codex", "claude-code")).resolves.toMatchObject({
+      available: false,
+      reason: {
+        code: "adapter-disabled",
+        message: expect.stringMatching(/translated/i),
+      },
+      capabilities: {
+        composition: {
+          adapterChain: [{ id: "claude-provider-to-codex-contract", version: "1" }],
+        },
+      },
+    })
+  })
+
+  it("dispatches a Claude-contract launch through the selected Codex provider pack", async () => {
+    const provider = directAdapter()
+    const startTurn = vi.fn(provider.startTurn)
+    provider.startTurn = startTurn
+    const codexFactory = vi.fn(() => provider)
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory,
+      enableCodex: true,
+      enableCodexProviderClaudeContract: true,
+    })
+    const probe = await service.probe("claude-code", "codex")
+    const run = queued("translated-codex-provider")
+    run.runtimeLaunch = {
+      ...run.runtimeLaunch!,
+      requestedPreference: "claude-code",
+      resolvedRuntime: "claude-code",
+      compatibility: {
+        compatible: true,
+        harness: "codex",
+        runtime: "claude-code",
+        reason: null,
+      },
+      versions: probe.versions,
+      capabilities: probe.capabilities,
+    }
+    seedDirectRun(
+      run.runId,
+      [
+        1,
+        "claude-code",
+        "chat",
+        "claude-code",
+        probe.versions.adapterVersion,
+        probe.versions.protocolVersion,
+        JSON.stringify(probe.capabilities),
+        JSON.stringify(run.runtimeLaunch.controls),
+      ],
+      "claude-code",
+    )
+    const outputSchema = { type: "object", required: ["verdict"] }
+
+    await service.launch({ ...run, outputSchema })
+
+    expect(probe.capabilities.composition).toMatchObject({
+      runtimeMode: "translated",
+      providerRuntime: "codex",
+      adapterChain: [{ id: "codex-provider-to-claude-contract", version: "1" }],
+    })
+    expect(codexFactory).toHaveBeenCalledTimes(1)
+    expect(startTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        launch: expect.objectContaining({
+          harness: "codex",
+          resolvedRuntime: "codex",
+          permission: run.runtimeLaunch.permission,
+          controls: run.runtimeLaunch.controls,
+        }),
+        outputSchema,
+      }),
+      expect.any(Object),
+      expect.any(String),
+    )
   })
 
   it("blocks before provider intent when probed capabilities drift from the snapshot", async () => {
@@ -1211,7 +1337,11 @@ describe("process-wide Runtime launch service", () => {
   })
 })
 
-function seedDirectRun(runId: string): void {
+function seedDirectRun(
+  runId: string,
+  snapshotValues: readonly unknown[] = testRuntimeSnapshotSqlValues("codex", "codex"),
+  chatPreference = "codex",
+): void {
   sqlite
     .prepare(
       "INSERT OR IGNORE INTO projects (id, name, path, created_at) VALUES ('project', 'Project', '/tmp/project', 1)",
@@ -1221,9 +1351,9 @@ function seedDirectRun(runId: string): void {
     .prepare(
       `INSERT INTO chats
        (id, project_id, name, scope, permission_mode, harness, model, worktree_path, runtime_preference)
-       VALUES (?, 'project', 'Chat', 'global', 'read-only', 'codex', 'model', '/tmp/project', 'codex')`,
+       VALUES (?, 'project', 'Chat', 'global', 'read-only', 'codex', 'model', '/tmp/project', ?)`,
     )
-    .run(`chat-${runId}`)
+    .run(`chat-${runId}`, chatPreference)
   sqlite
     .prepare(
       `INSERT INTO sub_chats
@@ -1242,13 +1372,7 @@ function seedDirectRun(runId: string): void {
       ) VALUES (?, ?, ?, 'codex', 'model', 'read-only', '/tmp/project', ?, 'Prompt', 'running', 1,
         ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(
-      runId,
-      `chat-${runId}`,
-      `sub-${runId}`,
-      `mcp-${runId}`,
-      ...testRuntimeSnapshotSqlValues("codex", "codex"),
-    )
+    .run(runId, `chat-${runId}`, `sub-${runId}`, `mcp-${runId}`, ...snapshotValues)
 }
 
 function seedFollowupRun(runId: string, previousRunId: string): void {
@@ -1352,10 +1476,10 @@ function queued(runId: string): QueuedAgentRun {
   }
 }
 
-function directAdapter(): HarnessAdapter {
+function directAdapter(runtime: "codex" | "claude-code" = "codex"): HarnessAdapter {
   return {
-    runtime: "codex",
-    probe: async () => availableProbe(),
+    runtime,
+    probe: async () => availableProbe(runtime),
     startSession: async (context) => ({
       providerSessionId: `session-${context.runId}`,
       providerThreadId: `thread-${context.runId}`,
@@ -1385,10 +1509,10 @@ function directAdapter(): HarnessAdapter {
   }
 }
 
-function availableProbe() {
+function availableProbe(runtime: "codex" | "claude-code" = "codex") {
   return {
-    runtime: "codex" as const,
-    harness: "codex",
+    runtime,
+    harness: runtime,
     available: true,
     versions: {
       adapterVersion: "codex-test-adapter",

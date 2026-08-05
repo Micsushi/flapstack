@@ -110,6 +110,12 @@ import {
   resetRuntimeLaunchAuthoritiesForTests,
 } from "./agent-runtime/launch-access"
 import { isFrozenAgentProfileToolAllowed } from "./agent-profiles/runtime-authority"
+import {
+  CLAUDE_PROVIDER_TO_CODEX_CONTRACT,
+  CODEX_PROVIDER_TO_CLAUDE_CONTRACT,
+  createTranslatedRuntimeAdapterPackFactory,
+  translatedRuntimeCompositionIdentity,
+} from "./agent-runtime/translated-adapter-pack"
 
 export type MainRunLauncherOptions = {
   databasePath?: string
@@ -118,6 +124,8 @@ export type MainRunLauncherOptions = {
   claudeCodeFactory?: HarnessAdapterFactory<unknown>
   enableCodex?: boolean
   enableClaudeCode?: boolean
+  enableClaudeProviderCodexContract?: boolean
+  enableCodexProviderClaudeContract?: boolean
   permissionHandler?: (runId: string, request: unknown) => Promise<unknown>
   inputHandler?: (runId: string, request: unknown) => Promise<unknown>
   hookStore?: HookStateStore
@@ -133,6 +141,8 @@ export type RuntimeStructuredOutput = Readonly<{
 }>
 
 const services = new Map<string, MainRuntimeLaunchService>()
+const TRANSLATED_RUNTIME_RELEASE_REASON =
+  "Translated Runtime pack credentialed provider and package evidence is open."
 
 /** One process-wide authority for Runtime registry, dispatch, recovery, and interaction. */
 export class MainRuntimeLaunchService {
@@ -222,16 +232,40 @@ export class MainRuntimeLaunchService {
       createAgentRuntimeRegistry([
         {
           runtime: "codex",
+          harness: "codex",
           factory: codexFactory,
           enabled: options.enableCodex ?? RUNTIME_RELEASE_POLICY.codex.enabledForNewLaunches,
           disabledReason: RUNTIME_RELEASE_POLICY.codex.reason,
         },
         {
           runtime: "claude-code",
+          harness: "claude-code",
           factory: claudeCodeFactory,
           enabled:
             options.enableClaudeCode ?? RUNTIME_RELEASE_POLICY["claude-code"].enabledForNewLaunches,
           disabledReason: RUNTIME_RELEASE_POLICY["claude-code"].reason,
+        },
+        {
+          runtime: "codex",
+          harness: "claude-code",
+          factory: createTranslatedRuntimeAdapterPackFactory(
+            CLAUDE_PROVIDER_TO_CODEX_CONTRACT,
+            claudeCodeFactory,
+          ),
+          composition: translatedRuntimeCompositionIdentity(CLAUDE_PROVIDER_TO_CODEX_CONTRACT),
+          enabled: options.enableClaudeProviderCodexContract ?? false,
+          disabledReason: TRANSLATED_RUNTIME_RELEASE_REASON,
+        },
+        {
+          runtime: "claude-code",
+          harness: "codex",
+          factory: createTranslatedRuntimeAdapterPackFactory(
+            CODEX_PROVIDER_TO_CLAUDE_CONTRACT,
+            codexFactory,
+          ),
+          composition: translatedRuntimeCompositionIdentity(CODEX_PROVIDER_TO_CLAUDE_CONTRACT),
+          enabled: options.enableCodexProviderClaudeContract ?? false,
+          disabledReason: TRANSLATED_RUNTIME_RELEASE_REASON,
         },
         { runtime: "flapstack-native", factory: nativeFactory },
       ])

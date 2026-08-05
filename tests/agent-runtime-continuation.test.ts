@@ -44,6 +44,42 @@ function createService(database: Database.Database) {
   return createRuntimeChatLifecycleService(database, availableProbe)
 }
 
+function translatedProbe(harness: "codex" | "claude-code", runtime: ResolvedAgentRuntime) {
+  const probe = availableProbe(harness, runtime)
+  const providerRuntime = harness === "codex" ? "codex" : "claude-code"
+  return {
+    ...probe,
+    capabilities: {
+      ...probe.capabilities,
+      composition: {
+        runtimeMode: "translated" as const,
+        providerRuntime,
+        providerVersions: {
+          adapterVersion: `${providerRuntime}-test`,
+          protocolVersion: `${providerRuntime}-test`,
+        },
+        adapterChain: [{ id: `${providerRuntime}-provider-to-${runtime}-contract`, version: "1" }],
+        capabilities: {
+          continuation: "available" as const,
+          delegation: "available" as const,
+          structuredOutput: "available" as const,
+          cancellation: "available" as const,
+          toolLoop: "available" as const,
+          tools: "lossy" as const,
+          permissions: "available" as const,
+          sessionFork: "unavailable" as const,
+        },
+        losses: [
+          {
+            code: "native-session-identity",
+            summary: "Provider-native session identity remains authoritative.",
+          },
+        ],
+      },
+    },
+  }
+}
+
 describe("Agent Runtime continuation", () => {
   let database: Database.Database
 
@@ -215,6 +251,94 @@ describe("Agent Runtime continuation", () => {
       expect.objectContaining<Partial<RuntimeChatLifecycleError>>({ code: "preview-mismatch" }),
     )
     expect(database.prepare("SELECT count(*) count FROM chats").get()).toEqual({ count: 1 })
+  })
+
+  it("previews an explicit cross-provider Runtime contract as translated", () => {
+    const { chatId } = seedRuntimeChat(database, {
+      harness: "codex",
+      sessionId: "source-session",
+    })
+    const service = createRuntimeChatLifecycleService(database, (harness, runtime) =>
+      harness === "claude-code" && runtime === "codex"
+        ? translatedProbe(harness, runtime)
+        : availableProbe(harness, runtime),
+    )
+
+    const preview = service.previewContinuation({
+      sourceChatId: chatId,
+      targetHarness: "claude-code",
+      targetModel: "claude-sonnet",
+      preference: "codex",
+      requestId: "translated-continuation",
+      requiredCapabilities: ["toolLoop", "permissions"],
+    })
+
+    expect(preview.targetSnapshot).toMatchObject({
+      harness: "claude-code",
+      runtime: "codex",
+      runtimeMode: "translated",
+      adapterChain: [{ id: "claude-code-provider-to-codex-contract", version: "1" }],
+      losses: [expect.objectContaining({ code: "native-session-identity" })],
+    })
+    expect(preview.availability.state).toBe("available")
+
+    const exactToolSchema = service.previewContinuation({
+      sourceChatId: chatId,
+      targetHarness: "claude-code",
+      targetModel: "claude-sonnet",
+      preference: "codex",
+      requestId: "translated-tool-schema",
+      requiredCapabilities: ["tools"],
+    })
+    expect(exactToolSchema.availability).toMatchObject({
+      state: "blocked",
+      reason: expect.stringContaining("tools"),
+    })
+  })
+
+  it("keeps a probed unavailable translated target labeled with its exact pack reason", () => {
+    const { chatId } = seedRuntimeChat(database, {
+      harness: "codex",
+      sessionId: "source-session",
+    })
+    const service = createRuntimeChatLifecycleService(database, (harness, runtime) => {
+      const probe = translatedProbe(harness as "claude-code", runtime)
+      const reason = {
+        code: "adapter-disabled" as const,
+        harness,
+        runtime,
+        message: "Claude provider adapter pack is disabled.",
+        repair: "Enable the reviewed translated adapter pack.",
+      }
+      return {
+        ...probe,
+        available: false,
+        capabilities: {
+          ...probe.capabilities,
+          status: "unavailable" as const,
+          unavailableReason: reason,
+        },
+        reason,
+      }
+    })
+
+    const preview = service.previewContinuation({
+      sourceChatId: chatId,
+      targetHarness: "claude-code",
+      targetModel: "claude-sonnet",
+      preference: "codex",
+      requestId: "translated-unavailable",
+    })
+
+    expect(preview.targetSnapshot).toMatchObject({
+      runtimeMode: "translated",
+      adapterChain: [{ id: "claude-code-provider-to-codex-contract", version: "1" }],
+    })
+    expect(preview.availability).toEqual({
+      state: "blocked",
+      reason: "Claude provider adapter pack is disabled.",
+      repair: "Enable the reviewed translated adapter pack.",
+    })
   })
 
   it.each([

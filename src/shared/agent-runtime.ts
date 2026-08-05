@@ -77,6 +77,17 @@ export type RuntimeControlCapability = {
   reason: string | null
 }
 
+export type RuntimeCompositionCapabilityState = "available" | "unavailable" | "unknown" | "lossy"
+
+export type RuntimeAdapterCompositionSnapshot = {
+  runtimeMode: "translated"
+  providerRuntime: ResolvedAgentRuntime
+  providerVersions: RuntimeVersionSnapshot
+  adapterChain: Array<{ id: string; version: string }>
+  capabilities: Record<string, RuntimeCompositionCapabilityState>
+  losses: Array<{ code: string; summary: string }>
+}
+
 export type RuntimeCapabilitySnapshot = {
   schemaVersion: 1
   status: RuntimeCapabilityStatus
@@ -93,6 +104,7 @@ export type RuntimeCapabilitySnapshot = {
     structuredOutput: RuntimeControlCapability
     cancellation: RuntimeControlCapability
   }
+  composition?: RuntimeAdapterCompositionSnapshot
   limitations: string[]
   unavailableReason: RuntimeBlockReason | null
 }
@@ -189,9 +201,10 @@ export interface HarnessAdapter<TActivity = unknown> {
 export type HarnessAdapterFactory<TActivity = unknown> = () => HarnessAdapter<TActivity>
 
 export interface HarnessAdapterRegistryContract<TActivity = unknown> {
-  get(runtime: ResolvedAgentRuntime): HarnessAdapter<TActivity> | null
+  get(runtime: ResolvedAgentRuntime, harness?: string): HarnessAdapter<TActivity> | null
   list(): ReadonlyArray<{
     runtime: ResolvedAgentRuntime
+    harness?: string
     factory: HarnessAdapterFactory<TActivity>
   }>
 }

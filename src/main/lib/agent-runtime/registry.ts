@@ -3,12 +3,16 @@ import type {
   HarnessAdapterFactory,
   HarnessAdapterRegistryContract,
   ResolvedAgentRuntime,
+  RuntimeAdapterCompositionSnapshot,
   RuntimeAdapterProbe,
   RuntimeBlockReason,
 } from "../../../shared/agent-runtime"
 
 export type RuntimeRegistryEntry<TActivity = unknown> = {
   runtime: ResolvedAgentRuntime
+  /** Exact provider harness. Omit only for a Runtime that supports every harness. */
+  harness?: string
+  composition?: RuntimeAdapterCompositionSnapshot
   factory: HarnessAdapterFactory<TActivity>
   enabled?: boolean
   disabledReason?: string | null
@@ -16,6 +20,7 @@ export type RuntimeRegistryEntry<TActivity = unknown> = {
 
 export type RuntimeRegistryDiagnostic = {
   runtime: ResolvedAgentRuntime
+  harness: string | null
   enabled: boolean
   instantiated: boolean
   disabledReason: string | null
@@ -32,11 +37,8 @@ export class RuntimeRegistryError extends Error {
 export class AgentRuntimeRegistry<
   TActivity = unknown,
 > implements HarnessAdapterRegistryContract<TActivity> {
-  private readonly entries = new Map<
-    ResolvedAgentRuntime,
-    Required<RuntimeRegistryEntry<TActivity>>
-  >()
-  private readonly adapters = new Map<ResolvedAgentRuntime, HarnessAdapter<TActivity>>()
+  private readonly entries = new Map<string, NormalizedRuntimeRegistryEntry<TActivity>>()
+  private readonly adapters = new Map<string, HarnessAdapter<TActivity>>()
   private readonly probes = new Map<
     string,
     { expiresAt: number; value: Promise<RuntimeAdapterProbe> }
@@ -47,20 +49,26 @@ export class AgentRuntimeRegistry<
   }
 
   register(entry: RuntimeRegistryEntry<TActivity>): void {
-    if (this.entries.has(entry.runtime)) {
-      throw new Error(`Runtime adapter ${entry.runtime} is already registered.`)
+    const key = entryKey(entry.runtime, entry.harness)
+    if (this.entries.has(key)) {
+      throw new Error(
+        `Runtime adapter ${entry.runtime} for ${entry.harness ?? "all harnesses"} is already registered.`,
+      )
     }
-    this.entries.set(entry.runtime, {
+    this.entries.set(key, {
       ...entry,
+      harness: entry.harness ?? null,
+      composition: entry.composition ?? null,
       enabled: entry.enabled ?? true,
       disabledReason: entry.disabledReason ?? null,
     })
   }
 
-  get(runtime: ResolvedAgentRuntime): HarnessAdapter<TActivity> | null {
-    const entry = this.entries.get(runtime)
-    if (!entry) return null
-    let adapter = this.adapters.get(runtime)
+  get(runtime: ResolvedAgentRuntime, harness?: string): HarnessAdapter<TActivity> | null {
+    const resolved = this.resolveEntry(runtime, harness)
+    if (!resolved) return null
+    const [key, entry] = resolved
+    let adapter = this.adapters.get(key)
     if (!adapter) {
       adapter = entry.factory()
       if (adapter.runtime !== runtime) {
@@ -68,14 +76,14 @@ export class AgentRuntimeRegistry<
           `Runtime factory ${runtime} returned mismatched adapter ${adapter.runtime}.`,
         )
       }
-      this.adapters.set(runtime, adapter)
+      this.adapters.set(key, adapter)
     }
     return adapter
   }
 
   forNewLaunch(runtime: ResolvedAgentRuntime, harness: string): HarnessAdapter<TActivity> {
-    const entry = this.entries.get(runtime)
-    if (!entry) {
+    const resolved = this.resolveEntry(runtime, harness)
+    if (!resolved) {
       throw new RuntimeRegistryError(
         blockReason(
           "runtime-unavailable",
@@ -86,6 +94,7 @@ export class AgentRuntimeRegistry<
         ),
       )
     }
+    const [, entry] = resolved
     if (!entry.enabled) {
       throw new RuntimeRegistryError(
         blockReason(
@@ -97,14 +106,16 @@ export class AgentRuntimeRegistry<
         ),
       )
     }
-    return this.get(runtime)!
+    return this.get(runtime, harness)!
   }
 
   setEnabled(runtime: ResolvedAgentRuntime, enabled: boolean, reason?: string | null): void {
-    const entry = this.entries.get(runtime)
-    if (!entry) throw new Error(`Runtime adapter ${runtime} is not registered.`)
-    entry.enabled = enabled
-    entry.disabledReason = enabled ? null : (reason ?? entry.disabledReason)
+    const entries = [...this.entries.values()].filter((entry) => entry.runtime === runtime)
+    if (entries.length === 0) throw new Error(`Runtime adapter ${runtime} is not registered.`)
+    for (const entry of entries) {
+      entry.enabled = enabled
+      entry.disabledReason = enabled ? null : (reason ?? entry.disabledReason)
+    }
     for (const key of this.probes.keys()) {
       if (key.startsWith(`${runtime}\0`)) this.probes.delete(key)
     }
@@ -119,7 +130,12 @@ export class AgentRuntimeRegistry<
         return await this.forNewLaunch(runtime, harness).probe(harness)
       } catch (error) {
         if (!(error instanceof RuntimeRegistryError)) throw error
-        return unavailableProbe(runtime, harness, error.reason)
+        return unavailableProbe(
+          runtime,
+          harness,
+          error.reason,
+          this.resolveEntry(runtime, harness)?.[1].composition,
+        )
       }
     })()
     this.probes.set(key, { expiresAt: Number.POSITIVE_INFINITY, value })
@@ -136,29 +152,60 @@ export class AgentRuntimeRegistry<
   }
 
   async probeAll(harness: string): Promise<Record<ResolvedAgentRuntime, RuntimeAdapterProbe>> {
+    const runtimes = [...new Set([...this.entries.values()].map((entry) => entry.runtime))]
     const pairs = await Promise.all(
-      [...this.entries.keys()].map(
-        async (runtime) => [runtime, await this.probe(runtime, harness)] as const,
-      ),
+      runtimes.map(async (runtime) => [runtime, await this.probe(runtime, harness)] as const),
     )
     return Object.fromEntries(pairs) as Record<ResolvedAgentRuntime, RuntimeAdapterProbe>
   }
 
   list(): ReadonlyArray<{
     runtime: ResolvedAgentRuntime
+    harness?: string
     factory: HarnessAdapterFactory<TActivity>
   }> {
-    return [...this.entries.values()].map(({ runtime, factory }) => ({ runtime, factory }))
+    return [...this.entries.values()].map(({ runtime, harness, factory }) => ({
+      runtime,
+      ...(harness ? { harness } : {}),
+      factory,
+    }))
   }
 
   diagnostics(): RuntimeRegistryDiagnostic[] {
     return [...this.entries.values()].map((entry) => ({
       runtime: entry.runtime,
+      harness: entry.harness,
       enabled: entry.enabled,
-      instantiated: this.adapters.has(entry.runtime),
+      instantiated: this.adapters.has(entryKey(entry.runtime, entry.harness ?? undefined)),
       disabledReason: entry.disabledReason,
     }))
   }
+
+  private resolveEntry(
+    runtime: ResolvedAgentRuntime,
+    harness?: string,
+  ): [string, NormalizedRuntimeRegistryEntry<TActivity>] | null {
+    if (harness) {
+      const exactKey = entryKey(runtime, harness)
+      const exact = this.entries.get(exactKey)
+      if (exact) return [exactKey, exact]
+    }
+    const universalKey = entryKey(runtime)
+    const universal = this.entries.get(universalKey)
+    if (universal) return [universalKey, universal]
+    if (harness) return null
+    const matches = [...this.entries.entries()].filter(([, entry]) => entry.runtime === runtime)
+    return matches.length === 1 ? matches[0] : null
+  }
+}
+
+type NormalizedRuntimeRegistryEntry<TActivity> = Omit<
+  Required<RuntimeRegistryEntry<TActivity>>,
+  "harness" | "composition"
+> & { harness: string | null; composition: RuntimeAdapterCompositionSnapshot | null }
+
+function entryKey(runtime: ResolvedAgentRuntime, harness?: string): string {
+  return `${runtime}\0${harness ?? "*"}`
 }
 
 export function createAgentRuntimeRegistry<TActivity = unknown>(
@@ -171,6 +218,7 @@ function unavailableProbe(
   runtime: ResolvedAgentRuntime,
   harness: string,
   reason: RuntimeBlockReason,
+  composition?: RuntimeAdapterCompositionSnapshot | null,
 ): RuntimeAdapterProbe {
   return {
     runtime,
@@ -187,6 +235,7 @@ function unavailableProbe(
         subagentActivity: { supported: false, reason: reason.message },
         hookDiagnostics: { supported: false, reason: reason.message },
       },
+      ...(composition ? { composition } : {}),
       limitations: [reason.message],
       unavailableReason: reason,
     },

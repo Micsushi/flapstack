@@ -172,7 +172,16 @@ export function interpretRuntimeSnapshot(row: Record<string, unknown>): RuntimeS
 export function resolvedLaunchFromSnapshotRow(row: Record<string, unknown>): ResolvedRuntimeLaunch {
   const snapshot = interpretRuntimeSnapshot(row)
   const harness = String(row.harness)
-  const compatibility = checkRuntimeCompatibility(harness, snapshot.resolvedRuntime)
+  const capabilities = parseSnapshotJson<RuntimeCapabilitySnapshot>(
+    snapshot.runtimeCapabilitySnapshot,
+    snapshot.runtimeSnapshotVersion === 0 ? LEGACY_RUNTIME_CAPABILITIES : null,
+    "Runtime capability snapshot",
+  )
+  const compatibility = checkRuntimeCompatibility(
+    harness,
+    snapshot.resolvedRuntime,
+    capabilities.composition,
+  )
   if (!compatibility.compatible) throw new AgentRuntimeResolutionError(compatibility.reason)
   return {
     schemaVersion: 1,
@@ -186,11 +195,7 @@ export function resolvedLaunchFromSnapshotRow(row: Record<string, unknown>): Res
       adapterVersion: snapshot.runtimeAdapterVersion,
       protocolVersion: snapshot.runtimeProtocolVersion,
     },
-    capabilities: parseSnapshotJson(
-      snapshot.runtimeCapabilitySnapshot,
-      snapshot.runtimeSnapshotVersion === 0 ? LEGACY_RUNTIME_CAPABILITIES : null,
-      "Runtime capability snapshot",
-    ),
+    capabilities,
     controls: parseSnapshotJson(
       snapshot.runtimeControlSnapshot,
       snapshot.runtimeSnapshotVersion === 0 ? DEFAULT_RUNTIME_CONTROLS : null,

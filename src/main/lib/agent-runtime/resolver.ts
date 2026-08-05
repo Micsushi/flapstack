@@ -35,10 +35,24 @@ export class AgentRuntimeResolutionError extends Error {
 
 export function resolveAgentRuntime(input: RuntimeResolutionInput): RuntimeResolutionResult {
   const selected = selectPreference(input)
-  const compatibility = checkRuntimeCompatibility(input.harness, selected.runtime)
+  const probe = input.adapterProbes?.[selected.runtime]
+  if (probe && (probe.harness !== input.harness || probe.runtime !== selected.runtime)) {
+    return {
+      ok: false,
+      reason: unavailableReason(
+        input.harness,
+        selected.runtime,
+        "The Runtime adapter probe identity does not match the selected target.",
+      ),
+    }
+  }
+  const compatibility = checkRuntimeCompatibility(
+    input.harness,
+    selected.runtime,
+    probe?.capabilities.composition,
+  )
   if (!compatibility.compatible) return { ok: false, reason: compatibility.reason }
 
-  const probe = input.adapterProbes?.[selected.runtime]
   if (probe && !probe.available) {
     return {
       ok: false,

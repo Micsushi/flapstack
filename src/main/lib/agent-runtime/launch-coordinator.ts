@@ -355,7 +355,7 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
   async cancelPersisted(request: RuntimeLaunchRequest, reason: string): Promise<boolean> {
     if (this.active.has(request.runId)) return await this.cancel(request.runId, reason)
     validateRequest(request)
-    const adapter = this.registry.get(request.launch.resolvedRuntime)
+    const adapter = this.registry.get(request.launch.resolvedRuntime, request.launch.harness)
     if (!adapter) return false
     const controller = new AbortController()
     const context: RuntimeAdapterContext = {
@@ -425,7 +425,7 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
     validateRequest(request)
     const ownedState = this.runState(request.runId)
     if (ownedState) return reconciliationStateForOwned(ownedState)
-    const adapter = this.registry.get(request.launch.resolvedRuntime)
+    const adapter = this.registry.get(request.launch.resolvedRuntime, request.launch.harness)
     if (!adapter) return "uncertain"
     const context: RuntimeAdapterContext = {
       runId: request.runId,
