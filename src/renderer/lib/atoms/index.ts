@@ -1,6 +1,7 @@
 import { atom } from "jotai"
 import { atomWithStorage } from "jotai/utils"
 import { desktopViewAtom as _desktopViewAtom } from "../../features/agents/atoms"
+import type { CodexThreadVisibility } from "../../../shared/codex-thread-visibility"
 
 // ============================================
 // RE-EXPORT FROM FEATURES/AGENTS/ATOMS (source of truth)
@@ -342,6 +343,13 @@ export const activeConfigAtom = atom((get) => {
 export const reasoningOutputEnabledAtom = atomWithStorage<boolean>(
   "preferences:extended-thinking-enabled",
   true,
+  undefined,
+  { getOnInit: true },
+)
+
+export const codexThreadVisibilityAtom = atomWithStorage<CodexThreadVisibility>(
+  "agents:codex-thread-visibility",
+  "hidden",
   undefined,
   { getOnInit: true },
 )

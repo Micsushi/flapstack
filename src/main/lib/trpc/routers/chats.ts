@@ -12,7 +12,18 @@ import {
   trackWorkspaceCreated,
   trackWorkspaceDeleted,
 } from "../../analytics"
-import { agentRuns, chats, getDatabase, getDatabasePath, projects, subChats, tasks } from "../../db"
+import {
+  agentRuns,
+  chats,
+  chatTagAssignments,
+  chatTags,
+  getDatabase,
+  getDatabasePath,
+  projects,
+  subChats,
+  tasks,
+} from "../../db"
+import { CHAT_TAG_COLORS } from "../../chat-tags"
 import { restoreCheckpoint } from "../../checkpoints"
 import {
   createWorktreeForChat,
@@ -70,6 +81,13 @@ const newChatPermissionModeSchema = z.enum([
   "auto-edit-project-only",
   "full-access",
 ])
+const chatTagColorSchema = z.enum(CHAT_TAG_COLORS)
+
+function normalizedTagName(name: string) {
+  const clean = name.trim().replace(/\s+/g, " ")
+  if (!clean) throw new Error("Tag name is required")
+  return { name: clean, normalizedName: clean.toLocaleLowerCase() }
+}
 
 const runtimeDelegationInputSchema = z.object({
   sourceChatId: z.string().trim().min(1).max(200),
@@ -453,6 +471,78 @@ export const chatsRouter = router({
         .where(and(...conditions))
         .orderBy(desc(chats.archivedAt))
         .all()
+    }),
+
+  listTags: publicProcedure.query(() => {
+    return getDatabase().select().from(chatTags).orderBy(chatTags.normalizedName).all()
+  }),
+
+  listTagAssignments: publicProcedure.query(() => {
+    return getDatabase()
+      .select({ chatId: chatTagAssignments.chatId, tag: chatTags })
+      .from(chatTagAssignments)
+      .innerJoin(chatTags, eq(chatTagAssignments.tagId, chatTags.id))
+      .orderBy(chatTags.normalizedName, chatTags.id)
+      .all()
+  }),
+
+  createTag: publicProcedure
+    .input(z.object({ name: z.string().max(32), color: chatTagColorSchema }))
+    .mutation(({ input }) => {
+      const names = normalizedTagName(input.name)
+      try {
+        return getDatabase()
+          .insert(chatTags)
+          .values({ ...names, color: input.color })
+          .returning()
+          .get()
+      } catch (error) {
+        if (error instanceof Error && /unique/i.test(error.message)) {
+          throw new Error(`A tag named '${names.name}' already exists`)
+        }
+        throw error
+      }
+    }),
+
+  updateTag: publicProcedure
+    .input(z.object({ id: z.string(), name: z.string().max(32), color: chatTagColorSchema }))
+    .mutation(({ input }) => {
+      const names = normalizedTagName(input.name)
+      const updated = getDatabase()
+        .update(chatTags)
+        .set({ ...names, color: input.color, updatedAt: new Date() })
+        .where(eq(chatTags.id, input.id))
+        .returning()
+        .get()
+      if (!updated) throw new Error("Tag not found")
+      return updated
+    }),
+
+  deleteTag: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
+    getDatabase().delete(chatTags).where(eq(chatTags.id, input.id)).run()
+    return { success: true }
+  }),
+
+  assignTag: publicProcedure
+    .input(z.object({ chatId: z.string(), tagId: z.string() }))
+    .mutation(({ input }) => {
+      getDatabase().insert(chatTagAssignments).values(input).onConflictDoNothing().run()
+      return { success: true }
+    }),
+
+  unassignTag: publicProcedure
+    .input(z.object({ chatId: z.string(), tagId: z.string() }))
+    .mutation(({ input }) => {
+      getDatabase()
+        .delete(chatTagAssignments)
+        .where(
+          and(
+            eq(chatTagAssignments.chatId, input.chatId),
+            eq(chatTagAssignments.tagId, input.tagId),
+          ),
+        )
+        .run()
+      return { success: true }
     }),
 
   /**

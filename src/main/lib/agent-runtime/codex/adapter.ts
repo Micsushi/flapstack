@@ -23,6 +23,7 @@ import {
   type CodexProtocolServerRequest,
 } from "./protocol-client"
 import { sanitizeRuntimeText } from "../sanitizer"
+import type { CodexThreadVisibility } from "../../../../shared/codex-thread-visibility"
 
 const execFileAsync = promisify(execFile)
 const PERMISSION_TIMEOUT_MS = 60_000
@@ -43,6 +44,7 @@ type CodexRunState = {
   abortListener: (() => void) | null
   cancellationPromise: Promise<void> | null
   cancelled: boolean
+  archived: boolean
 }
 
 type CodexRuntimeAdapterOptions = {
@@ -55,6 +57,9 @@ type CodexRuntimeAdapterOptions = {
     context: RuntimeAdapterContext,
     prompt: string,
   ) => Promise<unknown[]> | unknown[]
+  resolveThreadVisibility?: (
+    context: RuntimeAdapterContext,
+  ) => Promise<CodexThreadVisibility> | CodexThreadVisibility
   resolvePersistedSession?: (
     context: RuntimeAdapterContext,
   ) => Promise<RuntimeAdapterSession | null> | RuntimeAdapterSession | null
@@ -185,7 +190,13 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
         await this.options.resolveThreadParams(context, "resume"),
         context.launch.controls.serviceTier,
       )
-      const response = record(await state.client.request("thread/resume", { ...params, threadId }))
+      let response: Record<string, unknown>
+      try {
+        response = record(await state.client.request("thread/resume", { ...params, threadId }))
+      } catch {
+        await state.client.request("thread/unarchive", { threadId })
+        response = record(await state.client.request("thread/resume", { ...params, threadId }))
+      }
       this.captureThread(state, response, "thread/resume")
       return sessionFromState(state)
     } catch (error) {
@@ -391,6 +402,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     if (!state.terminal || state.uncertain) {
       throw new Error("[codex-runtime] Cannot complete before a certain terminal turn event.")
     }
+    await this.archiveHiddenThread(state)
   }
 
   async reconcile(context: RuntimeAdapterContext): Promise<"running" | "completed" | "uncertain"> {
@@ -424,6 +436,9 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     this.states.delete(context.runId)
     try {
       await state.cancellationPromise?.catch(() => undefined)
+      if ((state.terminal || state.cancelled) && !state.uncertain) {
+        await this.archiveHiddenThread(state)
+      }
     } finally {
       await state.client.close()
     }
@@ -454,6 +469,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       abortListener: null,
       cancellationPromise: null,
       cancelled: false,
+      archived: false,
     }
     client.setRequestHandler((request) => this.handleServerRequest(context, request))
     this.states.set(context.runId, state)
@@ -553,6 +569,21 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
   private assertContext(context: RuntimeAdapterContext): void {
     if (context.launch.harness !== "codex" || context.launch.resolvedRuntime !== "codex") {
       throw new Error("[codex-runtime] Launch snapshot is not a resolved Codex Runtime.")
+    }
+  }
+
+  private async archiveHiddenThread(state: CodexRunState): Promise<void> {
+    if (state.archived || !state.threadId) return
+    const visibility = (await this.options.resolveThreadVisibility?.(state.context)) ?? "project"
+    if (visibility !== "hidden") return
+    try {
+      await state.client.request("thread/archive", { threadId: state.threadId })
+      state.archived = true
+    } catch (error) {
+      this.options.onDiagnostic?.(
+        state.context,
+        `Could not hide completed Codex task: ${safeMessage(error)}`,
+      )
     }
   }
 

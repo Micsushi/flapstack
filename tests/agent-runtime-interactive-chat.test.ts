@@ -69,12 +69,14 @@ describe("interactive Runtime launch bridge", () => {
         mode: "write",
         reasoningEffort,
         reasoningEnabled: true,
+        codexThreadVisibility: "hidden",
       })
 
       expect(run).toMatchObject({
         runId: "run",
         harness,
         model,
+        codexThreadVisibility: "hidden",
         runtimeLaunch: {
           resolvedRuntime: runtime,
           controls: { modelEffort: reasoningEffort },

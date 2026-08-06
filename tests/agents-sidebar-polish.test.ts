@@ -10,9 +10,15 @@ describe("agents sidebar polish", () => {
     expect(source).toContain("group-focus-within:opacity-100")
   })
 
-  it("uses less top padding and more bottom padding for chat rows", () => {
-    expect(source).toContain("text-left pt-0.5 pb-1.5 cursor-pointer group relative")
+  it("uses halved asymmetric vertical padding for chat rows", () => {
+    expect(source).toContain("text-left pt-px pb-[3px] cursor-pointer group relative")
     expect(source).not.toContain("text-left py-1 cursor-pointer group relative")
+  })
+
+  it("marks Chats that belong to a saved group", () => {
+    expect(source).toContain("isInWorkbenchGroup")
+    expect(source).toContain('aria-label="In Chat group"')
+    expect(source).toContain("<PanelsTopLeft")
   })
 
   it("gives the icon-only Settings action an accessible name", () => {

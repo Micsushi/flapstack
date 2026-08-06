@@ -6,6 +6,7 @@ import { createHash } from "node:crypto"
 import { randomUUID } from "node:crypto"
 import { AGENT_HARNESSES, type AgentHarness } from "../../shared/harness-types"
 import type { ResolvedRuntimeLaunch } from "../../shared/agent-runtime"
+import type { CodexThreadVisibility } from "../../shared/codex-thread-visibility"
 import type { AgentProfileRuntimeAuthority } from "../../shared/agent-profiles"
 import { resolvedLaunchFromSnapshotRow } from "./agent-runtime/snapshot"
 import { redactMcpAuditSummary } from "./mcp-control/audit-storage"
@@ -43,6 +44,7 @@ export type QueuedAgentRun = {
   customPermissions: string | null
   worktreePath: string | null
   projectPath: string | null
+  codexThreadVisibility?: CodexThreadVisibility
   localEndpoint?: string
   requiredLocalToolTiers?: Array<"read" | "project-write" | "shell" | "git" | "network">
   runtimeLaunch?: ResolvedRuntimeLaunch

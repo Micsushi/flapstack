@@ -69,6 +69,18 @@ describe("visible parent chat tabs", () => {
       }),
     ).toEqual([archivedChat, chats[1]])
   })
+
+  it("removes chats owned by saved multi-pane groups from the main tab strip", () => {
+    expect(
+      resolveVisibleOpenChatTabs({
+        chats,
+        openChatIds: ["one", "two"],
+        selectedChatId: "one",
+        selectedChatIsRemote: false,
+        excludedChatIds: new Set(["one"]),
+      }),
+    ).toEqual([chats[1]])
+  })
 })
 
 describe("open parent chat tab underline", () => {

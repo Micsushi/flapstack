@@ -1514,6 +1514,56 @@ export const chatsRelations = relations(chats, ({ one, many }) => ({
   subChats: many(subChats),
   runs: many(agentRuns),
   attachments: many(attachments),
+  tagAssignments: many(chatTagAssignments),
+}))
+
+// Reusable user-defined labels for top-level chats. Color is a semantic token,
+// not a raw hex value, so chips remain legible in every theme.
+export const chatTags = sqliteTable(
+  "chat_tags",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    color: text("color").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("chat_tags_normalized_name_idx").on(table.normalizedName),
+    check(
+      "chat_tags_color_check",
+      sql`${table.color} in ('slate','blue','cyan','green','amber','orange','rose','violet')`,
+    ),
+  ],
+)
+
+export const chatTagAssignments = sqliteTable(
+  "chat_tag_assignments",
+  {
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    tagId: text("tag_id")
+      .notNull()
+      .references(() => chatTags.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ columns: [table.chatId, table.tagId] }),
+    index("chat_tag_assignments_tag_idx").on(table.tagId, table.chatId),
+  ],
+)
+
+export const chatTagsRelations = relations(chatTags, ({ many }) => ({
+  assignments: many(chatTagAssignments),
+}))
+
+export const chatTagAssignmentsRelations = relations(chatTagAssignments, ({ one }) => ({
+  chat: one(chats, { fields: [chatTagAssignments.chatId], references: [chats.id] }),
+  tag: one(chatTags, { fields: [chatTagAssignments.tagId], references: [chatTags.id] }),
 }))
 
 // ============ SUB-CHATS ============

@@ -6,6 +6,8 @@ import { trpc, trpcClient } from "../../../lib/trpc"
 import { RuntimeActivityChatChunkMapper } from "./runtime-activity-chat-chunks"
 import { directRuntimeFinishMetadata } from "./runtime-finish-metadata"
 import { RuntimeResponseLabelFilter, RuntimeTextChatChunkMapper } from "./runtime-text-chat-chunks"
+import { codexThreadVisibilityAtom } from "../../../lib/atoms"
+import { appStore } from "../../../lib/jotai-store"
 
 type DirectRuntimeHarness = "codex" | "claude-code"
 type RuntimeEffort = "minimal" | "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
@@ -106,6 +108,7 @@ export async function createDirectRuntimeStream(input: {
           mode: input.mode,
           reasoningEffort: input.reasoningEffort,
           reasoningEnabled: input.reasoningEnabled,
+          codexThreadVisibility: appStore.get(codexThreadVisibilityAtom),
           ...(input.vaultContextGraphSelection
             ? { vaultContextGraphSelection: input.vaultContextGraphSelection }
             : {}),

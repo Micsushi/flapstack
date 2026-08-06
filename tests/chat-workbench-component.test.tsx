@@ -10,7 +10,13 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 function dragEvent(
   type: string,
   data: Record<string, string>,
-  options: { dropEffect?: DataTransfer["dropEffect"]; screenX?: number; screenY?: number } = {},
+  options: {
+    dropEffect?: DataTransfer["dropEffect"]
+    screenX?: number
+    screenY?: number
+    clientX?: number
+    clientY?: number
+  } = {},
 ) {
   const values = new Map(Object.entries(data))
   const dataTransfer = {
@@ -18,12 +24,15 @@ function dragEvent(
     effectAllowed: "all",
     getData: (format: string) => values.get(format) ?? "",
     setData: (format: string, value: string) => values.set(format, value),
+    setDragImage: vi.fn(),
   } as DataTransfer
   const event = new Event(type, { bubbles: true, cancelable: true })
   Object.defineProperties(event, {
     dataTransfer: { value: dataTransfer },
     screenX: { value: options.screenX ?? 0 },
     screenY: { value: options.screenY ?? 0 },
+    clientX: { value: options.clientX ?? 0 },
+    clientY: { value: options.clientY ?? 0 },
   })
   return { event, dataTransfer }
 }
@@ -75,6 +84,92 @@ describe("ChatWorkbench", () => {
     expect(container.querySelectorAll("textarea")).toHaveLength(4)
     expect(renderChat.mock.calls.map(([chatId]) => chatId).sort()).toEqual(["a", "b", "c", "d"])
     expect(container.querySelectorAll('[role="tablist"]')).toHaveLength(4)
+    expect(container.textContent).not.toContain("Group 1")
+    expect(container.textContent).not.toContain("Group 2")
+  })
+
+  it("uses the compact hover scrollbar inside every pane tab bar", async () => {
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: ["a", "b", "c"].map((id) => ({ id, name: `Chat ${id}` })),
+          layout: createChatWorkbenchLayout(["a", "b", "c"]),
+          onLayoutChange: vi.fn(),
+          onActiveChatChange: vi.fn(),
+          renderChat: (chatId: string) => createElement("div", null, chatId),
+        }),
+      ),
+    )
+
+    expect(container.querySelector("[data-chat-pane-scrollbar]")).not.toBeNull()
+    expect(container.querySelector('[role="tablist"]')?.className).toContain("scrollbar-hide")
+  })
+
+  it("offers move and new-group actions when a pane tab is right-clicked", async () => {
+    const onCreateGroupFromChat = vi.fn()
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: [{ id: "a", name: "Chat a" }],
+          layout: createChatWorkbenchLayout(["a"]),
+          savedGroups: [
+            { id: "current", name: "Current group" },
+            { id: "other", name: "Other group" },
+          ],
+          activeSavedGroupId: "current",
+          onMoveChatToMainBar: vi.fn(),
+          onMoveChatToGroup: vi.fn(),
+          onCreateGroupFromChat,
+          onLayoutChange: vi.fn(),
+          onActiveChatChange: vi.fn(),
+          renderChat: (chatId: string) => createElement("div", null, chatId),
+        }),
+      ),
+    )
+
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>('[role="tab"]')!
+        .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 20 }))
+    })
+    const items = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+    expect(items.map((item) => item.textContent)).toEqual(
+      expect.arrayContaining(["Move", "Add to new group", "Close presentation"]),
+    )
+
+    const create = items.find((item) => item.textContent === "Add to new group")!
+    await act(async () => create.click())
+    expect(onCreateGroupFromChat).toHaveBeenCalledWith("a")
+  })
+
+  it("shows an unseen completion dot in the close position until the pane is used", async () => {
+    const onChatViewed = vi.fn()
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: [{ id: "a", name: "Chat a", hasUnseenChanges: true }],
+          layout: createChatWorkbenchLayout(["a"]),
+          onChatViewed,
+          onLayoutChange: vi.fn(),
+          onActiveChatChange: vi.fn(),
+          renderChat: (chatId: string) => createElement("div", null, chatId),
+        }),
+      ),
+    )
+
+    expect(container.querySelector('[data-chat-unseen-indicator="a"]')).not.toBeNull()
+    expect(
+      container
+        .querySelector('[aria-label="Close Chat a presentation"] svg')
+        ?.getAttribute("class"),
+    ).toContain("opacity-0")
+
+    await act(async () =>
+      container
+        .querySelector<HTMLElement>('[role="region"]')!
+        .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })),
+    )
+    expect(onChatViewed).toHaveBeenCalledWith("a")
   })
 
   it("offers keyboard split and announces the exact committed state", async () => {
@@ -188,7 +283,6 @@ describe("ChatWorkbench", () => {
   })
 
   it("keeps transfer actions unavailable until a read-only Chat takes ownership", async () => {
-    const move = vi.fn()
     const claim = vi.fn().mockResolvedValue("Chat ownership moved here.")
     await act(async () =>
       root.render(
@@ -196,7 +290,6 @@ describe("ChatWorkbench", () => {
           chats: [{ id: "a", name: "Chat a" }],
           layout: createChatWorkbenchLayout(["a"]),
           readOnlyChatIds: new Set(["a"]),
-          onMoveToNewWindow: move,
           onClaimOwnership: claim,
           onLayoutChange: vi.fn(),
           onActiveChatChange: vi.fn(),
@@ -219,14 +312,12 @@ describe("ChatWorkbench", () => {
     )
   })
 
-  it("reports a rejected editable transfer without an unhandled promise", async () => {
-    const move = vi.fn().mockRejectedValue(new Error("Destination window is unavailable."))
+  it("keeps window transfer commands out of the pane menu", async () => {
     await act(async () =>
       root.render(
         createElement(ChatWorkbench, {
           chats: [{ id: "a", name: "Chat a" }],
           layout: createChatWorkbenchLayout(["a"]),
-          onMoveToNewWindow: move,
           onLayoutChange: vi.fn(),
           onActiveChatChange: vi.fn(),
           renderChat: (chatId: string) => createElement("div", null, chatId),
@@ -235,13 +326,12 @@ describe("ChatWorkbench", () => {
     )
 
     await openPaneOptions()
-    const moveButton = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-      (button) => button.textContent === "Move to new window",
-    )!
-    await act(async () => moveButton.click())
-    expect(container.querySelector('[role="status"]')?.textContent).toContain(
-      "Destination window is unavailable.",
+    const commands = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].map(
+      (button) => button.textContent,
     )
+    expect(commands).not.toContain("Move to new window")
+    expect(commands).not.toContain("Open read-only copy")
+    expect(commands).not.toContain("Move to existing window…")
   })
 
   it("uses a twelve-pixel pointer target around the visible split divider", async () => {
@@ -292,7 +382,7 @@ describe("ChatWorkbench", () => {
     ).toEqual(["33", "67"])
   })
 
-  it("routes an exact cross-window edge drop through the atomic transfer callback", async () => {
+  it("routes a contextual cross-window edge drop through the atomic transfer callback", async () => {
     const onCrossWindowDrop = vi.fn().mockResolvedValue("Moving Chat into the right pane")
     const onLayoutChange = vi.fn()
     await act(async () =>
@@ -314,27 +404,39 @@ describe("ChatWorkbench", () => {
       groupId: "source-group",
       sourceWindowId: "main",
     })
-    const region = container.querySelector<HTMLElement>('[role="tablist"]')!
+    const region = container.querySelector<HTMLElement>('[role="region"]')!
+    vi.spyOn(region, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 600,
+      width: 800,
+      height: 600,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
     await act(async () => {
       region.dispatchEvent(
-        dragEvent("dragover", {
-          "application/x-flapstack-chat-workbench": payload,
-        }).event,
+        dragEvent(
+          "dragover",
+          { "application/x-flapstack-chat-workbench": payload },
+          { clientX: 795, clientY: 300 },
+        ).event,
       )
     })
-    const right = container.querySelector<HTMLElement>('[data-chat-drop-zone="right"]')!
+    const overlay = container.querySelector<HTMLElement>('[data-chat-drop-overlay="right"]')!
+    expect(overlay).not.toBeNull()
+    expect(overlay.style.left).toBe("50%")
+    expect(overlay.style.width).toBe("50%")
+    expect(container.querySelector("[data-chat-drop-zone]")).toBeNull()
     await act(async () => {
-      right.dispatchEvent(
-        dragEvent("dragover", {
-          "application/x-flapstack-chat-workbench": payload,
-        }).event,
-      )
-    })
-    await act(async () => {
-      right.dispatchEvent(
-        dragEvent("drop", {
-          "application/x-flapstack-chat-workbench": payload,
-        }).event,
+      region.dispatchEvent(
+        dragEvent(
+          "drop",
+          { "application/x-flapstack-chat-workbench": payload },
+          { clientX: 795, clientY: 300 },
+        ).event,
       )
     })
 
@@ -343,6 +445,367 @@ describe("ChatWorkbench", () => {
       { groupId: "chat-group-1", zone: "right" },
     )
     expect(onLayoutChange).not.toHaveBeenCalled()
+  })
+
+  it("moves one VS Code-style preview rectangle between edge and center targets", async () => {
+    const onCrossWindowDrop = vi.fn().mockResolvedValue("Moved")
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: [{ id: "b", name: "Chat b" }],
+          layout: createChatWorkbenchLayout(["b"]),
+          windowId: "window-2",
+          onCrossWindowDrop,
+          onLayoutChange: vi.fn(),
+          onActiveChatChange: vi.fn(),
+          renderChat: (chatId: string) => createElement("div", null, chatId),
+        }),
+      ),
+    )
+    const pane = container.querySelector<HTMLElement>('[role="region"]')!
+    vi.spyOn(pane, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 600,
+      width: 800,
+      height: 600,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const payload = JSON.stringify({ chatId: "a", groupId: "source", sourceWindowId: "main" })
+    await act(async () => {
+      pane.dispatchEvent(
+        dragEvent(
+          "dragover",
+          { "application/x-flapstack-chat-workbench": payload },
+          { clientX: 160, clientY: 300 },
+        ).event,
+      )
+    })
+    const leftOverlay = container.querySelector<HTMLElement>('[data-chat-drop-overlay="left"]')!
+    expect(leftOverlay).not.toBeNull()
+    expect(leftOverlay.style.width).toBe("50%")
+    expect(leftOverlay.style.height).toBe("calc(100% - 40px)")
+    await act(async () => {
+      pane.dispatchEvent(
+        dragEvent(
+          "dragover",
+          { "application/x-flapstack-chat-workbench": payload },
+          { clientX: 400, clientY: 300 },
+        ).event,
+      )
+    })
+    const centerOverlay = container.querySelector<HTMLElement>('[data-chat-drop-overlay="tab"]')!
+    expect(centerOverlay).toBe(leftOverlay)
+    expect(centerOverlay.style.width).toBe("100%")
+    expect(centerOverlay.style.height).toBe("calc(100% - 40px)")
+    await act(async () => {
+      pane.dispatchEvent(
+        dragEvent(
+          "drop",
+          { "application/x-flapstack-chat-workbench": payload },
+          { clientX: 160, clientY: 300 },
+        ).event,
+      )
+    })
+    expect(onCrossWindowDrop).toHaveBeenCalledWith(
+      { chatId: "a", groupId: "source", sourceWindowId: "main" },
+      { groupId: "chat-group-1", zone: "left" },
+    )
+  })
+
+  it("does not rerender an active Chat for repeated dragover events in the same drop zone", async () => {
+    const renderChat = vi.fn((chatId: string) => createElement("div", null, chatId))
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: ["a", "b"].map((id) => ({ id, name: `Chat ${id}` })),
+          layout: createChatWorkbenchLayout(["a", "b"], "a"),
+          onLayoutChange: vi.fn(),
+          onActiveChatChange: vi.fn(),
+          renderChat,
+        }),
+      ),
+    )
+    const pane = container.querySelector<HTMLElement>('[role="region"]')!
+    vi.spyOn(pane, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 600,
+      width: 800,
+      height: 600,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const payload = JSON.stringify({
+      chatId: "b",
+      groupId: "chat-group-1",
+      sourceWindowId: "main",
+    })
+    const initialRenderCount = renderChat.mock.calls.length
+
+    for (let index = 0; index < 3; index += 1) {
+      await act(async () => {
+        pane.dispatchEvent(
+          dragEvent(
+            "dragover",
+            { "application/x-flapstack-chat-workbench": payload },
+            { clientX: 10, clientY: 300 },
+          ).event,
+        )
+      })
+    }
+
+    expect(renderChat).toHaveBeenCalledTimes(initialRenderCount)
+  })
+
+  it("uses the dragged-over tab midpoint as the insertion position", async () => {
+    const onLayoutChange = vi.fn()
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: ["a", "b", "c"].map((id) => ({ id, name: `Chat ${id}` })),
+          layout: createChatWorkbenchLayout(["a", "b", "c"]),
+          onLayoutChange,
+          onActiveChatChange: vi.fn(),
+          renderChat: (chatId: string) => createElement("div", null, chatId),
+        }),
+      ),
+    )
+    const tabs = container.querySelectorAll<HTMLElement>('[draggable="true"]:not([role="tablist"])')
+    vi.spyOn(tabs[1], "getBoundingClientRect").mockReturnValue({
+      left: 100,
+      right: 300,
+      top: 0,
+      bottom: 32,
+      width: 200,
+      height: 32,
+      x: 100,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const started = dragEvent("dragstart", {}, { screenX: 20, screenY: 20 })
+    await act(async () => tabs[0].dispatchEvent(started.event))
+    const payload = started.dataTransfer.getData("application/x-flapstack-chat-workbench")
+    await act(async () => {
+      tabs[1].dispatchEvent(
+        dragEvent(
+          "dragover",
+          { "application/x-flapstack-chat-workbench": payload },
+          { clientX: 280, clientY: 12 },
+        ).event,
+      )
+    })
+    expect(tabs[1].getAttribute("data-chat-tab-drop-side")).toBe("right")
+    await act(async () => {
+      tabs[1].dispatchEvent(
+        dragEvent(
+          "drop",
+          { "application/x-flapstack-chat-workbench": payload },
+          { clientX: 280, clientY: 12 },
+        ).event,
+      )
+    })
+    expect(onLayoutChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        root: expect.objectContaining({ chatIds: ["b", "a", "c"] }),
+      }),
+      expect.objectContaining({ type: "move-tab", chatId: "a", toIndex: 2 }),
+    )
+  })
+
+  it("uses the middle half of a pane tab to move the Chat into that pane", async () => {
+    const onLayoutChange = vi.fn()
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: ["a", "b", "c"].map((id) => ({ id, name: `Chat ${id}` })),
+          layout: createChatWorkbenchLayout(["a", "b", "c"]),
+          onLayoutChange,
+          onActiveChatChange: vi.fn(),
+          renderChat: (chatId: string) => createElement("div", null, chatId),
+        }),
+      ),
+    )
+    const tabs = container.querySelectorAll<HTMLElement>('[draggable="true"]:not([role="tablist"])')
+    vi.spyOn(tabs[1], "getBoundingClientRect").mockReturnValue({
+      left: 100,
+      right: 300,
+      top: 0,
+      bottom: 32,
+      width: 200,
+      height: 32,
+      x: 100,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const started = dragEvent("dragstart", {}, { screenX: 20, screenY: 20 })
+    await act(async () => tabs[0].dispatchEvent(started.event))
+    const payload = started.dataTransfer.getData("application/x-flapstack-chat-workbench")
+    await act(async () =>
+      tabs[1].dispatchEvent(
+        dragEvent(
+          "dragover",
+          { "application/x-flapstack-chat-workbench": payload },
+          { clientX: 200, clientY: 12 },
+        ).event,
+      ),
+    )
+    expect(tabs[1].getAttribute("data-chat-tab-drop-side")).toBe("inside")
+    expect(tabs[1].querySelector("[data-chat-tab-insertion]")).toBeNull()
+    await act(async () =>
+      tabs[1].dispatchEvent(
+        dragEvent(
+          "drop",
+          { "application/x-flapstack-chat-workbench": payload },
+          { clientX: 200, clientY: 12 },
+        ).event,
+      ),
+    )
+    expect(onLayoutChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        root: expect.objectContaining({ activeChatId: "a", chatIds: ["b", "c", "a"] }),
+      }),
+      expect.objectContaining({ type: "move-tab", chatId: "a", toIndex: undefined }),
+    )
+  })
+
+  it("drags the blank tab strip to move the entire pane with a contextual preview", async () => {
+    const layout = reduceChatWorkbench(createChatWorkbenchLayout(["a", "b"]), {
+      type: "apply-preset",
+      preset: "two-columns",
+    }).layout
+    const onLayoutChange = vi.fn()
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: ["a", "b"].map((id) => ({ id, name: `Chat ${id}` })),
+          layout,
+          onLayoutChange,
+          onActiveChatChange: vi.fn(),
+          renderChat: (chatId: string) => createElement("div", null, chatId),
+        }),
+      ),
+    )
+    const tabStrips = container.querySelectorAll<HTMLElement>("[data-chat-group-drag-handle]")
+    const panes = container.querySelectorAll<HTMLElement>('[role="region"]')
+    vi.spyOn(panes[1], "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 600,
+      width: 800,
+      height: 600,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const started = dragEvent("dragstart", {}, { screenX: 20, screenY: 20 })
+    await act(async () => tabStrips[0].dispatchEvent(started.event))
+    const payload = started.dataTransfer.getData("application/x-flapstack-chat-workbench")
+    await act(async () => {
+      panes[1].dispatchEvent(
+        dragEvent(
+          "dragover",
+          { "application/x-flapstack-chat-workbench": payload },
+          { clientX: 795, clientY: 300 },
+        ).event,
+      )
+    })
+    expect(panes[1].querySelector('[data-chat-drop-overlay="right"]')).not.toBeNull()
+    await act(async () => {
+      panes[1].dispatchEvent(
+        dragEvent(
+          "drop",
+          { "application/x-flapstack-chat-workbench": payload },
+          { clientX: 795, clientY: 300 },
+        ).event,
+      )
+    })
+    expect(onLayoutChange).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "move-group",
+        fromGroupId: "chat-group-1",
+        toGroupId: "chat-group-2",
+        zone: "right",
+      }),
+    )
+  })
+
+  it("creates a split when a same-window sidebar Chat is dragged onto a pane edge", async () => {
+    const onLayoutChange = vi.fn()
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: [
+            { id: "a", name: "Chat a" },
+            { id: "b", name: "Chat b" },
+          ],
+          layout: createChatWorkbenchLayout(["b"]),
+          windowId: "main",
+          onLayoutChange,
+          onActiveChatChange: vi.fn(),
+          renderChat: (chatId: string) => createElement("div", null, chatId),
+        }),
+      ),
+    )
+    const pane = container.querySelector<HTMLElement>('[role="region"]')!
+    vi.spyOn(pane, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 600,
+      width: 800,
+      height: 600,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const payload = JSON.stringify({ chatId: "a", groupId: "sidebar", sourceWindowId: "main" })
+    await act(async () => {
+      pane.dispatchEvent(
+        dragEvent(
+          "dragover",
+          { "application/x-flapstack-chat-workbench": payload },
+          { clientX: 160, clientY: 300 },
+        ).event,
+      )
+    })
+    await act(async () => {
+      pane.dispatchEvent(
+        dragEvent(
+          "drop",
+          { "application/x-flapstack-chat-workbench": payload },
+          { clientX: 160, clientY: 300 },
+        ).event,
+      )
+    })
+
+    expect(onLayoutChange).toHaveBeenCalledWith(
+      expect.objectContaining({ root: expect.objectContaining({ type: "split" }) }),
+      expect.objectContaining({ type: "split", chatId: "a", zone: "left" }),
+    )
+  })
+
+  it("removes explicit layout and pop-out buttons from pane headers", async () => {
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: [{ id: "a", name: "Chat a" }],
+          layout: createChatWorkbenchLayout(["a"]),
+          onLayoutChange: vi.fn(),
+          onActiveChatChange: vi.fn(),
+          renderChat: (chatId: string) => createElement("div", null, chatId),
+        }),
+      ),
+    )
+    expect(container.querySelector('[aria-label="Choose Chat layout"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Move active Chat to new window"]')).toBeNull()
   })
 
   it("offers a floating window only after a thresholded outside drag", async () => {
@@ -364,6 +827,12 @@ describe("ChatWorkbench", () => {
     const tab = container.querySelector<HTMLElement>('[role="tab"]')!
     const started = dragEvent("dragstart", {}, { screenX: 100, screenY: 100 })
     await act(async () => tab.dispatchEvent(started.event))
+    expect(started.dataTransfer.effectAllowed).toBe("copyMove")
+    expect(started.dataTransfer.getData("text/plain")).toBe("Chat a")
+    expect(started.dataTransfer.setDragImage).toHaveBeenCalledOnce()
+    expect(
+      (vi.mocked(started.dataTransfer.setDragImage).mock.calls[0]?.[0] as HTMLElement).textContent,
+    ).toContain("+")
     const ended = dragEvent("dragend", {}, { dropEffect: "none", screenX: 160, screenY: 160 })
     await act(async () => tab.dispatchEvent(ended.event))
 
@@ -406,25 +875,46 @@ describe("ChatWorkbench", () => {
     expect(onLayoutChange).not.toHaveBeenCalled()
   })
 
-  it("exposes an explicit existing-window destination affordance", async () => {
-    const onMoveToExistingWindow = vi.fn().mockResolvedValue("Choose a destination.")
+  it("does not advertise a fifth split when four panes are already open", async () => {
+    const layout = reduceChatWorkbench(createChatWorkbenchLayout(["a", "b", "c", "d"]), {
+      type: "apply-preset",
+      preset: "grid-2x2",
+    }).layout
     await act(async () =>
       root.render(
         createElement(ChatWorkbench, {
-          chats: [{ id: "a", name: "Chat a" }],
-          layout: createChatWorkbenchLayout(["a"]),
-          onMoveToExistingWindow,
+          chats: ["a", "b", "c", "d", "outside"].map((id) => ({ id, name: `Chat ${id}` })),
+          layout,
           onLayoutChange: vi.fn(),
           onActiveChatChange: vi.fn(),
           renderChat: (chatId: string) => createElement("div", null, chatId),
         }),
       ),
     )
-    await openPaneOptions()
-    const move = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-      (button) => button.textContent === "Move to existing window…",
-    )!
-    await act(async () => move.click())
-    expect(onMoveToExistingWindow).toHaveBeenCalledWith("a", "chat-group-1")
+    const pane = container.querySelector<HTMLElement>('[role="region"]')!
+    vi.spyOn(pane, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 600,
+      width: 800,
+      height: 600,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const payload = JSON.stringify({
+      chatId: "outside",
+      groupId: "sidebar",
+      sourceWindowId: "main",
+    })
+    const dragging = dragEvent(
+      "dragover",
+      { "application/x-flapstack-chat-workbench": payload },
+      { clientX: 80, clientY: 300 },
+    )
+    await act(async () => pane.dispatchEvent(dragging.event))
+    expect(container.querySelector("[data-chat-drop-overlay]")).toBeNull()
+    expect(dragging.dataTransfer.dropEffect).toBe("none")
   })
 })

@@ -1,5 +1,6 @@
 import {
   useEffect,
+  memo,
   useMemo,
   useRef,
   useState,
@@ -11,6 +12,9 @@ import {
 } from "react"
 import {
   applyChatDrop,
+  CHAT_WORKBENCH_DRAG_MIME,
+  CHAT_WORKBENCH_DRAG_SESSION_KEY,
+  CHAT_WORKBENCH_EXTERNAL_GROUP_ID,
   collectChatGroups,
   previewChatDrop,
   projectResponsiveChatWorkbench,
@@ -20,22 +24,27 @@ import {
   type ChatGroupNode,
   type ChatWorkbenchAction,
   type ChatWorkbenchLayout,
-  type ChatWorkbenchPreset,
 } from "../../../../shared/chat-workbench"
 import { cn } from "../../../lib/utils"
-import { ChevronRight, MoreHorizontal, X } from "lucide-react"
+import { configureChatDragFeedback } from "../lib/chat-drag-feedback"
+import { MoreHorizontal, X } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../../../components/ui/dropdown-menu"
-
-const CHAT_DRAG_TYPE = "application/x-flapstack-chat-workbench"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "../../../components/ui/context-menu"
 
 export const CHAT_WORKBENCH_A11Y = {
   shell: "Chat workbench",
@@ -44,42 +53,60 @@ export const CHAT_WORKBENCH_A11Y = {
   status: "Chat workbench status",
 } as const
 
-export type ChatWorkbenchChat = { id: string; name?: string | null; accentColor?: string | null }
+export type ChatWorkbenchChat = {
+  id: string
+  name?: string | null
+  accentColor?: string | null
+  hasUnseenChanges?: boolean
+}
 export type ChatWorkbenchDragSource = {
   chatId: string
   groupId: string
   sourceWindowId: string
 }
+type ChatWorkbenchGroupDragSource = {
+  kind: "group"
+  groupId: string
+  sourceWindowId: string
+}
+type ChatWorkbenchAnyDragSource = ChatWorkbenchDragSource | ChatWorkbenchGroupDragSource
+type ChatMoveMenu = {
+  savedGroups: ReadonlyArray<{ id: string; name: string }>
+  activeSavedGroupId: string | null
+  onMoveChatToMainBar?: (chatId: string) => void
+  onMoveChatToGroup?: (chatId: string, groupId: string) => void
+  onCreateGroupFromChat?: (chatId: string) => void
+}
 
-export function ChatWorkbench({
+function ChatWorkbenchComponent({
   chats,
   layout,
   onLayoutChange,
   onActiveChatChange,
+  onChatViewed,
   renderChat,
   readOnlyChatIds = new Set(),
   windowId = "main",
-  onMoveToNewWindow,
-  onMoveToExistingWindow,
   onCrossWindowDrop,
   onDragOutside,
   onClaimOwnership,
   onSaveAsWorkspace,
+  showPaneHeaders = true,
+  savedGroups = [],
+  activeSavedGroupId = null,
+  onMoveChatToMainBar,
+  onMoveChatToGroup,
+  onCreateGroupFromChat,
   viewport,
 }: {
   chats: ChatWorkbenchChat[]
   layout: ChatWorkbenchLayout
   onLayoutChange: (layout: ChatWorkbenchLayout, action: ChatWorkbenchAction) => void
   onActiveChatChange: (chatId: string) => void
+  onChatViewed?: (chatId: string) => void
   renderChat: (chatId: string, active: boolean) => ReactNode
   readOnlyChatIds?: ReadonlySet<string>
   windowId?: string
-  onMoveToNewWindow?: (
-    chatId: string,
-    sourceGroupId: string,
-    operation: "move" | "read-only-copy",
-  ) => Promise<string>
-  onMoveToExistingWindow?: (chatId: string, sourceGroupId: string) => Promise<string>
   onCrossWindowDrop?: (
     source: ChatWorkbenchDragSource,
     target: { groupId: string; zone: ChatDropZone },
@@ -90,6 +117,12 @@ export function ChatWorkbench({
   ) => Promise<string>
   onClaimOwnership?: (chatId: string) => Promise<string>
   onSaveAsWorkspace?: () => Promise<string>
+  showPaneHeaders?: boolean
+  savedGroups?: ReadonlyArray<{ id: string; name: string }>
+  activeSavedGroupId?: string | null
+  onMoveChatToMainBar?: (chatId: string) => void
+  onMoveChatToGroup?: (chatId: string, groupId: string) => void
+  onCreateGroupFromChat?: (chatId: string) => void
   viewport?: { width: number; height: number }
 }) {
   const shellRef = useRef<HTMLElement>(null)
@@ -100,6 +133,8 @@ export function ChatWorkbench({
     height: number
   } | null>(null)
   const [dragPreview, setDragPreview] = useState<ChatDropPreview | null>(null)
+  const setStableDragPreview = (preview: ChatDropPreview | null) =>
+    setDragPreview((current) => (sameChatDropPreview(current, preview) ? current : preview))
   const dragSessionRef = useRef<{
     source: ChatWorkbenchDragSource
     screenX: number
@@ -112,6 +147,10 @@ export function ChatWorkbench({
   )
   const chatAccents = useMemo(
     () => new Map(chats.map((chat) => [chat.id, chat.accentColor ?? null])),
+    [chats],
+  )
+  const unseenChatIds = useMemo(
+    () => new Set(chats.filter((chat) => chat.hasUnseenChanges).map((chat) => chat.id)),
     [chats],
   )
   const groups = collectChatGroups(layout.root)
@@ -190,18 +229,9 @@ export function ChatWorkbench({
     setAnnouncement(result.announcement ?? describeAction(normalized))
   }
 
-  const runWindowAction = async (
-    operation: "move" | "move-existing" | "read-only-copy" | "claim",
-    chatId: string,
-    groupId: string,
-  ) => {
+  const runClaimAction = async (chatId: string) => {
     try {
-      const message =
-        operation === "claim"
-          ? await onClaimOwnership?.(chatId)
-          : operation === "move-existing"
-            ? await onMoveToExistingWindow?.(chatId, groupId)
-            : await onMoveToNewWindow?.(chatId, groupId, operation)
+      const message = await onClaimOwnership?.(chatId)
       setAnnouncement(message ?? "This window action is unavailable.")
     } catch (error) {
       setAnnouncement(error instanceof Error ? error.message : "The window action failed.")
@@ -213,9 +243,24 @@ export function ChatWorkbench({
     explicitTarget?: { groupId: string; zone: ChatDropZone },
   ) => {
     const source = readDrag(event)
+    if (!source) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (isGroupDragSource(source)) {
+      setDragPreview(null)
+      if (!explicitTarget || source.sourceWindowId !== windowId) {
+        setAnnouncement("A whole Chat pane can only be moved inside its current window.")
+        return
+      }
+      dispatch({
+        type: "move-group",
+        fromGroupId: source.groupId,
+        toGroupId: explicitTarget.groupId,
+        zone: explicitTarget.zone,
+      })
+      return
+    }
     if (source?.sourceWindowId && source.sourceWindowId !== windowId) {
-      event.preventDefault()
-      event.stopPropagation()
       const target =
         explicitTarget ??
         (dragPreview
@@ -256,6 +301,11 @@ export function ChatWorkbench({
 
   const handleDragEnd = (event: DragEvent<HTMLElement>) => {
     setDragPreview(null)
+    try {
+      localStorage.removeItem(CHAT_WORKBENCH_DRAG_SESSION_KEY)
+    } catch {
+      // Ignore unavailable storage in restricted renderer contexts.
+    }
     const session = dragSessionRef.current
     dragSessionRef.current = null
     if (
@@ -282,24 +332,6 @@ export function ChatWorkbench({
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (!activeGroup) return
-    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "n" && onMoveToNewWindow) {
-      event.preventDefault()
-      if (readOnlyChatIds.has(activeGroup.activeChatId)) {
-        setAnnouncement("Take ownership before moving this read-only Chat.")
-        return
-      }
-      void runWindowAction("move", activeGroup.activeChatId, activeGroup.id)
-      return
-    }
-    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "c" && onMoveToNewWindow) {
-      event.preventDefault()
-      if (readOnlyChatIds.has(activeGroup.activeChatId)) {
-        setAnnouncement("Take ownership before copying this read-only Chat.")
-        return
-      }
-      void runWindowAction("read-only-copy", activeGroup.activeChatId, activeGroup.id)
-      return
-    }
     const zone =
       event.key === "ArrowLeft"
         ? "left"
@@ -392,21 +424,29 @@ export function ChatWorkbench({
         layout={layout}
         chatNames={chatNames}
         chatAccents={chatAccents}
+        unseenChatIds={unseenChatIds}
         readOnlyChatIds={readOnlyChatIds}
         renderChat={renderChat}
         dispatch={dispatch}
         onActiveChatChange={onActiveChatChange}
+        onChatViewed={onChatViewed}
         dragPreview={dragPreview}
-        setDragPreview={setDragPreview}
+        setDragPreview={setStableDragPreview}
         commitDrop={handleDrop}
         windowId={windowId}
         dragSessionRef={dragSessionRef}
-        onMoveToNewWindow={onMoveToNewWindow ? runWindowAction : undefined}
-        onMoveToExistingWindow={onMoveToExistingWindow ? runWindowAction : undefined}
-        onClaimOwnership={onClaimOwnership ? runWindowAction : undefined}
+        onClaimOwnership={onClaimOwnership ? runClaimAction : undefined}
         onSaveWorkspace={saveWorkspace}
         savingWorkspace={savingWorkspace}
         logicalGroupForChat={logicalGroupForChat}
+        showPaneHeaders={showPaneHeaders}
+        moveMenu={{
+          savedGroups,
+          activeSavedGroupId,
+          onMoveChatToMainBar,
+          onMoveChatToGroup,
+          onCreateGroupFromChat,
+        }}
       />
       <div
         role="status"
@@ -420,35 +460,41 @@ export function ChatWorkbench({
   )
 }
 
+export const ChatWorkbench = memo(ChatWorkbenchComponent)
+
 function WorkbenchNode({
   node,
   layout,
   chatNames,
   chatAccents,
+  unseenChatIds,
   readOnlyChatIds,
   renderChat,
   dispatch,
   onActiveChatChange,
+  onChatViewed,
   dragPreview,
   setDragPreview,
   commitDrop,
   windowId,
   dragSessionRef,
-  onMoveToNewWindow,
-  onMoveToExistingWindow,
   onClaimOwnership,
   onSaveWorkspace,
   savingWorkspace,
   logicalGroupForChat,
+  showPaneHeaders,
+  moveMenu,
 }: {
   node: ChatGroupNode
   layout: ChatWorkbenchLayout
   chatNames: ReadonlyMap<string, string>
   chatAccents: ReadonlyMap<string, string | null>
+  unseenChatIds: ReadonlySet<string>
   readOnlyChatIds: ReadonlySet<string>
   renderChat: (chatId: string, active: boolean) => ReactNode
   dispatch: (action: ChatWorkbenchAction) => void
   onActiveChatChange: (chatId: string) => void
+  onChatViewed?: (chatId: string) => void
   dragPreview: ChatDropPreview | null
   setDragPreview: (preview: ChatDropPreview | null) => void
   commitDrop: (event: DragEvent, target?: { groupId: string; zone: ChatDropZone }) => void
@@ -459,20 +505,12 @@ function WorkbenchNode({
     screenY: number
     cancelled: boolean
   } | null>
-  onMoveToNewWindow?: (
-    operation: "move" | "read-only-copy",
-    chatId: string,
-    groupId: string,
-  ) => Promise<void>
-  onMoveToExistingWindow?: (
-    operation: "move-existing",
-    chatId: string,
-    groupId: string,
-  ) => Promise<void>
-  onClaimOwnership?: (operation: "claim", chatId: string, groupId: string) => Promise<void>
+  onClaimOwnership?: (chatId: string) => Promise<void>
   onSaveWorkspace?: () => void
   savingWorkspace: boolean
   logicalGroupForChat: (chatId: string) => Extract<ChatGroupNode, { type: "group" }> | undefined
+  showPaneHeaders: boolean
+  moveMenu: ChatMoveMenu
 }) {
   if (node.type === "group") {
     return (
@@ -481,21 +519,23 @@ function WorkbenchNode({
         layout={layout}
         chatNames={chatNames}
         chatAccents={chatAccents}
+        unseenChatIds={unseenChatIds}
         readOnlyChatIds={readOnlyChatIds}
         renderChat={renderChat}
         dispatch={dispatch}
         onActiveChatChange={onActiveChatChange}
+        onChatViewed={onChatViewed}
         dragPreview={dragPreview}
         setDragPreview={setDragPreview}
         commitDrop={commitDrop}
         windowId={windowId}
         dragSessionRef={dragSessionRef}
-        onMoveToNewWindow={onMoveToNewWindow}
-        onMoveToExistingWindow={onMoveToExistingWindow}
         onClaimOwnership={onClaimOwnership}
         onSaveWorkspace={onSaveWorkspace}
         savingWorkspace={savingWorkspace}
         logicalGroupForChat={logicalGroupForChat}
+        showPaneHeader={showPaneHeaders}
+        moveMenu={moveMenu}
       />
     )
   }
@@ -515,21 +555,23 @@ function WorkbenchNode({
             layout={layout}
             chatNames={chatNames}
             chatAccents={chatAccents}
+            unseenChatIds={unseenChatIds}
             readOnlyChatIds={readOnlyChatIds}
             renderChat={renderChat}
             dispatch={dispatch}
             onActiveChatChange={onActiveChatChange}
+            onChatViewed={onChatViewed}
             dragPreview={dragPreview}
             setDragPreview={setDragPreview}
             commitDrop={commitDrop}
             windowId={windowId}
             dragSessionRef={dragSessionRef}
-            onMoveToNewWindow={onMoveToNewWindow}
-            onMoveToExistingWindow={onMoveToExistingWindow}
             onClaimOwnership={onClaimOwnership}
             onSaveWorkspace={onSaveWorkspace}
             savingWorkspace={savingWorkspace}
             logicalGroupForChat={logicalGroupForChat}
+            showPaneHeaders={showPaneHeaders}
+            moveMenu={moveMenu}
           />
         </SplitChild>
       ))}
@@ -632,30 +674,34 @@ function ChatGroup({
   layout,
   chatNames,
   chatAccents,
+  unseenChatIds,
   readOnlyChatIds,
   renderChat,
   dispatch,
   onActiveChatChange,
+  onChatViewed,
   dragPreview,
   setDragPreview,
   commitDrop,
   windowId,
   dragSessionRef,
-  onMoveToNewWindow,
-  onMoveToExistingWindow,
   onClaimOwnership,
   onSaveWorkspace,
   savingWorkspace,
   logicalGroupForChat,
+  showPaneHeader,
+  moveMenu,
 }: {
   group: Extract<ChatGroupNode, { type: "group" }>
   layout: ChatWorkbenchLayout
   chatNames: ReadonlyMap<string, string>
   chatAccents: ReadonlyMap<string, string | null>
+  unseenChatIds: ReadonlySet<string>
   readOnlyChatIds: ReadonlySet<string>
   renderChat: (chatId: string, active: boolean) => ReactNode
   dispatch: (action: ChatWorkbenchAction) => void
   onActiveChatChange: (chatId: string) => void
+  onChatViewed?: (chatId: string) => void
   dragPreview: ChatDropPreview | null
   setDragPreview: (preview: ChatDropPreview | null) => void
   commitDrop: (event: DragEvent, target?: { groupId: string; zone: ChatDropZone }) => void
@@ -666,43 +712,55 @@ function ChatGroup({
     screenY: number
     cancelled: boolean
   } | null>
-  onMoveToNewWindow?: (
-    operation: "move" | "read-only-copy",
-    chatId: string,
-    groupId: string,
-  ) => Promise<void>
-  onMoveToExistingWindow?: (
-    operation: "move-existing",
-    chatId: string,
-    groupId: string,
-  ) => Promise<void>
-  onClaimOwnership?: (operation: "claim", chatId: string, groupId: string) => Promise<void>
+  onClaimOwnership?: (chatId: string) => Promise<void>
   onSaveWorkspace?: () => void
   savingWorkspace: boolean
   logicalGroupForChat: (chatId: string) => Extract<ChatGroupNode, { type: "group" }> | undefined
+  showPaneHeader: boolean
+  moveMenu: ChatMoveMenu
 }) {
   const activeChatId = group.chatIds.includes(group.activeChatId)
     ? group.activeChatId
     : group.chatIds[0]
-  const groupPreferenceKey = `flapstack-chat-group:${windowId}:${group.id}`
-  const [groupPresentation, setGroupPresentation] = useState<{
-    name: string
-    collapsed: boolean
-  }>(() => {
-    try {
-      const stored = localStorage.getItem(groupPreferenceKey)
-      if (stored) return JSON.parse(stored) as { name: string; collapsed: boolean }
-    } catch {
-      // Ignore malformed presentation preferences.
+  const tabsRef = useRef<HTMLDivElement>(null)
+  const [tabsHovered, setTabsHovered] = useState(false)
+  const [scrollbar, setScrollbar] = useState({ left: 0, width: 0 })
+  const [groupDropZone, setGroupDropZone] = useState<ChatDropZone | null>(null)
+  const [tabDropTarget, setTabDropTarget] = useState<{
+    chatId: string
+    side: "left" | "inside" | "right"
+  } | null>(null)
+  const renderedChat = useMemo(
+    () => renderChat(activeChatId, layout.activeGroupId === group.id),
+    [activeChatId, group.id, layout.activeGroupId, renderChat],
+  )
+  const updateScrollbar = () => {
+    const element = tabsRef.current
+    if (!element || element.scrollWidth <= element.clientWidth) {
+      setScrollbar((current) =>
+        current.left === 0 && current.width === 0 ? current : { left: 0, width: 0 },
+      )
+      return
     }
-    return { name: `Group ${group.id.split("-").at(-1) ?? "1"}`, collapsed: false }
-  })
+    const width = Math.max(24, (element.clientWidth / element.scrollWidth) * element.clientWidth)
+    const maxLeft = element.clientWidth - width
+    const left = (element.scrollLeft / (element.scrollWidth - element.clientWidth)) * maxLeft
+    setScrollbar((current) =>
+      current.left === left && current.width === width ? current : { left, width },
+    )
+  }
   useEffect(() => {
-    localStorage.setItem(groupPreferenceKey, JSON.stringify(groupPresentation))
-  }, [groupPreferenceKey, groupPresentation])
+    updateScrollbar()
+    const element = tabsRef.current
+    if (!element || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(updateScrollbar)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [group.chatIds.length])
   const activate = (chatId: string) => {
     dispatch({ type: "activate-tab", groupId: group.id, chatId })
     onActiveChatChange(chatId)
+    onChatViewed?.(chatId)
   }
   const tabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     let next: number | null = null
@@ -719,7 +777,13 @@ function ChatGroup({
     event.preventDefault()
     const source = readDrag(event)
     if (!source) return
-    event.dataTransfer.dropEffect = "move"
+    if (isGroupDragSource(source)) {
+      event.dataTransfer.dropEffect = "move"
+      setDragPreview(null)
+      setGroupDropZone(source.groupId === group.id ? null : zone)
+      return
+    }
+    setGroupDropZone(null)
     const request = {
       chatId: source.chatId,
       sourceGroupId: source.groupId,
@@ -728,7 +792,7 @@ function ChatGroup({
       toIndex,
     }
     if (source.sourceWindowId && source.sourceWindowId !== windowId) {
-      setDragPreview(
+      const nextPreview: ChatDropPreview =
         zone !== "tab" && collectChatGroups(layout.root).length >= 4
           ? {
               accepted: false,
@@ -744,12 +808,36 @@ function ChatGroup({
                 zone === "tab"
                   ? `Move Chat to group ${group.id}`
                   : `Split ${zone} of group ${group.id}`,
-            },
-      )
+            }
+      event.dataTransfer.dropEffect = nextPreview.accepted ? "move" : "none"
+      setDragPreview(nextPreview)
       return
     }
-    setDragPreview(previewChatDrop(layout, request))
+    const nextPreview = previewChatDrop(layout, request)
+    event.dataTransfer.dropEffect = nextPreview.accepted ? "move" : "none"
+    setDragPreview(nextPreview)
   }
+
+  const pointerDropZone = (event: DragEvent<HTMLElement>): ChatDropZone => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const x = event.clientX - rect.left
+    const headerOffset = showPaneHeader ? 40 : 0
+    const height = Math.max(0, rect.height - headerOffset)
+    const y = event.clientY - rect.top - headerOffset
+    const insideCenter =
+      x > rect.width * 0.25 && x < rect.width * 0.75 && y > height * 0.2 && y < height * 0.8
+    if (insideCenter) return "tab"
+    if (x < rect.width / 3) return "left"
+    if (x > (rect.width / 3) * 2) return "right"
+    return y < height / 2 ? "top" : "bottom"
+  }
+
+  const indicatorZone =
+    groupDropZone ??
+    (dragPreview?.accepted && dragPreview.request.targetGroupId === group.id
+      ? dragPreview.request.zone
+      : null)
+  const indicatorStyle = dropOverlayStyle(indicatorZone, showPaneHeader ? 40 : 0)
 
   return (
     <section
@@ -763,236 +851,329 @@ function ChatGroup({
       data-chat-group={group.id}
       data-active-chat-id={activeChatId}
       data-active-group={layout.activeGroupId === group.id || undefined}
+      onPointerDownCapture={() => {
+        if (unseenChatIds.has(activeChatId)) onChatViewed?.(activeChatId)
+      }}
       onFocusCapture={() => {
         if (layout.activeGroupId !== group.id) activate(activeChatId)
+        else if (unseenChatIds.has(activeChatId)) onChatViewed?.(activeChatId)
+      }}
+      onDragOver={(event) => preview(event, pointerDropZone(event))}
+      onDrop={(event) => commitDrop(event, { groupId: group.id, zone: pointerDropZone(event) })}
+      onDragLeave={(event) => {
+        const next = event.relatedTarget
+        if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+          setGroupDropZone(null)
+          setTabDropTarget(null)
+        }
       }}
     >
-      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-muted/30 px-1">
-        <button
-          type="button"
-          className="flex h-8 max-w-32 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-          aria-expanded={!groupPresentation.collapsed}
-          onClick={() =>
-            setGroupPresentation((current) => ({ ...current, collapsed: !current.collapsed }))
-          }
-        >
-          <ChevronRight
-            className={cn(
-              "h-3.5 w-3.5 transition-transform",
-              !groupPresentation.collapsed && "rotate-90",
-            )}
-          />
-          <span className="truncate">{groupPresentation.name}</span>
-        </button>
-        <div
-          role="tablist"
-          aria-label={CHAT_WORKBENCH_A11Y.tabs}
-          className={cn(
-            "min-w-0 flex-1 items-center gap-1 overflow-x-auto",
-            groupPresentation.collapsed ? "hidden" : "flex",
-          )}
-          onDragOver={(event) => preview(event, "tab")}
-          onDrop={(event) => commitDrop(event, { groupId: group.id, zone: "tab" })}
-        >
-          {group.chatIds.map((chatId, index) => (
+      {showPaneHeader && (
+        <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-muted/30 px-1">
+          <div
+            className="relative min-w-0 flex-1"
+            onMouseEnter={() => setTabsHovered(true)}
+            onMouseLeave={() => setTabsHovered(false)}
+          >
             <div
-              key={chatId}
-              draggable={!readOnlyChatIds.has(chatId)}
-              className={cn(
-                "group/tab relative flex h-8 w-44 shrink-0 items-center rounded-md border border-transparent",
-                chatId === activeChatId
-                  ? "border-border bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-accent",
-              )}
-              style={{ borderTopColor: chatAccents.get(chatId) ?? undefined }}
+              ref={tabsRef}
+              role="tablist"
+              aria-label={CHAT_WORKBENCH_A11Y.tabs}
+              className="scrollbar-hide flex min-w-0 items-center gap-1 overflow-x-auto"
+              draggable
+              data-chat-group-drag-handle={group.id}
+              onScroll={updateScrollbar}
               onDragStart={(event) => {
+                if (event.target !== event.currentTarget) return
                 event.dataTransfer.effectAllowed = "move"
-                const source = {
-                  chatId,
-                  groupId: logicalGroupForChat(chatId)?.id ?? group.id,
+                const source: ChatWorkbenchGroupDragSource = {
+                  kind: "group",
+                  groupId: group.id,
                   sourceWindowId: windowId,
                 }
-                dragSessionRef.current = {
-                  source,
-                  screenX: event.screenX,
-                  screenY: event.screenY,
-                  cancelled: false,
+                event.dataTransfer.setData(CHAT_WORKBENCH_DRAG_MIME, JSON.stringify(source))
+                try {
+                  localStorage.setItem(CHAT_WORKBENCH_DRAG_SESSION_KEY, JSON.stringify(source))
+                } catch {
+                  // Native dataTransfer remains the primary path.
                 }
-                event.dataTransfer.setData(CHAT_DRAG_TYPE, JSON.stringify(source))
               }}
-              onDragOver={(event) => preview(event, "tab", index)}
-              onDrop={(event) => commitDrop(event, { groupId: group.id, zone: "tab" })}
+              onDragEnd={() => {
+                setGroupDropZone(null)
+                setTabDropTarget(null)
+                try {
+                  localStorage.removeItem(CHAT_WORKBENCH_DRAG_SESSION_KEY)
+                } catch {
+                  // Ignore unavailable storage in restricted renderer contexts.
+                }
+              }}
+              onDragOver={(event) => {
+                event.stopPropagation()
+                preview(event, "tab", group.chatIds.length)
+              }}
+              onDrop={(event) => {
+                event.stopPropagation()
+                setTabDropTarget(null)
+                setGroupDropZone(null)
+                commitDrop(event, { groupId: group.id, zone: "tab" })
+              }}
             >
-              <button
-                id={tabId(group.id, chatId)}
-                type="button"
-                role="tab"
-                aria-selected={chatId === activeChatId}
-                aria-controls={panelId(group.id, chatId)}
-                tabIndex={chatId === activeChatId ? 0 : -1}
-                className="min-w-0 flex-1 truncate px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                onClick={() => activate(chatId)}
-                onKeyDown={(event) => tabKeyDown(event, index)}
-              >
-                {chatNames.get(chatId) ?? chatId}
-                {readOnlyChatIds.has(chatId) ? " (read only)" : ""}
-              </button>
-              <button
-                type="button"
-                aria-label={`Close ${chatNames.get(chatId) ?? "Chat"} presentation`}
-                className={cn(
-                  "mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-0 hover:bg-muted group-hover/tab:opacity-100 focus-visible:opacity-100",
-                  chatId === activeChatId && "opacity-60",
-                )}
-                onClick={() => dispatch({ type: "close-tab", groupId: group.id, chatId })}
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+              {group.chatIds.map((chatId, index) => {
+                const targetGroups = moveMenu.savedGroups.filter(
+                  (savedGroup) => savedGroup.id !== moveMenu.activeSavedGroupId,
+                )
+                const canMove =
+                  Boolean(moveMenu.activeSavedGroupId && moveMenu.onMoveChatToMainBar) ||
+                  Boolean(moveMenu.onMoveChatToGroup && targetGroups.length > 0)
+                return (
+                  <ContextMenu key={chatId}>
+                    <ContextMenuTrigger asChild>
+                      <div
+                        draggable={!readOnlyChatIds.has(chatId)}
+                        className={cn(
+                          "group/tab relative flex h-8 w-44 shrink-0 items-center rounded-md border border-transparent",
+                          chatId === activeChatId
+                            ? "border-border bg-background text-foreground shadow-sm"
+                            : "text-muted-foreground hover:bg-accent",
+                        )}
+                        style={{ borderTopColor: chatAccents.get(chatId) ?? undefined }}
+                        data-chat-tab-drop-side={
+                          tabDropTarget?.chatId === chatId ? tabDropTarget.side : undefined
+                        }
+                        onDragStart={(event) => {
+                          configureChatDragFeedback(
+                            event.dataTransfer,
+                            chatNames.get(chatId) ?? "Chat",
+                          )
+                          const source = {
+                            chatId,
+                            groupId: logicalGroupForChat(chatId)?.id ?? group.id,
+                            sourceWindowId: windowId,
+                          }
+                          dragSessionRef.current = {
+                            source,
+                            screenX: event.screenX,
+                            screenY: event.screenY,
+                            cancelled: false,
+                          }
+                          event.dataTransfer.setData(
+                            CHAT_WORKBENCH_DRAG_MIME,
+                            JSON.stringify(source),
+                          )
+                          try {
+                            localStorage.setItem(
+                              CHAT_WORKBENCH_DRAG_SESSION_KEY,
+                              JSON.stringify(source),
+                            )
+                          } catch {
+                            // Native dataTransfer remains the primary path.
+                          }
+                        }}
+                        onDragOver={(event) => {
+                          event.stopPropagation()
+                          const rect = event.currentTarget.getBoundingClientRect()
+                          const relativeX = (event.clientX - rect.left) / rect.width
+                          const side =
+                            relativeX <= 0.25 ? "left" : relativeX >= 0.75 ? "right" : "inside"
+                          setTabDropTarget({ chatId, side })
+                          preview(
+                            event,
+                            "tab",
+                            side === "inside" ? undefined : index + (side === "right" ? 1 : 0),
+                          )
+                        }}
+                        onDrop={(event) => {
+                          event.stopPropagation()
+                          const rect = event.currentTarget.getBoundingClientRect()
+                          const relativeX = (event.clientX - rect.left) / rect.width
+                          const side =
+                            relativeX <= 0.25 ? "left" : relativeX >= 0.75 ? "right" : "inside"
+                          preview(
+                            event,
+                            "tab",
+                            side === "inside" ? undefined : index + (side === "right" ? 1 : 0),
+                          )
+                          setTabDropTarget(null)
+                          commitDrop(event, { groupId: group.id, zone: "tab" })
+                        }}
+                      >
+                        {tabDropTarget?.chatId === chatId && tabDropTarget.side !== "inside" && (
+                          <span
+                            aria-hidden
+                            data-chat-tab-insertion
+                            className={cn(
+                              "pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-primary",
+                              tabDropTarget.side === "left" ? "left-0" : "right-0",
+                            )}
+                          />
+                        )}
+                        <button
+                          id={tabId(group.id, chatId)}
+                          type="button"
+                          role="tab"
+                          aria-selected={chatId === activeChatId}
+                          aria-controls={panelId(group.id, chatId)}
+                          tabIndex={chatId === activeChatId ? 0 : -1}
+                          className="min-w-0 flex-1 truncate px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          onClick={() => activate(chatId)}
+                          onKeyDown={(event) => tabKeyDown(event, index)}
+                        >
+                          {chatNames.get(chatId) ?? chatId}
+                          {readOnlyChatIds.has(chatId) ? " (read only)" : ""}
+                          {unseenChatIds.has(chatId) && (
+                            <span className="sr-only">, new response</span>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Close ${chatNames.get(chatId) ?? "Chat"} presentation`}
+                          className={cn(
+                            "relative mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-0 hover:bg-muted group-hover/tab:opacity-100 focus-visible:opacity-100",
+                            chatId === activeChatId && !unseenChatIds.has(chatId) && "opacity-60",
+                            unseenChatIds.has(chatId) && "opacity-100",
+                          )}
+                          onClick={() => dispatch({ type: "close-tab", groupId: group.id, chatId })}
+                        >
+                          {unseenChatIds.has(chatId) && (
+                            <span
+                              aria-hidden
+                              data-chat-unseen-indicator={chatId}
+                              className="absolute inset-0 flex items-center justify-center transition-opacity group-hover/tab:opacity-0 group-focus-within/tab:opacity-0"
+                            >
+                              <span className="h-2 w-2 rounded-full bg-[#307BD0]" />
+                            </span>
+                          )}
+                          <X
+                            className={cn(
+                              "h-3.5 w-3.5",
+                              unseenChatIds.has(chatId) &&
+                                "opacity-0 transition-opacity group-hover/tab:opacity-100 group-focus-within/tab:opacity-100",
+                            )}
+                          />
+                        </button>
+                      </div>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className="w-52">
+                      <ContextMenuSub>
+                        <ContextMenuSubTrigger disabled={!canMove}>Move</ContextMenuSubTrigger>
+                        <ContextMenuSubContent className="w-52">
+                          {moveMenu.activeSavedGroupId && moveMenu.onMoveChatToMainBar && (
+                            <ContextMenuItem
+                              onSelect={() => moveMenu.onMoveChatToMainBar?.(chatId)}
+                            >
+                              Main bar
+                            </ContextMenuItem>
+                          )}
+                          {targetGroups.map((savedGroup) => (
+                            <ContextMenuItem
+                              key={savedGroup.id}
+                              onSelect={() => moveMenu.onMoveChatToGroup?.(chatId, savedGroup.id)}
+                            >
+                              {savedGroup.name}
+                            </ContextMenuItem>
+                          ))}
+                        </ContextMenuSubContent>
+                      </ContextMenuSub>
+                      <ContextMenuItem
+                        disabled={!moveMenu.onCreateGroupFromChat}
+                        onSelect={() => moveMenu.onCreateGroupFromChat?.(chatId)}
+                      >
+                        Add to new group
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem
+                        onSelect={() => dispatch({ type: "close-tab", groupId: group.id, chatId })}
+                      >
+                        Close presentation
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
+                )
+              })}
             </div>
-          ))}
-        </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent"
-              aria-label="Chat pane options"
-            >
-              <MoreHorizontal className="h-4 w-4" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>Layout</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-44">
-                {(
-                  [
-                    "single",
-                    "two-columns",
-                    "two-rows",
-                    "three-columns",
-                    "three-rows",
-                    "grid-2x2",
-                    "four-columns",
-                    "four-rows",
-                  ] as ChatWorkbenchPreset[]
-                ).map((preset) => (
-                  <DropdownMenuItem
-                    key={preset}
-                    className="capitalize"
-                    onSelect={() => dispatch({ type: "apply-preset", preset })}
-                  >
-                    {preset.replaceAll("-", " ")}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            <DropdownMenuItem
-              onSelect={() => dispatch({ type: "toggle-maximize", groupId: group.id })}
-            >
-              {layout.maximizedGroupId === group.id ? "Restore pane" : "Maximize pane"}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={() => {
-                const name = window.prompt("Group name", groupPresentation.name)?.trim()
-                if (name) setGroupPresentation((current) => ({ ...current, name }))
-              }}
-            >
-              Rename group…
-            </DropdownMenuItem>
-            {layout.activeGroupId === group.id &&
-              readOnlyChatIds.has(activeChatId) &&
-              onClaimOwnership && (
-                <DropdownMenuItem
-                  onSelect={() => void onClaimOwnership("claim", activeChatId, group.id)}
-                >
-                  Take ownership here
-                </DropdownMenuItem>
+            <span
+              aria-hidden
+              data-chat-pane-scrollbar
+              className={cn(
+                "pointer-events-none absolute bottom-0 h-0.5 bg-muted-foreground/45 transition-opacity duration-100",
+                tabsHovered && scrollbar.width > 0 ? "opacity-100" : "opacity-0",
               )}
-            {layout.activeGroupId === group.id &&
-              !readOnlyChatIds.has(activeChatId) &&
-              onMoveToNewWindow && (
+              style={{ left: scrollbar.left, width: scrollbar.width }}
+            />
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent"
+                aria-label="Chat pane options"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuItem
+                onSelect={() => dispatch({ type: "toggle-maximize", groupId: group.id })}
+              >
+                {layout.maximizedGroupId === group.id ? "Restore pane" : "Maximize pane"}
+              </DropdownMenuItem>
+              {layout.activeGroupId === group.id &&
+                readOnlyChatIds.has(activeChatId) &&
+                onClaimOwnership && (
+                  <DropdownMenuItem onSelect={() => void onClaimOwnership(activeChatId)}>
+                    Take ownership here
+                  </DropdownMenuItem>
+                )}
+              {onSaveWorkspace && (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onSelect={() => void onMoveToNewWindow("move", activeChatId, group.id)}
-                  >
-                    Move to new window
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() =>
-                      void onMoveToNewWindow("read-only-copy", activeChatId, group.id)
-                    }
-                  >
-                    Open read-only copy
+                  <DropdownMenuItem disabled={savingWorkspace} onSelect={onSaveWorkspace}>
+                    {savingWorkspace ? "Saving workspace…" : "Save as workspace"}
                   </DropdownMenuItem>
                 </>
               )}
-            {layout.activeGroupId === group.id &&
-              !readOnlyChatIds.has(activeChatId) &&
-              onMoveToExistingWindow && (
-                <DropdownMenuItem
-                  onSelect={() =>
-                    void onMoveToExistingWindow("move-existing", activeChatId, group.id)
-                  }
-                >
-                  Move to existing window…
-                </DropdownMenuItem>
-              )}
-            {onSaveWorkspace && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem disabled={savingWorkspace} onSelect={onSaveWorkspace}>
-                  {savingWorkspace ? "Saving workspace…" : "Save as workspace"}
-                </DropdownMenuItem>
-              </>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
       <div
         id={panelId(group.id, activeChatId)}
         role="tabpanel"
         aria-labelledby={tabId(group.id, activeChatId)}
         className="relative min-h-0 min-w-0 flex-1 overflow-hidden"
       >
-        {renderChat(activeChatId, layout.activeGroupId === group.id)}
+        {renderedChat}
       </div>
-      {dragPreview && (
-        <div className="pointer-events-none absolute inset-0 z-30 grid grid-cols-3 grid-rows-3 gap-1 bg-background/35 p-2">
-          {(["top", "left", "tab", "right", "bottom"] as const).map((zone) => (
-            <button
-              key={zone}
-              type="button"
-              tabIndex={-1}
-              aria-label={`Drop Chat ${zone === "tab" ? "as tab" : zone}`}
-              data-chat-drop-zone={zone}
-              className={cn(
-                "pointer-events-auto rounded border border-primary/60 bg-primary/15 text-xs",
-                zone === "top" && "col-start-2 row-start-1",
-                zone === "left" && "col-start-1 row-start-2",
-                zone === "tab" && "col-start-2 row-start-2",
-                zone === "right" && "col-start-3 row-start-2",
-                zone === "bottom" && "col-start-2 row-start-3",
-              )}
-              onDragOver={(event) => preview(event, zone)}
-              onDrop={(event) => commitDrop(event, { groupId: group.id, zone })}
-            >
-              {zone}
-            </button>
-          ))}
-        </div>
+      {indicatorZone && (
+        <div
+          aria-hidden
+          data-chat-drop-overlay={indicatorZone}
+          className="pointer-events-none absolute z-30 bg-primary/20 outline outline-1 -outline-offset-1 outline-primary/70 transition-[top,left,width,height,opacity] duration-75 ease-out"
+          style={indicatorStyle}
+        />
       )}
     </section>
   )
 }
 
-function readDrag(event: DragEvent): ChatWorkbenchDragSource | null {
+function readDrag(event: DragEvent): ChatWorkbenchAnyDragSource | null {
   try {
-    const parsed = JSON.parse(event.dataTransfer.getData(CHAT_DRAG_TYPE)) as {
+    const serialized =
+      event.dataTransfer.getData(CHAT_WORKBENCH_DRAG_MIME) ||
+      localStorage.getItem(CHAT_WORKBENCH_DRAG_SESSION_KEY) ||
+      ""
+    const parsed = JSON.parse(serialized) as {
+      kind?: unknown
       chatId?: unknown
       groupId?: unknown
       sourceWindowId?: unknown
+    }
+    if (parsed.kind === "group" && typeof parsed.groupId === "string") {
+      return {
+        kind: "group",
+        groupId: parsed.groupId,
+        sourceWindowId: typeof parsed.sourceWindowId === "string" ? parsed.sourceWindowId : "main",
+      }
     }
     return typeof parsed.chatId === "string" && typeof parsed.groupId === "string"
       ? {
@@ -1005,6 +1186,46 @@ function readDrag(event: DragEvent): ChatWorkbenchDragSource | null {
   } catch {
     return null
   }
+}
+
+function isGroupDragSource(
+  source: ChatWorkbenchAnyDragSource,
+): source is ChatWorkbenchGroupDragSource {
+  return "kind" in source && source.kind === "group"
+}
+
+function dropOverlayStyle(zone: ChatDropZone | null, headerOffset: number) {
+  const contentHeight = headerOffset ? `calc(100% - ${headerOffset}px)` : "100%"
+  const base = { top: `${headerOffset}px`, left: "0%", width: "100%", height: contentHeight }
+  if (zone === "left") return { ...base, width: "50%" }
+  if (zone === "right") return { ...base, left: "50%", width: "50%" }
+  if (zone === "top")
+    return { ...base, height: headerOffset ? `calc((100% - ${headerOffset}px) / 2)` : "50%" }
+  if (zone === "bottom") {
+    return {
+      ...base,
+      top: headerOffset ? `calc(${headerOffset}px + (100% - ${headerOffset}px) / 2)` : "50%",
+      height: headerOffset ? `calc((100% - ${headerOffset}px) / 2)` : "50%",
+    }
+  }
+  return base
+}
+
+function sameChatDropPreview(
+  current: ChatDropPreview | null,
+  next: ChatDropPreview | null,
+): boolean {
+  if (current === next) return true
+  if (!current || !next || current.accepted !== next.accepted) return false
+  const a = current.request
+  const b = next.request
+  return (
+    a.chatId === b.chatId &&
+    a.sourceGroupId === b.sourceGroupId &&
+    a.targetGroupId === b.targetGroupId &&
+    a.zone === b.zone &&
+    a.toIndex === b.toIndex
+  )
 }
 
 function findGroup(
@@ -1032,11 +1253,22 @@ function describeAction(action: ChatWorkbenchAction): string {
   if (action.type === "toggle-maximize") return "Chat pane maximize state changed"
   if (action.type === "close-tab") return "Chat presentation closed"
   if (action.type === "resize-split") return "Chat pane sizes changed"
+  if (action.type === "move-group") return `Moved Chat pane ${action.zone}`
   if (action.type === "apply-preset") return `Applied ${action.preset} layout`
   return "Active Chat changed"
 }
 
 function dropAction(preview: Extract<ChatDropPreview, { accepted: true }>): ChatWorkbenchAction {
+  if (
+    preview.request.sourceGroupId === CHAT_WORKBENCH_EXTERNAL_GROUP_ID &&
+    preview.request.zone === "tab"
+  ) {
+    return {
+      type: "open-tab",
+      groupId: preview.request.targetGroupId,
+      chatId: preview.request.chatId,
+    }
+  }
   return preview.request.zone === "tab"
     ? {
         type: "move-tab",

@@ -5,6 +5,7 @@ export function resolveVisibleOpenChatTabs<T extends { id: string }>(params: {
   openChatIds: string[]
   selectedChatId: string | null
   selectedChatIsRemote: boolean
+  excludedChatIds?: ReadonlySet<string>
 }): T[] {
   const {
     chats = [],
@@ -13,13 +14,22 @@ export function resolveVisibleOpenChatTabs<T extends { id: string }>(params: {
     openChatIds,
     selectedChatId,
     selectedChatIsRemote,
+    excludedChatIds = new Set<string>(),
   } = params
 
   const chatsById = new Map([...chats, ...archivedChats].map((chat) => [chat.id, chat]))
   if (selectedChat) chatsById.set(selectedChat.id, selectedChat)
-  const tabs = openChatIds.map((id) => chatsById.get(id)).filter((chat): chat is T => Boolean(chat))
+  const tabs = openChatIds
+    .filter((id) => !excludedChatIds.has(id))
+    .map((id) => chatsById.get(id))
+    .filter((chat): chat is T => Boolean(chat))
 
-  if (selectedChatIsRemote || !selectedChatId || tabs.some((chat) => chat.id === selectedChatId)) {
+  if (
+    selectedChatIsRemote ||
+    !selectedChatId ||
+    excludedChatIds.has(selectedChatId) ||
+    tabs.some((chat) => chat.id === selectedChatId)
+  ) {
     return tabs
   }
 

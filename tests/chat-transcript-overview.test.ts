@@ -96,6 +96,32 @@ describe("active Chat transcript overview", () => {
     )
   })
 
+  it("keeps marker previews compact and removes duplicate public response parts", () => {
+    const longPrompt = `Please inspect ${"every worktree and branch ".repeat(20)}`
+    const longResponse = `I inspected ${"the complete repository state ".repeat(20)}`
+    const [marker] = buildTranscriptMarkers([
+      {
+        id: "prompt-1",
+        role: "user",
+        parts: [{ type: "text", text: longPrompt }],
+      },
+      {
+        id: "response-1",
+        role: "assistant",
+        parts: [
+          { type: "text", text: longResponse },
+          { type: "text", text: longResponse },
+        ],
+      },
+    ])
+
+    expect(marker?.promptPreview.length).toBeLessThanOrEqual(96)
+    expect(marker?.responsePreview?.length).toBeLessThanOrEqual(160)
+    expect(marker?.promptPreview).toMatch(/…$/)
+    expect(marker?.responsePreview).toMatch(/…$/)
+    expect(marker?.responsePreview?.match(/I inspected/g)).toHaveLength(1)
+  })
+
   it("bounds timeline turns while keeping the first and last prompt", () => {
     const messages = Array.from({ length: 40 }, (_, index) => ({
       id: `message-${index + 1}`,

@@ -54,6 +54,7 @@ import {
   chatTransferOpenNewSchema,
   chatTransferReserveSchema,
   chatTransferStartSchema,
+  type ChatTransferOffer,
   type ChatTransferOpenNew,
   type ChatTransferOpenNewResult,
   toChatTransferWindowDestinations,
@@ -71,6 +72,7 @@ const resolveInitialLaunchPresentation = createInitialLaunchPresentationResolver
 let workbenchWindowSessionStore: WorkbenchWindowSessionStore | null = null
 let workbenchWindowSessionWarningLogged = false
 const pendingBoundsPersistence = new Map<number, NodeJS.Timeout>()
+const pendingChatTransferOffers = new Map<string, ChatTransferOffer>()
 const chatTransferCoordinator = new ChatTransferCoordinator({
   getOwner: (chatId) => {
     const ownerId = windowManager.getChatOwner(chatId)
@@ -151,11 +153,7 @@ function offerChatTransferInNewWindow(input: ChatTransferOpenNew): ChatTransferO
     chatTransferCoordinator.fail(started.transfer.nonce, "reservation-failed")
     return { status: "creation-failed" }
   }
-  creation.window.webContents.once("did-finish-load", () => {
-    if (!creation.window.isDestroyed() && !creation.window.webContents.isDestroyed()) {
-      creation.window.webContents.send("chat-transfer:offer", offer)
-    }
-  })
+  pendingChatTransferOffers.set(destinationWindowId, offer)
   return { status: "offered", nonce: started.transfer.nonce, destinationWindowId }
 }
 
@@ -247,6 +245,16 @@ let ipcHandlersRegistered = false
 function registerIpcHandlers(): void {
   if (ipcHandlersRegistered) return
   ipcHandlersRegistered = true
+
+  ipcMain.on("chat-transfer:renderer-ready", (event) => {
+    const destination = getWindowFromEvent(event)
+    if (!destination) return
+    const destinationWindowId = windowManager.getStableId(destination)
+    const offer = pendingChatTransferOffers.get(destinationWindowId)
+    if (!offer) return
+    pendingChatTransferOffers.delete(destinationWindowId)
+    destination.webContents.send("chat-transfer:offer", offer)
+  })
 
   // App info
   ipcMain.handle("app:version", () => app.getVersion())

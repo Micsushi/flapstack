@@ -5,6 +5,9 @@ export const CHAT_WORKBENCH_SESSION_VERSION = 1 as const
 export const CHAT_WORKBENCH_DRAG_VERSION = 1 as const
 export const CHAT_WORKBENCH_MAX_GROUPS = 4
 export const CHAT_WORKBENCH_MAX_WINDOWS = 4
+export const CHAT_WORKBENCH_DRAG_MIME = "application/x-flapstack-chat-workbench"
+export const CHAT_WORKBENCH_EXTERNAL_GROUP_ID = "sidebar"
+export const CHAT_WORKBENCH_DRAG_SESSION_KEY = "flapstack:chat-workbench-drag-session"
 
 export type ChatWorkbenchPreset =
   | "single"
@@ -168,6 +171,12 @@ export type ChatWorkbenchAction =
   | { type: "activate-tab"; groupId: string; chatId: string }
   | { type: "close-tab"; groupId: string; chatId: string }
   | { type: "move-tab"; fromGroupId: string; toGroupId: string; chatId: string; toIndex?: number }
+  | {
+      type: "move-group"
+      fromGroupId: string
+      toGroupId: string
+      zone: ChatDropZone
+    }
   | { type: "split"; groupId: string; chatId: string; zone: Exclude<ChatDropZone, "tab"> }
   | { type: "apply-preset"; preset: ChatWorkbenchPreset }
   | { type: "resize-split"; splitId: string; sizes: number[] }
@@ -345,6 +354,9 @@ export function reduceChatWorkbench(
   if (action.type === "move-tab") {
     return moveTab(layout, action)
   }
+  if (action.type === "move-group") {
+    return moveGroup(layout, action)
+  }
   return splitChat(layout, action)
 }
 
@@ -395,6 +407,36 @@ export function previewChatDrop(
 ): ChatDropPreview {
   const source = findGroup(layout.root, request.sourceGroupId)
   const target = findGroup(layout.root, request.targetGroupId)
+  if (!source && request.sourceGroupId === CHAT_WORKBENCH_EXTERNAL_GROUP_ID) {
+    if (collectChatGroups(layout.root).some((group) => group.chatIds.includes(request.chatId))) {
+      return { accepted: false, request, reason: "invalid-source" }
+    }
+    const opened = reduceChatWorkbench(layout, {
+      type: "open-tab",
+      groupId: request.targetGroupId,
+      chatId: request.chatId,
+    })
+    if (!opened.accepted) return { accepted: false, request, reason: opened.reason }
+    const result =
+      request.zone === "tab"
+        ? opened
+        : reduceChatWorkbench(opened.layout, {
+            type: "split",
+            groupId: request.targetGroupId,
+            chatId: request.chatId,
+            zone: request.zone,
+          })
+    if (!result.accepted) {
+      return { accepted: false, request, reason: result.reason, recovery: result.recovery }
+    }
+    return {
+      accepted: true,
+      request,
+      layout: result.layout,
+      announcement:
+        request.zone === "tab" ? "Added Chat as a pane tab" : `Created a ${request.zone} Chat pane`,
+    }
+  }
   if (!source || !source.chatIds.includes(request.chatId)) {
     return { accepted: false, request, reason: "invalid-source" }
   }
@@ -433,8 +475,8 @@ export function previewChatDrop(
     layout: result.layout,
     announcement:
       request.zone === "tab"
-        ? `Move Chat to group ${request.targetGroupId}`
-        : `Split ${request.zone} of group ${request.targetGroupId}`,
+        ? `Move Chat to pane ${request.targetGroupId}`
+        : `Split ${request.zone} of pane ${request.targetGroupId}`,
   }
 }
 
@@ -589,7 +631,10 @@ function moveTab(
   if (!target) return rejected(layout, "invalid-target")
   if (source.id === target.id) {
     const chatIds = source.chatIds.filter((id) => id !== action.chatId)
-    chatIds.splice(clampIndex(action.toIndex, chatIds.length), 0, action.chatId)
+    const sourceIndex = source.chatIds.indexOf(action.chatId)
+    let targetIndex = clampIndex(action.toIndex, source.chatIds.length)
+    if (sourceIndex < targetIndex) targetIndex -= 1
+    chatIds.splice(clampIndex(targetIndex, chatIds.length), 0, action.chatId)
     const root = mapNode(layout.root, (node) =>
       node.type === "group" && node.id === source.id
         ? { ...node, chatIds, activeChatId: action.chatId }
@@ -608,6 +653,53 @@ function moveTab(
   if (!findGroup(root, target.id)?.chatIds.includes(action.chatId))
     return rejected(layout, "invalid-target")
   return accepted(validate({ ...layout, root, activeGroupId: target.id }))
+}
+
+function moveGroup(
+  layout: ChatWorkbenchLayout,
+  action: Extract<ChatWorkbenchAction, { type: "move-group" }>,
+): ChatWorkbenchResult {
+  const source = findGroup(layout.root, action.fromGroupId)
+  const target = findGroup(layout.root, action.toGroupId)
+  if (!source) return rejected(layout, "invalid-source")
+  if (!target || source.id === target.id) return rejected(layout, "invalid-target")
+
+  const withoutSource = removeGroup(layout.root, source.id)
+  if (!withoutSource) return rejected(layout, "invalid-source")
+  const liveTarget = findGroup(withoutSource, target.id)
+  if (!liveTarget) return rejected(layout, "invalid-target")
+
+  if (action.zone === "tab") {
+    const root = mapNode(withoutSource, (node) =>
+      node.type === "group" && node.id === liveTarget.id
+        ? {
+            ...node,
+            chatIds: uniqueIds([...node.chatIds, ...source.chatIds]),
+            activeChatId: source.activeChatId,
+          }
+        : node,
+    )
+    return accepted(
+      validate({ ...layout, root, activeGroupId: liveTarget.id, maximizedGroupId: null }),
+      "Merged Chat pane tabs",
+    )
+  }
+
+  const before = action.zone === "left" || action.zone === "top"
+  const direction = action.zone === "left" || action.zone === "right" ? "row" : "column"
+  const root = mapNode(withoutSource, (node) =>
+    node.id === liveTarget.id
+      ? split(
+          nextId(withoutSource, "chat-split"),
+          direction,
+          before ? [source, node] : [node, source],
+        )
+      : node,
+  )
+  return accepted(
+    validate({ ...layout, root, activeGroupId: source.id, maximizedGroupId: null }),
+    `Moved Chat pane ${action.zone}`,
+  )
 }
 
 function splitChat(
@@ -666,6 +758,19 @@ function removeChat(node: ChatGroupNode, groupId: string, chatId: string): ChatG
   }
   const retained = node.children.flatMap((child, index) => {
     const result = removeChat(child, groupId, chatId)
+    return result ? [{ child: result, size: node.sizes[index] }] : []
+  })
+  const children = retained.map(({ child }) => child)
+  if (children.length === 0) return null
+  if (children.length === 1) return children[0]
+  return { ...node, children, sizes: normalizeSizes(retained.map(({ size }) => size)) }
+}
+
+function removeGroup(node: ChatGroupNode, groupId: string): ChatGroupNode | null {
+  if (node.id === groupId) return null
+  if (node.type === "group") return node
+  const retained = node.children.flatMap((child, index) => {
+    const result = removeGroup(child, groupId)
     return result ? [{ child: result, size: node.sizes[index] }] : []
   })
   const children = retained.map(({ child }) => child)

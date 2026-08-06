@@ -239,6 +239,66 @@ describe("direct Codex Runtime adapter", () => {
     ).toMatchObject({ effort: "low", serviceTier: "fast" })
   })
 
+  it("archives hidden Codex threads after a completed response", async () => {
+    const client = new FakeCodexProtocolClient()
+    const adapter = createCodexRuntimeAdapterFactory({
+      appendActivity: collectActivity().append,
+      resolveThreadParams: () => ({ cwd: "/worktree" }),
+      resolveThreadVisibility: () => "hidden",
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.144.1",
+      createClient: () => client,
+    })()
+    const context = runtimeContext()
+    const session = await adapter.startSession(context)
+    const turn = await adapter.startTurn(context, session, "PROMPT_HIDDEN")
+    client.queue.emit({
+      method: "turn/completed",
+      params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } },
+    })
+    for await (const _event of adapter.streamActivity(context, session, turn)) {
+      // Drain the certain completion event.
+    }
+
+    await adapter.complete(context)
+
+    expect(client.requests).toContainEqual({
+      method: "thread/archive",
+      params: { threadId: "thread-1" },
+    })
+  })
+
+  it("restores an archived Codex thread before retrying resume", async () => {
+    const client = new FakeCodexProtocolClient()
+    let resumeAttempts = 0
+    client.responses.set("thread/resume", () => {
+      resumeAttempts += 1
+      if (resumeAttempts === 1) throw new Error("thread is archived")
+      return { thread: { id: "thread-1", sessionId: "session-1" } }
+    })
+    client.responses.set("thread/unarchive", { thread: { id: "thread-1" } })
+    const adapter = createCodexRuntimeAdapterFactory({
+      appendActivity: collectActivity().append,
+      resolveThreadParams: () => ({ cwd: "/worktree" }),
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.144.1",
+      createClient: () => client,
+    })()
+
+    await expect(
+      adapter.resumeSession(runtimeContext(), {
+        providerSessionId: "session-1",
+        providerThreadId: "thread-1",
+      }),
+    ).resolves.toEqual({ providerSessionId: "session-1", providerThreadId: "thread-1" })
+
+    expect(
+      client.requests
+        .filter((request) => request.method.startsWith("thread/"))
+        .map((request) => request.method),
+    ).toEqual(["thread/resume", "thread/unarchive", "thread/resume"])
+  })
+
   it("rejects a terminal failed turn instead of projecting provider failure as success", async () => {
     const client = new FakeCodexProtocolClient()
     const activity = collectActivity()

@@ -6,6 +6,7 @@ const titleEditorSource = readFileSync(
   "src/renderer/features/agents/ui/chat-title-editor.tsx",
   "utf8",
 )
+const openInButtonSource = readFileSync("src/renderer/components/open-in-button.tsx", "utf8")
 const subChatSelectorSource = readFileSync(
   "src/renderer/features/agents/ui/sub-chat-selector.tsx",
   "utf8",
@@ -49,6 +50,13 @@ describe("active chat header actions", () => {
     expect(subChatSelectorSource).toContain("hover:bg-accent hover:text-accent-foreground")
     expect(activeChatSource).toContain(
       "rounded-md p-0 text-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
+    )
+  })
+
+  it("uses one font size and weight for desktop header labels", () => {
+    expect(titleEditorSource.match(/text-\[13px\] font-medium leading-none/g)).toHaveLength(2)
+    expect(openInButtonSource).toContain(
+      'className="text-[13px] font-medium leading-none truncate max-w-[120px]"',
     )
   })
 })

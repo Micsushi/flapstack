@@ -22,6 +22,7 @@ import {
   agentsMobileViewModeAtom,
   agentsPreviewSidebarOpenAtom,
   agentsSidebarOpenAtom,
+  agentsUnseenChangesAtom,
   selectedChatScopeAtom,
   agentsSubChatsSidebarModeAtom,
   agentsSubChatsSidebarWidthAtom,
@@ -64,7 +65,8 @@ import { ResizableSidebar } from "../../../components/ui/resizable-sidebar"
 // import { useCombinedAuth } from "@/lib/hooks/use-combined-auth"
 const useCombinedAuth = () => ({ userId: null }) // Desktop mock
 import { Button } from "../../../components/ui/button"
-import { AlignJustify, MessageSquare, Plus, X } from "lucide-react"
+import { RenameDialog } from "../../../components/rename-dialog"
+import { AlignJustify, MessageSquare, PanelsTopLeft, Plus, X } from "lucide-react"
 import { AgentsQuickSwitchDialog } from "../components/agents-quick-switch-dialog"
 import { SubChatsQuickSwitchDialog } from "../components/subchats-quick-switch-dialog"
 import { SettingsContent } from "../../settings/settings-content"
@@ -76,9 +78,30 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "../../../components/ui/context-menu"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogBody,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../../components/ui/alert-dialog"
 import { resolveOpenChatTabUnderlineColor, resolveVisibleOpenChatTabs } from "../lib/open-chat-tabs"
+import { configureChatDragFeedback } from "../lib/chat-drag-feedback"
+import { markChatSeen } from "../lib/chat-unseen-state"
+import {
+  resolveTopNavigationDropIntent,
+  resolveTopNavigationReorderIntent,
+  type TopNavigationDropIntent,
+} from "../lib/top-navigation-drag"
 import { DictationSessionProvider } from "../voice/dictation-session"
 import { reconcileLiveAgentInputs } from "../lib/agent-input-transport"
 import { appStore } from "../../../lib/jotai-store"
@@ -112,30 +135,68 @@ import {
 import { emitDraftsChanged } from "../lib/drafts"
 import {
   closeChatsInWorkbench,
+  CHAT_WORKBENCH_DRAG_MIME,
+  CHAT_WORKBENCH_DRAG_SESSION_KEY,
+  CHAT_WORKBENCH_EXTERNAL_GROUP_ID,
   collectChatGroups,
   createChatWorkbenchLayout,
   isEmptyChatWorkbenchLayout,
   reduceChatWorkbench,
-  selectChatInWorkbench,
   type ChatWorkbenchAction,
 } from "../../../../shared/chat-workbench"
-import {
-  showChatTransferWindowChoice,
-  showChatTransferWindowLimitChoice,
-} from "../../../lib/chat-transfer-window-limit"
+import { showChatTransferWindowLimitChoice } from "../../../lib/chat-transfer-window-limit"
 import { chatWorkbenchToSavedWorkspace } from "../../../../shared/workbench-saved-workspace-adapter"
+import {
+  activateChatWorkbenchGroup,
+  activateChatSelection,
+  activateSingleChat,
+  appendChatWorkbenchNavigationItem,
+  CHAT_WORKBENCH_GROUP_COLORS,
+  CHAT_WORKBENCH_NAVIGATION_CHANGE_EVENT,
+  CHAT_WORKBENCH_SELECT_CHAT_EVENT,
+  chatWorkbenchNavigationStorageKey,
+  createChatWorkbenchGroup,
+  detachChatFromWorkbenchGroup,
+  findLoneChatGroupTransition,
+  getGroupedChatIds,
+  moveChatToWorkbenchGroup,
+  parseChatWorkbenchNavigation,
+  reconcileChatWorkbenchNavigation,
+  removeChatWorkbenchGroup,
+  renameChatWorkbenchGroup,
+  reorderChatWorkbenchNavigationItem,
+  resolveChatWorkbenchNavigationItems,
+  setChatWorkbenchGroupColor,
+  type ChatWorkbenchGroupColor,
+  type ChatWorkbenchNavigationItem,
+  type ChatWorkbenchNavigation,
+} from "../../../../shared/chat-workbench-navigation"
+import {
+  createChatWorkbenchHistory,
+  recordChatWorkbenchHistory,
+  redoChatWorkbenchHistory,
+  undoChatWorkbenchHistory,
+  type ChatWorkbenchSnapshot,
+} from "../../../../shared/chat-workbench-history"
 import { SelectRepoPage } from "../../onboarding"
 // Desktop mock
 const useIsAdmin = () => false
-const OPEN_CHAT_TAB_DRAG_THRESHOLD = 4
-
-function readStoredProjectColors(): Record<string, string> {
-  if (typeof window === "undefined") return {}
+const TOP_NAVIGATION_ENTER_DELAY_MS = 180
+const GROUP_COLOR_SWATCHES: Record<ChatWorkbenchGroupColor, string> = {
+  blue: "#3B82F6",
+  cyan: "#06B6D4",
+  teal: "#14B8A6",
+  green: "#22C55E",
+  lime: "#84CC16",
+  amber: "#F59E0B",
+  orange: "#F97316",
+  red: "#EF4444",
+  pink: "#EC4899",
+  violet: "#8B5CF6",
+}
+function parseStoredProjectColors(value: string): Record<string, string> {
   try {
-    return JSON.parse(localStorage.getItem("flapstack-sidebar-project-colors") ?? "{}") as Record<
-      string,
-      string
-    >
+    return JSON.parse(value) as Record<string, string>
   } catch {
     return {}
   }
@@ -145,20 +206,39 @@ function readStoredProjectColors(): Record<string, string> {
 function AgentsContentInner() {
   const workspaceWindowParams = useMemo(() => getInitialWindowParams(), [])
   const openChatTabsRef = useRef<HTMLDivElement>(null)
-  const suppressOpenChatTabClickRef = useRef(false)
-  const [openChatDropTarget, setOpenChatDropTarget] = useState<{
-    chatId: string
-    position: "before" | "after"
+  const topNavigationEnteredTargetRef = useRef<string | null>(null)
+  const topNavigationPendingTargetRef = useRef<string | null>(null)
+  const topNavigationEnterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [topNavigationDropTarget, setTopNavigationDropTarget] = useState<{
+    item: ChatWorkbenchNavigationItem
+    intent: TopNavigationDropIntent
   } | null>(null)
+  const [mainBarDropActive, setMainBarDropActive] = useState(false)
   const [openChatTabsHovered, setOpenChatTabsHovered] = useState(false)
   const [openChatScrollbar, setOpenChatScrollbar] = useState({ left: 0, width: 0 })
   const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom)
   const [openChatIds, setOpenChatIds] = useAtom(openAgentChatIdsAtom)
+  const [unseenChatIds, setUnseenChatIds] = useAtom(agentsUnseenChangesAtom)
   const stableWindowId = useMemo(() => getWindowId(), [])
   const [chatWorkbenchLayout, setChatWorkbenchLayout] = useState(() =>
     loadChatWorkbenchLayout(localStorage, stableWindowId, openChatIds, selectedChatId),
   )
+  const workbenchNavigationStorageKey = chatWorkbenchNavigationStorageKey(stableWindowId)
+  const [chatWorkbenchNavigation, setChatWorkbenchNavigation] = useState<ChatWorkbenchNavigation>(
+    () => parseChatWorkbenchNavigation(localStorage.getItem(workbenchNavigationStorageKey)),
+  )
+  const [renamingWorkbenchGroup, setRenamingWorkbenchGroup] = useState<{
+    id: string
+    name: string
+  } | null>(null)
+  const [loneChatGroupPrompt, setLoneChatGroupPrompt] = useState<{
+    groupId: string
+    chatId: string
+  } | null>(null)
+  const chatWorkbenchNavigationRef = useRef(chatWorkbenchNavigation)
   const chatWorkbenchLayoutRef = useRef(chatWorkbenchLayout)
+  const chatWorkbenchHistoryRef = useRef(createChatWorkbenchHistory())
+  const lastResizeHistoryRef = useRef<{ splitId: string; at: number } | null>(null)
   const chatWorkbenchRevisionRef = useRef(0)
   const chatWorkbenchCompactRef = useRef(false)
   const [editableWorkbenchChatIds, setEditableWorkbenchChatIds] = useState<ReadonlySet<string>>(
@@ -374,6 +454,138 @@ function AgentsContentInner() {
     [stableWindowId],
   )
 
+  const persistWorkbenchNavigation = useCallback(
+    (navigation: ChatWorkbenchNavigation) => {
+      chatWorkbenchNavigationRef.current = navigation
+      setChatWorkbenchNavigation(navigation)
+      localStorage.setItem(workbenchNavigationStorageKey, JSON.stringify(navigation))
+      window.dispatchEvent(
+        new CustomEvent(CHAT_WORKBENCH_NAVIGATION_CHANGE_EVENT, { detail: navigation }),
+      )
+    },
+    [workbenchNavigationStorageKey],
+  )
+
+  const currentWorkbenchSnapshot = useCallback(
+    (): ChatWorkbenchSnapshot => ({
+      navigation: chatWorkbenchNavigationRef.current,
+      layout: chatWorkbenchLayoutRef.current,
+      openChatIds: appStore.get(openAgentChatIdsAtom),
+    }),
+    [],
+  )
+
+  const recordWorkbenchMutation = useCallback(
+    (action?: ChatWorkbenchAction) => {
+      if (action?.type === "activate-tab") return
+      if (action?.type === "resize-split") {
+        const now = Date.now()
+        const previous = lastResizeHistoryRef.current
+        lastResizeHistoryRef.current = { splitId: action.splitId, at: now }
+        if (previous?.splitId === action.splitId && now - previous.at < 750) return
+      } else {
+        lastResizeHistoryRef.current = null
+      }
+      chatWorkbenchHistoryRef.current = recordChatWorkbenchHistory(
+        chatWorkbenchHistoryRef.current,
+        currentWorkbenchSnapshot(),
+      )
+    },
+    [currentWorkbenchSnapshot],
+  )
+
+  const restoreWorkbenchSnapshot = useCallback(
+    (snapshot: ChatWorkbenchSnapshot) => {
+      lastResizeHistoryRef.current = null
+      persistWorkbenchNavigation(snapshot.navigation)
+      chatWorkbenchRevisionRef.current += 1
+      chatWorkbenchLayoutRef.current = snapshot.layout
+      setChatWorkbenchLayout(snapshot.layout)
+      persistChatWorkbenchLayout(localStorage, stableWindowId, snapshot.layout)
+      persistWorkbenchPresentation(snapshot.layout)
+      const layoutChatIds = isEmptyChatWorkbenchLayout(snapshot.layout)
+        ? []
+        : collectChatGroups(snapshot.layout.root).flatMap((group) => group.chatIds)
+      const savedChatIds = snapshot.navigation.groups.flatMap((group) =>
+        collectChatGroups(group.layout.root).flatMap((pane) => pane.chatIds),
+      )
+      setOpenChatIds([...new Set([...snapshot.openChatIds, ...layoutChatIds, ...savedChatIds])])
+      const panes = collectChatGroups(snapshot.layout.root)
+      const active = panes.find((pane) => pane.id === snapshot.layout.activeGroupId) ?? panes[0]
+      setSelectedChatId(active?.activeChatId ?? null)
+      setSelectedChatIsRemote(false)
+      setChatSourceMode("local")
+    },
+    [
+      persistWorkbenchNavigation,
+      persistWorkbenchPresentation,
+      setChatSourceMode,
+      setOpenChatIds,
+      setSelectedChatId,
+      setSelectedChatIsRemote,
+      stableWindowId,
+    ],
+  )
+
+  useEffect(() => {
+    const handleHistoryShortcut = (event: globalThis.KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return
+      const target = event.target
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
+      ) {
+        return
+      }
+      const current = currentWorkbenchSnapshot()
+      const result = event.shiftKey
+        ? redoChatWorkbenchHistory(chatWorkbenchHistoryRef.current, current)
+        : undoChatWorkbenchHistory(chatWorkbenchHistoryRef.current, current)
+      if (!result) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      chatWorkbenchHistoryRef.current = result.history
+      restoreWorkbenchSnapshot(result.snapshot)
+    }
+    window.addEventListener("keydown", handleHistoryShortcut, true)
+    return () => window.removeEventListener("keydown", handleHistoryShortcut, true)
+  }, [currentWorkbenchSnapshot, restoreWorkbenchSnapshot])
+
+  const showSelectedChatLayout = useCallback(
+    (chatId: string) => {
+      const result = activateChatSelection(
+        chatWorkbenchNavigationRef.current,
+        chatWorkbenchLayoutRef.current,
+        chatId,
+      )
+      persistWorkbenchNavigation(result.navigation)
+      chatWorkbenchRevisionRef.current += 1
+      chatWorkbenchLayoutRef.current = result.layout
+      setChatWorkbenchLayout(result.layout)
+      persistChatWorkbenchLayout(localStorage, stableWindowId, result.layout)
+      persistWorkbenchPresentation(result.layout)
+    },
+    [persistWorkbenchNavigation, persistWorkbenchPresentation, stableWindowId],
+  )
+
+  useEffect(() => {
+    if (
+      chatWorkbenchNavigationRef.current.groups.length > 0 ||
+      collectChatGroups(chatWorkbenchLayoutRef.current.root).length <= 1
+    ) {
+      return
+    }
+    const chatIds = collectChatGroups(chatWorkbenchLayoutRef.current.root).flatMap(
+      (group) => group.chatIds,
+    )
+    const navigation = reconcileChatWorkbenchNavigation(
+      chatWorkbenchNavigationRef.current,
+      createChatWorkbenchLayout(chatIds, chatIds[0]),
+      chatWorkbenchLayoutRef.current,
+    )
+    persistWorkbenchNavigation(navigation)
+  }, [persistWorkbenchNavigation])
+
   const closeWorkbenchChats = useCallback(
     (chatIds: readonly string[]) => {
       const current = chatWorkbenchLayoutRef.current
@@ -470,23 +682,22 @@ function AgentsContentInner() {
     if (owner?.id === chatWorkbenchLayout.activeGroupId && owner.activeChatId === selectedChatId) {
       return
     }
-    const result = selectChatInWorkbench(chatWorkbenchLayout, selectedChatId)
-    if (!result.accepted) return
-    chatWorkbenchRevisionRef.current += 1
-    chatWorkbenchLayoutRef.current = result.layout
-    setChatWorkbenchLayout(result.layout)
-    persistChatWorkbenchLayout(localStorage, stableWindowId, result.layout)
-    persistWorkbenchPresentation(result.layout)
-  }, [
-    chatWorkbenchLayout,
-    persistWorkbenchPresentation,
-    selectedChatId,
-    selectedChatIsRemote,
-    stableWindowId,
-  ])
+    showSelectedChatLayout(selectedChatId)
+  }, [chatWorkbenchLayout, selectedChatId, selectedChatIsRemote, showSelectedChatLayout])
 
   const handleChatWorkbenchChange = useCallback(
     (layout: typeof chatWorkbenchLayout, action: ChatWorkbenchAction) => {
+      const previousLayout = chatWorkbenchLayoutRef.current
+      const previousNavigation = chatWorkbenchNavigationRef.current
+      recordWorkbenchMutation(action)
+      const navigation = reconcileChatWorkbenchNavigation(
+        previousNavigation,
+        previousLayout,
+        layout,
+      )
+      const loneChatTransition = findLoneChatGroupTransition(previousNavigation, navigation)
+      if (loneChatTransition) setLoneChatGroupPrompt(loneChatTransition)
+      persistWorkbenchNavigation(navigation)
       chatWorkbenchRevisionRef.current += 1
       chatWorkbenchLayoutRef.current = layout
       setChatWorkbenchLayout(layout)
@@ -495,7 +706,7 @@ function AgentsContentInner() {
       const groups = collectChatGroups(layout.root)
       const emptyLayout = isEmptyChatWorkbenchLayout(layout)
       const visibleChatIds = emptyLayout ? [] : groups.flatMap((group) => group.chatIds)
-      setOpenChatIds(visibleChatIds)
+      setOpenChatIds((current) => [...new Set([...current, ...visibleChatIds])])
       const activeGroup = groups.find((group) => group.id === layout.activeGroupId) ?? groups[0]
       if (activeGroup && !emptyLayout) {
         setSelectedChatId(activeGroup.activeChatId)
@@ -510,6 +721,8 @@ function AgentsContentInner() {
     },
     [
       persistWorkbenchPresentation,
+      persistWorkbenchNavigation,
+      recordWorkbenchMutation,
       setChatSourceMode,
       setOpenChatIds,
       setSelectedChatId,
@@ -691,60 +904,6 @@ function AgentsContentInner() {
     }
   }, [handleChatWorkbenchChange, stableWindowId])
 
-  const moveChatToNewWindow = useCallback(
-    async (chatId: string, sourceGroupId: string, operation: "move" | "read-only-copy") => {
-      const result = await window.desktopApi.openNewChatTransfer({
-        version: 1,
-        chatId,
-        sourceWindowId: stableWindowId,
-        sourceGroupId,
-        operation,
-        destinationGroupId: "chat-group-1",
-        zone: "tab",
-        ...(selectedProject?.id ? { projectId: selectedProject.id } : {}),
-      })
-      if (result.status === "offered") {
-        return operation === "move"
-          ? "Moving Chat to a new window"
-          : "Opening a read-only Chat copy"
-      }
-      if (result.status === "at-limit") {
-        showChatTransferWindowLimitChoice({
-          api: window.desktopApi,
-          context: {
-            chatId,
-            sourceWindowId: stableWindowId,
-            sourceGroupId,
-            operation,
-          },
-          destinations: result.destinations,
-        })
-        return "Four windows are open. Choose an existing destination, focus a window, or cancel."
-      }
-      return "Chat stayed in this window because the transfer could not start."
-    },
-    [selectedProject?.id, stableWindowId],
-  )
-
-  const moveChatToExistingWindow = useCallback(
-    async (chatId: string, sourceGroupId: string) => {
-      const destinations = await window.desktopApi.getChatTransferDestinations()
-      if (destinations.length === 0) return "No other workbench window is available."
-      showChatTransferWindowChoice({
-        api: window.desktopApi,
-        context: {
-          chatId,
-          sourceWindowId: stableWindowId,
-          sourceGroupId,
-          operation: "move",
-        },
-        destinations,
-      })
-      return "Choose the exact destination window and whether to add a tab or split right."
-    },
-    [stableWindowId],
-  )
-
   const dropChatIntoCurrentWindow = useCallback(
     async (
       source: { chatId: string; groupId: string; sourceWindowId: string },
@@ -828,7 +987,11 @@ function AgentsContentInner() {
       : `Chat remains owned by ${ownerStableId ?? "another window"}. The owner window could not be focused.`
   }, [])
 
-  const openChatTabs = useMemo(() => {
+  const groupedChatIds = useMemo(
+    () => getGroupedChatIds(chatWorkbenchNavigation),
+    [chatWorkbenchNavigation],
+  )
+  const workbenchChatCatalog = useMemo(() => {
     return resolveVisibleOpenChatTabs({
       chats: agentChats,
       archivedChats,
@@ -838,13 +1001,45 @@ function AgentsContentInner() {
       selectedChatIsRemote,
     })
   }, [agentChats, archivedChats, chatData, openChatIds, selectedChatId, selectedChatIsRemote])
+  const openChatTabs = useMemo(() => {
+    return resolveVisibleOpenChatTabs({
+      chats: agentChats,
+      archivedChats,
+      selectedChat: chatData ?? undefined,
+      openChatIds,
+      selectedChatId,
+      selectedChatIsRemote,
+      excludedChatIds: groupedChatIds,
+    })
+  }, [
+    agentChats,
+    archivedChats,
+    chatData,
+    groupedChatIds,
+    openChatIds,
+    selectedChatId,
+    selectedChatIsRemote,
+  ])
+  const topNavigationItems = useMemo(
+    () =>
+      resolveChatWorkbenchNavigationItems(
+        chatWorkbenchNavigation,
+        openChatTabs.map((chat) => chat.id),
+      ),
+    [chatWorkbenchNavigation, openChatTabs],
+  )
+  const topNavigationOrder = useMemo(
+    () =>
+      new Map(topNavigationItems.map((item, index) => [`${item.kind}:${item.id}`, index] as const)),
+    [topNavigationItems],
+  )
 
   const saveChatWorkbenchAsWorkspace = useCallback(async () => {
     if (!selectedProject?.id) return "Select a project before saving this workspace."
     const groups = collectChatGroups(chatWorkbenchLayoutRef.current.root)
     const active = groups.find((group) => group.id === chatWorkbenchLayoutRef.current.activeGroupId)
     const activeName =
-      openChatTabs.find((chat) => chat.id === active?.activeChatId)?.name?.trim() ||
+      workbenchChatCatalog.find((chat) => chat.id === active?.activeChatId)?.name?.trim() ||
       "Chat workbench"
     const requestedName = window.prompt("Workspace name", `${activeName} workspace`)
     if (requestedName === null) return "Save as Workspace cancelled."
@@ -856,9 +1051,25 @@ function AgentsContentInner() {
       layout: chatWorkbenchToSavedWorkspace(chatWorkbenchLayoutRef.current),
     })
     return `Saved as workspace ${result.workspace.name}`
-  }, [createSavedWorkspace, openChatTabs, selectedProject?.id])
+  }, [createSavedWorkspace, selectedProject?.id, workbenchChatCatalog])
 
-  const openChatProjectColors = readStoredProjectColors()
+  const openChatProjectColorsStorageValue =
+    typeof window === "undefined"
+      ? "{}"
+      : (window.localStorage.getItem("flapstack-sidebar-project-colors") ?? "{}")
+  const openChatProjectColors = useMemo(
+    () => parseStoredProjectColors(openChatProjectColorsStorageValue),
+    [openChatProjectColorsStorageValue],
+  )
+  const workbenchChats = useMemo(
+    () =>
+      workbenchChatCatalog.map((chat) => ({
+        ...chat,
+        accentColor: resolveOpenChatTabUnderlineColor(chat, openChatProjectColors),
+        hasUnseenChanges: unseenChatIds.has(chat.id),
+      })),
+    [openChatProjectColors, unseenChatIds, workbenchChatCatalog],
+  )
 
   const updateOpenChatScrollbar = useCallback(() => {
     const element = openChatTabsRef.current
@@ -927,13 +1138,271 @@ function AgentsContentInner() {
           return
         }
       }
+      setUnseenChatIds((current) => markChatSeen(current, chatId))
       setSelectedChatId(chatId)
       setSelectedChatIsRemote(false)
       setChatSourceMode("local")
       setDesktopView(null)
     },
-    [setChatSourceMode, setDesktopView, setOpenChatIds, setSelectedChatId, setSelectedChatIsRemote],
+    [
+      setChatSourceMode,
+      setDesktopView,
+      setOpenChatIds,
+      setSelectedChatId,
+      setSelectedChatIsRemote,
+      setUnseenChatIds,
+    ],
   )
+
+  const handleChatViewed = useCallback(
+    (chatId: string) => setUnseenChatIds((current) => markChatSeen(current, chatId)),
+    [setUnseenChatIds],
+  )
+
+  const handleToggleSidebar = useCallback(
+    () => setSidebarOpen((current) => !current),
+    [setSidebarOpen],
+  )
+
+  const handleWorkbenchActiveChatChange = useCallback(
+    (chatId: string) => {
+      if (readOnlyWorkbenchChatIds.has(chatId)) {
+        setSelectedChatId(chatId)
+        setSelectedChatIsRemote(false)
+        setChatSourceMode("local")
+        return
+      }
+      void handleSelectOpenChatTab(chatId)
+    },
+    [
+      handleSelectOpenChatTab,
+      readOnlyWorkbenchChatIds,
+      setChatSourceMode,
+      setSelectedChatId,
+      setSelectedChatIsRemote,
+    ],
+  )
+
+  const renderWorkbenchChat = useCallback(
+    (chatId: string, active: boolean) => {
+      const readOnly = readOnlyWorkbenchChatIds.has(chatId)
+      return (
+        <div className="relative h-full">
+          <div
+            className="h-full"
+            inert={readOnly ? true : undefined}
+            aria-disabled={readOnly || undefined}
+          >
+            <ChatView
+              key={`${chatSourceMode}-${chatId}`}
+              chatId={chatId}
+              workbenchActive={active}
+              isSidebarOpen={sidebarOpen}
+              onToggleSidebar={handleToggleSidebar}
+              selectedTeamName={selectedTeam?.name}
+              selectedTeamImageUrl={selectedTeam?.image_url}
+            />
+          </div>
+          {readOnly && (
+            <div
+              role="note"
+              className="absolute inset-x-3 bottom-3 rounded-md border border-border bg-background/95 px-3 py-2 text-xs shadow"
+            >
+              Read-only in this window. Move Chat ownership here before sending or changing
+              settings.
+            </div>
+          )}
+        </div>
+      )
+    },
+    [
+      chatSourceMode,
+      handleToggleSidebar,
+      readOnlyWorkbenchChatIds,
+      selectedTeam?.image_url,
+      selectedTeam?.name,
+      sidebarOpen,
+    ],
+  )
+
+  const showSingleChatLayout = useCallback(
+    (chatId: string) => {
+      const activated = activateSingleChat(chatWorkbenchNavigationRef.current, chatId)
+      persistWorkbenchNavigation(activated.navigation)
+      chatWorkbenchRevisionRef.current += 1
+      chatWorkbenchLayoutRef.current = activated.layout
+      setChatWorkbenchLayout(activated.layout)
+      persistChatWorkbenchLayout(localStorage, stableWindowId, activated.layout)
+      persistWorkbenchPresentation(activated.layout)
+    },
+    [persistWorkbenchNavigation, persistWorkbenchPresentation, stableWindowId],
+  )
+
+  const handleSelectMainChatTab = useCallback(
+    (chatId: string) => {
+      showSingleChatLayout(chatId)
+      void handleSelectOpenChatTab(chatId)
+    },
+    [handleSelectOpenChatTab, showSingleChatLayout],
+  )
+
+  const handleSelectWorkbenchGroup = useCallback(
+    (groupId: string) => {
+      const activated = activateChatWorkbenchGroup(chatWorkbenchNavigationRef.current, groupId)
+      persistWorkbenchNavigation(activated.navigation)
+      chatWorkbenchRevisionRef.current += 1
+      chatWorkbenchLayoutRef.current = activated.layout
+      setChatWorkbenchLayout(activated.layout)
+      persistChatWorkbenchLayout(localStorage, stableWindowId, activated.layout)
+      persistWorkbenchPresentation(activated.layout)
+      const panes = collectChatGroups(activated.layout.root)
+      const active = panes.find((pane) => pane.id === activated.layout.activeGroupId) ?? panes[0]
+      if (active) void handleSelectOpenChatTab(active.activeChatId)
+    },
+    [
+      handleSelectOpenChatTab,
+      persistWorkbenchNavigation,
+      persistWorkbenchPresentation,
+      stableWindowId,
+    ],
+  )
+
+  const handleCloseWorkbenchGroup = useCallback(
+    (groupId: string) => {
+      const current = chatWorkbenchNavigationRef.current
+      const wasActive = current.activeGroupId === groupId
+      recordWorkbenchMutation()
+      const next = removeChatWorkbenchGroup(
+        current,
+        groupId,
+        openChatTabs.map((chat) => chat.id),
+      )
+      persistWorkbenchNavigation(next)
+      if (wasActive && selectedChatId) showSingleChatLayout(selectedChatId)
+    },
+    [
+      openChatTabs,
+      persistWorkbenchNavigation,
+      recordWorkbenchMutation,
+      selectedChatId,
+      showSingleChatLayout,
+    ],
+  )
+
+  const saveRenamedWorkbenchGroup = useCallback(
+    (name: string) => {
+      if (renamingWorkbenchGroup) {
+        recordWorkbenchMutation()
+        persistWorkbenchNavigation(
+          renameChatWorkbenchGroup(
+            chatWorkbenchNavigationRef.current,
+            renamingWorkbenchGroup.id,
+            name,
+          ),
+        )
+      }
+      return Promise.resolve()
+    },
+    [persistWorkbenchNavigation, recordWorkbenchMutation, renamingWorkbenchGroup],
+  )
+
+  const handleSetWorkbenchGroupColor = useCallback(
+    (groupId: string, color: ChatWorkbenchGroupColor) => {
+      recordWorkbenchMutation()
+      persistWorkbenchNavigation(
+        setChatWorkbenchGroupColor(chatWorkbenchNavigationRef.current, groupId, color),
+      )
+    },
+    [persistWorkbenchNavigation, recordWorkbenchMutation],
+  )
+
+  const showActiveNavigationGroup = useCallback(
+    (navigation: ChatWorkbenchNavigation, chatId: string) => {
+      const group = navigation.groups.find((candidate) => candidate.id === navigation.activeGroupId)
+      if (!group) return
+      persistWorkbenchNavigation(navigation)
+      chatWorkbenchRevisionRef.current += 1
+      chatWorkbenchLayoutRef.current = group.layout
+      setChatWorkbenchLayout(group.layout)
+      persistChatWorkbenchLayout(localStorage, stableWindowId, group.layout)
+      persistWorkbenchPresentation(group.layout)
+      setOpenChatIds((current) => (current.includes(chatId) ? current : [...current, chatId]))
+      void handleSelectOpenChatTab(chatId)
+    },
+    [
+      handleSelectOpenChatTab,
+      persistWorkbenchNavigation,
+      persistWorkbenchPresentation,
+      setOpenChatIds,
+      stableWindowId,
+    ],
+  )
+
+  const handleMoveChatToWorkbenchGroup = useCallback(
+    (chatId: string, groupId: string) => {
+      const previous = chatWorkbenchNavigationRef.current
+      const navigation = moveChatToWorkbenchGroup(previous, chatId, groupId)
+      if (navigation === previous) return
+      recordWorkbenchMutation()
+      const transition = findLoneChatGroupTransition(previous, navigation)
+      if (transition) setLoneChatGroupPrompt(transition)
+      showActiveNavigationGroup(navigation, chatId)
+    },
+    [recordWorkbenchMutation, showActiveNavigationGroup],
+  )
+
+  const handleCreateWorkbenchGroupFromChat = useCallback(
+    (chatId: string) => {
+      const previous = chatWorkbenchNavigationRef.current
+      const navigation = createChatWorkbenchGroup(
+        previous,
+        openChatTabs.map((chat) => chat.id),
+        chatId,
+      )
+      recordWorkbenchMutation()
+      const transition = findLoneChatGroupTransition(previous, navigation)
+      if (transition) setLoneChatGroupPrompt(transition)
+      showActiveNavigationGroup(navigation, chatId)
+    },
+    [openChatTabs, recordWorkbenchMutation, showActiveNavigationGroup],
+  )
+
+  const handleRemoveLoneChatGroup = useCallback(() => {
+    if (!loneChatGroupPrompt) return
+    const current = chatWorkbenchNavigationRef.current
+    const group = current.groups.find((candidate) => candidate.id === loneChatGroupPrompt.groupId)
+    if (!group) {
+      setLoneChatGroupPrompt(null)
+      return
+    }
+    recordWorkbenchMutation()
+    const navigation = removeChatWorkbenchGroup(
+      current,
+      group.id,
+      openChatTabs.map((chat) => chat.id),
+    )
+    persistWorkbenchNavigation(navigation)
+    if (current.activeGroupId === group.id) showSingleChatLayout(loneChatGroupPrompt.chatId)
+    setLoneChatGroupPrompt(null)
+  }, [
+    loneChatGroupPrompt,
+    openChatTabs,
+    persistWorkbenchNavigation,
+    recordWorkbenchMutation,
+    showSingleChatLayout,
+  ])
+
+  useEffect(() => {
+    const selectChat = (event: Event) => {
+      const chatId = (event as CustomEvent<{ chatId?: string }>).detail?.chatId
+      if (chatId) {
+        handleChatViewed(chatId)
+        showSelectedChatLayout(chatId)
+      }
+    }
+    window.addEventListener(CHAT_WORKBENCH_SELECT_CHAT_EVENT, selectChat)
+    return () => window.removeEventListener(CHAT_WORKBENCH_SELECT_CHAT_EVENT, selectChat)
+  }, [handleChatViewed, showSelectedChatLayout])
 
   const handleCloseOpenChatTab = useCallback(
     (chatId: string) => {
@@ -1020,89 +1489,239 @@ function AgentsContentInner() {
     [setOpenChatIds],
   )
 
-  const handleOpenChatTabPointerDown = useCallback(
-    (event: React.PointerEvent<HTMLElement>, chatId: string) => {
-      if (event.button !== 0) return
+  const cancelTopNavigationEnter = useCallback(() => {
+    if (topNavigationEnterTimerRef.current !== null) {
+      clearTimeout(topNavigationEnterTimerRef.current)
+      topNavigationEnterTimerRef.current = null
+    }
+    topNavigationPendingTargetRef.current = null
+  }, [])
+
+  const clearTopNavigationDropTarget = useCallback(() => {
+    cancelTopNavigationEnter()
+    topNavigationEnteredTargetRef.current = null
+    setTopNavigationDropTarget(null)
+    setMainBarDropActive(false)
+  }, [cancelTopNavigationEnter])
+
+  const readTopNavigationDragSource = useCallback((dataTransfer: DataTransfer) => {
+    try {
+      const serialized =
+        dataTransfer.getData(CHAT_WORKBENCH_DRAG_MIME) ||
+        localStorage.getItem(CHAT_WORKBENCH_DRAG_SESSION_KEY)
+      if (!serialized) return null
+      const source = JSON.parse(serialized) as { chatId?: unknown; groupId?: unknown }
+      return typeof source.chatId === "string" && typeof source.groupId === "string"
+        ? { chatId: source.chatId, groupId: source.groupId }
+        : null
+    } catch {
+      return null
+    }
+  }, [])
+
+  const activateTopNavigationDropTarget = useCallback(
+    (target: ChatWorkbenchNavigationItem) => {
+      const key = `${target.kind}:${target.id}`
+      if (topNavigationEnteredTargetRef.current === key) return
+      topNavigationEnteredTargetRef.current = key
+      if (target.kind === "group") handleSelectWorkbenchGroup(target.id)
+      else handleSelectMainChatTab(target.id)
+    },
+    [handleSelectMainChatTab, handleSelectWorkbenchGroup],
+  )
+
+  const scheduleTopNavigationEnter = useCallback(
+    (target: ChatWorkbenchNavigationItem) => {
+      const key = `${target.kind}:${target.id}`
       if (
-        event.target instanceof HTMLElement &&
-        event.target.closest("[data-open-chat-tab-action]")
+        topNavigationEnteredTargetRef.current === key ||
+        topNavigationPendingTargetRef.current === key
       ) {
         return
       }
-
-      const sourceElement = event.currentTarget
-      const startX = event.clientX
-      const startY = event.clientY
-      let dragStarted = false
-      let dropTarget: { chatId: string; position: "before" | "after" } | null = null
-
-      const cleanup = () => {
-        document.removeEventListener("pointermove", handlePointerMove, true)
-        document.removeEventListener("pointerup", handlePointerUp, true)
-        document.removeEventListener("pointercancel", handlePointerCancel, true)
-        sourceElement.removeAttribute("data-open-chat-tab-drag-source")
-        delete document.body.dataset.openChatTabPointerDragging
-        document.body.style.cursor = ""
-        setOpenChatDropTarget(null)
-      }
-
-      const startDrag = () => {
-        dragStarted = true
-        suppressOpenChatTabClickRef.current = true
-        sourceElement.setAttribute("data-open-chat-tab-drag-source", "true")
-        document.body.dataset.openChatTabPointerDragging = "true"
-        document.body.style.cursor = "grabbing"
-      }
-
-      const handlePointerMove = (pointerEvent: PointerEvent) => {
-        if (!dragStarted) {
-          const movedX = pointerEvent.clientX - startX
-          const movedY = pointerEvent.clientY - startY
-          if (Math.hypot(movedX, movedY) < OPEN_CHAT_TAB_DRAG_THRESHOLD) return
-          startDrag()
-        }
-        pointerEvent.preventDefault()
-
-        const target = document
-          .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
-          ?.closest<HTMLElement>("[data-open-chat-tab-id]")
-        const targetChatId = target?.dataset.openChatTabId
-        if (!target || !targetChatId || targetChatId === chatId) {
-          dropTarget = null
-          setOpenChatDropTarget(null)
-          return
-        }
-
-        const bounds = target.getBoundingClientRect()
-        dropTarget = {
-          chatId: targetChatId,
-          position: pointerEvent.clientX < bounds.left + bounds.width / 2 ? "before" : "after",
-        }
-        setOpenChatDropTarget(dropTarget)
-      }
-
-      const finishDrag = (pointerEvent?: PointerEvent) => {
-        cleanup()
-        if (!dragStarted || !pointerEvent) return
-
-        pointerEvent.preventDefault()
-        if (dropTarget) reorderOpenChatTab(chatId, dropTarget.chatId, dropTarget.position)
-        window.setTimeout(() => {
-          suppressOpenChatTabClickRef.current = false
-        }, 0)
-      }
-
-      const handlePointerUp = (pointerEvent: PointerEvent) => finishDrag(pointerEvent)
-      const handlePointerCancel = () => {
-        finishDrag()
-        suppressOpenChatTabClickRef.current = false
-      }
-
-      document.addEventListener("pointermove", handlePointerMove, true)
-      document.addEventListener("pointerup", handlePointerUp, true)
-      document.addEventListener("pointercancel", handlePointerCancel, true)
+      cancelTopNavigationEnter()
+      topNavigationPendingTargetRef.current = key
+      topNavigationEnterTimerRef.current = setTimeout(() => {
+        topNavigationPendingTargetRef.current = null
+        topNavigationEnterTimerRef.current = null
+        activateTopNavigationDropTarget(target)
+      }, TOP_NAVIGATION_ENTER_DELAY_MS)
     },
-    [reorderOpenChatTab],
+    [activateTopNavigationDropTarget, cancelTopNavigationEnter],
+  )
+
+  useEffect(() => cancelTopNavigationEnter, [cancelTopNavigationEnter])
+
+  const moveGroupedChatToMainBar = useCallback(
+    (chatId: string, target?: ChatWorkbenchNavigationItem, position?: "before" | "after") => {
+      const current = chatWorkbenchNavigationRef.current
+      const detached = detachChatFromWorkbenchGroup(current, chatId)
+      const remainingGroupedIds = new Set(
+        detached.navigation.groups.flatMap((group) =>
+          collectChatGroups(group.layout.root).flatMap((pane) => pane.chatIds),
+        ),
+      )
+      const visibleChatIds = [...new Set([...openChatIds, chatId])].filter(
+        (id) => !remainingGroupedIds.has(id),
+      )
+      const navigation =
+        target && position
+          ? reorderChatWorkbenchNavigationItem(
+              detached.navigation,
+              visibleChatIds,
+              { kind: "chat", id: chatId },
+              target,
+              position,
+            )
+          : appendChatWorkbenchNavigationItem(detached.navigation, visibleChatIds, {
+              kind: "chat",
+              id: chatId,
+            })
+      recordWorkbenchMutation()
+      const transition = findLoneChatGroupTransition(current, navigation)
+      if (transition) setLoneChatGroupPrompt(transition)
+      persistWorkbenchNavigation(navigation)
+      chatWorkbenchRevisionRef.current += 1
+      chatWorkbenchLayoutRef.current = detached.layout
+      setChatWorkbenchLayout(detached.layout)
+      persistChatWorkbenchLayout(localStorage, stableWindowId, detached.layout)
+      persistWorkbenchPresentation(detached.layout)
+      setOpenChatIds((currentIds) =>
+        currentIds.includes(chatId) ? currentIds : [...currentIds, chatId],
+      )
+      void handleSelectOpenChatTab(chatId)
+    },
+    [
+      handleSelectOpenChatTab,
+      openChatIds,
+      persistWorkbenchNavigation,
+      persistWorkbenchPresentation,
+      recordWorkbenchMutation,
+      setOpenChatIds,
+      stableWindowId,
+    ],
+  )
+
+  const handleTopNavigationDragOver = useCallback(
+    (event: React.DragEvent<HTMLElement>, target: ChatWorkbenchNavigationItem) => {
+      const source = readTopNavigationDragSource(event.dataTransfer)
+      if (!source) return
+      event.preventDefault()
+      event.stopPropagation()
+      const bounds = event.currentTarget.getBoundingClientRect()
+      const sourceIsGrouped = groupedChatIds.has(source.chatId)
+      const intent =
+        sourceIsGrouped && target.kind === "chat"
+          ? resolveTopNavigationReorderIntent(event.clientX, bounds.left, bounds.width)
+          : resolveTopNavigationDropIntent(event.clientX, bounds.left, bounds.width)
+      const sourceIsOrdinary = openChatTabs.some((chat) => chat.id === source.chatId)
+      const sourceCanMoveToMainBar = sourceIsOrdinary || sourceIsGrouped
+      const accepted = intent === "inside" || sourceCanMoveToMainBar
+      event.dataTransfer.dropEffect = accepted ? "move" : "none"
+      setMainBarDropActive(false)
+      setTopNavigationDropTarget((current) => {
+        if (!accepted) return current === null ? current : null
+        return current?.item.kind === target.kind &&
+          current.item.id === target.id &&
+          current.intent === intent
+          ? current
+          : { item: target, intent }
+      })
+      if (intent === "inside" && source.chatId !== target.id) {
+        scheduleTopNavigationEnter(target)
+      } else {
+        cancelTopNavigationEnter()
+      }
+      if (intent !== "inside") {
+        topNavigationEnteredTargetRef.current = null
+      }
+    },
+    [
+      cancelTopNavigationEnter,
+      groupedChatIds,
+      openChatTabs,
+      readTopNavigationDragSource,
+      scheduleTopNavigationEnter,
+    ],
+  )
+
+  const handleTopNavigationDrop = useCallback(
+    (event: React.DragEvent<HTMLElement>, target: ChatWorkbenchNavigationItem) => {
+      const source = readTopNavigationDragSource(event.dataTransfer)
+      if (!source) return
+      event.preventDefault()
+      event.stopPropagation()
+      const bounds = event.currentTarget.getBoundingClientRect()
+      const intent =
+        groupedChatIds.has(source.chatId) && target.kind === "chat"
+          ? resolveTopNavigationReorderIntent(event.clientX, bounds.left, bounds.width)
+          : resolveTopNavigationDropIntent(event.clientX, bounds.left, bounds.width)
+      if (intent === "inside") {
+        if (source.chatId !== target.id) activateTopNavigationDropTarget(target)
+        clearTopNavigationDropTarget()
+        return
+      }
+      if (groupedChatIds.has(source.chatId)) {
+        moveGroupedChatToMainBar(source.chatId, target, intent)
+        clearTopNavigationDropTarget()
+        return
+      }
+      if (!openChatTabs.some((chat) => chat.id === source.chatId)) {
+        clearTopNavigationDropTarget()
+        return
+      }
+      const navigation = reorderChatWorkbenchNavigationItem(
+        chatWorkbenchNavigationRef.current,
+        openChatTabs.map((chat) => chat.id),
+        { kind: "chat", id: source.chatId },
+        target,
+        intent,
+      )
+      recordWorkbenchMutation()
+      persistWorkbenchNavigation(navigation)
+      if (target.kind === "chat") reorderOpenChatTab(source.chatId, target.id, intent)
+      clearTopNavigationDropTarget()
+    },
+    [
+      activateTopNavigationDropTarget,
+      clearTopNavigationDropTarget,
+      groupedChatIds,
+      moveGroupedChatToMainBar,
+      openChatTabs,
+      persistWorkbenchNavigation,
+      readTopNavigationDragSource,
+      recordWorkbenchMutation,
+      reorderOpenChatTab,
+    ],
+  )
+
+  const handleMainBarDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      const source = readTopNavigationDragSource(event.dataTransfer)
+      if (!source || !groupedChatIds.has(source.chatId)) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = "move"
+      cancelTopNavigationEnter()
+      setTopNavigationDropTarget(null)
+      setMainBarDropActive(true)
+    },
+    [cancelTopNavigationEnter, groupedChatIds, readTopNavigationDragSource],
+  )
+
+  const handleMainBarDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      const source = readTopNavigationDragSource(event.dataTransfer)
+      if (!source || !groupedChatIds.has(source.chatId)) return
+      event.preventDefault()
+      moveGroupedChatToMainBar(source.chatId)
+      clearTopNavigationDropTarget()
+    },
+    [
+      clearTopNavigationDropTarget,
+      groupedChatIds,
+      moveGroupedChatToMainBar,
+      readTopNavigationDragSource,
+    ],
   )
 
   // Track previous chat ID for navigation after archive
@@ -1873,7 +2492,7 @@ function AgentsContentInner() {
             />
           ) : selectedChatId ? (
             <div className="h-full flex flex-col relative overflow-hidden">
-              {selectedChatIsRemote && openChatTabs.length > 0 && (
+              {(openChatTabs.length > 0 || chatWorkbenchNavigation.groups.length > 0) && (
                 <div
                   className="relative h-[43px] shrink-0 border-b-2 border-border bg-muted/30"
                   style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
@@ -1885,11 +2504,169 @@ function AgentsContentInner() {
                 >
                   <div
                     ref={openChatTabsRef}
-                    className="scrollbar-hide flex h-full items-start overflow-x-auto px-px pt-1"
+                    data-chat-main-bar-drop-target
+                    data-chat-main-bar-drop-active={mainBarDropActive || undefined}
+                    className={[
+                      "scrollbar-hide relative flex h-full items-start overflow-x-auto px-px pr-10 pt-1 transition-[background-color,box-shadow]",
+                      mainBarDropActive ? "bg-primary/10 ring-1 ring-inset ring-primary/70" : "",
+                    ].join(" ")}
                     onScroll={updateOpenChatScrollbar}
+                    onDragOver={handleMainBarDragOver}
+                    onDrop={handleMainBarDrop}
+                    onDragLeave={(event) => {
+                      const next = event.relatedTarget
+                      if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+                        clearTopNavigationDropTarget()
+                      }
+                    }}
                   >
+                    {!selectedChatIsRemote &&
+                      chatWorkbenchNavigation.groups.map((group) => {
+                        const isActive = chatWorkbenchNavigation.activeGroupId === group.id
+                        const hasUnseenChanges = collectChatGroups(group.layout.root).some((pane) =>
+                          pane.chatIds.some((chatId) => unseenChatIds.has(chatId)),
+                        )
+                        return (
+                          <ContextMenu key={group.id}>
+                            <ContextMenuTrigger asChild>
+                              <div
+                                data-workbench-navigation-group={group.id}
+                                data-top-navigation-item-kind="group"
+                                data-top-navigation-item-id={group.id}
+                                data-top-navigation-drop-intent={
+                                  topNavigationDropTarget?.item.kind === "group" &&
+                                  topNavigationDropTarget.item.id === group.id
+                                    ? topNavigationDropTarget.intent
+                                    : undefined
+                                }
+                                onDragOver={(event) =>
+                                  handleTopNavigationDragOver(event, {
+                                    kind: "group",
+                                    id: group.id,
+                                  })
+                                }
+                                onDrop={(event) =>
+                                  handleTopNavigationDrop(event, { kind: "group", id: group.id })
+                                }
+                                onDragLeave={(event) => {
+                                  if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                                    clearTopNavigationDropTarget()
+                                  }
+                                }}
+                                className={[
+                                  "group relative flex h-9 min-w-28 max-w-56 shrink-0 items-center gap-1.5 rounded-t-md border border-b-0 pl-2 pr-1 text-left text-xs transition-[background-color,border-color,color,box-shadow]",
+                                  isActive
+                                    ? "border-border bg-primary/15 font-medium text-foreground shadow-sm"
+                                    : "border-border/40 bg-muted/25 text-muted-foreground hover:border-border/70 hover:bg-muted/70 hover:text-foreground",
+                                  topNavigationDropTarget?.item.kind === "group" &&
+                                  topNavigationDropTarget.item.id === group.id &&
+                                  topNavigationDropTarget.intent === "inside"
+                                    ? "ring-1 ring-inset ring-primary/80"
+                                    : "",
+                                ].join(" ")}
+                                style={
+                                  {
+                                    WebkitAppRegion: "no-drag",
+                                    order: topNavigationOrder.get(`group:${group.id}`),
+                                    borderTopColor: group.color
+                                      ? GROUP_COLOR_SWATCHES[group.color]
+                                      : undefined,
+                                  } as React.CSSProperties
+                                }
+                              >
+                                {topNavigationDropTarget?.item.kind === "group" &&
+                                  topNavigationDropTarget.item.id === group.id &&
+                                  topNavigationDropTarget.intent !== "inside" && (
+                                    <span
+                                      aria-hidden
+                                      data-top-navigation-insertion={topNavigationDropTarget.intent}
+                                      className={[
+                                        "pointer-events-none absolute bottom-0 top-1 z-20 w-0.5 rounded-full bg-blue-500",
+                                        topNavigationDropTarget.intent === "before"
+                                          ? "-left-px"
+                                          : "-right-px",
+                                      ].join(" ")}
+                                    />
+                                  )}
+                                <PanelsTopLeft className="h-3.5 w-3.5 shrink-0" />
+                                <button
+                                  type="button"
+                                  className="min-w-0 flex-1 truncate text-left"
+                                  onClick={() => handleSelectWorkbenchGroup(group.id)}
+                                >
+                                  {group.name}
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label={`Close ${group.name}`}
+                                  className={[
+                                    "relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/20 hover:text-foreground group-hover:opacity-100",
+                                    hasUnseenChanges ? "opacity-100" : "opacity-60",
+                                  ].join(" ")}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    handleCloseWorkbenchGroup(group.id)
+                                  }}
+                                >
+                                  {hasUnseenChanges && (
+                                    <span
+                                      aria-hidden
+                                      data-group-unseen-indicator={group.id}
+                                      className="absolute inset-0 flex items-center justify-center transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
+                                    >
+                                      <span className="h-2 w-2 rounded-full bg-[#307BD0]" />
+                                    </span>
+                                  )}
+                                  <X
+                                    className={[
+                                      "h-3.5 w-3.5",
+                                      hasUnseenChanges
+                                        ? "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                                        : "",
+                                    ].join(" ")}
+                                  />
+                                </button>
+                              </div>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent className="w-48">
+                              <ContextMenuItem
+                                onSelect={() =>
+                                  setRenamingWorkbenchGroup({ id: group.id, name: group.name })
+                                }
+                              >
+                                Rename group…
+                              </ContextMenuItem>
+                              <ContextMenuSub>
+                                <ContextMenuSubTrigger>Group color</ContextMenuSubTrigger>
+                                <ContextMenuSubContent className="w-44">
+                                  {CHAT_WORKBENCH_GROUP_COLORS.map((color) => (
+                                    <ContextMenuItem
+                                      key={color}
+                                      onSelect={() => handleSetWorkbenchGroupColor(group.id, color)}
+                                    >
+                                      <span
+                                        aria-hidden
+                                        className="h-3 w-3 rounded-full ring-1 ring-white/20"
+                                        style={{ backgroundColor: GROUP_COLOR_SWATCHES[color] }}
+                                      />
+                                      <span className="capitalize">{color}</span>
+                                      {group.color === color && <span className="ml-auto">✓</span>}
+                                    </ContextMenuItem>
+                                  ))}
+                                </ContextMenuSubContent>
+                              </ContextMenuSub>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem onSelect={() => handleCloseWorkbenchGroup(group.id)}>
+                                Close group
+                              </ContextMenuItem>
+                            </ContextMenuContent>
+                          </ContextMenu>
+                        )
+                      })}
                     {openChatTabs.map((chat, tabIndex) => {
-                      const isActive = chat.id === selectedChatId
+                      const isActive =
+                        chatWorkbenchNavigation.activeGroupId === null && chat.id === selectedChatId
+                      const hasUnseenChanges = unseenChatIds.has(chat.id)
                       const underlineColor = resolveOpenChatTabUnderlineColor(
                         chat,
                         openChatProjectColors,
@@ -1903,38 +2680,87 @@ function AgentsContentInner() {
                           <ContextMenuTrigger asChild>
                             <div
                               data-open-chat-tab-id={chat.id}
-                              onPointerDown={(event) =>
-                                handleOpenChatTabPointerDown(event, chat.id)
+                              data-top-navigation-item-kind="chat"
+                              data-top-navigation-item-id={chat.id}
+                              data-top-navigation-drop-intent={
+                                topNavigationDropTarget?.item.kind === "chat" &&
+                                topNavigationDropTarget.item.id === chat.id
+                                  ? topNavigationDropTarget.intent
+                                  : undefined
                               }
+                              draggable={!selectedChatIsRemote}
+                              onDragStart={(event) => {
+                                if (selectedChatIsRemote) {
+                                  event.preventDefault()
+                                  return
+                                }
+                                configureChatDragFeedback(
+                                  event.dataTransfer,
+                                  chat.name || "New Chat",
+                                )
+                                const source = {
+                                  chatId: chat.id,
+                                  groupId: CHAT_WORKBENCH_EXTERNAL_GROUP_ID,
+                                  sourceWindowId: stableWindowId,
+                                }
+                                const serialized = JSON.stringify(source)
+                                event.dataTransfer.setData(CHAT_WORKBENCH_DRAG_MIME, serialized)
+                                localStorage.setItem(CHAT_WORKBENCH_DRAG_SESSION_KEY, serialized)
+                              }}
+                              onDragEnd={() => {
+                                localStorage.removeItem(CHAT_WORKBENCH_DRAG_SESSION_KEY)
+                                clearTopNavigationDropTarget()
+                              }}
+                              onDragOver={(event) =>
+                                handleTopNavigationDragOver(event, { kind: "chat", id: chat.id })
+                              }
+                              onDrop={(event) =>
+                                handleTopNavigationDrop(event, { kind: "chat", id: chat.id })
+                              }
+                              onDragLeave={(event) => {
+                                if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                                  clearTopNavigationDropTarget()
+                                }
+                              }}
                               className={[
                                 "group relative flex h-9 max-w-56 min-w-28 items-center gap-1.5 rounded-t-md border border-b-0 pl-3 pr-1 text-left text-xs transition-[background-color,border-color,color,box-shadow]",
                                 isActive
                                   ? "border-border bg-primary/15 font-medium text-foreground shadow-sm"
                                   : "border-border/40 bg-muted/25 text-muted-foreground hover:border-border/70 hover:bg-muted/70 hover:text-foreground",
+                                topNavigationDropTarget?.item.kind === "chat" &&
+                                topNavigationDropTarget.item.id === chat.id &&
+                                topNavigationDropTarget.intent === "inside"
+                                  ? "ring-1 ring-inset ring-primary/80"
+                                  : "",
                               ].join(" ")}
-                              style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                              style={
+                                {
+                                  WebkitAppRegion: "no-drag",
+                                  order: topNavigationOrder.get(`chat:${chat.id}`),
+                                } as React.CSSProperties
+                              }
                             >
                               <button
                                 type="button"
                                 className="min-w-0 flex-1 truncate text-left"
-                                onClick={(event) => {
-                                  if (suppressOpenChatTabClickRef.current) {
-                                    event.preventDefault()
-                                    suppressOpenChatTabClickRef.current = false
-                                    return
-                                  }
-                                  handleSelectOpenChatTab(chat.id)
-                                }}
+                                onClick={() => handleSelectMainChatTab(chat.id)}
                               >
                                 {chat.name || "New Chat"}
+                                {hasUnseenChanges && (
+                                  <span className="sr-only">, new response</span>
+                                )}
                               </button>
                               <button
                                 type="button"
                                 data-open-chat-tab-action
                                 aria-label={`Close ${chat.name || "chat"}`}
                                 className={[
-                                  "flex h-8 w-8 translate-y-0.5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,box-shadow,color,opacity] hover:bg-foreground/20 hover:text-foreground hover:ring-1 hover:ring-inset hover:ring-foreground/35 group-hover:opacity-100",
-                                  isActive ? "opacity-60" : "opacity-0",
+                                  "relative flex h-8 w-8 translate-y-0.5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,box-shadow,color,opacity] hover:bg-foreground/20 hover:text-foreground hover:ring-1 hover:ring-inset hover:ring-foreground/35 group-hover:opacity-100",
+                                  hasUnseenChanges
+                                    ? "opacity-100"
+                                    : isActive
+                                      ? "opacity-60"
+                                      : "opacity-0",
                                 ].join(" ")}
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
@@ -1942,28 +2768,71 @@ function AgentsContentInner() {
                                   handleCloseOpenChatTab(chat.id)
                                 }}
                               >
-                                <X className="h-4 w-4" />
+                                {hasUnseenChanges && (
+                                  <span
+                                    aria-hidden
+                                    data-open-chat-unseen-indicator={chat.id}
+                                    className="absolute inset-0 flex items-center justify-center transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
+                                  >
+                                    <span className="h-2 w-2 rounded-full bg-[#307BD0]" />
+                                  </span>
+                                )}
+                                <X
+                                  className={[
+                                    "h-4 w-4",
+                                    hasUnseenChanges
+                                      ? "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                                      : "",
+                                  ].join(" ")}
+                                />
                               </button>
                               <span
                                 aria-hidden
                                 className="pointer-events-none absolute inset-x-0 top-0 h-0.5 opacity-[0.55]"
                                 style={{ backgroundColor: underlineColor }}
                               />
-                              {openChatDropTarget?.chatId === chat.id && (
-                                <span
-                                  aria-hidden
-                                  data-open-chat-drop-indicator={openChatDropTarget.position}
-                                  className={[
-                                    "pointer-events-none absolute bottom-0 top-1 z-20 w-0.5 rounded-full bg-blue-500 shadow-[0_0_0_1px_rgba(59,130,246,0.2)]",
-                                    openChatDropTarget.position === "before"
-                                      ? "-left-px"
-                                      : "-right-px",
-                                  ].join(" ")}
-                                />
-                              )}
+                              {topNavigationDropTarget?.item.kind === "chat" &&
+                                topNavigationDropTarget.item.id === chat.id &&
+                                topNavigationDropTarget.intent !== "inside" && (
+                                  <span
+                                    aria-hidden
+                                    data-top-navigation-insertion={topNavigationDropTarget.intent}
+                                    className={[
+                                      "pointer-events-none absolute bottom-0 top-1 z-20 w-0.5 rounded-full bg-blue-500 shadow-[0_0_0_1px_rgba(59,130,246,0.2)]",
+                                      topNavigationDropTarget.intent === "before"
+                                        ? "-left-px"
+                                        : "-right-px",
+                                    ].join(" ")}
+                                  />
+                                )}
                             </div>
                           </ContextMenuTrigger>
                           <ContextMenuContent className="w-48">
+                            <ContextMenuSub>
+                              <ContextMenuSubTrigger
+                                disabled={chatWorkbenchNavigation.groups.length === 0}
+                              >
+                                Move
+                              </ContextMenuSubTrigger>
+                              <ContextMenuSubContent className="w-52">
+                                {chatWorkbenchNavigation.groups.map((group) => (
+                                  <ContextMenuItem
+                                    key={group.id}
+                                    onSelect={() =>
+                                      handleMoveChatToWorkbenchGroup(chat.id, group.id)
+                                    }
+                                  >
+                                    {group.name}
+                                  </ContextMenuItem>
+                                ))}
+                              </ContextMenuSubContent>
+                            </ContextMenuSub>
+                            <ContextMenuItem
+                              onSelect={() => handleCreateWorkbenchGroupFromChat(chat.id)}
+                            >
+                              Add to new group
+                            </ContextMenuItem>
+                            <ContextMenuSeparator />
                             <ContextMenuItem onSelect={() => handleCloseOpenChatTab(chat.id)}>
                               Close
                             </ContextMenuItem>
@@ -1987,6 +2856,14 @@ function AgentsContentInner() {
                         </ContextMenu>
                       )
                     })}
+                    {mainBarDropActive && (
+                      <span
+                        aria-hidden
+                        className="pointer-events-none absolute right-2 top-1/2 z-30 -translate-y-1/2 rounded bg-background/90 px-2 py-1 text-xs font-medium text-foreground shadow-sm"
+                      >
+                        Move to main bar
+                      </span>
+                    )}
                   </div>
                   {openChatScrollbar.width > 0 && (
                     <span
@@ -2011,60 +2888,24 @@ function AgentsContentInner() {
                 />
               ) : (
                 <ChatWorkbench
-                  chats={openChatTabs.map((chat) => ({
-                    ...chat,
-                    accentColor: resolveOpenChatTabUnderlineColor(chat, openChatProjectColors),
-                  }))}
+                  chats={workbenchChats}
                   layout={chatWorkbenchLayout}
                   onLayoutChange={handleChatWorkbenchChange}
-                  onActiveChatChange={(chatId) => {
-                    if (readOnlyWorkbenchChatIds.has(chatId)) {
-                      setSelectedChatId(chatId)
-                      setSelectedChatIsRemote(false)
-                      setChatSourceMode("local")
-                      return
-                    }
-                    void handleSelectOpenChatTab(chatId)
-                  }}
+                  onActiveChatChange={handleWorkbenchActiveChatChange}
+                  onChatViewed={handleChatViewed}
                   readOnlyChatIds={readOnlyWorkbenchChatIds}
                   windowId={stableWindowId}
-                  onMoveToNewWindow={moveChatToNewWindow}
-                  onMoveToExistingWindow={moveChatToExistingWindow}
                   onCrossWindowDrop={dropChatIntoCurrentWindow}
                   onDragOutside={dropChatOutside}
                   onClaimOwnership={claimReadOnlyChat}
                   onSaveAsWorkspace={saveChatWorkbenchAsWorkspace}
-                  renderChat={(chatId, active) => {
-                    const readOnly = readOnlyWorkbenchChatIds.has(chatId)
-                    return (
-                      <div className="relative h-full">
-                        <div
-                          className="h-full"
-                          inert={readOnly ? true : undefined}
-                          aria-disabled={readOnly || undefined}
-                        >
-                          <ChatView
-                            key={`${chatSourceMode}-${chatId}`}
-                            chatId={chatId}
-                            workbenchActive={active}
-                            isSidebarOpen={sidebarOpen}
-                            onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
-                            selectedTeamName={selectedTeam?.name}
-                            selectedTeamImageUrl={selectedTeam?.image_url}
-                          />
-                        </div>
-                        {readOnly && (
-                          <div
-                            role="note"
-                            className="absolute inset-x-3 bottom-3 rounded-md border border-border bg-background/95 px-3 py-2 text-xs shadow"
-                          >
-                            Read-only in this window. Move Chat ownership here before sending or
-                            changing settings.
-                          </div>
-                        )}
-                      </div>
-                    )
-                  }}
+                  showPaneHeaders={Boolean(chatWorkbenchNavigation.activeGroupId)}
+                  savedGroups={chatWorkbenchNavigation.groups.map(({ id, name }) => ({ id, name }))}
+                  activeSavedGroupId={chatWorkbenchNavigation.activeGroupId}
+                  onMoveChatToMainBar={moveGroupedChatToMainBar}
+                  onMoveChatToGroup={handleMoveChatToWorkbenchGroup}
+                  onCreateGroupFromChat={handleCreateWorkbenchGroupFromChat}
+                  renderChat={renderWorkbenchChat}
                 />
               )}
             </div>
@@ -2166,6 +3007,40 @@ function AgentsContentInner() {
           )}
         </div>
       </div>
+
+      <RenameDialog
+        isOpen={renamingWorkbenchGroup !== null}
+        onClose={() => setRenamingWorkbenchGroup(null)}
+        onSave={saveRenamedWorkbenchGroup}
+        currentName={renamingWorkbenchGroup?.name ?? ""}
+        title="Rename group"
+        placeholder="Group name"
+      />
+
+      <AlertDialog
+        open={loneChatGroupPrompt !== null}
+        onOpenChange={(open) => {
+          if (!open) setLoneChatGroupPrompt(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Keep this one-Chat group?</AlertDialogTitle>
+          </AlertDialogHeader>
+          <AlertDialogBody>
+            <AlertDialogDescription>
+              This move leaves one Chat in the group. Keep the group, or remove it and place the
+              remaining Chat on the main bar?
+            </AlertDialogDescription>
+          </AlertDialogBody>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setLoneChatGroupPrompt(null)}>
+              Keep group
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleRemoveLoneChatGroup}>Remove group</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Quick-switch dialog - Agents (Opt+Ctrl+Tab) */}
       <AgentsQuickSwitchDialog

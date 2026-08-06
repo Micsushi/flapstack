@@ -220,6 +220,8 @@ export class MainRuntimeLaunchService {
             ...(Object.keys(config).length > 0 ? { config } : {}),
           }
         },
+        resolveThreadVisibility: (context) =>
+          this.runs.get(context.runId)?.codexThreadVisibility ?? "hidden",
         resolvePersistedSession: (context) => this.loadPersistedSession(context.runId),
         resolvePersistedTurn: (context) => this.loadPersistedTurn(context.runId),
         requestPermission: (context, request) =>

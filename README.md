@@ -254,8 +254,11 @@ commands live in the [Windows development guide](docs/windows-development.md).
   universal new-chat/sub-agent selection, and honest effort/speed compatibility.
 - Secure cross-agent mobile companion over a default-off local PWA bridge.
 - Visual context capture, redaction, artifacts, agent context, and standalone helper.
-- Up to four fully interactive Chat groups with VS Code-style directional tab
-  drops, resizable mixed layouts, floating-window drag-out, and the same
+- Saved multi-pane Chat groups with up to four fully interactive panes,
+  VS Code-style pointer-positioned split previews with generous edge targets,
+  quarter-zone top navigation and per-pane tab moving/reordering,
+  whole-pane tab-strip dragging, resizable mixed layouts,
+  floating-window drag-out, and the same
   compositor extended into terminal-grid/swarm workspaces, with at most four
   visible Flapstack workbench windows total including main.
 - Final Runtime/orchestration composition for schemas, control, activity, and recovery.
@@ -274,6 +277,29 @@ see the
 [Stage 6 router](openspec/stages/s6-product-polish-personalization-reach/README.md),
 [execution plan](docs/stage6-execution-plan.md), and
 [test matrix](docs/stage6-full-feature-test-matrix.md).
+
+Recent owner-requested local additions on `main` add reusable chat tags with
+sidebar chips and tag-aware search, plus a read-only project repository overview
+for all registered Git worktrees and local or remote branches. The Chat
+workbench now distinguishes ordinary top-level Chat items from persistent
+multi-pane groups. A split creates a group, each pane owns its own compact tab
+bar, group-owned Chats disappear from the main tab strip, and selecting or
+creating an ordinary Chat returns to a single-Chat view without discarding the
+group. Sidebar, main-bar, and pane tabs can be dropped on a pane edge or center;
+the middle half of a top item enters that Chat or group while the pointer remains
+dragging, and its outer quarters reorder ordinary Chat items between Chats and
+groups. Dragging a grouped Chat onto empty main-bar space moves it back to an
+ordinary full-screen item; dropping on an outer quarter positions it beside the
+chosen Chat or group. A pane-tab center drop moves the Chat into that pane and
+activates it; edge drops split. Repeated drag events in the same target no longer
+rerender Chat content, and entering top items uses a short hover delay to avoid
+loading Chats merely crossed by the pointer. Groups can be renamed from their
+context menu. Dragging outside creates a window, while rejected fifth-pane splits
+show no false preview. Window transfers wait for the destination renderer before
+committing. Layout and window movement are drag-driven rather than toolbar commands.
+Preferences also control whether completed Flapstack Codex tasks remain visible
+under their Codex project or are archived while idle. Hidden tasks are restored
+automatically before the next message so Flapstack conversations remain resumable.
 
 Stage 2 owns Flapstack's in-app STT/TTS. Handy covers standalone system-wide
 dictation; no separate Flapstack voice platform is planned.

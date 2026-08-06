@@ -163,6 +163,7 @@ contextBridge.exposeInMainWorld("desktopApi", {
   onChatTransferOffer: (callback: (offer: ChatTransferOffer) => void) => {
     const handler = (_event: unknown, offer: ChatTransferOffer) => callback(offer)
     ipcRenderer.on("chat-transfer:offer", handler)
+    ipcRenderer.send("chat-transfer:renderer-ready")
     return () => ipcRenderer.removeListener("chat-transfer:offer", handler)
   },
   onChatTransferRemoveSource: (callback: (input: ChatTransferRemoveSource) => void) => {

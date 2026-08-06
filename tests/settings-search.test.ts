@@ -34,6 +34,13 @@ describe("Settings search", () => {
     expect(results[0]?.id).toBe("preferences-default-mode")
   })
 
+  it("finds the Codex task visibility preference", () => {
+    expect(searchSettings("codex task visibility", { showDevelopment: false })[0]).toMatchObject({
+      tab: "preferences",
+      targetId: "preferences-codex-task-visibility",
+    })
+  })
+
   it("requires every normalized query token to match", () => {
     expect(searchSettings("default permission", { showDevelopment: false })[0]?.id).toBe(
       "permissions-default",

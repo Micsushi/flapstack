@@ -182,6 +182,7 @@ import { LocalModelChatTransport } from "../lib/local-model-chat-transport"
 import { OpencodeChatTransport } from "../lib/opencode-chat-transport"
 import { resolveProjectAccentColor } from "../lib/open-chat-tabs"
 import { resolveCanonicalConversationId } from "../lib/canonical-conversation"
+import { markChatSeen, markChatUnseen } from "../lib/chat-unseen-state"
 import { resolveLocalFolder } from "../lib/resolve-local-folder"
 import {
   createQueueItem,
@@ -1870,6 +1871,7 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Track chat container height via CSS custom property (no re-renders)
   const chatContainerObserverRef = useRef<ResizeObserver | null>(null)
+  const bottomDockObserverRef = useRef<ResizeObserver | null>(null)
 
   // Ref for the inner content wrapper (for ResizeObserver-based scroll-to-bottom)
   const contentWrapperRef = useRef<HTMLDivElement | null>(null)
@@ -5044,7 +5046,8 @@ const ChatViewInner = memo(function ChatViewInner({
             ref={contentWrapperRef}
             className="mx-auto max-w-2xl px-2 pt-6"
             style={{
-              paddingBottom: "32px",
+              paddingBottom:
+                "calc(var(--chat-bottom-dock-height, var(--chat-input-height, 4rem)) + 32px)",
             }}
           >
             <div className="space-y-4">
@@ -5099,138 +5102,156 @@ const ChatViewInner = memo(function ChatViewInner({
           </div>
         </div>
 
-        {/* Shared question dialog. Background chats never open it automatically. */}
-        {displayQuestions && (
-          <>
-            <AgentInputDialog
-              request={displayQuestions}
-              open={isActive && questionDialogOpen}
-              onOpenChange={setQuestionDialogOpen}
-              onAnswer={handleQuestionsAnswer}
-              onSkip={handleQuestionsSkip}
-              onAnswerInChat={() => {
-                setQuestionDialogOpen(false)
-                queueMicrotask(() => editorRef.current?.focus())
-              }}
-            />
-            {!questionDialogOpen && (
-              <div className="relative z-20 px-4">
-                <div className="mx-auto flex w-full max-w-2xl items-start justify-between gap-3 rounded-t-xl border border-b-0 border-border bg-muted/30 px-3 py-2">
-                  <div className="min-w-0 text-xs text-muted-foreground">
-                    <div className="font-medium text-foreground">Agent questions</div>
-                    {displayQuestions.questions.map((question, index) => (
-                      <div key={`${displayQuestions.toolUseId}-${index}`} className="truncate">
-                        {index + 1}. {question.question}
-                      </div>
-                    ))}
-                    {isQuestionContinuation && (
-                      <div className="mt-1 text-amber-600 dark:text-amber-400">
-                        This harness cannot resume a paused structured request. Your reply will
-                        continue as a normal chat turn.
-                      </div>
-                    )}
+        <div
+          ref={(element) => {
+            bottomDockObserverRef.current?.disconnect()
+            bottomDockObserverRef.current = null
+            if (!element) return
+            const root = element.parentElement
+            const observer = new ResizeObserver(([entry]) => {
+              const height = entry?.contentRect.height ?? 0
+              root?.style.setProperty("--chat-bottom-dock-height", `${height}px`)
+              root?.style.setProperty("--chat-input-height", `${height}px`)
+            })
+            observer.observe(element)
+            bottomDockObserverRef.current = observer
+          }}
+          className="absolute inset-x-0 bottom-0 z-20"
+          data-chat-bottom-dock
+        >
+          {/* Shared question dialog. Background chats never open it automatically. */}
+          {displayQuestions && (
+            <>
+              <AgentInputDialog
+                request={displayQuestions}
+                open={isActive && questionDialogOpen}
+                onOpenChange={setQuestionDialogOpen}
+                onAnswer={handleQuestionsAnswer}
+                onSkip={handleQuestionsSkip}
+                onAnswerInChat={() => {
+                  setQuestionDialogOpen(false)
+                  queueMicrotask(() => editorRef.current?.focus())
+                }}
+              />
+              {!questionDialogOpen && (
+                <div className="relative z-20 px-4">
+                  <div className="mx-auto flex w-full max-w-2xl items-start justify-between gap-3 rounded-t-xl border border-b-0 border-border bg-muted/30 px-3 py-2">
+                    <div className="min-w-0 text-xs text-muted-foreground">
+                      <div className="font-medium text-foreground">Agent questions</div>
+                      {displayQuestions.questions.map((question, index) => (
+                        <div key={`${displayQuestions.toolUseId}-${index}`} className="truncate">
+                          {index + 1}. {question.question}
+                        </div>
+                      ))}
+                      {isQuestionContinuation && (
+                        <div className="mt-1 text-amber-600 dark:text-amber-400">
+                          This harness cannot resume a paused structured request. Your reply will
+                          continue as a normal chat turn.
+                        </div>
+                      )}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={() => setQuestionDialogOpen(true)}
+                    >
+                      Reopen questions
+                    </Button>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    onClick={() => setQuestionDialogOpen(true)}
-                  >
-                    Reopen questions
-                  </Button>
                 </div>
+              )}
+            </>
+          )}
+
+          {/* Stacked cards container - queue + status */}
+          {shouldShowStackedCards && (
+            <div className="px-2 -mb-6 relative z-10">
+              <div className="w-full max-w-2xl mx-auto px-2">
+                {/* Queue indicator card - top card */}
+                {queue.length > 0 && (
+                  <AgentQueueIndicator
+                    queue={queue}
+                    onRemoveItem={handleRemoveFromQueue}
+                    onSendNow={handleSendFromQueue}
+                    onEditItem={handleEditQueuedMessage}
+                    onReorderItem={handleReorderQueuedMessage}
+                    isStreaming={isStreaming}
+                    hasStatusCardBelow={shouldShowStatusCard}
+                  />
+                )}
+                {/* Status card - bottom card */}
+                {shouldShowStatusCard && (
+                  <SubChatStatusCard
+                    chatId={parentChatId}
+                    subChatId={subChatId}
+                    isStreaming={isStreaming}
+                    isCompacting={isCompacting}
+                    changedFiles={changedFilesForSubChat}
+                    worktreePath={projectPath}
+                    onStop={handleStop}
+                    hasQueueCardAbove={queue.length > 0}
+                  />
+                )}
               </div>
-            )}
-          </>
-        )}
-
-        {/* Stacked cards container - queue + status */}
-        {shouldShowStackedCards && (
-          <div className="px-2 -mb-6 relative z-10">
-            <div className="w-full max-w-2xl mx-auto px-2">
-              {/* Queue indicator card - top card */}
-              {queue.length > 0 && (
-                <AgentQueueIndicator
-                  queue={queue}
-                  onRemoveItem={handleRemoveFromQueue}
-                  onSendNow={handleSendFromQueue}
-                  onEditItem={handleEditQueuedMessage}
-                  onReorderItem={handleReorderQueuedMessage}
-                  isStreaming={isStreaming}
-                  hasStatusCardBelow={shouldShowStatusCard}
-                />
-              )}
-              {/* Status card - bottom card */}
-              {shouldShowStatusCard && (
-                <SubChatStatusCard
-                  chatId={parentChatId}
-                  subChatId={subChatId}
-                  isStreaming={isStreaming}
-                  isCompacting={isCompacting}
-                  changedFiles={changedFilesForSubChat}
-                  worktreePath={projectPath}
-                  onStop={handleStop}
-                  hasQueueCardAbove={queue.length > 0}
-                />
-              )}
             </div>
-          </div>
-        )}
+          )}
 
-        <AttachmentTray
-          chatId={parentChatId}
-          taskId={taskId ?? null}
-          worktreePath={projectPath ?? null}
-        />
+          <AttachmentTray
+            chatId={parentChatId}
+            taskId={taskId ?? null}
+            worktreePath={projectPath ?? null}
+          />
 
-        {/* Input - isolated component to prevent re-renders */}
-        <ChatInputArea
-          editorRef={editorRef}
-          fileInputRef={fileInputRef}
-          onSend={handleSend}
-          onForceSend={handleForceSend}
-          onStop={handleStop}
-          onCompact={handleCompact}
-          onModeChange={handleModeChange}
-          isStreaming={isStreaming}
-          isCompacting={isCompacting}
-          images={images}
-          files={files}
-          onAddAttachments={handleAddAttachments}
-          onPersistAttachments={persistAttachments}
-          onRemoveImage={removeImage}
-          onRemoveFile={removeFile}
-          isUploading={isUploading}
-          textContexts={textContexts}
-          onRemoveTextContext={removeTextContext}
-          diffTextContexts={diffTextContexts}
-          onRemoveDiffTextContext={removeDiffTextContext}
-          pastedTexts={pastedTexts}
-          onAddPastedText={addPastedText}
-          onRemovePastedText={removePastedText}
-          onCacheFileContent={cacheFileContent}
-          messageTokenData={messageTokenData}
-          subChatId={subChatId}
-          parentChatId={parentChatId}
-          provider={provider}
-          teamId={teamId}
-          repository={repository}
-          chatName={workspaceName}
-          projectLabel={workspaceRepoName}
-          sandboxId={sandboxId}
-          projectPath={projectPath}
-          changedFiles={changedFilesForSubChat}
-          isMobile={isMobile}
-          queueLength={queue.length}
-          onSendFromQueue={handleSendFromQueue}
-          firstQueueItemId={queue[0]?.id}
-          onInputContentChange={setInputHasContent}
-          onSubmitWithQuestionAnswer={submitWithQuestionAnswerCallback}
-          onProviderChange={handleInputProviderChange}
-          onContinueWithProvider={handleContinueWithProvider}
-          onDelegateWithProvider={handleDelegateWithProvider}
-          isActive={isActive}
-        />
+          {/* Input - isolated component to prevent re-renders */}
+          <ChatInputArea
+            editorRef={editorRef}
+            fileInputRef={fileInputRef}
+            onSend={handleSend}
+            onForceSend={handleForceSend}
+            onStop={handleStop}
+            onCompact={handleCompact}
+            onModeChange={handleModeChange}
+            isStreaming={isStreaming}
+            isCompacting={isCompacting}
+            images={images}
+            files={files}
+            onAddAttachments={handleAddAttachments}
+            onPersistAttachments={persistAttachments}
+            onRemoveImage={removeImage}
+            onRemoveFile={removeFile}
+            isUploading={isUploading}
+            textContexts={textContexts}
+            onRemoveTextContext={removeTextContext}
+            diffTextContexts={diffTextContexts}
+            onRemoveDiffTextContext={removeDiffTextContext}
+            pastedTexts={pastedTexts}
+            onAddPastedText={addPastedText}
+            onRemovePastedText={removePastedText}
+            onCacheFileContent={cacheFileContent}
+            messageTokenData={messageTokenData}
+            subChatId={subChatId}
+            parentChatId={parentChatId}
+            provider={provider}
+            teamId={teamId}
+            repository={repository}
+            chatName={workspaceName}
+            projectLabel={workspaceRepoName}
+            sandboxId={sandboxId}
+            projectPath={projectPath}
+            changedFiles={changedFilesForSubChat}
+            isMobile={isMobile}
+            queueLength={queue.length}
+            onSendFromQueue={handleSendFromQueue}
+            firstQueueItemId={queue[0]?.id}
+            onInputContentChange={setInputHasContent}
+            onSubmitWithQuestionAnswer={submitWithQuestionAnswerCallback}
+            onProviderChange={handleInputProviderChange}
+            onContinueWithProvider={handleContinueWithProvider}
+            onDelegateWithProvider={handleDelegateWithProvider}
+            isActive={isActive}
+          />
+        </div>
 
         {/* Scroll to bottom button - isolated component to avoid re-renders during streaming */}
         <ScrollToBottomButton
@@ -5726,17 +5747,12 @@ function ChatViewScoped({
   // Track changed files across all sub-chats for filtering
   const subChatFiles = useAtomValue(subChatFilesAtom)
 
-  // Clear "unseen changes" when chat is opened
+  // Standalone Chats are acknowledged when opened. Workbench panes are
+  // acknowledged by an explicit pane or tab interaction instead.
   useEffect(() => {
-    setUnseenChanges((prev: Set<string>) => {
-      if (prev.has(chatId)) {
-        const next = new Set(prev)
-        next.delete(chatId)
-        return next
-      }
-      return prev
-    })
-  }, [chatId, setUnseenChanges])
+    if (workbenchActive !== undefined) return
+    setUnseenChanges((current: Set<string>) => markChatSeen(current, chatId))
+  }, [chatId, setUnseenChanges, workbenchActive])
 
   // Get this top-level Chat's scoped compatibility state.
   const scopedSubChatState = useAgentSubChatStore((state) => state)
@@ -7258,14 +7274,11 @@ Make sure to preserve all functionality from both branches when resolving confli
             })
           }
 
-          // Also mark parent chat as unseen if user is not viewing it
-          if (!isViewingThisChat) {
-            setUnseenChanges((prev: Set<string>) => {
-              const next = new Set(prev)
-              next.add(chatId)
-              return next
-            })
+          // Keep completion visible until the user explicitly returns to this
+          // Chat or pane, even if it was technically selected while running.
+          setUnseenChanges((current: Set<string>) => markChatUnseen(current, chatId))
 
+          if (!isViewingThisChat) {
             // Play completion sound only if NOT manually aborted and sound is enabled
             if (!wasManuallyAborted) {
               const isSoundEnabled = appStore.get(soundNotificationsEnabledAtom)
@@ -7602,14 +7615,11 @@ Make sure to preserve all functionality from both branches when resolving confli
             })
           }
 
-          // Also mark parent chat as unseen if user is not viewing it
-          if (!isViewingThisChat) {
-            setUnseenChanges((prev: Set<string>) => {
-              const next = new Set(prev)
-              next.add(chatId)
-              return next
-            })
+          // Keep completion visible until the user explicitly returns to this
+          // Chat or pane, even if it was technically selected while running.
+          setUnseenChanges((current: Set<string>) => markChatUnseen(current, chatId))
 
+          if (!isViewingThisChat) {
             // Play completion sound only if NOT manually aborted and sound is enabled
             if (!wasManuallyAborted) {
               const isSoundEnabled = appStore.get(soundNotificationsEnabledAtom)
@@ -8109,7 +8119,14 @@ Make sure to preserve all functionality from both branches when resolving confli
             onSelectFile={setFileViewerPath}
           />
         )}
-        <div className="flex h-full flex-col">
+        <div
+          className="flex h-full flex-col"
+          onPointerDownCapture={() => {
+            if (workbenchActive === undefined) {
+              setUnseenChanges((current: Set<string>) => markChatSeen(current, chatId))
+            }
+          }}
+        >
           {/* Main content */}
           <div className="flex-1 overflow-hidden flex">
             {/* Chat Panel */}

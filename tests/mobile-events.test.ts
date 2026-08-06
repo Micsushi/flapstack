@@ -101,7 +101,7 @@ describe("mobile-events", () => {
       expect.objectContaining({ tag: "0050_mobile_projection_families" }),
     )
     expect(journal.entries.at(-1)).toEqual(
-      expect.objectContaining({ idx: 52, tag: "0052_project-vault-custom-notes" }),
+      expect.objectContaining({ idx: 53, tag: "0053_chat-tags" }),
     )
     expect(tableNames()).toEqual(
       expect.arrayContaining([

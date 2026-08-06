@@ -94,8 +94,8 @@ describe("mobile-pairing", () => {
         tag: "0050_mobile_projection_families",
       })
       expect(sqliteJournal().entries.at(-1)).toMatchObject({
-        idx: 52,
-        tag: "0052_project-vault-custom-notes",
+        idx: 53,
+        tag: "0053_chat-tags",
       })
       expect(
         legacy

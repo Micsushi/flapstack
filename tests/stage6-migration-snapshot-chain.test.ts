@@ -22,19 +22,22 @@ function readJson<T>(path: string): T {
 }
 
 describe("stage 6 migration snapshots", () => {
-  it("keeps the 0051 and 0052 snapshots linked to their exact schema additions", () => {
+  it("keeps post-Stage 6 snapshots linked to their exact schema additions", () => {
     const journal = readJson<Journal>("drizzle/meta/_journal.json")
     const snapshot50 = readJson<Snapshot>("drizzle/meta/0050_snapshot.json")
     const snapshot51 = readJson<Snapshot>("drizzle/meta/0051_snapshot.json")
     const snapshot52 = readJson<Snapshot>("drizzle/meta/0052_snapshot.json")
+    const snapshot53 = readJson<Snapshot>("drizzle/meta/0053_snapshot.json")
 
-    expect(journal.entries.slice(-2).map(({ idx, tag }) => ({ idx, tag }))).toEqual([
+    expect(journal.entries.slice(-3).map(({ idx, tag }) => ({ idx, tag }))).toEqual([
       { idx: 51, tag: "0051_runtime_composition_attempts" },
       { idx: 52, tag: "0052_project-vault-custom-notes" },
+      { idx: 53, tag: "0053_chat-tags" },
     ])
     expect(snapshot51.prevId).toBe(snapshot50.id)
     expect(snapshot52.prevId).toBe(snapshot51.id)
-    expect(new Set([snapshot50.id, snapshot51.id, snapshot52.id]).size).toBe(3)
+    expect(snapshot53.prevId).toBe(snapshot52.id)
+    expect(new Set([snapshot50.id, snapshot51.id, snapshot52.id, snapshot53.id]).size).toBe(4)
 
     expect(snapshot50.tables).not.toHaveProperty("runtime_composition_attempts")
     expect(snapshot51.tables).toHaveProperty("runtime_composition_attempts")
@@ -50,5 +53,7 @@ describe("stage 6 migration snapshots", () => {
     expect(snapshot51.tables).not.toHaveProperty("project_vault_custom_notes")
     expect(snapshot52.tables).toHaveProperty("runtime_composition_attempts")
     expect(snapshot52.tables).toHaveProperty("project_vault_custom_notes")
+    expect(snapshot53.tables).toHaveProperty("chat_tags")
+    expect(snapshot53.tables).toHaveProperty("chat_tag_assignments")
   })
 })

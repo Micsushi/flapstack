@@ -3,6 +3,7 @@ import { app } from "electron"
 import { join } from "node:path"
 import { z } from "zod"
 import { CHAT_MODES } from "../../../../shared/chat-mode"
+import { CODEX_THREAD_VISIBILITIES } from "../../../../shared/codex-thread-visibility"
 import { openAppDatabase } from "../../db/access"
 import { getDatabasePath } from "../../db"
 import { sleep } from "../../../../shared/sleep"
@@ -47,6 +48,7 @@ const resolveInputSchema = z.object({
 const launchInputSchema = resolveInputSchema.extend({
   runId: z.string().trim().min(1).max(512),
   prompt: z.string().min(1).max(2_000_000),
+  codexThreadVisibility: z.enum(CODEX_THREAD_VISIBILITIES).default("hidden"),
   promptMessageId: z.string().trim().min(1).max(512).optional(),
   vaultContextGraphSelection: vaultContextGraphSelectionSchema.optional(),
   images: z

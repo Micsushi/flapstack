@@ -38,6 +38,7 @@ import {
 } from "../../lib/hooks/use-remote-chats"
 import { usePrefetchLocalChat } from "../../lib/hooks/use-prefetch-local-chat"
 import { isReservedArchivedAccentColor } from "../agents/lib/open-chat-tabs"
+import { configureChatDragFeedback } from "../agents/lib/chat-drag-feedback"
 import {
   ChevronDown,
   ChevronRight,
@@ -63,10 +64,12 @@ import {
   Workflow,
   Network,
   LayoutGrid,
+  PanelsTopLeft,
   Check,
   FilePenLine,
   Library,
   Zap,
+  Trees,
 } from "lucide-react"
 // import { useRouter } from "next/navigation" // Desktop doesn't use next/navigation
 // Desktop: archive is handled inline, not via hook
@@ -145,6 +148,19 @@ import {
 } from "../agents/atoms"
 import { useAgentSubChatStore, OPEN_SUB_CHATS_CHANGE_EVENT } from "../agents/stores/sub-chat-store"
 import { getWindowId } from "../../contexts/WindowContext"
+import {
+  CHAT_WORKBENCH_DRAG_MIME,
+  CHAT_WORKBENCH_DRAG_SESSION_KEY,
+  CHAT_WORKBENCH_EXTERNAL_GROUP_ID,
+} from "../../../shared/chat-workbench"
+import {
+  CHAT_WORKBENCH_NAVIGATION_CHANGE_EVENT,
+  CHAT_WORKBENCH_SELECT_CHAT_EVENT,
+  chatWorkbenchNavigationStorageKey,
+  getGroupedChatIds,
+  parseChatWorkbenchNavigation,
+  type ChatWorkbenchNavigation,
+} from "../../../shared/chat-workbench-navigation"
 import { AgentsHelpPopover } from "../agents/components/agents-help-popover"
 import { getShortcutKey, isDesktopApp } from "../../lib/utils/platform"
 import { useResolvedHotkeyDisplay, useResolvedHotkeyDisplayWithAlt } from "../../lib/hotkeys"
@@ -185,6 +201,8 @@ import {
   type SidebarDropPosition,
 } from "./sidebar-ordering"
 import { getNonMainWorktreeLabel } from "./worktree-chip"
+import { ChatTagChip, ChatTagSubmenu, type ChatTagView } from "./chat-tag-menu"
+import { RepositoryOverviewDialog } from "./repository-overview-dialog"
 
 // GitHub avatar with loading placeholder
 const GitHubAvatar = React.memo(function GitHubAvatar({
@@ -895,6 +913,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   chatTaskId,
   parentChatId,
   chatScope,
+  chatTags,
   globalIndex,
   isSelected,
   isLoading,
@@ -908,6 +927,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   isDesktop,
   isPinned,
   isStarred,
+  isInWorkbenchGroup,
   harness,
   model,
   hasCustomWorktree,
@@ -962,6 +982,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   chatTaskId: string | null
   parentChatId?: string | null
   chatScope?: "global" | "project" | "task" | null
+  chatTags: ChatTagView[]
   globalIndex: number
   isSelected: boolean
   isLoading: boolean
@@ -975,6 +996,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   isDesktop: boolean
   isPinned: boolean
   isStarred: boolean
+  isInWorkbenchGroup: boolean
   harness?: string | null
   model?: string | null
   hasCustomWorktree: boolean
@@ -1103,6 +1125,23 @@ const AgentChatItem = React.memo(function AgentChatItem({
           data-sidebar-drag-target-id={effectiveDragItemId}
           data-sidebar-task-end-target-id={taskEndTargetId}
           data-sidebar-only-task-chat={isOnlyTaskChat || undefined}
+          draggable={!isRemote && !isMultiSelectMode}
+          onDragStart={(event) => {
+            if (isRemote || isMultiSelectMode) {
+              event.preventDefault()
+              return
+            }
+            configureChatDragFeedback(event.dataTransfer, chatName || "New Chat")
+            const source = {
+              chatId,
+              groupId: CHAT_WORKBENCH_EXTERNAL_GROUP_ID,
+              sourceWindowId: getWindowId(),
+            }
+            const serialized = JSON.stringify(source)
+            event.dataTransfer.setData(CHAT_WORKBENCH_DRAG_MIME, serialized)
+            localStorage.setItem(CHAT_WORKBENCH_DRAG_SESSION_KEY, serialized)
+          }}
+          onDragEnd={() => localStorage.removeItem(CHAT_WORKBENCH_DRAG_SESSION_KEY)}
           onPointerDown={handlePointerDragStart}
           onClick={(e) => {
             if (suppressClickRef.current) {
@@ -1133,7 +1172,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
           }}
           onMouseLeave={onMouseLeave}
           className={cn(
-            "w-full mb-0.5 last:mb-0 text-left pt-0.5 pb-1.5 cursor-pointer group relative",
+            "w-full mb-0.5 last:mb-0 text-left pt-px pb-[3px] cursor-pointer group relative",
             "transition-[background-color,border-color,box-shadow,opacity,transform] duration-150 ease-out",
             "border border-transparent text-foreground",
             "outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
@@ -1169,7 +1208,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
           {normalizedTint && (
             <span
               aria-hidden="true"
-              className="pointer-events-none absolute left-1.5 top-1 bottom-1.5 w-[2px] rounded-full"
+              className="pointer-events-none absolute left-1.5 top-0.5 bottom-0.5 w-[2px] rounded-full"
               style={tintMarkerStyle}
             />
           )}
@@ -1192,6 +1231,13 @@ const AgentChatItem = React.memo(function AgentChatItem({
             )}
             <div className="flex-1 min-w-0 flex flex-col gap-0.5">
               <div className="flex items-center gap-1">
+                {isInWorkbenchGroup && (
+                  <PanelsTopLeft
+                    aria-label="In Chat group"
+                    role="img"
+                    className="h-3 w-3 flex-shrink-0 text-muted-foreground"
+                  />
+                )}
                 {isPinned && <Pin className="h-3 w-3 flex-shrink-0 text-sky-400" />}
                 {isStarred && (
                   <Star className="h-3 w-3 flex-shrink-0 fill-amber-400 text-amber-400" />
@@ -1349,6 +1395,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
                         >
                           Rename chat
                         </DropdownMenuItem>
+                        {!isRemote && <ChatTagSubmenu chatId={chatId} assignedTags={chatTags} />}
                         {!isRemote && (
                           <DropdownMenuSub>
                             <DropdownMenuSubTrigger className="gap-2">
@@ -1531,6 +1578,12 @@ const AgentChatItem = React.memo(function AgentChatItem({
                       </SidebarChip>
                     )}
                   </div>
+                )}
+                {chatTags.slice(0, 2).map((tag) => (
+                  <ChatTagChip key={tag.id} tag={tag} compact />
+                ))}
+                {chatTags.length > 2 && (
+                  <span className="text-[9px] text-muted-foreground">+{chatTags.length - 2}</span>
                 )}
                 {displayText && <span className="truncate min-w-0">{displayText}</span>}
                 <span className="flex-1 min-w-0" />
@@ -1811,6 +1864,7 @@ function chatListSectionPropsAreEqual(
   if (prevProps.selectedChatIds !== nextProps.selectedChatIds) return false
   if (prevProps.pinnedChatIds !== nextProps.pinnedChatIds) return false
   if (prevProps.starredChatIds !== nextProps.starredChatIds) return false
+  if (prevProps.groupedChatIds !== nextProps.groupedChatIds) return false
   if (prevProps.justCreatedIds !== nextProps.justCreatedIds) return false
 
   // Check Maps by reference
@@ -1866,6 +1920,7 @@ interface ChatListSectionProps {
     model?: string | null
     worktreePath?: string | null
     meta?: { repository?: string; branch?: string | null } | null
+    tags: ChatTagView[]
   }>
   selectedChatId: string | null
   selectedChatIsRemote: boolean
@@ -1879,6 +1934,7 @@ interface ChatListSectionProps {
   isMobileFullscreen: boolean
   isDesktop: boolean
   pinnedChatIds: Set<string>
+  groupedChatIds: ReadonlySet<string>
   projectsMap: Map<
     string,
     {
@@ -1921,6 +1977,7 @@ interface ChatListSectionProps {
   onCreateProjectChat?: (projectId: string) => void
   onCreateProjectTask?: (projectId: string) => void
   onCreateTaskChat?: (taskId: string) => void
+  onOpenRepositoryOverview?: (projectId: string) => void
   planningEnabled?: boolean
   onChangeProjectColor?: (projectId: string, color: string) => void
   onToggleSection?: (sectionId: string) => void
@@ -1979,6 +2036,7 @@ const ChatListSection = React.memo(function ChatListSection({
   isMobileFullscreen,
   isDesktop,
   pinnedChatIds,
+  groupedChatIds,
   projectsMap,
   workspaceFileStats,
   filteredChats,
@@ -2007,6 +2065,7 @@ const ChatListSection = React.memo(function ChatListSection({
   onCreateProjectChat,
   onCreateProjectTask,
   onCreateTaskChat,
+  onOpenRepositoryOverview,
   planningEnabled = false,
   onChangeProjectColor,
   onToggleSection,
@@ -2247,6 +2306,14 @@ const ChatListSection = React.memo(function ChatListSection({
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="gap-2"
+            onSelect={() => onOpenRepositoryOverview?.(lifecycleTarget.id)}
+          >
+            <Trees className="h-3.5 w-3.5 text-muted-foreground" />
+            Branches and worktrees
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <div
             className="px-2 py-1.5"
             onClick={(event) => event.stopPropagation()}
@@ -2355,6 +2422,14 @@ const ChatListSection = React.memo(function ChatListSection({
               New task
             </ContextMenuItem>
           )}
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            className="gap-2"
+            onClick={() => onOpenRepositoryOverview?.(lifecycleTarget.id)}
+          >
+            <Trees className="h-3.5 w-3.5 text-muted-foreground" />
+            Branches and worktrees
+          </ContextMenuItem>
           <ContextMenuSeparator />
           <div
             className="px-2 py-1.5"
@@ -2761,6 +2836,7 @@ const ChatListSection = React.memo(function ChatListSection({
                     chatTaskId={chat.taskId}
                     parentChatId={chat.parentChatId}
                     chatScope={chat.scope}
+                    chatTags={chat.tags ?? []}
                     globalIndex={globalIndex}
                     isSelected={isSelected}
                     isLoading={isLoading}
@@ -2774,6 +2850,7 @@ const ChatListSection = React.memo(function ChatListSection({
                     isDesktop={isDesktop}
                     isPinned={isPinned}
                     isStarred={isStarred}
+                    isInWorkbenchGroup={groupedChatIds.has(chatOriginalId)}
                     harness={chat.harness}
                     model={chat.model}
                     hasCustomWorktree={hasCustomWorktree}
@@ -3061,6 +3138,14 @@ export function AgentsSidebar({
   isMobileFullscreen = false,
   onChatSelect,
 }: AgentsSidebarProps) {
+  const stableWindowId = useMemo(() => getWindowId(), [])
+  const [groupedChatIds, setGroupedChatIds] = useState(() =>
+    getGroupedChatIds(
+      parseChatWorkbenchNavigation(
+        localStorage.getItem(chatWorkbenchNavigationStorageKey(stableWindowId)),
+      ),
+    ),
+  )
   const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom)
   const openChatIds = useAtomValue(openAgentChatIdsAtom)
   const [selectedChatIsRemote, setSelectedChatIsRemote] = useAtom(selectedChatIsRemoteAtom)
@@ -3079,6 +3164,9 @@ export function AgentsSidebar({
   const isSidebarHoveredRef = useRef(false)
   const closeButtonRef = useRef<HTMLDivElement>(null)
   const [searchQuery, setSearchQuery] = useState("")
+  const [repositoryOverviewProjectId, setRepositoryOverviewProjectId] = useState<string | null>(
+    null,
+  )
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [isArchiveOpen, setIsArchiveOpen] = useState(false)
   const [archiveSearchQuery, setArchiveSearchQuery] = useState("")
@@ -3086,6 +3174,16 @@ export function AgentsSidebar({
   const [selectedArchivedChatIds, setSelectedArchivedChatIds] = useState<Set<string>>(new Set())
   const [focusedChatIndex, setFocusedChatIndex] = useState<number>(-1) // -1 means no focus
   const hoveredChatIndexRef = useRef<number>(-1) // Track hovered chat for X hotkey - ref to avoid re-renders
+
+  useEffect(() => {
+    const handleNavigationChange = (event: Event) => {
+      const navigation = (event as CustomEvent<ChatWorkbenchNavigation>).detail
+      setGroupedChatIds(getGroupedChatIds(navigation))
+    }
+    window.addEventListener(CHAT_WORKBENCH_NAVIGATION_CHANGE_EVENT, handleNavigationChange)
+    return () =>
+      window.removeEventListener(CHAT_WORKBENCH_NAVIGATION_CHANGE_EVENT, handleNavigationChange)
+  }, [])
 
   // Global desktop/fullscreen state from atoms (initialized in AgentsLayout)
   const isDesktop = useAtomValue(isDesktopAtom)
@@ -3249,6 +3347,16 @@ export function AgentsSidebar({
 
   // Fetch all local chats (no project filter)
   const { data: localChats } = trpc.chats.list.useQuery({})
+  const { data: tagAssignments = [] } = trpc.chats.listTagAssignments.useQuery()
+  const chatTagsByChat = useMemo(() => {
+    const result = new Map<string, ChatTagView[]>()
+    for (const assignment of tagAssignments) {
+      const tags = result.get(assignment.chatId) ?? []
+      tags.push(assignment.tag)
+      result.set(assignment.chatId, tags)
+    }
+    return result
+  }, [tagAssignments])
   const { data: automationInbox } = trpc.automations.inbox.useQuery(
     { unreadOnly: true, limit: 1 },
     { refetchInterval: 5_000, enabled: betaFeatures.automations },
@@ -3288,6 +3396,7 @@ export function AgentsSidebar({
       meta?: { repository?: string; branch?: string | null } | null
       isRemote: boolean
       pinnedAt?: Date | null
+      tags: ChatTagView[]
     }> = []
 
     // Add local chats
@@ -3311,6 +3420,7 @@ export function AgentsSidebar({
           prUrl: chat.prUrl,
           prNumber: chat.prNumber,
           pinnedAt: chat.pinnedAt,
+          tags: chatTagsByChat.get(chat.id) ?? [],
           isRemote: false,
         })
       }
@@ -3340,6 +3450,7 @@ export function AgentsSidebar({
           meta: chat.meta,
           isRemote: true,
           pinnedAt: null,
+          tags: [],
         })
       }
     }
@@ -3352,7 +3463,7 @@ export function AgentsSidebar({
     })
 
     return unified
-  }, [localChats, remoteChats])
+  }, [chatTagsByChat, localChats, remoteChats])
 
   // Track open sub-chat changes for reactivity
   const [openSubChatsVersion, setOpenSubChatsVersion] = useState(0)
@@ -4360,9 +4471,13 @@ export function AgentsSidebar({
       }
 
       const filtered = searchQuery.trim()
-        ? agentChats.filter((chat) =>
-            (chat.name ?? "").toLowerCase().includes(searchQuery.toLowerCase()),
-          )
+        ? agentChats.filter((chat) => {
+            const query = searchQuery.toLocaleLowerCase()
+            return (
+              (chat.name ?? "").toLocaleLowerCase().includes(query) ||
+              chat.tags.some((tag) => tag.name.toLocaleLowerCase().includes(query))
+            )
+          })
         : agentChats
 
       const activeProjectIds = new Set((projects ?? []).map((project) => project.id))
@@ -5956,6 +6071,14 @@ export function AgentsSidebar({
         }
       }
 
+      if (!isRemote) {
+        window.dispatchEvent(
+          new CustomEvent(CHAT_WORKBENCH_SELECT_CHAT_EVENT, {
+            detail: { chatId: originalId },
+          }),
+        )
+      }
+
       setSelectedChatId(originalId)
       setSelectedChatIsRemote(isRemote)
       if (!isRemote) {
@@ -6607,6 +6730,7 @@ export function AgentsSidebar({
     isMobileFullscreen,
     isDesktop,
     pinnedChatIds,
+    groupedChatIds,
     projectsMap,
     workspaceFileStats,
     filteredChats,
@@ -6633,6 +6757,7 @@ export function AgentsSidebar({
     onBulkUnpin: handleBulkUnpin,
     onBulkArchive: handleBulkArchive,
     onCreateTaskChat: openNewTaskChat,
+    onOpenRepositoryOverview: setRepositoryOverviewProjectId,
     planningEnabled: betaFeatures.planning,
     onToggleSection: handleToggleSection,
     onSelectScope: handleSelectScope,
@@ -7102,7 +7227,7 @@ export function AgentsSidebar({
             ].map((section) => (
               <div
                 key={section.kind}
-                className="mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150"
+                className="mx-2 mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150"
               >
                 <ChatListSection
                   {...sharedChatListSectionProps}
@@ -7162,7 +7287,7 @@ export function AgentsSidebar({
 
           {/* Drafts Section - always show regardless of chat source mode */}
           {!searchQuery && !collapsedSectionIds.has("quick-access") && (
-            <div className="mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150">
+            <div className="mx-2 mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150">
               <div
                 onClick={() => handleToggleSection("drafts")}
                 onKeyDown={(event) => {
@@ -7319,6 +7444,7 @@ export function AgentsSidebar({
           {(searchQuery || !collapsedSectionIds.has("projects-group")) && (
             <div
               className={cn(
+                "mx-2",
                 !searchQuery && "animate-in fade-in-0 slide-in-from-top-1 duration-150",
               )}
             >
@@ -7669,6 +7795,16 @@ export function AgentsSidebar({
         matchingProjects={importMatchingProjects}
         allProjects={projects ?? []}
         remoteSubChatId={null}
+      />
+      <RepositoryOverviewDialog
+        open={Boolean(repositoryOverviewProjectId)}
+        onOpenChange={(open) => !open && setRepositoryOverviewProjectId(null)}
+        projectName={
+          projects?.find((project) => project.id === repositoryOverviewProjectId)?.name ?? "Project"
+        }
+        projectPath={
+          projects?.find((project) => project.id === repositoryOverviewProjectId)?.path ?? null
+        }
       />
     </>
   )

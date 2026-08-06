@@ -36,12 +36,12 @@ describe("Stage 6 F1/F2 renderer contract", () => {
     expect(router).toContain("resolveSpeechVocabularyHints(")
   })
 
-  it("uses touch-sized keyboard controls and reduced-motion-safe transcript jumps", () => {
+  it("uses compact keyboard controls and reduced-motion-safe transcript jumps", () => {
     const overview = source("src/renderer/features/agents/main/chat-transcript-overview.tsx")
     const activeChat = source("src/renderer/features/agents/main/active-chat.tsx")
     const settingsTarget = source("src/renderer/features/settings/settings-target.ts")
 
-    expect(overview).toContain("min-h-10")
+    expect(overview).toContain("h-4 w-7")
     expect(overview).toContain("touch-manipulation")
     expect(overview).toContain("Private reasoning is never summarized here.")
     expect(activeChat).toContain("prefers-reduced-motion: reduce")

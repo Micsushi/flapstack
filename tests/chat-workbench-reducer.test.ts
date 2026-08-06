@@ -176,6 +176,51 @@ describe("chat workbench reducer", () => {
     expect(collectChatGroups(layout.root)[0].id).toBe(right.id)
   })
 
+  it("moves a whole pane beside another pane without splitting its tabs apart", () => {
+    const initial = reduceChatWorkbench(createChatWorkbenchLayout(["a", "b", "c"]), {
+      type: "apply-preset",
+      preset: "three-columns",
+    }).layout
+    const [first, second, third] = collectChatGroups(initial.root)
+    const moved = reduceChatWorkbench(initial, {
+      type: "move-group",
+      fromGroupId: first.id,
+      toGroupId: third.id,
+      zone: "right",
+    })
+
+    expect(moved.accepted).toBe(true)
+    expect(collectChatGroups(moved.layout.root).map((group) => group.id)).toEqual([
+      second.id,
+      third.id,
+      first.id,
+    ])
+    expect(collectChatGroups(moved.layout.root).flatMap((group) => group.chatIds)).toEqual([
+      "b",
+      "c",
+      "a",
+    ])
+  })
+
+  it("merges all tabs when a whole pane is dropped into another tab strip", () => {
+    const initial = reduceChatWorkbench(createChatWorkbenchLayout(["a", "b", "c"]), {
+      type: "apply-preset",
+      preset: "two-columns",
+    }).layout
+    const [source, target] = collectChatGroups(initial.root)
+    const merged = reduceChatWorkbench(initial, {
+      type: "move-group",
+      fromGroupId: source.id,
+      toGroupId: target.id,
+      zone: "tab",
+    })
+
+    expect(merged.accepted).toBe(true)
+    expect(collectChatGroups(merged.layout.root)).toEqual([
+      expect.objectContaining({ chatIds: ["b", "c", "a"], activeChatId: "a" }),
+    ])
+  })
+
   it("keeps every pane at the advertised five-percent minimum after extreme resize input", () => {
     const initial = reduceChatWorkbench(createChatWorkbenchLayout(["a", "b"]), {
       type: "apply-preset",

@@ -221,7 +221,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
         >
           {projectLabel && (
             <span
-              className="inline-flex h-7 shrink-0 items-center justify-center rounded-md border px-2.5 text-sm font-medium leading-none"
+              className="inline-flex h-7 shrink-0 items-center justify-center rounded-md border px-2.5 text-[13px] font-medium leading-none"
               style={{
                 color: projectColor ?? undefined,
                 borderColor: projectColor
@@ -238,7 +238,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
           {providerName && (
             <span
               className={cn(
-                "inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border px-2.5 text-sm font-medium leading-none",
+                "inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border px-2.5 text-[13px] font-medium leading-none",
                 providerClassName,
               )}
             >

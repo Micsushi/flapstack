@@ -5,6 +5,13 @@ import { describe, expect, it } from "vitest"
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8")
 
 describe("Stage 6 renderer/main workbench session integration", () => {
+  it("waits for the destination renderer to subscribe before delivering a new-window transfer", () => {
+    const main = readFileSync("src/main/windows/main.ts", "utf8")
+    const preload = readFileSync("src/preload/index.ts", "utf8")
+
+    expect(main).toContain('"chat-transfer:renderer-ready"')
+    expect(preload).toContain('ipcRenderer.send("chat-transfer:renderer-ready")')
+  })
   it("exposes validated get/update IPC and synchronizes each committed layout", () => {
     const main = read("src/main/windows/main.ts")
     const preload = read("src/preload/index.ts")

@@ -5,6 +5,7 @@ import { z } from "zod"
 import { publicProcedure, router } from "../trpc"
 import { assertRegisteredWorktree, getRegisteredChat, gitSwitchBranch } from "./security"
 import { createGit, createGitForNetwork, withGitLock, withLockRetry } from "./git-factory"
+import { getRepositoryOverview } from "./repository-overview"
 
 /** Regex for valid branch names */
 const BRANCH_NAME_REGEX = /^[a-zA-Z0-9._/-]+$/
@@ -38,6 +39,12 @@ export async function createBranchAtWorktree(input: {
 
 export const createBranchesRouter = () => {
   return router({
+    getRepositoryOverview: publicProcedure
+      .input(z.object({ projectPath: z.string() }))
+      .query(async ({ input }) => {
+        assertRegisteredWorktree(input.projectPath)
+        return getRepositoryOverview(input.projectPath)
+      }),
     getBranches: publicProcedure.input(z.object({ worktreePath: z.string() })).query(
       async ({
         input,

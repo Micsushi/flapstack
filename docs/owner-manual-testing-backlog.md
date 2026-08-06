@@ -1594,6 +1594,20 @@ the owner explicitly relabels it `release-blocking`.
     - Expected: focus, labels, contrast, state, and recovery remain clear; no
       launch-critical control is hidden behind unexplained UI.
     - Notes:
+  - [ ] S6-F1: Codex task visibility and archived-task recovery
+    - Test instructions:
+      1. Leave **Settings > Preferences > Codex task visibility** on **Hidden
+         while idle**, run a Codex Chat to completion, and confirm it leaves
+         Codex's active Recent/project views.
+      2. Send another message in the same Flapstack Chat and confirm the Codex
+         task is restored, resumes its prior context, and is hidden again after
+         the response.
+      3. Switch to **Show under project**, send another message, and confirm the
+         task remains visible under the correct Codex project after completion.
+      4. Archive that task manually in Codex, then send again from Flapstack.
+    - Expected: hidden tasks remain resumable, project-visible tasks remain in
+      the correct project, and manually archived tasks recover automatically.
+    - Notes:
   - [ ] S6-F2 — Fresh, skipped, resumed, and upgrade onboarding
     - Test instructions:
       1. Complete Focused, Standard, Complete, Skip, interrupted, and resumed
@@ -1664,7 +1678,7 @@ the owner explicitly relabels it `release-blocking`.
     - Test instructions:
       1. Follow
          [`stage6-multi-pane-chat-window-test-plan.md`](stage6-multi-pane-chat-window-test-plan.md)
-         for tab reorder, directional drops, presets, resize, maximize, join,
+         for midpoint tab reorder, contextual edge drops, presets, resize, maximize, join,
          close, keyboard paths, and simultaneous send.
       2. Transfer Chats across windows; close/crash source and destination; race
          fifth-group and fifth-window creation.
@@ -1776,3 +1790,80 @@ the owner explicitly relabels it `release-blocking`.
     - Expected: durable state and evidence agree, no P0/P1 issue remains, and
       Tier 3 notes never inflate Tier 2 acceptance.
     - Notes:
+
+## 2026-08-05 owner-requested local UI pass
+
+- [ ] Existing chat hydration and transcript navigation
+  - Open short and long existing chats from the sidebar.
+  - Expected: persisted messages appear without waiting indefinitely; chats with
+    three or fewer user turns have no transcript rail; longer chats use compact
+    markers whose prompt/response preview is bounded and whose click lands on
+    the matching user message.
+- [ ] Full-height transcript scrollbar
+  - Open a long chat and compare the right scrollbar with the full content pane.
+  - Expected: the scrollbar track spans behind the bottom composer dock to the
+    pane bottom, while the last message remains fully visible above the composer.
+- [ ] Layout presets and drag splitting
+  - Start on an ordinary Chat, then drag a different sidebar or main-bar Chat
+    over each pane edge and center. Repeat from a pane tab, then drag the blank
+    part of one pane's tab strip beside and into another pane.
+  - Expected: ordinary Chats are not labelled as groups. One translucent preview
+    rectangle follows the pointer (half-pane in the outer quarter at the left or
+    right edge, outer fifth at the top or bottom, and full-pane in the center),
+    with no directional-button or layout-button overlay. The first edge drop
+    creates one top-level group; edge drops split in the previewed direction;
+    center drops add a tab; tab midpoints show an insertion line; blank-strip
+    dragging moves or merges the entire pane; and no window displays more than
+    four panes. At four panes, another edge drag shows neither a split target nor
+    a misleading accepted-drop cursor.
+- [ ] Group navigation and pane tab bars
+  - Create a four-pane group, open multiple tabs in at least one pane, verify the
+    grouped Chats disappear from the main tab bar, create a new Chat, click one
+    of the grouped Chats in the sidebar, then click the group again. Right-click
+    the group, rename it, and restart. Drag an ordinary top-level Chat across the
+    left quarter, middle half, and right quarter of both an ordinary Chat item
+    and a group item; after the middle opens the target, continue the same drag
+    into a pane center. Repeat over a pane tab's outer quarters and middle half.
+    Finally, drag a pane Chat onto empty main-bar space and then drag another
+    pane Chat onto the outer quarter of an existing top item.
+  - Expected: the ordinary item shows one Chat; the group restores all four
+    panes and their per-pane active tabs. A new Chat opens as an ordinary
+    full-screen item rather than entering the active pane. Clicking a grouped
+    Chat in the sidebar restores its group, focuses its owning pane, and
+    activates its pane tab. A top item's middle half opens that Chat or group
+    without ending the drag; its outer quarters place the ordinary Chat before
+    or after the target, including between Chats and groups. A pane tab's middle
+    half moves the dragged Chat into that pane and makes it active; its outer
+    quarters reorder tabs. Empty main-bar space moves a grouped Chat back to an
+    ordinary full-screen item, while an outer-quarter drop also positions it in
+    the top strip. The remaining group layout is preserved, or dissolves into
+    ordinary items when only one pane remains. Drag overlays and tabs should
+    track the pointer without visible Chat-content reloads. The renamed group
+    persists after restart. Only the top-level group item is named as a group,
+    and group members appear only in pane tab bars. Every overflowing tab bar
+    uses the compact hover scrollbar rather than a full-height native horizontal
+    scrollbar.
+- [ ] Floating Chat windows
+  - Drag a pane tab outside the app, then drag a pane tab directly from one open
+    Flapstack window into another window's pane center and edges.
+  - Expected: a `+ Chat name` drag image communicates window creation and drag-out
+    opens a Flapstack window containing that Chat; no explicit layout or pop-out
+    buttons remain; direct cross-window drops add a tab or split the chosen
+    destination pane; and the source stays intact if a transfer is cancelled or
+    blocked.
+- [ ] Chat tags
+  - From a local chat's action menu, create a tag with a palette color, assign
+    existing tags, remove one assignment, restart, and search by tag name.
+  - Expected: compact chips appear in the sidebar, overflow is bounded, search
+    finds tagged chats, and definitions/assignments persist after restart.
+- [ ] Project branches and worktrees
+  - Open a project's action menu and choose `Branches and worktrees`; inspect
+    both tabs, search, dirty worktrees, checked-out branches, local and remote
+    branches, upstream counts, merged state, unique commits, and Refresh.
+  - Expected: the inventory matches Git, clearly distinguishes clean and dirty
+    worktrees, and offers no destructive cleanup action.
+- [ ] GameGuard false-positive regression
+  - With the updated GameGuard configuration active, launch Flapstack and leave
+    it idle while loading several chats.
+  - Expected: Flapstack does not trigger Performance Mode merely because Windows
+    Desktop Window Manager (`dwm`) is using GPU resources.

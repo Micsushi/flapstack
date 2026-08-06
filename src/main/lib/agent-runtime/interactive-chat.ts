@@ -9,6 +9,7 @@ import type { AgentHarness, RunPermissionMode } from "../../../shared/harness-ty
 import type { ResolvedAgentRuntime, RuntimeAdapterProbe } from "../../../shared/agent-runtime"
 import type { AgentRuntimePreference } from "../../../shared/agent-runtime"
 import type { AgentActivityEvent } from "../../../shared/agent-activity"
+import type { CodexThreadVisibility } from "../../../shared/codex-thread-visibility"
 import {
   resolveAgentHotlineEnabled,
   stripInactiveAgentHotlineLabels,
@@ -42,6 +43,7 @@ export type InteractiveRuntimeInput = {
   mode: ChatMode
   reasoningEffort: "minimal" | "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null
   reasoningEnabled: boolean
+  codexThreadVisibility?: CodexThreadVisibility
 }
 
 type ChatRow = {
@@ -284,6 +286,7 @@ export function materializeInteractiveRuntimeRun(
     customPermissions: permissionMode === "custom" ? context.custom_permissions : null,
     worktreePath,
     projectPath: context.project_path,
+    codexThreadVisibility: input.codexThreadVisibility ?? "hidden",
     runtimeLaunch: launch,
   }
 }

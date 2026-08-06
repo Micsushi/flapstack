@@ -17,11 +17,14 @@ import { messageGroupsPerChatAtom, userMessageIdsPerChatAtom } from "../stores/m
 import { IsolatedMessageGroup } from "./isolated-message-group"
 import { useStreamingStatusStore } from "../stores/streaming-status-store"
 
+const EAGER_TRANSCRIPT_GROUP_LIMIT = 12
+
 // ============================================================================
 // ISOLATED MESSAGES SECTION (LAYER 3)
 // ============================================================================
-// Retains the complete group index while mounting only a measured, overscanned
-// window against the owning Chat pane's real scroll container.
+// Renders short chats in document flow so startup does not depend on scroll
+// ownership. Longer histories retain the complete group index while mounting a
+// measured, overscanned window against the owning Chat pane's scroll container.
 //
 // During streaming:
 // - This component does NOT re-render (userMessageIds don't change)
@@ -133,6 +136,7 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
   // Per-subchat selector - split panes render fully independently.
   const userMsgIds = useAtomValue(userMessageIdsPerChatAtom(subChatId))
   const messageGroups = useAtomValue(messageGroupsPerChatAtom(subChatId))
+  const renderEagerly = userMsgIds.length <= EAGER_TRANSCRIPT_GROUP_LIMIT
   const sectionRef = useRef<HTMLDivElement>(null)
   const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null)
   const [scrollMargin, setScrollMargin] = useState(0)
@@ -158,7 +162,7 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
     rangeExtractor,
     scrollMargin,
     anchorTo: "end",
-    enabled: Boolean(scrollElementRef),
+    enabled: !renderEagerly && Boolean(scrollElementRef),
   })
   const virtualItems = virtualizer.getVirtualItems()
 
@@ -198,8 +202,9 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
       let previousTarget: HTMLElement | null = null
       let stableFrames = 0
       const focus = () => {
+        const searchRoot = scrollElement ?? sectionRef.current
         const target = Array.from(
-          scrollElement?.querySelectorAll<HTMLElement>(
+          searchRoot?.querySelectorAll<HTMLElement>(
             "[data-user-message-id], [data-assistant-message-id]",
           ) ?? [],
         ).find(
@@ -229,18 +234,61 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
     () => ({
       scrollToMessage(messageId, options) {
         const index = groupIndexByMessageId.get(messageId)
-        if (index === undefined || !scrollElement) return false
+        if (index === undefined) return false
         const align = options?.align ?? "center"
-        const offset = virtualizer.getOffsetForIndex(index, align)?.[0]
-        if (offset === undefined) return false
+        if (renderEagerly) {
+          const searchRoot = scrollElement ?? sectionRef.current
+          const target = Array.from(
+            searchRoot?.querySelectorAll<HTMLElement>(
+              "[data-user-message-id], [data-assistant-message-id]",
+            ) ?? [],
+          ).find(
+            (element) =>
+              element.dataset.userMessageId === messageId ||
+              element.dataset.assistantMessageId === messageId,
+          )
+          if (!target) return false
+          target.scrollIntoView?.({ block: align, behavior: "auto" })
+          if (options?.focus) focusMessageAfterMount(messageId)
+          return true
+        }
+        if (!scrollElement) return false
         virtualizer.scrollToIndex(index, { align, behavior: "auto" })
         if (options?.focus) focusMessageAfterMount(messageId)
         return true
       },
-      getMountedGroupCount: () => virtualizer.getVirtualItems().length,
+      getMountedGroupCount: () =>
+        renderEagerly ? userMsgIds.length : virtualizer.getVirtualItems().length,
       getTotalGroupCount: () => userMsgIds.length,
     }),
-    [focusMessageAfterMount, groupIndexByMessageId, scrollElement, userMsgIds.length, virtualizer],
+    [
+      focusMessageAfterMount,
+      groupIndexByMessageId,
+      renderEagerly,
+      scrollElement,
+      userMsgIds.length,
+      virtualizer,
+    ],
+  )
+
+  const renderMessageGroup = (userMsgId: string) => (
+    <IsolatedMessageGroup
+      userMsgId={userMsgId}
+      subChatId={subChatId}
+      chatId={chatId}
+      isMobile={isMobile}
+      sandboxSetupStatus={sandboxSetupStatus}
+      stickyTopClass={stickyTopClass}
+      sandboxSetupError={sandboxSetupError}
+      onRetrySetup={onRetrySetup}
+      onRollback={onRollback}
+      onEditLatest={onEditLatest}
+      onFork={onFork}
+      UserBubbleComponent={UserBubbleComponent}
+      ToolCallComponent={ToolCallComponent}
+      MessageGroupWrapper={MessageGroupWrapper}
+      toolRegistry={toolRegistry}
+    />
   )
 
   return (
@@ -250,49 +298,47 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
       aria-busy={isStreaming}
       aria-label="Chat transcript"
       data-total-message-groups={userMsgIds.length}
-      data-mounted-message-groups={virtualItems.length}
-      data-virtualization-ready={Boolean(scrollElement) || undefined}
+      data-mounted-message-groups={renderEagerly ? userMsgIds.length : virtualItems.length}
+      data-rendering-mode={renderEagerly ? "eager" : "virtualized"}
+      data-virtualization-ready={!renderEagerly && Boolean(scrollElement) ? true : undefined}
       className="relative w-full"
-      style={{ height: `${virtualizer.getTotalSize()}px` }}
+      style={renderEagerly ? undefined : { height: `${virtualizer.getTotalSize()}px` }}
     >
-      {virtualItems.map((virtualItem) => {
-        const userMsgId = userMsgIds[virtualItem.index]
-        if (!userMsgId) return null
-        return (
-          <div
-            key={virtualItem.key}
-            ref={virtualizer.measureElement}
-            role="article"
-            aria-label={`Conversation turn ${virtualItem.index + 1} of ${userMsgIds.length}`}
-            aria-posinset={virtualItem.index + 1}
-            aria-setsize={userMsgIds.length}
-            data-index={virtualItem.index}
-            data-virtual-message-group={userMsgId}
-            className="absolute left-0 w-full"
-            style={{
-              top: `${virtualItem.start - scrollMargin}px`,
-            }}
-          >
-            <IsolatedMessageGroup
-              userMsgId={userMsgId}
-              subChatId={subChatId}
-              chatId={chatId}
-              isMobile={isMobile}
-              sandboxSetupStatus={sandboxSetupStatus}
-              stickyTopClass={stickyTopClass}
-              sandboxSetupError={sandboxSetupError}
-              onRetrySetup={onRetrySetup}
-              onRollback={onRollback}
-              onEditLatest={onEditLatest}
-              onFork={onFork}
-              UserBubbleComponent={UserBubbleComponent}
-              ToolCallComponent={ToolCallComponent}
-              MessageGroupWrapper={MessageGroupWrapper}
-              toolRegistry={toolRegistry}
-            />
-          </div>
-        )
-      })}
+      {renderEagerly
+        ? userMsgIds.map((userMsgId, index) => (
+            <div
+              key={userMsgId}
+              role="article"
+              aria-label={`Conversation turn ${index + 1} of ${userMsgIds.length}`}
+              aria-posinset={index + 1}
+              aria-setsize={userMsgIds.length}
+              className="relative w-full"
+            >
+              {renderMessageGroup(userMsgId)}
+            </div>
+          ))
+        : virtualItems.map((virtualItem) => {
+            const userMsgId = userMsgIds[virtualItem.index]
+            if (!userMsgId) return null
+            return (
+              <div
+                key={virtualItem.key}
+                ref={virtualizer.measureElement}
+                role="article"
+                aria-label={`Conversation turn ${virtualItem.index + 1} of ${userMsgIds.length}`}
+                aria-posinset={virtualItem.index + 1}
+                aria-setsize={userMsgIds.length}
+                data-index={virtualItem.index}
+                data-virtual-message-group={userMsgId}
+                className="absolute left-0 w-full"
+                style={{
+                  top: `${virtualItem.start - scrollMargin}px`,
+                }}
+              >
+                {renderMessageGroup(userMsgId)}
+              </div>
+            )
+          })}
     </div>
   )
 }, areSectionPropsEqual)

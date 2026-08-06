@@ -177,7 +177,9 @@ export function OpenInButton({ path, label }: OpenInButtonProps) {
           disabled={!path}
         >
           <AppOptionIcon app={currentApp} />
-          <span className="font-medium truncate max-w-[120px]">{label}</span>
+          <span className="text-[13px] font-medium leading-none truncate max-w-[120px]">
+            {label}
+          </span>
         </Button>
       )}
       <DropdownMenu>

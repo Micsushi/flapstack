@@ -4,6 +4,7 @@ import {
   analyticsOptOutAtom,
   autoAdvanceTargetAtom,
   crossScopeMoveEnabledAtom,
+  codexThreadVisibilityAtom,
   defaultAgentModeAtom,
   desktopNotificationsEnabledAtom,
   reasoningOutputEnabledAtom,
@@ -13,6 +14,7 @@ import {
   type AgentMode,
   type AutoAdvanceTarget,
 } from "../../../lib/atoms"
+import type { CodexThreadVisibility } from "../../../../shared/codex-thread-visibility"
 import { CHAT_MODES, CHAT_MODE_META } from "../../../../shared/chat-mode"
 import { APP_META, type ExternalApp } from "../../../../shared/external-apps"
 import { initAnalytics, shutdown as shutdownAnalytics } from "../../../lib/analytics"
@@ -149,6 +151,7 @@ export function AgentsPreferencesTab() {
   const [autoAdvanceTarget, setAutoAdvanceTarget] = useAtom(autoAdvanceTargetAtom)
   const [crossScopeMoveEnabled, setCrossScopeMoveEnabled] = useAtom(crossScopeMoveEnabledAtom)
   const [defaultAgentMode, setDefaultAgentMode] = useAtom(defaultAgentModeAtom)
+  const [codexThreadVisibility, setCodexThreadVisibility] = useAtom(codexThreadVisibilityAtom)
   const [preferredEditor, setPreferredEditor] = useAtom(preferredEditorAtom)
   const isNarrowScreen = useIsNarrowScreen()
   const { data: availableAppsResult } = trpc.external.listAvailableApps.useQuery()
@@ -305,6 +308,33 @@ export function AgentsPreferencesTab() {
             onCheckedChange={handleCoAuthoredByToggle}
             disabled={setCoAuthoredByMutation.isPending}
           />
+        </div>
+        <div
+          className="flex items-center justify-between gap-6 border-t border-border p-4 outline-none"
+          data-settings-id="preferences-codex-task-visibility"
+          tabIndex={-1}
+        >
+          <div className="flex min-w-0 flex-col space-y-1">
+            <span className="text-sm font-medium text-foreground">Codex task visibility</span>
+            <span className="text-xs text-muted-foreground">
+              Hide completed Flapstack tasks from active Codex lists, or keep them under their
+              project.
+            </span>
+          </div>
+          <Select
+            value={codexThreadVisibility}
+            onValueChange={(value: CodexThreadVisibility) => setCodexThreadVisibility(value)}
+          >
+            <SelectTrigger className="w-auto min-w-36 shrink-0 px-2">
+              <span className="text-xs">
+                {codexThreadVisibility === "hidden" ? "Hidden while idle" : "Show under project"}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="hidden">Hidden while idle</SelectItem>
+              <SelectItem value="project">Show under project</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 

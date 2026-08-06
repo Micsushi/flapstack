@@ -22,6 +22,8 @@ const PRIVATE_KINDS = new Set<AgentActivityKind>([
   "private-metadata",
 ])
 const COMPLETED_PLAN_STATES = new Set(["built", "completed", "done", "finished"])
+const PROMPT_PREVIEW_LIMIT = 96
+const RESPONSE_PREVIEW_LIMIT = 160
 
 export function summarizeChatProgress(input: {
   events: readonly AgentActivityEvent[]
@@ -69,7 +71,8 @@ export function buildTranscriptMarkers(
     if (candidate.role === "user" && typeof candidate.id === "string") {
       turns.push({
         id: candidate.id,
-        promptPreview: publicTextPreview(candidate.parts) || "Untitled prompt",
+        promptPreview:
+          publicTextPreview(candidate.parts, PROMPT_PREVIEW_LIMIT) || "Untitled prompt",
         responsePreview: null,
       })
       continue
@@ -77,7 +80,8 @@ export function buildTranscriptMarkers(
     if (candidate.role === "assistant" && turns.length > 0) {
       const currentTurn = turns.at(-1)!
       if (currentTurn.responsePreview === null) {
-        currentTurn.responsePreview = publicTextPreview(candidate.parts) || null
+        currentTurn.responsePreview =
+          publicTextPreview(candidate.parts, RESPONSE_PREVIEW_LIMIT) || null
       }
     }
   }
@@ -94,17 +98,28 @@ export function buildTranscriptMarkers(
   }))
 }
 
-function publicTextPreview(parts: unknown): string {
+function publicTextPreview(parts: unknown, maximumLength: number): string {
   if (!Array.isArray(parts)) return ""
-  return parts
+  const normalizedParts = parts
     .flatMap((part) => {
       if (!part || typeof part !== "object") return []
       const candidate = part as { type?: unknown; text?: unknown }
       return candidate.type === "text" && typeof candidate.text === "string" ? [candidate.text] : []
     })
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim()
+    .map((text) => text.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+  const uniqueParts = normalizedParts.filter(
+    (text, index) => normalizedParts.indexOf(text) === index,
+  )
+  return truncatePreview(uniqueParts.join(" "), maximumLength)
+}
+
+function truncatePreview(text: string, maximumLength: number): string {
+  if (text.length <= maximumLength) return text
+  const lastCharacter = maximumLength - 1
+  const wordBoundary = text.lastIndexOf(" ", lastCharacter)
+  const cutAt = wordBoundary >= Math.floor(maximumLength * 0.6) ? wordBoundary : lastCharacter
+  return `${text.slice(0, cutAt).trimEnd()}…`
 }
 
 function activityLabel(kind: AgentActivityKind): string {

@@ -146,6 +146,7 @@ describe("IsolatedMessagesSection transcript virtualization", () => {
       this.scrollTop = top
       this.dispatchEvent(new Event("scroll"))
     }
+    HTMLElement.prototype.scrollIntoView = vi.fn()
     HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
       const index = Number((this as HTMLElement).dataset.index)
       const height = this.hasAttribute("data-index") ? (measuredGroupHeights.get(index) ?? 80) : 600
@@ -454,6 +455,43 @@ describe("IsolatedMessagesSection transcript virtualization", () => {
         ?.getAttribute("data-total-message-groups"),
     ).toBe("1000")
     expect(appStore.get(userMessageIdsPerChatAtom(subChatId))).toHaveLength(1_000)
+  })
+
+  it("renders a short transcript eagerly before the scroll owner attaches", async () => {
+    const subChatId = "short-detached-chat"
+    const ids = ["user-0", "user-1", "user-2"]
+    const virtualizerRef = createRef<any>()
+    appStore.set(userMessageIdsPerChatAtom(subChatId), ids)
+    appStore.set(
+      messageGroupsPerChatAtom(subChatId),
+      ids.map((userMsgId, index) => ({
+        userMsgId,
+        assistantMsgIds: [`assistant-${index}`],
+      })),
+    )
+
+    await act(async () =>
+      root.render(
+        createElement(
+          Provider,
+          { store: appStore },
+          createElement(IsolatedMessagesSection as ComponentType<any>, {
+            ...sectionProps(subChatId, createRef<HTMLElement>(), virtualizerRef),
+            scrollElementRef: undefined,
+          }),
+        ),
+      ),
+    )
+
+    expect(container.querySelectorAll("[data-rendered-group]")).toHaveLength(3)
+    expect(
+      container.querySelector("[data-rendering-mode]")?.getAttribute("data-rendering-mode"),
+    ).toBe("eager")
+    expect(virtualizerRef.current.scrollToMessage("user-2")).toBe(true)
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({
+      block: "center",
+      behavior: "auto",
+    })
   })
 
   it("preserves the visible keyed group when older variable-height groups are prepended", async () => {

@@ -401,6 +401,13 @@ export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
     ["write", "plan", "read", "review", "read only"],
   ),
   control(
+    "preferences-codex-task-visibility",
+    "preferences",
+    "Codex task visibility",
+    "Hide completed Flapstack tasks from active Codex lists or show them under their project",
+    ["codex", "thread", "task", "archive", "recent", "project", "hidden"],
+  ),
+  control(
     "preferences-coauthor",
     "preferences",
     "Claude commit attribution",
