@@ -1318,7 +1318,10 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
                     )}
                   </DropdownMenuContent>
                 </DropdownMenu>
-                <span data-message-inline-action className="hidden items-center gap-0.5 @[420px]:flex">
+                <span
+                  data-message-inline-action
+                  className="hidden items-center gap-0.5 @[420px]:flex"
+                >
                   <CopyButton text={getMessageTextContent(message)} isMobile={isMobile} />
                   <PlayButton
                     text={getMessageTextContent(message)}

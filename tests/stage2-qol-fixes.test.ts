@@ -25,7 +25,7 @@ describe("Stage 2 QOL regression contracts", () => {
   it("mirrors user message actions in the assistant response row", () => {
     const source = readSource("src/renderer/features/agents/main/assistant-message-item.tsx")
     const actions = source.slice(
-      source.indexOf("{hasTextContent && (!isStreaming || !isLastMessage)"),
+      source.indexOf("{(hasTextContent && (!isStreaming || !isLastMessage)) ||"),
       source.indexOf("{/* Git activity badges */}"),
     )
 

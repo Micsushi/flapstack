@@ -49,4 +49,12 @@ describe("composer settings layout", () => {
     expect(composer).not.toContain("SpeechVocabularyPopover")
     expect(commands).toContain('name: "goal"')
   })
+
+  it("uses equal control boxes and one shared gap for composer actions", () => {
+    const composer = read("src/renderer/features/agents/main/chat-input-area.tsx")
+
+    expect(composer).toMatch(/<AgentContextIndicator[\s\S]*?className="h-7 w-7"/)
+    expect(composer).toContain("gap={2}")
+    expect(composer).not.toMatch(/<div className="ml-0\.5">\s*<AgentSendButton/)
+  })
 })

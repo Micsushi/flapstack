@@ -2829,46 +2829,44 @@ export const ChatInputArea = memo(function ChatInputArea({
                   align="end"
                   side="top"
                   pinnedEnd={
-                    <div className="ml-0.5">
-                      <AgentSendButton
-                        isStreaming={isStreaming}
-                        isSubmitting={false}
-                        disabled={
-                          (!hasContent &&
-                            images.length === 0 &&
-                            files.length === 0 &&
-                            textContexts.length === 0 &&
-                            (diffTextContexts?.length ?? 0) === 0 &&
-                            queueLength === 0) ||
-                          isUploading ||
-                          Boolean(runtimeBlockedReason) ||
-                          Boolean(worktreeBlockedReason)
+                    <AgentSendButton
+                      isStreaming={isStreaming}
+                      isSubmitting={false}
+                      disabled={
+                        (!hasContent &&
+                          images.length === 0 &&
+                          files.length === 0 &&
+                          textContexts.length === 0 &&
+                          (diffTextContexts?.length ?? 0) === 0 &&
+                          queueLength === 0) ||
+                        isUploading ||
+                        Boolean(runtimeBlockedReason) ||
+                        Boolean(worktreeBlockedReason)
+                      }
+                      hasContent={
+                        hasContent ||
+                        images.length > 0 ||
+                        files.length > 0 ||
+                        textContexts.length > 0 ||
+                        (diffTextContexts?.length ?? 0) > 0
+                      }
+                      onClick={() => {
+                        if (
+                          !hasContent &&
+                          images.length === 0 &&
+                          files.length === 0 &&
+                          queueLength > 0 &&
+                          onSendFromQueue &&
+                          firstQueueItemId
+                        ) {
+                          onSendFromQueue(firstQueueItemId)
+                        } else {
+                          void handleEditorSubmit()
                         }
-                        hasContent={
-                          hasContent ||
-                          images.length > 0 ||
-                          files.length > 0 ||
-                          textContexts.length > 0 ||
-                          (diffTextContexts?.length ?? 0) > 0
-                        }
-                        onClick={() => {
-                          if (
-                            !hasContent &&
-                            images.length === 0 &&
-                            files.length === 0 &&
-                            queueLength > 0 &&
-                            onSendFromQueue &&
-                            firstQueueItemId
-                          ) {
-                            onSendFromQueue(firstQueueItemId)
-                          } else {
-                            void handleEditorSubmit()
-                          }
-                        }}
-                        onStop={onStop}
-                        mode={subChatMode}
-                      />
-                    </div>
+                      }}
+                      onStop={onStop}
+                      mode={subChatMode}
+                    />
                   }
                 >
                   {isVoiceRecording && (

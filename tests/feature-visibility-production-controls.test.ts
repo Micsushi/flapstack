@@ -11,7 +11,12 @@ describe("feature visibility production controls", () => {
     for (const featureId of ["agent-profiles", "runtimes", "voice", "visual-context"]) {
       expect(`${composer}\n${newChat}`).toContain(`featureVisibility.isVisible("${featureId}")`)
     }
-    expect(composer).toContain('hidden={!featureVisibility.isVisible("visual-context")}')
+    expect(composer).toMatch(
+      /featureVisibility\.isVisible\("visual-context"\)\s*&&\s*\(\s*<DropdownMenuItem/,
+    )
+    expect(composer).toMatch(
+      /featureVisibility\.isVisible\("visual-context"\) && runtimeChat\?\.projectId && \(\s*<VisualCaptureDialog/,
+    )
     expect(composer).toMatch(
       /featureVisibility\.isVisible\("voice"\)\s*&&\s*\(\s*<AgentVoiceButton/,
     )
