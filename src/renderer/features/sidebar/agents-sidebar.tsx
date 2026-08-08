@@ -164,7 +164,7 @@ import {
   type ChatWorkbenchNavigation,
 } from "../../../shared/chat-workbench-navigation"
 import { AgentsHelpPopover } from "../agents/components/agents-help-popover"
-import { getShortcutKey, isDesktopApp } from "../../lib/utils/platform"
+import { getPlatform, getShortcutKey, isDesktopApp } from "../../lib/utils/platform"
 import { useResolvedHotkeyDisplay, useResolvedHotkeyDisplayWithAlt } from "../../lib/hotkeys"
 import { pluralize } from "../agents/utils/pluralize"
 import {
@@ -583,8 +583,7 @@ function SidebarDisclosure({
   return (
     <span
       className={cn(
-        "ml-auto flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100",
-        !isCollapsed && "opacity-100",
+        "ml-auto mr-10 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover/disclosure:opacity-100 group-focus-within/disclosure:opacity-100",
         className,
       )}
       aria-hidden="true"
@@ -2507,13 +2506,15 @@ const ChatListSection = React.memo(function ChatListSection({
                 role={canCollapse || getHeaderScope() ? "button" : undefined}
                 tabIndex={canCollapse || getHeaderScope() ? 0 : undefined}
                 className={cn(
-                  "group relative flex items-center gap-1 group/section",
+                  "group group/disclosure group/section relative flex items-center gap-1",
                   "transition-[background-color,box-shadow,filter,opacity,transform] duration-150 ease-out",
                   isTaskSection
                     ? "h-7 mb-0.5 rounded-md pl-2 pr-1"
-                    : isTopLevelScopedSection || isReferenceSection
-                      ? "h-7 mt-1 mb-0.5 rounded-md pl-2 pr-1"
-                      : "h-5 mb-0.5",
+                    : isProjectSection
+                      ? "h-7 mt-0.5 mb-0 rounded-md pl-2 pr-1"
+                      : isTopLevelScopedSection || isReferenceSection
+                        ? "h-7 mt-1 mb-0.5 rounded-md pl-2 pr-1"
+                        : "h-5 mb-0.5",
                   isTaskSection
                     ? isMultiSelectMode
                       ? "pr-3"
@@ -2541,7 +2542,7 @@ const ChatListSection = React.memo(function ChatListSection({
                 )}
                 <div
                   className={cn(
-                    "flex min-w-0 flex-1 items-center gap-1.5 text-left pointer-events-none group-hover/section:pr-10 group-focus-within/section:pr-10",
+                    "pointer-events-none flex min-w-0 flex-1 items-center gap-1.5 text-left",
                     canCollapse ? "cursor-pointer" : "cursor-default",
                   )}
                 >
@@ -2573,7 +2574,6 @@ const ChatListSection = React.memo(function ChatListSection({
                       isTopLevelScopedSection || isTaskSection || isReferenceSection
                         ? "text-white/80"
                         : "text-muted-foreground",
-                      (lifecycleTarget || isGlobalSection) && !isMultiSelectMode && "mr-10",
                     )}
                   />
                 )}
@@ -2681,8 +2681,8 @@ const ChatListSection = React.memo(function ChatListSection({
         )}
         {!isCollapsed && showEmptyState && (
           <div
-            data-sidebar-empty-state="project"
-            className="mb-1 ml-9 flex h-7 items-center text-xs text-muted-foreground/60"
+            data-sidebar-empty-state="chats"
+            className="mb-0.5 ml-9 flex h-7 items-center text-xs text-muted-foreground/60"
           >
             No chats
           </div>
@@ -2693,9 +2693,11 @@ const ChatListSection = React.memo(function ChatListSection({
               "list-none p-0 m-0",
               isTaskSection
                 ? "mb-1 ml-3 pl-2"
-                : isTopLevelScopedSection || isReferenceSection
-                  ? "mb-1 ml-4 pl-2"
-                  : "mb-2",
+                : isProjectSection
+                  ? "mb-0.5 ml-4 pl-2"
+                  : isTopLevelScopedSection || isReferenceSection
+                    ? "mb-1 ml-4 pl-2"
+                    : "mb-2",
             )}
           >
             {chats.map((chat) => {
@@ -2892,34 +2894,15 @@ interface AgentsSidebarProps {
   onChatSelect?: () => void
 }
 
-// Isolated Sidebar Header - contains branding, traffic lights, and close button
+// Isolated macOS sidebar header for native traffic lights
 interface SidebarHeaderProps {
   isDesktop: boolean
   isFullscreen: boolean | null
-  isMobileFullscreen: boolean
-  onToggleSidebar?: () => void
-  handleSidebarMouseEnter: () => void
-  handleSidebarMouseLeave: (event: React.MouseEvent) => void
-  closeButtonRef: React.RefObject<HTMLDivElement | null>
 }
 
-const SidebarHeader = memo(function SidebarHeader({
-  isDesktop,
-  isFullscreen,
-  isMobileFullscreen,
-  onToggleSidebar,
-  handleSidebarMouseEnter,
-  handleSidebarMouseLeave,
-  closeButtonRef,
-}: SidebarHeaderProps) {
-  const toggleSidebarHotkey = useResolvedHotkeyDisplay("toggle-sidebar")
-
+const SidebarHeader = memo(function SidebarHeader({ isDesktop, isFullscreen }: SidebarHeaderProps) {
   return (
-    <div
-      className="relative flex-shrink-0"
-      onMouseEnter={handleSidebarMouseEnter}
-      onMouseLeave={handleSidebarMouseLeave}
-    >
+    <div className="relative flex-shrink-0">
       {/* Draggable area for window movement - background layer (hidden in fullscreen) */}
       {isDesktop && !isFullscreen && (
         <div
@@ -2938,38 +2921,6 @@ const SidebarHeader = memo(function SidebarHeader({
         isDesktop={isDesktop}
         className="absolute left-[15px] top-[12px] z-20"
       />
-
-      {/* Close button - positioned at top right */}
-      {!isMobileFullscreen && (
-        <div
-          ref={closeButtonRef}
-          className={cn("absolute right-2 z-20 transition-opacity duration-150", "top-2")}
-          style={{
-            opacity: 0,
-            // @ts-expect-error - WebKit-specific property
-            WebkitAppRegion: "no-drag",
-          }}
-        >
-          <Tooltip delayDuration={500}>
-            <TooltipTrigger asChild>
-              <ButtonCustom
-                variant="ghost"
-                size="icon"
-                onClick={onToggleSidebar}
-                tabIndex={-1}
-                className="h-6 w-6 p-0 hover:bg-foreground/10 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] text-foreground flex-shrink-0 rounded-md"
-                aria-label="Close sidebar"
-              >
-                <IconDoubleChevronLeft className="h-4 w-4" />
-              </ButtonCustom>
-            </TooltipTrigger>
-            <TooltipContent>
-              Close sidebar
-              {toggleSidebarHotkey && <Kbd>{toggleSidebarHotkey}</Kbd>}
-            </TooltipContent>
-          </Tooltip>
-        </div>
-      )}
 
       {/* Spacer for macOS traffic lights */}
       <TrafficLightSpacer isFullscreen={isFullscreen} isDesktop={isDesktop} />
@@ -2995,7 +2946,7 @@ const SidebarGroupHeader = memo(function SidebarGroupHeader({
   return (
     <div
       className={cn(
-        "group group/header relative flex h-7 w-full items-center gap-1 rounded-lg px-1 text-muted-foreground transition-colors hover:bg-foreground/5",
+        "group group/disclosure group/header relative flex h-7 w-full items-center gap-1 rounded-lg px-1 text-muted-foreground transition-colors hover:bg-foreground/5",
         !isCollapsed && "mb-2",
         className,
       )}
@@ -3003,15 +2954,15 @@ const SidebarGroupHeader = memo(function SidebarGroupHeader({
       <button
         type="button"
         onClick={onToggle}
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1 text-left"
+        className="flex min-w-0 w-full items-center gap-2 rounded-lg px-1 text-left"
         aria-expanded={!isCollapsed}
       >
         <Icon className="h-3.5 w-3.5 flex-shrink-0" />
         <span className="truncate text-xs font-medium">{title}</span>
-        <SidebarDisclosure isCollapsed={isCollapsed} />
+        <SidebarDisclosure isCollapsed={isCollapsed} className="mr-12" />
       </button>
       {actions && (
-        <div className="pointer-events-none flex items-center opacity-0 transition-opacity group-hover/header:pointer-events-auto group-hover/header:opacity-100">
+        <div className="pointer-events-none absolute right-1 top-1/2 flex w-10 -translate-y-1/2 items-center justify-end opacity-0 transition-opacity group-hover/header:pointer-events-auto group-hover/header:opacity-100">
           {actions}
         </div>
       )}
@@ -3101,9 +3052,6 @@ export function AgentsSidebar({
   const pendingQuestions = useAtomValue(pendingUserQuestionsAtom)
   const betaFeatures = useBetaFeatures()
   const featureVisibility = useFeatureVisibility()
-  // Use ref instead of state to avoid re-renders on hover
-  const isSidebarHoveredRef = useRef(false)
-  const closeButtonRef = useRef<HTMLDivElement>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [repositoryOverviewProjectId, setRepositoryOverviewProjectId] = useState<string | null>(
     null,
@@ -4627,6 +4575,7 @@ export function AgentsSidebar({
             parentProjectId: projectGroup.projectId,
             sectionDragId: childItem.id,
             projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
+            showEmptyState: !searchQuery.trim() && taskGroup.chats.length === 0,
           })
         }
       }
@@ -6359,36 +6308,6 @@ export function AgentsSidebar({
     }
   }, [])
 
-  // Update sidebar hover UI - DOM manipulation for close button, state for TrafficLights
-  // TrafficLights component handles native traffic light visibility via its own effect
-  // Update sidebar hover UI via DOM manipulation (no state update to avoid re-renders)
-  const updateSidebarHoverUI = useCallback((hovered: boolean) => {
-    isSidebarHoveredRef.current = hovered
-    // Update close button opacity
-    if (closeButtonRef.current) {
-      closeButtonRef.current.style.opacity = hovered ? "1" : "0"
-    }
-  }, [])
-
-  const handleSidebarMouseEnter = useCallback(() => {
-    updateSidebarHoverUI(true)
-  }, [updateSidebarHoverUI])
-
-  const handleSidebarMouseLeave = useCallback(
-    (e: React.MouseEvent) => {
-      // Electron's drag region (WebkitAppRegion: "drag") returns a non-HTMLElement
-      // object as relatedTarget. We preserve hover state in this case so the
-      // traffic lights remain visible when hovering over the drag area.
-      const relatedTarget = e.relatedTarget
-      if (!relatedTarget || !(relatedTarget instanceof HTMLElement)) return
-      const isStillInSidebar = relatedTarget.closest("[data-sidebar-content]")
-      if (!isStillInSidebar) {
-        updateSidebarHoverUI(false)
-      }
-    },
-    [updateSidebarHoverUI],
-  )
-
   // Check if scroll is needed and show/hide gradients via DOM manipulation
   React.useEffect(() => {
     const container = scrollContainerRef.current
@@ -6581,6 +6500,13 @@ export function AgentsSidebar({
       ),
     [visibleChatSections],
   )
+
+  const quickAccessHasChats =
+    pinnedAgents.length > 0 ||
+    starredAgents.length > 0 ||
+    pinnedTasks.some((task) => task.chats.length > 0) ||
+    starredTasks.some((task) => task.chats.length > 0) ||
+    visibleOtherSections.some((section) => section.chats.length > 0)
 
   const boundaryHighlightIds = useMemo(
     () =>
@@ -6858,31 +6784,22 @@ export function AgentsSidebar({
       onDragOverCapture={forceSidebarMoveCursor}
       onDropCapture={handleSidebarDropCapture}
       onMouseDownCapture={handleSidebarMouseDownCapture}
-      onMouseEnter={handleSidebarMouseEnter}
-      onMouseLeave={handleSidebarMouseLeave}
       data-pressing={isSidebarPressed || undefined}
       data-mobile-fullscreen={isMobileFullscreen || undefined}
       data-sidebar-content
       data-tour="sidebar"
     >
-      {/* Header area */}
-      <SidebarHeader
-        isDesktop={isDesktop}
-        isFullscreen={isFullscreen}
-        isMobileFullscreen={isMobileFullscreen}
-        onToggleSidebar={onToggleSidebar}
-        handleSidebarMouseEnter={handleSidebarMouseEnter}
-        handleSidebarMouseLeave={handleSidebarMouseLeave}
-        closeButtonRef={closeButtonRef}
-      />
+      {getPlatform() === "darwin" && (
+        <SidebarHeader isDesktop={isDesktop} isFullscreen={isFullscreen} />
+      )}
 
-      {/* Global search stays directly below the product name. */}
+      {/* Global search stays at the top of the sidebar. */}
       <div className="relative flex flex-shrink-0 items-center gap-1 px-2 pb-2 pt-1">
         <div className="relative min-w-0 flex-1">
           <SearchIcon className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={searchInputRef}
-            placeholder="Search projects and chats..."
+            aria-label="Search projects and chats"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             onFocus={() => setIsSearchFocused(true)}
@@ -7134,10 +7051,19 @@ export function AgentsSidebar({
             <SidebarGroupHeader
               title="Quick access"
               icon={Zap}
-              className="mt-[10px]"
+              className="mt-3.5"
               isCollapsed={collapsedSectionIds.has("quick-access")}
               onToggle={() => handleToggleSection("quick-access")}
             />
+          )}
+
+          {!searchQuery && !collapsedSectionIds.has("quick-access") && !quickAccessHasChats && (
+            <div
+              data-sidebar-empty-state="quick-access"
+              className="mb-0.5 ml-9 flex h-7 items-center text-xs text-muted-foreground/60"
+            >
+              No chats
+            </div>
           )}
 
           {!searchQuery &&
@@ -7168,6 +7094,10 @@ export function AgentsSidebar({
                   projectColor={null}
                   projectColorsById={projectColorsById}
                   showWhenEmpty
+                  showEmptyState={
+                    section.chats.length === 0 &&
+                    section.tasks.every((task) => task.chats.length === 0)
+                  }
                   isCollapsed={collapsedSectionIds.has(section.kind)}
                   draggingKind={draggingItem?.kind}
                   draggingId={draggingItem?.id}
@@ -7206,6 +7136,7 @@ export function AgentsSidebar({
                       }}
                       parentProjectId={task.projectId}
                       chats={task.chats}
+                      showEmptyState={task.chats.length === 0}
                       lifecyclePending={
                         pinTaskMutation.isPending ||
                         unpinTaskMutation.isPending ||
@@ -7229,7 +7160,7 @@ export function AgentsSidebar({
                 role="button"
                 tabIndex={0}
                 aria-expanded={!collapsedSectionIds.has("drafts")}
-                className="group relative mt-1 mb-0.5 flex h-7 cursor-pointer items-center gap-1 rounded-md pl-2 pr-1 transition-[background-color] duration-150 ease-out outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                className="group group/disclosure relative mt-1 mb-0.5 flex h-7 cursor-pointer items-center gap-1 rounded-md pl-2 pr-1 transition-[background-color] duration-150 ease-out outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
                 style={{
                   backgroundColor: rgbaFromHex(
                     getProjectTint(GLOBAL_SECTION_COLOR).base,
@@ -7300,7 +7231,7 @@ export function AgentsSidebar({
             <SidebarGroupHeader
               title="Projects"
               icon={Library}
-              className="mt-[10px]"
+              className="mt-3.5"
               isCollapsed={collapsedSectionIds.has("projects-group")}
               onToggle={() => handleToggleSection("projects-group")}
               actions={
@@ -7379,6 +7310,14 @@ export function AgentsSidebar({
                 !searchQuery && "animate-in fade-in-0 slide-in-from-top-1 duration-150",
               )}
             >
+              {!searchQuery && visibleProjectSections.length === 0 && (
+                <div
+                  data-sidebar-empty-state="projects"
+                  className="mb-0.5 ml-7 flex h-7 items-center text-xs text-muted-foreground/60"
+                >
+                  No chats
+                </div>
+              )}
               {visibleProjectSections.map((section, index) =>
                 renderSidebarSection(section, index, visibleProjectSections.length),
               )}
@@ -7397,16 +7336,16 @@ export function AgentsSidebar({
                 }}
                 aria-expanded={isArchiveOpen}
                 className={cn(
-                  "group group/archive relative mt-[10px] flex h-7 w-full items-center rounded-lg px-2 text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground",
+                  "group group/archive group/disclosure relative mt-3.5 flex h-7 w-full items-center rounded-lg px-2 text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground",
                   isArchiveOpen ? "mb-2" : "mb-1",
                 )}
               >
                 <DiffIcon className="mr-2 h-3.5 w-3.5" />
                 <span className="whitespace-nowrap text-xs font-medium">Archive</span>
-                <span className="ml-auto text-[11px] tabular-nums text-muted-foreground/60">
+                <span className="absolute right-2 text-[11px] tabular-nums text-muted-foreground/60">
                   {archivedLifecycleItems.length}
                 </span>
-                <SidebarDisclosure isCollapsed={!isArchiveOpen} className="ml-1" />
+                <SidebarDisclosure isCollapsed={!isArchiveOpen} className="mr-12" />
                 <AnimatePresence>{isArchiveOpen && <ExpandedSectionIndicator />}</AnimatePresence>
               </button>
               {isArchiveOpen && (

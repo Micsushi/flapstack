@@ -22,6 +22,25 @@ describe("Stage 2 QOL regression contracts", () => {
     )
   })
 
+  it("mirrors user message actions in the assistant response row", () => {
+    const source = readSource("src/renderer/features/agents/main/assistant-message-item.tsx")
+    const actions = source.slice(
+      source.indexOf("{hasTextContent && (!isStreaming || !isLastMessage)"),
+      source.indexOf("{/* Git activity badges */}"),
+    )
+
+    const menuIndex = actions.indexOf('aria-label="Assistant message options"')
+    const copyIndex = actions.indexOf("<CopyButton")
+    const playIndex = actions.indexOf("<PlayButton")
+    const timestampIndex = actions.indexOf("{timestamp &&")
+
+    expect(menuIndex).toBeGreaterThanOrEqual(0)
+    expect(menuIndex).toBeLessThan(copyIndex)
+    expect(copyIndex).toBeLessThan(playIndex)
+    expect(playIndex).toBeLessThan(timestampIndex)
+    expect(actions).toContain('<DropdownMenuContent align="start"')
+  })
+
   it("requests the selected stored-diff scope", () => {
     const card = readSource("src/renderer/features/agents/ui/agent-changed-files-card.tsx")
     const router = readSource("src/main/lib/trpc/routers/runs.ts")

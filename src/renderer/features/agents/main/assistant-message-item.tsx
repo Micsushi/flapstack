@@ -1285,6 +1285,39 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
           <div className="flex items-center gap-0.5">
             {(!isStreaming || !isLastMessage) && (
               <>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      aria-label="Assistant message options"
+                      tabIndex={-1}
+                      className="p-1 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
+                    >
+                      <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="min-w-[160px]">
+                    <div className="flex items-center gap-0.5 px-1 pb-1 @[420px]:hidden">
+                      <CopyButton text={getMessageTextContent(message)} isMobile={isMobile} />
+                      <PlayButton
+                        text={getMessageTextContent(message)}
+                        isMobile={isMobile}
+                        chatId={chatId}
+                        subChatId={subChatId}
+                        messageId={message.id}
+                      />
+                      <AgentMessageUsage
+                        metadata={msgMetadata}
+                        isStreaming={false}
+                        isMobile={isMobile}
+                      />
+                    </div>
+                    {onFork && (
+                      <DropdownMenuItem onClick={() => onFork(message.id)}>
+                        Fork from here
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <span data-message-inline-action className="hidden items-center gap-0.5 @[420px]:flex">
                   <CopyButton text={getMessageTextContent(message)} isMobile={isMobile} />
                   <PlayButton
@@ -1319,41 +1352,6 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
                 isMobile={isMobile}
               />
             </span>
-            {(!isStreaming || !isLastMessage) && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    tabIndex={-1}
-                    aria-label="Assistant message options"
-                    className="p-1 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
-                  >
-                    <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-[160px]">
-                  <div className="flex items-center gap-0.5 px-1 pb-1 @[420px]:hidden">
-                    <CopyButton text={getMessageTextContent(message)} isMobile={isMobile} />
-                    <PlayButton
-                      text={getMessageTextContent(message)}
-                      isMobile={isMobile}
-                      chatId={chatId}
-                      subChatId={subChatId}
-                      messageId={message.id}
-                    />
-                    <AgentMessageUsage
-                      metadata={msgMetadata}
-                      isStreaming={false}
-                      isMobile={isMobile}
-                    />
-                  </div>
-                  {onFork && (
-                    <DropdownMenuItem onClick={() => onFork(message.id)}>
-                      Fork from here
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
           </div>
         </div>
       ) : null}
