@@ -1252,14 +1252,23 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
         resourcesPath: process.resourcesPath,
       }),
       backgroundColor: nativeTheme.shouldUseDarkColors ? "#09090b" : "#ffffff",
-      // hiddenInset shows native traffic lights inset in the window
-      // hiddenInset hides the native title bar but keeps traffic lights visible
-      titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+      titleBarStyle:
+        process.platform === "darwin"
+          ? "hiddenInset"
+          : process.platform === "win32" && !useNativeFrame
+            ? "hidden"
+            : "default",
       trafficLightPosition: process.platform === "darwin" ? { x: 15, y: 12 } : undefined,
       // Windows: Use native frame or frameless based on user preference
       ...(process.platform === "win32" && {
         frame: useNativeFrame,
         autoHideMenuBar: true,
+        ...(!useNativeFrame && {
+          titleBarOverlay: {
+            color: "#00000000",
+            height: 32,
+          },
+        }),
       }),
       webPreferences: {
         preload: join(__dirname, "../preload/index.js"),

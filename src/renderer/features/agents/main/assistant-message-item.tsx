@@ -1278,6 +1278,24 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
       {hasTextContent && (!isStreaming || !isLastMessage) && (
         <div className="flex justify-between items-center h-6 px-2 mt-1">
           <div className="flex items-center gap-0.5">
+            {onFork && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    aria-label="Assistant message options"
+                    tabIndex={-1}
+                    className="p-1 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
+                  >
+                    <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-[160px]">
+                  <DropdownMenuItem onClick={() => onFork(message.id)}>
+                    Fork from here
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
             <CopyButton text={getMessageTextContent(message)} isMobile={isMobile} />
             <PlayButton
               text={getMessageTextContent(message)}
@@ -1301,23 +1319,6 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
               isStreaming={isStreaming}
               isMobile={isMobile}
             />
-            {onFork && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    tabIndex={-1}
-                    className="p-1 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
-                  >
-                    <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-[160px]">
-                  <DropdownMenuItem onClick={() => onFork(message.id)}>
-                    Fork from here
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
           </div>
         </div>
       )}

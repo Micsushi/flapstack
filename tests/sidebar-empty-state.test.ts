@@ -6,13 +6,19 @@ const sidebarSource = readFileSync(
   "utf8",
 ).replace(/\r\n/g, "\n")
 
-describe("sidebar empty project state", () => {
-  it("shows an expanded empty-project gap using Flapstack chat terminology", () => {
-    expect(sidebarSource).toContain('data-sidebar-empty-state="project"')
+describe("sidebar empty chat states", () => {
+  it("shows No chats for every expanded empty chat container", () => {
+    expect(sidebarSource).toContain('data-sidebar-empty-state="chats"')
+    expect(sidebarSource).toContain('data-sidebar-empty-state="quick-access"')
+    expect(sidebarSource).toContain('data-sidebar-empty-state="projects"')
     expect(sidebarSource).toContain("!isCollapsed && showEmptyState")
     expect(sidebarSource).toContain("No chats")
+    expect(sidebarSource).toContain("section.tasks.every((task) => task.chats.length === 0)")
     expect(sidebarSource).toContain(
       "!searchQuery.trim() &&\n            projectGroup.chats.length === 0 &&\n            projectGroup.taskGroups.length === 0",
+    )
+    expect(sidebarSource).toContain(
+      "showEmptyState: !searchQuery.trim() && taskGroup.chats.length === 0",
     )
   })
 })
