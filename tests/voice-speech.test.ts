@@ -491,6 +491,13 @@ describe("message speech request", () => {
 })
 
 describe("kokoro helpers", () => {
+  it("loads the package entry that retains Kokoro's bundled voice path", () => {
+    const source = readFileSync("src/main/lib/speech/tts-kokoro.ts", "utf8")
+    expect(source).toContain("createRequire(import.meta.url)")
+    expect(source).toContain('require("kokoro-js")')
+    expect(source).not.toContain('await import("kokoro-js")')
+  })
+
   it("stops before synthesizing another chunk after cancellation", async () => {
     const generate = vi
       .fn()

@@ -1,7 +1,10 @@
 import os from "node:os"
 import path from "node:path"
+import { createRequire } from "node:module"
 import { assertSpeechTextWithinLimit } from "./speech-text"
 import type { SpeechAdapterAvailability, TtsAdapter, TtsInput, TtsResult, TtsVoice } from "./types"
+
+const require = createRequire(import.meta.url)
 
 // Offline Kokoro neural TTS (S2.0: default TTS, system voice is the fallback).
 // Ported from agent-hotline's native-kokoro-tts. kokoro-js downloads the ONNX
@@ -162,7 +165,7 @@ async function tryResolveRuntime(): Promise<KokoroRuntime | null> {
   try {
     const transformers =
       (await import("@huggingface/transformers")) as KokoroRuntime["transformers"]
-    const kokoro = (await import("kokoro-js")) as unknown as KokoroRuntime["kokoro"]
+    const kokoro = require("kokoro-js") as KokoroRuntime["kokoro"]
     runtimeMissingReason = null
     return { transformers, kokoro }
   } catch (error) {
