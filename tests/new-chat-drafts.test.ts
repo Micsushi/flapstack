@@ -2,9 +2,13 @@
 
 import { beforeEach, describe, expect, it } from "vitest"
 import {
+  closeNewChatDraft,
+  countVisibleNewChatDraftsForProject,
   getNewChatDrafts,
   getNewChatDraftRestoreAction,
+  getOpenNewChatDrafts,
   markDraftVisible,
+  openNewChatDraft,
   resolveNewChatDraftDestination,
   updateNewChatDraftDestination,
   updateNewChatDraftText,
@@ -61,5 +65,20 @@ describe("new chat draft destinations", () => {
     updateNewChatDraftDestination("draft-1")
     expect(getNewChatDrafts()[0]).toMatchObject({ text: "Fix the sidebar" })
     expect(getNewChatDrafts()[0]?.project).toBeUndefined()
+  })
+
+  it("keeps a navigated-away draft open until its tab is explicitly closed", () => {
+    updateNewChatDraftText("draft-1", "Fix the sidebar", project)
+    markDraftVisible("draft-1")
+
+    expect(getOpenNewChatDrafts().map(({ id }) => id)).toEqual(["draft-1"])
+    expect(countVisibleNewChatDraftsForProject(project.id)).toBe(1)
+
+    closeNewChatDraft("draft-1")
+    expect(getOpenNewChatDrafts()).toEqual([])
+    expect(getNewChatDrafts().map(({ id }) => id)).toEqual(["draft-1"])
+
+    openNewChatDraft("draft-1")
+    expect(getOpenNewChatDrafts().map(({ id }) => id)).toEqual(["draft-1"])
   })
 })

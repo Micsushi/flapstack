@@ -2,7 +2,11 @@
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { createChatWorkbenchLayout, reduceChatWorkbench } from "../src/shared/chat-workbench"
+import {
+  collectChatGroups,
+  createChatWorkbenchLayout,
+  reduceChatWorkbench,
+} from "../src/shared/chat-workbench"
 import { ChatWorkbench } from "../src/renderer/features/agents/workbench/chat-workbench"
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -86,6 +90,35 @@ describe("ChatWorkbench", () => {
     expect(container.querySelectorAll('[role="tablist"]')).toHaveLength(4)
     expect(container.textContent).not.toContain("Group 1")
     expect(container.textContent).not.toContain("Group 2")
+  })
+
+  it("opens one movable Terminal presentation for a Chat", async () => {
+    let layout = createChatWorkbenchLayout(["a"])
+    let openTerminal: ((chatId: string) => void) | null = null
+    const renderWorkbench = () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: [{ id: "a", name: "Chat a" }],
+          layout,
+          onLayoutChange: (nextLayout) => {
+            layout = nextLayout
+            renderWorkbench()
+          },
+          onActiveChatChange: vi.fn(),
+          renderChat: (_presentationId, _active, controls) => {
+            openTerminal = controls.openTerminal
+            return createElement("div")
+          },
+        }),
+      )
+
+    await act(async () => renderWorkbench())
+    await act(async () => openTerminal?.("a"))
+    await act(async () => openTerminal?.("a"))
+
+    const presentationIds = collectChatGroups(layout.root).flatMap((group) => group.chatIds)
+    expect(presentationIds.filter((id) => id === "terminal:a")).toHaveLength(1)
+    expect(container.querySelector('[aria-label^="Terminal pane"]')).not.toBeNull()
   })
 
   it("uses the compact hover scrollbar inside every pane tab bar", async () => {
@@ -222,7 +255,11 @@ describe("ChatWorkbench", () => {
 
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(2)
     expect(renderChat).toHaveBeenCalledTimes(1)
-    expect(renderChat).toHaveBeenCalledWith("a", true)
+    expect(renderChat).toHaveBeenCalledWith(
+      "a",
+      true,
+      expect.objectContaining({ openTerminal: expect.any(Function) }),
+    )
   })
 
   it("keeps Save as workspace in the compact pane menu and announces the durable result", async () => {
@@ -357,6 +394,39 @@ describe("ChatWorkbench", () => {
     ).toBe("12")
   })
 
+  it("draws the active pane outline above its headers without removing project accents", async () => {
+    const layout = reduceChatWorkbench(createChatWorkbenchLayout(["a", "b"]), {
+      type: "apply-preset",
+      preset: "two-columns",
+    }).layout
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: [
+            { id: "a", accentColor: "#22c55e" },
+            { id: "b", accentColor: "#f97316" },
+          ],
+          layout,
+          viewport: { width: 900, height: 500 },
+          onLayoutChange: vi.fn(),
+          onActiveChatChange: vi.fn(),
+          renderChat: (chatId: string) => createElement("div", null, chatId),
+        }),
+      ),
+    )
+
+    const activePane = container.querySelector<HTMLElement>('[data-active-group="true"]')
+    const inactivePane = container.querySelector("[data-chat-group]:not([data-active-group])")
+    expect(activePane?.querySelector("[data-active-pane-outline]")).not.toBeNull()
+    expect(inactivePane?.querySelector("[data-active-pane-outline]")).toBeNull()
+    expect(activePane?.className).not.toContain("ring-inset")
+    expect(
+      [...container.querySelectorAll<HTMLElement>("[data-chat-tab]")].map(
+        (tab) => tab.style.borderTopColor,
+      ),
+    ).toEqual(["rgb(34, 197, 94)", "rgb(249, 115, 22)"])
+  })
+
   it("reports cumulative separator positions for assistive technology", async () => {
     const layout = reduceChatWorkbench(createChatWorkbenchLayout(["a", "b", "c"]), {
       type: "apply-preset",
@@ -380,6 +450,97 @@ describe("ChatWorkbench", () => {
         separator.getAttribute("aria-valuenow"),
       ),
     ).toEqual(["33", "67"])
+  })
+
+  it("links equivalent width dividers across a two-by-two layout", async () => {
+    const layout = reduceChatWorkbench(createChatWorkbenchLayout(["a", "b", "c", "d"]), {
+      type: "apply-preset",
+      preset: "grid-2x2",
+    }).layout
+    const onLayoutChange = vi.fn()
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: ["a", "b", "c", "d"].map((id) => ({ id })),
+          layout,
+          viewport: { width: 900, height: 900 },
+          onLayoutChange,
+          onActiveChatChange: vi.fn(),
+          renderChat: (chatId: string) => createElement("div", null, chatId),
+        }),
+      ),
+    )
+
+    const separators = [...container.querySelectorAll('[role="separator"]')]
+    expect(separators).toHaveLength(3)
+    expect(
+      separators.filter((separator) => separator.getAttribute("aria-orientation") === "vertical"),
+    ).toHaveLength(2)
+    expect(
+      separators.filter((separator) => separator.getAttribute("aria-orientation") === "horizontal"),
+    ).toHaveLength(1)
+
+    const topVertical = separators.find(
+      (separator) => separator.getAttribute("aria-orientation") === "vertical",
+    )
+    Object.defineProperty(topVertical?.parentElement, "clientWidth", {
+      configurable: true,
+      value: 900,
+    })
+    await act(async () =>
+      topVertical?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+      ),
+    )
+    const resized = onLayoutChange.mock.calls.at(-1)?.[0]
+    expect(resized.root.children[0].sizes[0]).toBeCloseTo(0.55)
+    expect(resized.root.children[0].sizes[1]).toBeCloseTo(0.45)
+    expect(resized.root.children[1].sizes[0]).toBeCloseTo(0.55)
+    expect(resized.root.children[1].sizes[1]).toBeCloseTo(0.45)
+  })
+
+  it("previews divider movement locally and commits the durable layout once", async () => {
+    const layout = reduceChatWorkbench(createChatWorkbenchLayout(["a", "b"]), {
+      type: "apply-preset",
+      preset: "two-columns",
+    }).layout
+    const onLayoutChange = vi.fn()
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: ["a", "b"].map((id) => ({ id })),
+          layout,
+          viewport: { width: 900, height: 600 },
+          onLayoutChange,
+          onActiveChatChange: vi.fn(),
+          renderChat: (chatId: string) => createElement("div", null, chatId),
+        }),
+      ),
+    )
+
+    const separator = container.querySelector<HTMLElement>('[role="separator"]')!
+    Object.defineProperty(separator.parentElement, "clientWidth", {
+      configurable: true,
+      value: 900,
+    })
+    await act(async () => {
+      separator.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 450 }),
+      )
+      window.dispatchEvent(new MouseEvent("pointermove", { clientX: 500 }))
+      window.dispatchEvent(new MouseEvent("pointermove", { clientX: 520 }))
+      window.dispatchEvent(new MouseEvent("pointermove", { clientX: 540 }))
+      window.dispatchEvent(new MouseEvent("pointerup", { clientX: 540 }))
+    })
+
+    expect(onLayoutChange).toHaveBeenCalledOnce()
+    expect(onLayoutChange.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ type: "resize-split" }),
+    )
+    expect(onLayoutChange.mock.calls[0]?.[0].root.sizes).toEqual([
+      expect.closeTo(0.6),
+      expect.closeTo(0.4),
+    ])
   })
 
   it("routes a contextual cross-window edge drop through the atomic transfer callback", async () => {
@@ -530,7 +691,7 @@ describe("ChatWorkbench", () => {
       ),
     )
     const pane = container.querySelector<HTMLElement>('[role="region"]')!
-    vi.spyOn(pane, "getBoundingClientRect").mockReturnValue({
+    const boundsSpy = vi.spyOn(pane, "getBoundingClientRect").mockReturnValue({
       left: 0,
       top: 0,
       right: 800,
@@ -561,6 +722,7 @@ describe("ChatWorkbench", () => {
     }
 
     expect(renderChat).toHaveBeenCalledTimes(initialRenderCount)
+    expect(boundsSpy).toHaveBeenCalledOnce()
   })
 
   it("uses the dragged-over tab midpoint as the insertion position", async () => {

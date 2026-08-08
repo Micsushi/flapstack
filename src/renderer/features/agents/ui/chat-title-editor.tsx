@@ -1,10 +1,22 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback, memo } from "react"
+import {
+  Children,
+  Fragment,
+  isValidElement,
+  memo,
+  type ReactElement,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react"
 import { cn } from "../../../lib/utils"
 import { Folder } from "lucide-react"
 import { ProviderChipIcon } from "../components/provider-chip-icon"
 import { OpenInButton } from "../../../components/open-in-button"
+import { ProgressiveOverflowRow } from "../../../components/progressive-overflow-row"
 
 interface ChatTitleEditorProps {
   name: string
@@ -22,7 +34,18 @@ interface ChatTitleEditorProps {
   projectColor?: string | null
   workspaceBranch?: string | null
   localFolderPath?: string
-  headerActions?: React.ReactNode
+  headerActions?: ReactNode
+}
+
+function flattenOverflowChildren(node: ReactNode): ReactNode[] {
+  return Children.toArray(node).flatMap((child) => {
+    if (isValidElement(child) && child.type === Fragment) {
+      return flattenOverflowChildren(
+        (child as ReactElement<{ children?: ReactNode }>).props.children,
+      )
+    }
+    return [child]
+  })
 }
 
 // Custom comparison to prevent re-renders during streaming
@@ -66,6 +89,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(name)
   const [isSaving, setIsSaving] = useState(false)
+  const [hiddenHeaderIndexes, setHiddenHeaderIndexes] = useState<number[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -160,6 +184,72 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
 
   // Fixed height to prevent layout shift when switching between view/edit modes
   const heightClass = isMobile ? "h-7" : "h-8"
+  const headerActionItems = flattenOverflowChildren(headerActions)
+  const actionKeys = headerActionItems.map((_, index) => `action-${index}`)
+  const headerOverflowItems = [
+    workspaceBranch
+      ? {
+          key: "branch",
+          node: (
+            <span className="max-w-32 truncate text-xs text-foreground/60">{workspaceBranch}</span>
+          ),
+        }
+      : null,
+    projectLabel
+      ? {
+          key: "project",
+          node: (
+            <span
+              className="inline-flex h-7 shrink-0 items-center justify-center rounded-md border px-2.5 text-[13px] font-medium leading-none"
+              style={{
+                color: projectColor ?? undefined,
+                borderColor: projectColor
+                  ? `color-mix(in srgb, ${projectColor} 45%, transparent)`
+                  : undefined,
+                backgroundColor: projectColor
+                  ? `color-mix(in srgb, ${projectColor} 14%, transparent)`
+                  : undefined,
+              }}
+            >
+              {projectLabel}
+            </span>
+          ),
+        }
+      : null,
+    providerName
+      ? {
+          key: "provider",
+          node: (
+            <span
+              className={cn(
+                "inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border px-2.5 text-[13px] font-medium leading-none",
+                providerClassName,
+              )}
+            >
+              <ProviderChipIcon provider={provider} className="h-4 w-4" />
+              {providerName}
+            </span>
+          ),
+        }
+      : null,
+    localFolderPath
+      ? {
+          key: "open-in",
+          node: <OpenInButton path={localFolderPath} label="Open in" />,
+        }
+      : null,
+    ...headerActionItems.map((node, index) => ({ key: actionKeys[index], node })),
+  ].filter((item): item is NonNullable<typeof item> => item !== null)
+  const headerCollapseOrder = ["provider", "project", "branch", ...actionKeys.reverse(), "open-in"]
+    .map((key) => headerOverflowItems.findIndex((item) => item.key === key))
+    .filter((index) => index >= 0)
+  const displayChipIndexes = ["project", "provider"]
+    .map((key) => headerOverflowItems.findIndex((item) => item.key === key))
+    .filter((index) => index >= 0)
+  const hideHeadingIcon =
+    !isEditing &&
+    displayChipIndexes.length > 0 &&
+    displayChipIndexes.every((index) => hiddenHeaderIndexes.includes(index))
 
   return (
     <div
@@ -170,7 +260,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
         heightClass,
       )}
     >
-      {!isMobile && (
+      {!isMobile && !hideHeadingIcon && (
         <Folder className="h-[18px] w-[18px] shrink-0 text-foreground/80" aria-hidden />
       )}
       {isEditing ? (
@@ -211,44 +301,21 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
           </span>
         </div>
       )}
-      {!isMobile && !isEditing && workspaceBranch && (
-        <span className="min-w-0 truncate text-xs text-foreground/60">{workspaceBranch}</span>
-      )}
       {!isMobile && !isEditing && (
-        <div
-          className="ml-auto flex shrink-0 items-center gap-2 leading-none"
+        <ProgressiveOverflowRow
+          usageRatio={1}
+          menuLabel="More chat actions"
+          className="ml-auto w-full max-w-[68%] justify-end leading-none"
+          contentClassName="justify-end"
+          gap={8}
+          collapseOrder={headerCollapseOrder}
+          onHiddenIndexesChange={setHiddenHeaderIndexes}
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-          {projectLabel && (
-            <span
-              className="inline-flex h-7 shrink-0 items-center justify-center rounded-md border px-2.5 text-[13px] font-medium leading-none"
-              style={{
-                color: projectColor ?? undefined,
-                borderColor: projectColor
-                  ? `color-mix(in srgb, ${projectColor} 45%, transparent)`
-                  : undefined,
-                backgroundColor: projectColor
-                  ? `color-mix(in srgb, ${projectColor} 14%, transparent)`
-                  : undefined,
-              }}
-            >
-              {projectLabel}
-            </span>
-          )}
-          {providerName && (
-            <span
-              className={cn(
-                "inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border px-2.5 text-[13px] font-medium leading-none",
-                providerClassName,
-              )}
-            >
-              <ProviderChipIcon provider={provider} className="h-4 w-4" />
-              {providerName}
-            </span>
-          )}
-          <OpenInButton path={localFolderPath} label="Open in" />
-          {headerActions}
-        </div>
+          {headerOverflowItems.map(({ key, node }) => (
+            <Fragment key={key}>{node}</Fragment>
+          ))}
+        </ProgressiveOverflowRow>
       )}
     </div>
   )

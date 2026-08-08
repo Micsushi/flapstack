@@ -9,6 +9,7 @@ import {
   desktopNotificationsEnabledAtom,
   reasoningOutputEnabledAtom,
   notifyWhenFocusedAtom,
+  newChatDraftReminderEnabledAtom,
   soundNotificationsEnabledAtom,
   preferredEditorAtom,
   type AgentMode,
@@ -150,6 +151,9 @@ export function AgentsPreferencesTab() {
   const [analyticsOptOut, setAnalyticsOptOut] = useAtom(analyticsOptOutAtom)
   const [autoAdvanceTarget, setAutoAdvanceTarget] = useAtom(autoAdvanceTargetAtom)
   const [crossScopeMoveEnabled, setCrossScopeMoveEnabled] = useAtom(crossScopeMoveEnabledAtom)
+  const [newChatDraftReminderEnabled, setNewChatDraftReminderEnabled] = useAtom(
+    newChatDraftReminderEnabledAtom,
+  )
   const [defaultAgentMode, setDefaultAgentMode] = useAtom(defaultAgentModeAtom)
   const [codexThreadVisibility, setCodexThreadVisibility] = useAtom(codexThreadVisibilityAtom)
   const [preferredEditor, setPreferredEditor] = useAtom(preferredEditorAtom)
@@ -253,6 +257,22 @@ export function AgentsPreferencesTab() {
       <div className="bg-background rounded-lg border border-border overflow-hidden">
         <div
           className="flex items-center justify-between p-4 outline-none"
+          data-settings-id="preferences-unsent-draft-reminders"
+          tabIndex={-1}
+        >
+          <div className="flex flex-col space-y-1">
+            <span className="text-sm font-medium text-foreground">Unsent draft reminders</span>
+            <span className="text-xs text-muted-foreground">
+              Show the number of saved drafts when starting another chat for the same project.
+            </span>
+          </div>
+          <Switch
+            checked={newChatDraftReminderEnabled}
+            onCheckedChange={setNewChatDraftReminderEnabled}
+          />
+        </div>
+        <div
+          className="flex items-center justify-between border-t border-border p-4 outline-none"
           data-settings-id="preferences-reasoning"
           tabIndex={-1}
         >

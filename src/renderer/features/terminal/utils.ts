@@ -4,20 +4,13 @@
 
 /**
  * Compute the terminal scope key for a chat/workspace.
- * - Local mode (no branch): shared across all local workspaces on the same project path
- * - Worktree mode (has branch): isolated per workspace
+ * Every chat owns one isolated terminal scope, regardless of checkout mode.
  */
 export function getTerminalScopeKey(chat: {
   branch: string | null
   worktreePath: string | null
   id: string
 }): string {
-  if (chat.branch) {
-    return `ws:${chat.id}`
-  }
-  if (chat.worktreePath) {
-    return `path:${chat.worktreePath}`
-  }
   return `ws:${chat.id}`
 }
 

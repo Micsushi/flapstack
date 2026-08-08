@@ -1281,23 +1281,25 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
 
       {(hasTextContent && (!isStreaming || !isLastMessage)) ||
       (isStreaming && isLastMessage && resolveMessageTokenUsage(msgMetadata).totalTokens > 0) ? (
-        <div className="flex justify-between items-center h-6 px-2 mt-1">
+        <div className="@container flex justify-between items-center h-6 px-2 mt-1">
           <div className="flex items-center gap-0.5">
             {(!isStreaming || !isLastMessage) && (
               <>
-                <CopyButton text={getMessageTextContent(message)} isMobile={isMobile} />
-                <PlayButton
-                  text={getMessageTextContent(message)}
-                  isMobile={isMobile}
-                  chatId={chatId}
-                  subChatId={subChatId}
-                  messageId={message.id}
-                  highlightColor={
-                    getHarnessChipMeta(
-                      (msgMetadata as AgentMessageMetadata & { harness?: string })?.harness,
-                    ).color
-                  }
-                />
+                <span data-message-inline-action className="hidden items-center gap-0.5 @[420px]:flex">
+                  <CopyButton text={getMessageTextContent(message)} isMobile={isMobile} />
+                  <PlayButton
+                    text={getMessageTextContent(message)}
+                    isMobile={isMobile}
+                    chatId={chatId}
+                    subChatId={subChatId}
+                    messageId={message.id}
+                    highlightColor={
+                      getHarnessChipMeta(
+                        (msgMetadata as AgentMessageMetadata & { harness?: string })?.harness,
+                      ).color
+                    }
+                  />
+                </span>
                 {timestamp && (
                   <span className="ml-1 text-[10px] text-muted-foreground">{timestamp}</span>
                 )}
@@ -1305,25 +1307,50 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             )}
           </div>
           <div className="flex items-center gap-0.5">
-            <AgentMessageUsage
-              metadata={msgMetadata}
-              isStreaming={isStreaming && isLastMessage}
-              isMobile={isMobile}
-            />
-            {onFork && (!isStreaming || !isLastMessage) && (
+            <span
+              data-message-inline-action
+              className={
+                isStreaming && isLastMessage ? "inline-flex" : "hidden @[420px]:inline-flex"
+              }
+            >
+              <AgentMessageUsage
+                metadata={msgMetadata}
+                isStreaming={isStreaming && isLastMessage}
+                isMobile={isMobile}
+              />
+            </span>
+            {(!isStreaming || !isLastMessage) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
                     tabIndex={-1}
+                    aria-label="Assistant message options"
                     className="p-1 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
                   >
                     <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-[160px]">
-                  <DropdownMenuItem onClick={() => onFork(message.id)}>
-                    Fork from here
-                  </DropdownMenuItem>
+                  <div className="flex items-center gap-0.5 px-1 pb-1 @[420px]:hidden">
+                    <CopyButton text={getMessageTextContent(message)} isMobile={isMobile} />
+                    <PlayButton
+                      text={getMessageTextContent(message)}
+                      isMobile={isMobile}
+                      chatId={chatId}
+                      subChatId={subChatId}
+                      messageId={message.id}
+                    />
+                    <AgentMessageUsage
+                      metadata={msgMetadata}
+                      isStreaming={false}
+                      isMobile={isMobile}
+                    />
+                  </div>
+                  {onFork && (
+                    <DropdownMenuItem onClick={() => onFork(message.id)}>
+                      Fork from here
+                    </DropdownMenuItem>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}

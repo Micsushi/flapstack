@@ -66,7 +66,7 @@ export const terminalSearchOpenAtom = atom<Record<string, boolean>>({})
 /**
  * Map of scopeKey -> terminal instances.
  * Window-scoped so each window manages its own terminal instances.
- * Key is scopeKey: "path:<dir>" for shared (local mode) or "ws:<chatId>" for isolated (worktree).
+ * Key is scopeKey: "ws:<chatId>" so every chat owns at most one Terminal presentation.
  */
 export const terminalsAtom = atomWithWindowStorage<Record<string, TerminalInstance[]>>(
   "terminals-by-scope",
@@ -77,7 +77,7 @@ export const terminalsAtom = atomWithWindowStorage<Record<string, TerminalInstan
 /**
  * Map of scopeKey -> active terminal id.
  * Window-scoped - tracks which terminal is currently active for each scope in this window.
- * Key is scopeKey: "path:<dir>" for shared (local mode) or "ws:<chatId>" for isolated (worktree).
+ * Key is scopeKey: "ws:<chatId>".
  */
 export const activeTerminalIdAtom = atomWithWindowStorage<Record<string, string | null>>(
   "active-terminal-by-scope",

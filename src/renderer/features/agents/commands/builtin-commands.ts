@@ -65,6 +65,13 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandOption[] = [
     category: "builtin",
   },
   {
+    id: "builtin:goal",
+    name: "goal",
+    command: "/goal",
+    description: "Set a persistent Codex goal",
+    category: "builtin",
+  },
+  {
     id: "builtin:write",
     name: "write",
     command: "/write",

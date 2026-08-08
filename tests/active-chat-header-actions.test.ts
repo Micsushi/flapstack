@@ -34,11 +34,12 @@ describe("active chat header actions", () => {
   it("uses one size and spacing rhythm for desktop header controls", () => {
     expect(activeChatSource).toContain('headerPaddingSidebarOpen: "pt-2.5 pb-12 px-3 pl-2"')
     expect(titleEditorSource).toContain(
-      'className="ml-auto flex shrink-0 items-center gap-2 leading-none"',
+      'className="ml-auto w-full max-w-[68%] justify-end leading-none"',
     )
     expect(titleEditorSource).toContain('WebkitAppRegion: "no-drag"')
     expect(titleEditorSource).toContain('<OpenInButton path={localFolderPath} label="Open in" />')
-    expect(titleEditorSource).toContain("{headerActions}")
+    expect(titleEditorSource).toContain("flattenOverflowChildren(headerActions)")
+    expect(titleEditorSource).toContain('menuLabel="More chat actions"')
     expect(titleEditorSource).not.toContain("reserveRestoreSpace")
     expect(titleEditorSource).toContain("inline-flex h-7 shrink-0")
     expect(titleEditorSource).not.toContain("inline-flex h-6 shrink-0")

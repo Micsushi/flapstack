@@ -59,6 +59,7 @@ export interface NewChatDraft {
   updatedAt: number
   project?: DraftProject
   isVisible?: boolean // Only show in sidebar when user navigates away from the form
+  isOpen?: boolean // Closed drafts stay recoverable under Quick access > Drafts
   images?: DraftImage[]
   files?: DraftFile[]
   textContexts?: DraftTextContext[]
@@ -142,9 +143,18 @@ export function getNewChatDrafts(): NewChatDraft[] {
       updatedAt: data.updatedAt || 0,
       project: (data as NewChatDraft).project,
       isVisible: (data as NewChatDraft).isVisible,
+      isOpen: (data as NewChatDraft).isOpen,
     }))
     .filter((draft) => draft.isVisible === true)
     .sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+export function getOpenNewChatDrafts(): NewChatDraft[] {
+  return getNewChatDrafts().filter((draft) => draft.isOpen !== false)
+}
+
+export function countVisibleNewChatDraftsForProject(projectId: string): number {
+  return getNewChatDrafts().filter((draft) => draft.project?.id === projectId).length
 }
 
 // Save a new chat draft
@@ -176,6 +186,22 @@ export function markDraftVisible(draftId: string): void {
     ;(globalDrafts[draftId] as NewChatDraft).isVisible = true
     saveGlobalDrafts(globalDrafts)
   }
+}
+
+export function closeNewChatDraft(draftId: string): void {
+  const globalDrafts = loadGlobalDrafts()
+  const draft = globalDrafts[draftId] as NewChatDraft | undefined
+  if (!draft) return
+  globalDrafts[draftId] = { ...draft, isVisible: true, isOpen: false, updatedAt: Date.now() }
+  saveGlobalDrafts(globalDrafts)
+}
+
+export function openNewChatDraft(draftId: string): void {
+  const globalDrafts = loadGlobalDrafts()
+  const draft = globalDrafts[draftId] as NewChatDraft | undefined
+  if (!draft) return
+  globalDrafts[draftId] = { ...draft, isVisible: true, isOpen: true, updatedAt: Date.now() }
+  saveGlobalDrafts(globalDrafts)
 }
 
 // Get sub-chat draft key
@@ -240,6 +266,7 @@ export function updateNewChatDraftText(
       text,
       updatedAt: Date.now(),
       isVisible: existing?.isVisible ?? false,
+      isOpen: existing?.isOpen ?? true,
       project,
     }
   } else {
@@ -303,9 +330,7 @@ export function useNewChatDrafts(): NewChatDraft[] {
       // For storage events, only react to draft-related keys
       // This prevents re-renders when other localStorage keys change (e.g., sub-chat active state)
       if (e instanceof StorageEvent) {
-        if (!e.key?.startsWith("new-chat-draft-")) {
-          return
-        }
+        if (e.key !== DRAFTS_STORAGE_KEY) return
       }
 
       const newDrafts = getNewChatDrafts()
@@ -323,11 +348,11 @@ export function useNewChatDrafts(): NewChatDraft[] {
         if (prevIds !== newIds) return newDrafts
         // Also compare text and project association so sidebar color rails stay current.
         const prevContents = prev
-          .map((d) => `${d.id}:${d.text}:${d.project?.id ?? "global"}`)
+          .map((d) => `${d.id}:${d.text}:${d.project?.id ?? "global"}:${d.isOpen !== false}`)
           .sort()
           .join("|")
         const newContents = newDrafts
-          .map((d) => `${d.id}:${d.text}:${d.project?.id ?? "global"}`)
+          .map((d) => `${d.id}:${d.text}:${d.project?.id ?? "global"}:${d.isOpen !== false}`)
           .sort()
           .join("|")
         if (prevContents !== newContents) return newDrafts

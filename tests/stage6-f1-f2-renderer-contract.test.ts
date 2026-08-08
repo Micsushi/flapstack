@@ -27,8 +27,8 @@ describe("Stage 6 F1/F2 renderer contract", () => {
     const input = source("src/renderer/features/agents/main/chat-input-area.tsx")
     const router = source("src/main/lib/trpc/routers/voice.ts")
 
-    expect(input).toContain("buildSelectedSpeechVocabulary(selectedSpeechContext)")
-    expect(input).toContain("<SpeechVocabularyPopover")
+    expect(input).toContain("selectedContext: selectedSpeechContext")
+    expect(input).not.toContain("SpeechVocabularyPopover")
     expect(dictation).toContain(
       "allowCloudSelectedContext: target.allowCloudSelectedContext ?? false",
     )

@@ -176,9 +176,14 @@ const agents: Array<{
 interface NewChatFormProps {
   isMobileFullscreen?: boolean
   onBackToChats?: () => void
+  onDraftIdChange?: (draftId: string | null) => void
 }
 
-export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewChatFormProps = {}) {
+export function NewChatForm({
+  isMobileFullscreen = false,
+  onBackToChats,
+  onDraftIdChange,
+}: NewChatFormProps = {}) {
   const betaFeatures = useBetaFeatures()
   // UNCONTROLLED: just track if editor has content for send button
   const [hasContent, setHasContent] = useState(false)
@@ -191,6 +196,12 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
 
   // Current draft ID being edited (generated when user starts typing in empty form)
   const currentDraftIdRef = useRef<string | null>(null)
+  const ensureCurrentDraftId = useCallback(() => {
+    const draftId = currentDraftIdRef.current ?? generateDraftId()
+    currentDraftIdRef.current = draftId
+    onDraftIdChange?.(draftId)
+    return draftId
+  }, [onDraftIdChange])
   const unseenChanges = useAtomValue(agentsUnseenChangesAtom)
 
   // Check if any chat has unseen changes
@@ -744,8 +755,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     return registerVoiceHistoryInsertTarget("new-chat:composer", (value) => {
       const text = value.trim()
       if (!text) return
-      const draftId = currentDraftIdRef.current ?? generateDraftId()
-      currentDraftIdRef.current = draftId
+      const draftId = ensureCurrentDraftId()
       setSelectedDraftId(draftId)
       const current = editorRef.current?.getValue() || ""
       const next = `${current}${current && !/\s$/.test(current) ? " " : ""}${text}`
@@ -765,7 +775,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       setHasContent(true)
       editorRef.current?.focus()
     })
-  }, [chatScope, setSelectedDraftId, validatedProject])
+  }, [chatScope, ensureCurrentDraftId, setSelectedDraftId, validatedProject])
 
   // Voice input handlers
   const handleVoiceMouseDown = useCallback(async () => {
@@ -774,8 +784,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       showVoiceSetup()
       return
     }
-    const draftId = currentDraftIdRef.current ?? generateDraftId()
-    currentDraftIdRef.current = draftId
+    const draftId = ensureCurrentDraftId()
     setSelectedDraftId(draftId)
     const project =
       chatScope !== "global" && validatedProject
@@ -808,6 +817,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     isVoiceRecording,
     isVoiceReady,
     showVoiceSetup,
+    ensureCurrentDraftId,
     setSelectedDraftId,
     chatScope,
     validatedProject,
@@ -1088,6 +1098,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       // Don't clear if user is currently typing (currentDraftIdRef has a value)
       if (restoreAction === "clear") {
         currentDraftIdRef.current = null
+        onDraftIdChange?.(null)
         lastSavedTextRef.current = ""
         if (editorRef.current) {
           editorRef.current.clear()
@@ -1131,6 +1142,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       }
 
       currentDraftIdRef.current = selectedDraftId
+      onDraftIdChange?.(selectedDraftId)
       lastSavedTextRef.current = draft.text // Initialize to prevent immediate re-save
 
       // Try to set value immediately if editor is ready
@@ -1146,7 +1158,11 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
         return () => clearTimeout(timeoutId)
       }
     }
-  }, [projectsList, selectedDraftId, setSelectedProject, validatedProject?.path])
+  }, [onDraftIdChange, projectsList, selectedDraftId, setSelectedProject, validatedProject?.path])
+
+  useEffect(() => {
+    onDraftIdChange?.(selectedDraftId)
+  }, [onDraftIdChange, selectedDraftId])
 
   const persistDraftDestination = useCallback((scope: ChatScope, project: SelectedProject) => {
     if (!currentDraftIdRef.current) return
@@ -1494,12 +1510,10 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
 
       if (text.trim()) {
         // If no current draft ID, create a new one
-        if (!currentDraftIdRef.current) {
-          currentDraftIdRef.current = generateDraftId()
-        }
+        const draftId = ensureCurrentDraftId()
 
         updateNewChatDraftText(
-          currentDraftIdRef.current,
+          draftId,
           text,
           chatScope !== "global" && validatedProject
             ? {
@@ -1516,9 +1530,10 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
         // Text is empty - delete the current draft
         deleteNewChatDraft(currentDraftIdRef.current)
         currentDraftIdRef.current = null
+        onDraftIdChange?.(null)
       }
     },
-    [chatScope, validatedProject],
+    [chatScope, ensureCurrentDraftId, onDraftIdChange, validatedProject],
   )
 
   // Clear current draft when chat is created
@@ -1527,8 +1542,9 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
 
     deleteNewChatDraft(currentDraftIdRef.current)
     currentDraftIdRef.current = null
+    onDraftIdChange?.(null)
     setSelectedDraftId(null)
-  }, [setSelectedDraftId])
+  }, [onDraftIdChange, setSelectedDraftId])
 
   // Memoized callbacks to prevent re-renders
   const handleMentionTrigger = useCallback(

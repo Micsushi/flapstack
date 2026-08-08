@@ -59,6 +59,7 @@ export const previousAgentChatIdAtom = atom<string | null>(null)
 // NewChatForm uses this to restore the draft text
 // Reset to null when "New Workspace" is clicked or chat is created
 export const selectedDraftIdAtom = atom<string | null>(null)
+export const newChatFormSessionAtom = atom<number>(0)
 
 export const selectedTargetWorktreePathAtomFamily = atomFamily((subChatId: string) =>
   atom<string | null>(null),
@@ -593,6 +594,22 @@ export const agentsPreviewSidebarOpenAtom = atomWithWindowStorage<boolean>(
   "agents-preview-sidebar-open",
   true,
   { getOnInit: true },
+)
+
+const agentsPreviewSidebarOpenByChatAtom = atomWithWindowStorage<Record<string, boolean>>(
+  "agents-preview-sidebar-open-by-chat",
+  {},
+  { getOnInit: true },
+)
+
+export const agentsPreviewSidebarOpenAtomFamily = atomFamily((chatId: string) =>
+  atom(
+    (get) => get(agentsPreviewSidebarOpenByChatAtom)[chatId] ?? false,
+    (get, set, isOpen: boolean) => {
+      const current = get(agentsPreviewSidebarOpenByChatAtom)
+      set(agentsPreviewSidebarOpenByChatAtom, { ...current, [chatId]: isOpen })
+    },
+  ),
 )
 
 // Diff sidebar (right) width (global - same width for all chats)

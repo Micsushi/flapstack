@@ -18,6 +18,7 @@ import {
   selectedChatIsRemoteAtom,
   previousAgentChatIdAtom,
   selectedDraftIdAtom,
+  newChatFormSessionAtom,
   showNewChatFormAtom,
   agentsMobileViewModeAtom,
   agentsPreviewSidebarOpenAtom,
@@ -54,7 +55,11 @@ import { AgentsSidebar } from "../../sidebar/agents-sidebar"
 import { AgentsSubChatsSidebar } from "../../sidebar/agents-subchats-sidebar"
 import { AgentPreview } from "./agent-preview"
 import { AgentDiffView } from "./agent-diff-view"
-import { TerminalSidebar, terminalSidebarOpenAtomFamily } from "../../terminal"
+import {
+  TerminalSidebar,
+  terminalSidebarOpenAtomFamily,
+  WorkbenchTerminalPane,
+} from "../../terminal"
 import { getTerminalScopeKey } from "../../terminal/utils"
 import { useAgentSubChatStore, type SubChatMeta } from "../stores/sub-chat-store"
 import { useShallow } from "zustand/react/shallow"
@@ -66,7 +71,7 @@ import { ResizableSidebar } from "../../../components/ui/resizable-sidebar"
 const useCombinedAuth = () => ({ userId: null }) // Desktop mock
 import { Button } from "../../../components/ui/button"
 import { RenameDialog } from "../../../components/rename-dialog"
-import { AlignJustify, MessageSquare, PanelsTopLeft, Plus, X } from "lucide-react"
+import { AlignJustify, MessageSquare, PanelsTopLeft, Plus, SquareTerminal, X } from "lucide-react"
 import { AgentsQuickSwitchDialog } from "../components/agents-quick-switch-dialog"
 import { SubChatsQuickSwitchDialog } from "../components/subchats-quick-switch-dialog"
 import { SettingsContent } from "../../settings/settings-content"
@@ -132,7 +137,12 @@ import {
   createWorkbenchScrollAnchorReference,
   restoreWorkbenchPresentationReferences,
 } from "../workbench/chat-workbench-presentation-state"
-import { emitDraftsChanged } from "../lib/drafts"
+import {
+  closeNewChatDraft,
+  emitDraftsChanged,
+  openNewChatDraft,
+  useNewChatDrafts,
+} from "../lib/drafts"
 import {
   closeChatsInWorkbench,
   CHAT_WORKBENCH_DRAG_MIME,
@@ -140,6 +150,7 @@ import {
   CHAT_WORKBENCH_EXTERNAL_GROUP_ID,
   collectChatGroups,
   createChatWorkbenchLayout,
+  getTerminalPresentationChatId,
   isEmptyChatWorkbenchLayout,
   reduceChatWorkbench,
   type ChatWorkbenchAction,
@@ -194,6 +205,23 @@ const GROUP_COLOR_SWATCHES: Record<ChatWorkbenchGroupColor, string> = {
   pink: "#EC4899",
   violet: "#8B5CF6",
 }
+
+function resolveGroupTabBackground(
+  color: ChatWorkbenchGroupColor | undefined,
+  isActive: boolean,
+): string | undefined {
+  if (!color) return undefined
+  return `color-mix(in srgb, ${GROUP_COLOR_SWATCHES[color]} ${isActive ? 42 : 26}%, hsl(var(--background)))`
+}
+
+function resolveGroupTabBorder(
+  color: ChatWorkbenchGroupColor | undefined,
+  isActive: boolean,
+): string | undefined {
+  if (!color) return undefined
+  return `color-mix(in srgb, ${GROUP_COLOR_SWATCHES[color]} ${isActive ? 72 : 48}%, hsl(var(--border)))`
+}
+
 function parseStoredProjectColors(value: string): Record<string, string> {
   try {
     return JSON.parse(value) as Record<string, string>
@@ -248,7 +276,16 @@ function AgentsContentInner() {
     () =>
       isEmptyChatWorkbenchLayout(chatWorkbenchLayout)
         ? []
-        : collectChatGroups(chatWorkbenchLayout.root).flatMap((group) => group.chatIds),
+        : [
+            ...new Set(
+              collectChatGroups(chatWorkbenchLayout.root)
+                .flatMap((group) => group.chatIds)
+                .map(
+                  (presentationId) =>
+                    getTerminalPresentationChatId(presentationId) ?? presentationId,
+                ),
+            ),
+          ],
     [chatWorkbenchLayout],
   )
   const readOnlyWorkbenchChatIds = useMemo(
@@ -274,8 +311,22 @@ function AgentsContentInner() {
   const createSavedWorkspace = trpc.savedWorkspaces.create.useMutation()
   const setChatSourceMode = useSetAtom(chatSourceModeAtom)
   const chatSourceMode = useAtomValue(chatSourceModeAtom)
-  const selectedDraftId = useAtomValue(selectedDraftIdAtom)
+  const [selectedDraftId, setSelectedDraftId] = useAtom(selectedDraftIdAtom)
   const [showNewChatForm, setShowNewChatForm] = useAtom(showNewChatFormAtom)
+  const [newChatFormSession, setNewChatFormSession] = useAtom(newChatFormSessionAtom)
+  const drafts = useNewChatDrafts()
+  const openNewChatDrafts = useMemo(
+    () => drafts.filter((draft) => draft.isOpen !== false),
+    [drafts],
+  )
+  const [activeNewChatDraftId, setActiveNewChatDraftId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!selectedChatId) return
+    setSelectedDraftId(null)
+    setShowNewChatForm(false)
+    setActiveNewChatDraftId(null)
+  }, [selectedChatId, setSelectedDraftId, setShowNewChatForm])
   const [selectedTeamId] = useAtom(selectedTeamIdAtom)
   const setBillingMethod = useSetAtom(billingMethodAtom)
   const setAnthropicOnboardingCompleted = useSetAtom(anthropicOnboardingCompletedAtom)
@@ -439,7 +490,16 @@ function AgentsContentInner() {
     (layout: typeof chatWorkbenchLayout) => {
       const chatIds = isEmptyChatWorkbenchLayout(layout)
         ? []
-        : collectChatGroups(layout.root).flatMap((group) => group.chatIds)
+        : [
+            ...new Set(
+              collectChatGroups(layout.root)
+                .flatMap((group) => group.chatIds)
+                .map(
+                  (presentationId) =>
+                    getTerminalPresentationChatId(presentationId) ?? presentationId,
+                ),
+            ),
+          ]
       void window.desktopApi?.updateWorkbenchSessionPresentation?.({
         layout,
         compact: chatWorkbenchCompactRef.current,
@@ -509,10 +569,18 @@ function AgentsContentInner() {
       const savedChatIds = snapshot.navigation.groups.flatMap((group) =>
         collectChatGroups(group.layout.root).flatMap((pane) => pane.chatIds),
       )
-      setOpenChatIds([...new Set([...snapshot.openChatIds, ...layoutChatIds, ...savedChatIds])])
+      setOpenChatIds([
+        ...new Set(
+          [...snapshot.openChatIds, ...layoutChatIds, ...savedChatIds].map(
+            (presentationId) => getTerminalPresentationChatId(presentationId) ?? presentationId,
+          ),
+        ),
+      ])
       const panes = collectChatGroups(snapshot.layout.root)
       const active = panes.find((pane) => pane.id === snapshot.layout.activeGroupId) ?? panes[0]
-      setSelectedChatId(active?.activeChatId ?? null)
+      setSelectedChatId(
+        active ? (getTerminalPresentationChatId(active.activeChatId) ?? active.activeChatId) : null,
+      )
       setSelectedChatIsRemote(false)
       setChatSourceMode("local")
     },
@@ -612,12 +680,22 @@ function AgentsContentInner() {
       persistChatWorkbenchLayout(localStorage, stableWindowId, session.layout)
       const restoredGroups = collectChatGroups(session.layout.root)
       const restoredEmpty = isEmptyChatWorkbenchLayout(session.layout)
-      setOpenChatIds(restoredEmpty ? [] : restoredGroups.flatMap((group) => group.chatIds))
+      setOpenChatIds(
+        restoredEmpty
+          ? []
+          : restoredGroups
+              .flatMap((group) => group.chatIds)
+              .map(
+                (presentationId) => getTerminalPresentationChatId(presentationId) ?? presentationId,
+              ),
+      )
       const restoredActive =
         restoredGroups.find((group) => group.id === session.layout.activeGroupId) ??
         restoredGroups[0]
       if (restoredActive && !restoredEmpty) {
-        setSelectedChatId(restoredActive.activeChatId)
+        setSelectedChatId(
+          getTerminalPresentationChatId(restoredActive.activeChatId) ?? restoredActive.activeChatId,
+        )
         setSelectedChatIsRemote(false)
         setChatSourceMode("local")
       } else if (restoredEmpty) {
@@ -660,7 +738,9 @@ function AgentsContentInner() {
     if (!desktop?.onWorkspaceOwnershipChanged) return
     return desktop.onWorkspaceOwnershipChanged((event) => {
       const visibleIds = new Set(
-        collectChatGroups(chatWorkbenchLayoutRef.current.root).flatMap((group) => group.chatIds),
+        collectChatGroups(chatWorkbenchLayoutRef.current.root)
+          .flatMap((group) => group.chatIds)
+          .map((presentationId) => getTerminalPresentationChatId(presentationId) ?? presentationId),
       )
       const relevantIds = event.chatIds.filter((chatId) => visibleIds.has(chatId))
       if (relevantIds.length === 0) return
@@ -678,8 +758,16 @@ function AgentsContentInner() {
   useEffect(() => {
     if (!selectedChatId || selectedChatIsRemote) return
     const groups = collectChatGroups(chatWorkbenchLayout.root)
-    const owner = groups.find((group) => group.chatIds.includes(selectedChatId))
-    if (owner?.id === chatWorkbenchLayout.activeGroupId && owner.activeChatId === selectedChatId) {
+    const owner = groups.find((group) =>
+      group.chatIds.some(
+        (presentationId) =>
+          (getTerminalPresentationChatId(presentationId) ?? presentationId) === selectedChatId,
+      ),
+    )
+    const activeOwnerChatId = owner
+      ? (getTerminalPresentationChatId(owner.activeChatId) ?? owner.activeChatId)
+      : null
+    if (owner?.id === chatWorkbenchLayout.activeGroupId && activeOwnerChatId === selectedChatId) {
       return
     }
     showSelectedChatLayout(selectedChatId)
@@ -690,11 +778,20 @@ function AgentsContentInner() {
       const previousLayout = chatWorkbenchLayoutRef.current
       const previousNavigation = chatWorkbenchNavigationRef.current
       recordWorkbenchMutation(action)
-      const navigation = reconcileChatWorkbenchNavigation(
-        previousNavigation,
-        previousLayout,
-        layout,
-      )
+      let navigation = reconcileChatWorkbenchNavigation(previousNavigation, previousLayout, layout)
+      if (navigation.activeGroupId) {
+        const groupedTerminalIds = new Set(
+          collectChatGroups(layout.root)
+            .flatMap((group) => group.chatIds)
+            .filter((presentationId) => getTerminalPresentationChatId(presentationId)),
+        )
+        navigation = {
+          ...navigation,
+          order: navigation.order?.filter(
+            (item) => !(item.kind === "chat" && groupedTerminalIds.has(item.id)),
+          ),
+        }
+      }
       const loneChatTransition = findLoneChatGroupTransition(previousNavigation, navigation)
       if (loneChatTransition) setLoneChatGroupPrompt(loneChatTransition)
       persistWorkbenchNavigation(navigation)
@@ -705,11 +802,19 @@ function AgentsContentInner() {
       persistWorkbenchPresentation(layout)
       const groups = collectChatGroups(layout.root)
       const emptyLayout = isEmptyChatWorkbenchLayout(layout)
-      const visibleChatIds = emptyLayout ? [] : groups.flatMap((group) => group.chatIds)
+      const visibleChatIds = emptyLayout
+        ? []
+        : groups
+            .flatMap((group) => group.chatIds)
+            .map(
+              (presentationId) => getTerminalPresentationChatId(presentationId) ?? presentationId,
+            )
       setOpenChatIds((current) => [...new Set([...current, ...visibleChatIds])])
       const activeGroup = groups.find((group) => group.id === layout.activeGroupId) ?? groups[0]
       if (activeGroup && !emptyLayout) {
-        setSelectedChatId(activeGroup.activeChatId)
+        setSelectedChatId(
+          getTerminalPresentationChatId(activeGroup.activeChatId) ?? activeGroup.activeChatId,
+        )
         setSelectedChatIsRemote(false)
         setChatSourceMode("local")
       } else if (emptyLayout) {
@@ -717,7 +822,9 @@ function AgentsContentInner() {
         setSelectedChatIsRemote(false)
         setChatSourceMode("local")
       }
-      if (action.type === "close-tab") window.desktopApi?.releaseChat?.(action.chatId)
+      if (action.type === "close-tab" && !getTerminalPresentationChatId(action.chatId)) {
+        window.desktopApi?.releaseChat?.(action.chatId)
+      }
     },
     [
       persistWorkbenchPresentation,
@@ -1020,13 +1127,21 @@ function AgentsContentInner() {
     selectedChatId,
     selectedChatIsRemote,
   ])
-  const topNavigationItems = useMemo(
+  const topNavigationItems = useMemo(() => {
+    const terminalIds = (chatWorkbenchNavigation.order ?? []).flatMap((item) =>
+      item.kind === "chat" && getTerminalPresentationChatId(item.id) ? [item.id] : [],
+    )
+    return resolveChatWorkbenchNavigationItems(chatWorkbenchNavigation, [
+      ...openChatTabs.map((chat) => chat.id),
+      ...terminalIds,
+    ])
+  }, [chatWorkbenchNavigation, openChatTabs])
+  const standaloneTerminalIds = useMemo(
     () =>
-      resolveChatWorkbenchNavigationItems(
-        chatWorkbenchNavigation,
-        openChatTabs.map((chat) => chat.id),
+      topNavigationItems.flatMap((item) =>
+        item.kind === "chat" && getTerminalPresentationChatId(item.id) ? [item.id] : [],
       ),
-    [chatWorkbenchNavigation, openChatTabs],
+    [topNavigationItems],
   )
   const topNavigationOrder = useMemo(
     () =>
@@ -1039,8 +1154,15 @@ function AgentsContentInner() {
     const groups = collectChatGroups(chatWorkbenchLayoutRef.current.root)
     const active = groups.find((group) => group.id === chatWorkbenchLayoutRef.current.activeGroupId)
     const activeName =
-      workbenchChatCatalog.find((chat) => chat.id === active?.activeChatId)?.name?.trim() ||
-      "Chat workbench"
+      workbenchChatCatalog
+        .find(
+          (chat) =>
+            chat.id ===
+            (active
+              ? (getTerminalPresentationChatId(active.activeChatId) ?? active.activeChatId)
+              : null),
+        )
+        ?.name?.trim() || "Chat workbench"
     const requestedName = window.prompt("Workspace name", `${activeName} workspace`)
     if (requestedName === null) return "Save as Workspace cancelled."
     const name = requestedName.trim()
@@ -1139,6 +1261,8 @@ function AgentsContentInner() {
         }
       }
       setUnseenChatIds((current) => markChatSeen(current, chatId))
+      setSelectedDraftId(null)
+      setShowNewChatForm(false)
       setSelectedChatId(chatId)
       setSelectedChatIsRemote(false)
       setChatSourceMode("local")
@@ -1148,9 +1272,54 @@ function AgentsContentInner() {
       setChatSourceMode,
       setDesktopView,
       setOpenChatIds,
+      setSelectedDraftId,
       setSelectedChatId,
       setSelectedChatIsRemote,
+      setShowNewChatForm,
       setUnseenChatIds,
+    ],
+  )
+
+  const handleSelectOpenDraftTab = useCallback(
+    (draftId: string) => {
+      openNewChatDraft(draftId)
+      setActiveNewChatDraftId(draftId)
+      setSelectedChatId(null)
+      setSelectedDraftId(draftId)
+      setShowNewChatForm(false)
+      setDesktopView(null)
+    },
+    [setDesktopView, setSelectedChatId, setSelectedDraftId, setShowNewChatForm],
+  )
+
+  const handleCloseNewChatTab = useCallback(
+    (draftId: string | null) => {
+      if (draftId) closeNewChatDraft(draftId)
+      const isActive = !selectedChatId && (selectedDraftId === draftId || showNewChatForm)
+      if (!isActive) return
+
+      const fallbackDraft = openNewChatDrafts.find((draft) => draft.id !== draftId)
+      setActiveNewChatDraftId(null)
+      if (fallbackDraft) {
+        handleSelectOpenDraftTab(fallbackDraft.id)
+        return
+      }
+
+      setSelectedDraftId(null)
+      setShowNewChatForm(false)
+      const fallbackChat = openChatTabs[0]
+      if (fallbackChat) void handleSelectOpenChatTab(fallbackChat.id)
+    },
+    [
+      handleSelectOpenChatTab,
+      handleSelectOpenDraftTab,
+      openChatTabs,
+      openNewChatDrafts,
+      selectedChatId,
+      selectedDraftId,
+      setSelectedDraftId,
+      setShowNewChatForm,
+      showNewChatForm,
     ],
   )
 
@@ -1184,7 +1353,22 @@ function AgentsContentInner() {
   )
 
   const renderWorkbenchChat = useCallback(
-    (chatId: string, active: boolean) => {
+    (
+      presentationId: string,
+      active: boolean,
+      controls: { openTerminal: (chatId: string) => void },
+    ) => {
+      const terminalChatId = getTerminalPresentationChatId(presentationId)
+      if (terminalChatId) {
+        const owner = workbenchChatCatalog.find((chat) => chat.id === terminalChatId)
+        return (
+          <WorkbenchTerminalPane
+            chatId={terminalChatId}
+            cwd={(owner?.worktreePath as string | null | undefined) ?? null}
+          />
+        )
+      }
+      const chatId = presentationId
       const readOnly = readOnlyWorkbenchChatIds.has(chatId)
       return (
         <div className="relative h-full">
@@ -1199,6 +1383,7 @@ function AgentsContentInner() {
               workbenchActive={active}
               isSidebarOpen={sidebarOpen}
               onToggleSidebar={handleToggleSidebar}
+              onOpenTerminal={() => controls.openTerminal(chatId)}
               selectedTeamName={selectedTeam?.name}
               selectedTeamImageUrl={selectedTeam?.image_url}
             />
@@ -1222,6 +1407,7 @@ function AgentsContentInner() {
       selectedTeam?.image_url,
       selectedTeam?.name,
       sidebarOpen,
+      workbenchChatCatalog,
     ],
   )
 
@@ -1246,6 +1432,32 @@ function AgentsContentInner() {
     [handleSelectOpenChatTab, showSingleChatLayout],
   )
 
+  const handleSelectStandaloneTerminal = useCallback(
+    (presentationId: string) => {
+      const ownerChatId = getTerminalPresentationChatId(presentationId)
+      if (!ownerChatId) return
+      showSingleChatLayout(presentationId)
+      void handleSelectOpenChatTab(ownerChatId)
+    },
+    [handleSelectOpenChatTab, showSingleChatLayout],
+  )
+
+  const handleCloseStandaloneTerminal = useCallback(
+    (presentationId: string) => {
+      const ownerChatId = getTerminalPresentationChatId(presentationId)
+      if (!ownerChatId) return
+      persistWorkbenchNavigation({
+        ...chatWorkbenchNavigationRef.current,
+        order: chatWorkbenchNavigationRef.current.order?.filter(
+          (item) => !(item.kind === "chat" && item.id === presentationId),
+        ),
+      })
+      showSingleChatLayout(ownerChatId)
+      void handleSelectOpenChatTab(ownerChatId)
+    },
+    [handleSelectOpenChatTab, persistWorkbenchNavigation, showSingleChatLayout],
+  )
+
   const handleSelectWorkbenchGroup = useCallback(
     (groupId: string) => {
       const activated = activateChatWorkbenchGroup(chatWorkbenchNavigationRef.current, groupId)
@@ -1257,7 +1469,11 @@ function AgentsContentInner() {
       persistWorkbenchPresentation(activated.layout)
       const panes = collectChatGroups(activated.layout.root)
       const active = panes.find((pane) => pane.id === activated.layout.activeGroupId) ?? panes[0]
-      if (active) void handleSelectOpenChatTab(active.activeChatId)
+      if (active) {
+        void handleSelectOpenChatTab(
+          getTerminalPresentationChatId(active.activeChatId) ?? active.activeChatId,
+        )
+      }
     },
     [
       handleSelectOpenChatTab,
@@ -1525,9 +1741,11 @@ function AgentsContentInner() {
       if (topNavigationEnteredTargetRef.current === key) return
       topNavigationEnteredTargetRef.current = key
       if (target.kind === "group") handleSelectWorkbenchGroup(target.id)
-      else handleSelectMainChatTab(target.id)
+      else if (getTerminalPresentationChatId(target.id)) {
+        handleSelectStandaloneTerminal(target.id)
+      } else handleSelectMainChatTab(target.id)
     },
-    [handleSelectMainChatTab, handleSelectWorkbenchGroup],
+    [handleSelectMainChatTab, handleSelectStandaloneTerminal, handleSelectWorkbenchGroup],
   )
 
   const scheduleTopNavigationEnter = useCallback(
@@ -1556,14 +1774,15 @@ function AgentsContentInner() {
     (chatId: string, target?: ChatWorkbenchNavigationItem, position?: "before" | "after") => {
       const current = chatWorkbenchNavigationRef.current
       const detached = detachChatFromWorkbenchGroup(current, chatId)
+      const terminalOwnerChatId = getTerminalPresentationChatId(chatId)
       const remainingGroupedIds = new Set(
         detached.navigation.groups.flatMap((group) =>
           collectChatGroups(group.layout.root).flatMap((pane) => pane.chatIds),
         ),
       )
-      const visibleChatIds = [...new Set([...openChatIds, chatId])].filter(
-        (id) => !remainingGroupedIds.has(id),
-      )
+      const visibleChatIds = [
+        ...new Set([...openChatIds, ...standaloneTerminalIds, chatId]),
+      ].filter((id) => !remainingGroupedIds.has(id))
       const navigation =
         target && position
           ? reorderChatWorkbenchNavigationItem(
@@ -1586,10 +1805,14 @@ function AgentsContentInner() {
       setChatWorkbenchLayout(detached.layout)
       persistChatWorkbenchLayout(localStorage, stableWindowId, detached.layout)
       persistWorkbenchPresentation(detached.layout)
-      setOpenChatIds((currentIds) =>
-        currentIds.includes(chatId) ? currentIds : [...currentIds, chatId],
-      )
-      void handleSelectOpenChatTab(chatId)
+      if (terminalOwnerChatId) {
+        setSelectedChatId(terminalOwnerChatId)
+      } else {
+        setOpenChatIds((currentIds) =>
+          currentIds.includes(chatId) ? currentIds : [...currentIds, chatId],
+        )
+        void handleSelectOpenChatTab(chatId)
+      }
     },
     [
       handleSelectOpenChatTab,
@@ -1598,6 +1821,8 @@ function AgentsContentInner() {
       persistWorkbenchPresentation,
       recordWorkbenchMutation,
       setOpenChatIds,
+      setSelectedChatId,
+      standaloneTerminalIds,
       stableWindowId,
     ],
   )
@@ -1615,7 +1840,8 @@ function AgentsContentInner() {
           ? resolveTopNavigationReorderIntent(event.clientX, bounds.left, bounds.width)
           : resolveTopNavigationDropIntent(event.clientX, bounds.left, bounds.width)
       const sourceIsOrdinary = openChatTabs.some((chat) => chat.id === source.chatId)
-      const sourceCanMoveToMainBar = sourceIsOrdinary || sourceIsGrouped
+      const sourceIsTerminal = standaloneTerminalIds.includes(source.chatId)
+      const sourceCanMoveToMainBar = sourceIsOrdinary || sourceIsGrouped || sourceIsTerminal
       const accepted = intent === "inside" || sourceCanMoveToMainBar
       event.dataTransfer.dropEffect = accepted ? "move" : "none"
       setMainBarDropActive(false)
@@ -1642,6 +1868,7 @@ function AgentsContentInner() {
       openChatTabs,
       readTopNavigationDragSource,
       scheduleTopNavigationEnter,
+      standaloneTerminalIds,
     ],
   )
 
@@ -1666,20 +1893,27 @@ function AgentsContentInner() {
         clearTopNavigationDropTarget()
         return
       }
-      if (!openChatTabs.some((chat) => chat.id === source.chatId)) {
+      const sourceIsTerminal = standaloneTerminalIds.includes(source.chatId)
+      if (!openChatTabs.some((chat) => chat.id === source.chatId) && !sourceIsTerminal) {
         clearTopNavigationDropTarget()
         return
       }
       const navigation = reorderChatWorkbenchNavigationItem(
         chatWorkbenchNavigationRef.current,
-        openChatTabs.map((chat) => chat.id),
+        [...openChatTabs.map((chat) => chat.id), ...standaloneTerminalIds],
         { kind: "chat", id: source.chatId },
         target,
         intent,
       )
       recordWorkbenchMutation()
       persistWorkbenchNavigation(navigation)
-      if (target.kind === "chat") reorderOpenChatTab(source.chatId, target.id, intent)
+      if (
+        target.kind === "chat" &&
+        !sourceIsTerminal &&
+        !getTerminalPresentationChatId(target.id)
+      ) {
+        reorderOpenChatTab(source.chatId, target.id, intent)
+      }
       clearTopNavigationDropTarget()
     },
     [
@@ -1692,6 +1926,7 @@ function AgentsContentInner() {
       readTopNavigationDragSource,
       recordWorkbenchMutation,
       reorderOpenChatTab,
+      standaloneTerminalIds,
     ],
   )
 
@@ -2490,9 +2725,14 @@ function AgentsContentInner() {
               popoutPaneId={workspaceWindowParams.paneId}
               initialSkipPaneId={workspaceWindowParams.skipPaneId}
             />
-          ) : selectedChatId ? (
+          ) : selectedChatId || selectedDraftId || showNewChatForm ? (
             <div className="h-full flex flex-col relative overflow-hidden">
-              {(openChatTabs.length > 0 || chatWorkbenchNavigation.groups.length > 0) && (
+              {(openChatTabs.length > 0 ||
+                openNewChatDrafts.length > 0 ||
+                selectedDraftId ||
+                showNewChatForm ||
+                chatWorkbenchNavigation.groups.length > 0 ||
+                standaloneTerminalIds.length > 0) && (
                 <div
                   className="relative h-[43px] shrink-0 border-b-2 border-border bg-muted/30"
                   style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
@@ -2556,8 +2796,8 @@ function AgentsContentInner() {
                                 className={[
                                   "group relative flex h-9 min-w-28 max-w-56 shrink-0 items-center gap-1.5 rounded-t-md border border-b-0 pl-2 pr-1 text-left text-xs transition-[background-color,border-color,color,box-shadow]",
                                   isActive
-                                    ? "border-border bg-primary/15 font-medium text-foreground shadow-sm"
-                                    : "border-border/40 bg-muted/25 text-muted-foreground hover:border-border/70 hover:bg-muted/70 hover:text-foreground",
+                                    ? "border-foreground/20 bg-muted font-medium text-foreground shadow-sm"
+                                    : "border-border/40 bg-muted/25 text-foreground/90 hover:border-border/70 hover:bg-muted/70 hover:text-foreground",
                                   topNavigationDropTarget?.item.kind === "group" &&
                                   topNavigationDropTarget.item.id === group.id &&
                                   topNavigationDropTarget.intent === "inside"
@@ -2568,9 +2808,11 @@ function AgentsContentInner() {
                                   {
                                     WebkitAppRegion: "no-drag",
                                     order: topNavigationOrder.get(`group:${group.id}`),
-                                    borderTopColor: group.color
-                                      ? GROUP_COLOR_SWATCHES[group.color]
-                                      : undefined,
+                                    backgroundColor: resolveGroupTabBackground(
+                                      group.color,
+                                      isActive,
+                                    ),
+                                    borderColor: resolveGroupTabBorder(group.color, isActive),
                                   } as React.CSSProperties
                                 }
                               >
@@ -2588,10 +2830,10 @@ function AgentsContentInner() {
                                       ].join(" ")}
                                     />
                                   )}
-                                <PanelsTopLeft className="h-3.5 w-3.5 shrink-0" />
+                                <PanelsTopLeft className="h-3.5 w-3.5 shrink-0 text-foreground/80" />
                                 <button
                                   type="button"
-                                  className="min-w-0 flex-1 truncate text-left"
+                                  className="min-w-0 flex-1 truncate text-left font-medium text-foreground"
                                   onClick={() => handleSelectWorkbenchGroup(group.id)}
                                 >
                                   {group.name}
@@ -2600,7 +2842,7 @@ function AgentsContentInner() {
                                   type="button"
                                   aria-label={`Close ${group.name}`}
                                   className={[
-                                    "relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/20 hover:text-foreground group-hover:opacity-100",
+                                    "relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-foreground/70 hover:bg-foreground/20 hover:text-foreground group-hover:opacity-100",
                                     hasUnseenChanges ? "opacity-100" : "opacity-60",
                                   ].join(" ")}
                                   onClick={(event) => {
@@ -2663,6 +2905,91 @@ function AgentsContentInner() {
                           </ContextMenu>
                         )
                       })}
+                    {standaloneTerminalIds.map((presentationId) => {
+                      const ownerChatId = getTerminalPresentationChatId(presentationId)!
+                      const owner = workbenchChatCatalog.find((chat) => chat.id === ownerChatId)
+                      const isActive =
+                        chatWorkbenchNavigation.activeGroupId === null &&
+                        collectChatGroups(chatWorkbenchLayout.root).some((pane) =>
+                          pane.chatIds.includes(presentationId),
+                        )
+                      return (
+                        <ContextMenu key={presentationId}>
+                          <ContextMenuTrigger asChild>
+                            <div
+                              data-top-navigation-item-kind="chat"
+                              data-top-navigation-item-id={presentationId}
+                              draggable
+                              onDragStart={(event) => {
+                                const source = {
+                                  chatId: presentationId,
+                                  groupId: CHAT_WORKBENCH_EXTERNAL_GROUP_ID,
+                                  sourceWindowId: stableWindowId,
+                                }
+                                const serialized = JSON.stringify(source)
+                                event.dataTransfer.setData(CHAT_WORKBENCH_DRAG_MIME, serialized)
+                                localStorage.setItem(CHAT_WORKBENCH_DRAG_SESSION_KEY, serialized)
+                              }}
+                              onDragEnd={() => {
+                                localStorage.removeItem(CHAT_WORKBENCH_DRAG_SESSION_KEY)
+                                clearTopNavigationDropTarget()
+                              }}
+                              onDragOver={(event) =>
+                                handleTopNavigationDragOver(event, {
+                                  kind: "chat",
+                                  id: presentationId,
+                                })
+                              }
+                              onDrop={(event) =>
+                                handleTopNavigationDrop(event, {
+                                  kind: "chat",
+                                  id: presentationId,
+                                })
+                              }
+                              className={[
+                                "group relative flex h-9 min-w-28 max-w-56 items-center gap-1.5 rounded-t-md border border-b-0 pl-3 pr-1 text-left text-xs",
+                                isActive
+                                  ? "border-foreground/20 bg-muted font-medium text-foreground shadow-sm"
+                                  : "border-border/40 bg-muted/25 text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                              ].join(" ")}
+                              style={
+                                {
+                                  WebkitAppRegion: "no-drag",
+                                  order: topNavigationOrder.get(`chat:${presentationId}`),
+                                } as React.CSSProperties
+                              }
+                            >
+                              <SquareTerminal className="h-3.5 w-3.5 shrink-0" />
+                              <button
+                                type="button"
+                                className="min-w-0 flex-1 truncate text-left"
+                                onClick={() => handleSelectStandaloneTerminal(presentationId)}
+                              >
+                                Terminal{owner?.name ? ` â€” ${owner.name}` : ""}
+                              </button>
+                              <button
+                                type="button"
+                                aria-label="Close Terminal"
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-60 hover:bg-foreground/20 hover:text-foreground group-hover:opacity-100"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  handleCloseStandaloneTerminal(presentationId)
+                                }}
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent>
+                            <ContextMenuItem
+                              onSelect={() => handleCloseStandaloneTerminal(presentationId)}
+                            >
+                              Close Terminal
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
+                      )
+                    })}
                     {openChatTabs.map((chat, tabIndex) => {
                       const isActive =
                         chatWorkbenchNavigation.activeGroupId === null && chat.id === selectedChatId
@@ -2725,7 +3052,7 @@ function AgentsContentInner() {
                               className={[
                                 "group relative flex h-9 max-w-56 min-w-28 items-center gap-1.5 rounded-t-md border border-b-0 pl-3 pr-1 text-left text-xs transition-[background-color,border-color,color,box-shadow]",
                                 isActive
-                                  ? "border-border bg-primary/15 font-medium text-foreground shadow-sm"
+                                  ? "border-foreground/20 bg-muted font-medium text-foreground shadow-sm"
                                   : "border-border/40 bg-muted/25 text-muted-foreground hover:border-border/70 hover:bg-muted/70 hover:text-foreground",
                                 topNavigationDropTarget?.item.kind === "chat" &&
                                 topNavigationDropTarget.item.id === chat.id &&
@@ -2856,6 +3183,64 @@ function AgentsContentInner() {
                         </ContextMenu>
                       )
                     })}
+                    {openNewChatDrafts.map((draft) => {
+                      const isActive =
+                        !selectedChatId &&
+                        (selectedDraftId === draft.id || activeNewChatDraftId === draft.id)
+                      return (
+                        <div
+                          key={draft.id}
+                          data-open-draft-tab-id={draft.id}
+                          className={[
+                            "group relative flex h-9 min-w-28 max-w-56 items-center gap-1.5 rounded-t-md border border-b-0 pl-3 pr-1 text-left text-xs",
+                            isActive
+                              ? "border-foreground/20 bg-muted font-medium text-foreground shadow-sm"
+                              : "border-border/40 bg-muted/25 text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                          ].join(" ")}
+                          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                        >
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 truncate text-left"
+                            onClick={() => handleSelectOpenDraftTab(draft.id)}
+                          >
+                            New Chat
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Close New Chat"
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-60 hover:bg-foreground/20 hover:text-foreground group-hover:opacity-100"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              handleCloseNewChatTab(draft.id)
+                            }}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )
+                    })}
+                    {!selectedChatId &&
+                      (showNewChatForm || selectedDraftId) &&
+                      !openNewChatDrafts.some(
+                        (draft) => draft.id === (selectedDraftId ?? activeNewChatDraftId),
+                      ) && (
+                        <div
+                          data-new-chat-tab="true"
+                          className="group relative flex h-9 min-w-28 max-w-56 items-center gap-1.5 rounded-t-md border border-b-0 border-foreground/20 bg-muted pl-3 pr-1 text-left text-xs font-medium text-foreground shadow-sm"
+                          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                        >
+                          <span className="min-w-0 flex-1 truncate text-left">New Chat</span>
+                          <button
+                            type="button"
+                            aria-label="Close New Chat"
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-60 hover:bg-foreground/20 hover:text-foreground group-hover:opacity-100"
+                            onClick={() => handleCloseNewChatTab(activeNewChatDraftId)}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )}
                     {mainBarDropActive && (
                       <span
                         aria-hidden
@@ -2877,10 +3262,17 @@ function AgentsContentInner() {
                   )}
                 </div>
               )}
-              {selectedChatIsRemote ? (
+              {!selectedChatId && (selectedDraftId || showNewChatForm) ? (
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                  <NewChatForm
+                    key={`new-chat-${newChatFormSession}-${newChatFormKeyRef.current}`}
+                    onDraftIdChange={setActiveNewChatDraftId}
+                  />
+                </div>
+              ) : selectedChatIsRemote ? (
                 <ChatView
                   key={`${chatSourceMode}-${selectedChatId}`}
-                  chatId={selectedChatId}
+                  chatId={selectedChatId!}
                   isSidebarOpen={sidebarOpen}
                   onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
                   selectedTeamName={selectedTeam?.name}
@@ -2909,10 +3301,6 @@ function AgentsContentInner() {
                 />
               )}
             </div>
-          ) : selectedDraftId || showNewChatForm ? (
-            <div className="h-full flex flex-col relative overflow-hidden">
-              <NewChatForm key={`new-chat-${newChatFormKeyRef.current}`} />
-            </div>
           ) : selectedChatScope ? (
             <div className="h-full flex flex-col overflow-hidden bg-background">
               <div className="shrink-0 border-b border-border/70 px-6 py-4">
@@ -2929,7 +3317,15 @@ function AgentsContentInner() {
                       {selectedChatScope.name}
                     </h2>
                   </div>
-                  <Button size="sm" className="gap-1.5" onClick={() => setShowNewChatForm(true)}>
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => {
+                      setSelectedDraftId(null)
+                      setNewChatFormSession((session) => session + 1)
+                      setShowNewChatForm(true)
+                    }}
+                  >
                     <Plus className="h-4 w-4" />
                     New Chat
                   </Button>

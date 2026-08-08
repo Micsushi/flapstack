@@ -215,6 +215,57 @@ describe("direct Codex Runtime adapter", () => {
     expect(activity.flat().filter((event) => event.kind === "permission")).toHaveLength(2)
   })
 
+  it("starts a persisted Codex goal instead of sending the goal command as a normal turn", async () => {
+    const client = new FakeCodexProtocolClient()
+    const activity = collectActivity()
+    client.responses.set("thread/goal/set", () => {
+      client.queue.emit({
+        method: "thread/goal/updated",
+        params: {
+          threadId: "thread-1",
+          goal: { objective: "Finish the migration", status: "active" },
+        },
+      })
+      client.queue.emit({
+        method: "turn/started",
+        params: { threadId: "thread-1", turn: { id: "goal-turn-1", status: "inProgress" } },
+      })
+      return { goal: { objective: "Finish the migration", status: "active" } }
+    })
+    const adapter = createCodexRuntimeAdapterFactory({
+      appendActivity: activity.append,
+      resolveThreadParams: () => ({ cwd: "/worktree" }),
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.144.1",
+      createClient: () => client,
+    })()
+    const context = runtimeContext()
+    const session = await adapter.startSession(context)
+    const turn = await adapter.startTurn(context, session, "/goal Finish the migration")
+
+    expect(turn.providerTurnId).toBe("goal-turn-1")
+    expect(client.requests).toContainEqual({
+      method: "thread/goal/set",
+      params: {
+        threadId: "thread-1",
+        objective: "Finish the migration",
+        status: "active",
+      },
+    })
+    expect(client.requests.some((request) => request.method === "turn/start")).toBe(false)
+
+    client.queue.emit({
+      method: "turn/completed",
+      params: { threadId: "thread-1", turn: { id: "goal-turn-1", status: "completed" } },
+    })
+    for await (const _event of adapter.streamActivity(context, session, turn)) {
+      // Drain the goal turn.
+    }
+    expect(activity.flat()).toContainEqual(
+      expect.objectContaining({ kind: "status", phase: "updated" }),
+    )
+  })
+
   it("sends a frozen fast service tier independently of reasoning effort", async () => {
     const client = new FakeCodexProtocolClient()
     const adapter = createCodexRuntimeAdapterFactory({

@@ -1,4 +1,4 @@
-import { Search } from "lucide-react"
+import { LockKeyhole, Search } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 import { Button } from "../../components/ui/button"
@@ -8,17 +8,28 @@ import { trpc } from "../../lib/trpc"
 import { handleListboxKeyDown } from "../../lib/listbox-keyboard"
 import { AGENT_PROFILE_LAUNCH_BLOCKING_CONFLICT_CODES } from "../../../shared/agent-profiles"
 
-export function ChatAgentProfileControl({ chatId }: { chatId: string }) {
+export function ChatAgentProfileControl({
+  chatId,
+  locked = false,
+}: {
+  chatId: string
+  locked?: boolean
+}) {
   const utils = trpc.useUtils()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const binding = trpc.agentProfiles.getChatBinding.useQuery(
     { chatId },
     {
-      refetchInterval: (result) => (result.state.data && !result.state.data.frozen ? 2_000 : false),
+      refetchInterval: (result) =>
+        !locked && result.state.data && !result.state.data.frozen ? 2_000 : false,
     },
   )
-  const choices = trpc.agentProfiles.searchForChat.useQuery({ chatId, query })
+  const isLocked = locked || binding.data?.frozen === true
+  const choices = trpc.agentProfiles.searchForChat.useQuery(
+    { chatId, query },
+    { enabled: !isLocked },
+  )
   const bind = trpc.agentProfiles.bindChat.useMutation({
     onSuccess: async () => {
       await Promise.all([
@@ -41,17 +52,18 @@ export function ChatAgentProfileControl({ chatId }: { chatId: string }) {
             size="sm"
             variant="outline"
             className="h-7 max-w-64 gap-1.5 px-2"
+            title={isLocked ? "Agent Profile locked after the first message" : undefined}
             aria-label={
               selected
-                ? `Agent Profile ${selected.displayName} version ${selected.profile.version}`
+                ? `${isLocked ? "Locked " : ""}Agent Profile ${selected.displayName} version ${selected.profile.version}`
                 : "Choose Agent Profile"
             }
           >
             <span className="truncate">
               {selected ? `${selected.displayName} v${selected.profile.version}` : "Agent Profile"}
             </span>
-            {binding.data?.frozen ? (
-              <span className="text-[10px] text-muted-foreground">frozen</span>
+            {isLocked ? (
+              <LockKeyhole className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
             ) : null}
           </Button>
         </PopoverTrigger>
@@ -70,12 +82,12 @@ export function ChatAgentProfileControl({ chatId }: { chatId: string }) {
               autoFocus
             />
           </label>
-          {binding.data?.frozen ? (
+          {isLocked ? (
             <p className="mt-2 text-xs text-muted-foreground">
               This Chat has started. Its exact profile snapshot cannot change.
             </p>
           ) : null}
-          {!binding.data?.frozen && binding.data?.invalidReason ? (
+          {!isLocked && binding.data?.invalidReason ? (
             <div
               role="alert"
               className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive"
@@ -84,7 +96,7 @@ export function ChatAgentProfileControl({ chatId }: { chatId: string }) {
               {binding.data.invalidReason}
             </div>
           ) : null}
-          {!binding.data?.frozen ? (
+          {!isLocked ? (
             <div
               role="listbox"
               aria-label="Compatible Agent Profiles"

@@ -156,10 +156,25 @@ export function setChatWorkbenchGroupColor(
   }
 }
 
+function randomUnusedGroupColor(
+  groups: readonly ChatWorkbenchSavedGroup[],
+  random: () => number,
+): ChatWorkbenchGroupColor {
+  const usedColors = new Set(groups.map((group) => group.color))
+  const unusedColors = CHAT_WORKBENCH_GROUP_COLORS.filter((color) => !usedColors.has(color))
+  const availableColors = unusedColors.length > 0 ? unusedColors : CHAT_WORKBENCH_GROUP_COLORS
+  const index = Math.min(
+    availableColors.length - 1,
+    Math.max(0, Math.floor(random() * availableColors.length)),
+  )
+  return availableColors[index]!
+}
+
 export function reconcileChatWorkbenchNavigation(
   navigation: ChatWorkbenchNavigation,
   previousLayout: ChatWorkbenchLayout,
   nextLayout: ChatWorkbenchLayout,
+  random: () => number = Math.random,
 ): ChatWorkbenchNavigation {
   const wasMultiPane = collectChatGroups(previousLayout.root).length > 1
   const isMultiPane = collectChatGroups(nextLayout.root).length > 1
@@ -187,7 +202,12 @@ export function reconcileChatWorkbenchNavigation(
     activeGroupId: id,
     groups: [
       ...navigation.groups,
-      { id, name: `Group ${navigation.groups.length + 1}`, layout: nextLayout },
+      {
+        id,
+        name: `Group ${navigation.groups.length + 1}`,
+        color: randomUnusedGroupColor(navigation.groups, random),
+        layout: nextLayout,
+      },
     ],
   }
 }
@@ -317,6 +337,7 @@ export function createChatWorkbenchGroup(
   navigation: ChatWorkbenchNavigation,
   visibleChatIds: readonly string[],
   chatId: string,
+  random: () => number = Math.random,
 ): ChatWorkbenchNavigation {
   const items = resolveChatWorkbenchNavigationItems(navigation, visibleChatIds)
   const withoutChat = removeChatFromSavedGroups(navigation, chatId)
@@ -324,6 +345,7 @@ export function createChatWorkbenchGroup(
   const group: ChatWorkbenchSavedGroup = {
     id,
     name: `Group ${withoutChat.groups.length + 1}`,
+    color: randomUnusedGroupColor(withoutChat.groups, random),
     layout: createChatWorkbenchLayout([chatId], chatId),
   }
   const liveGroupIds = new Set([...withoutChat.groups.map((candidate) => candidate.id), id])
