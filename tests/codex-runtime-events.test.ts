@@ -142,4 +142,34 @@ describe("direct Codex Runtime event mapping", () => {
       },
     })
   })
+
+  it("preserves current context usage and model window", () => {
+    expect(
+      mapCodexNotification({
+        method: "thread/tokenUsage/updated",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          tokenUsage: {
+            last: {
+              inputTokens: 42_057,
+              cachedInputTokens: 39_680,
+              outputTokens: 470,
+              reasoningOutputTokens: 186,
+            },
+            modelContextWindow: 258_400,
+          },
+        },
+      }),
+    ).toMatchObject([
+      {
+        kind: "usage",
+        payload: {
+          inputTokens: 42_057,
+          cachedTokens: 39_680,
+          contextWindow: 258_400,
+        },
+      },
+    ])
+  })
 })

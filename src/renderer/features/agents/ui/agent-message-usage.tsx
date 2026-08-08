@@ -6,6 +6,7 @@ import { cn } from "../../../lib/utils"
 
 export interface AgentMessageMetadata {
   runId?: string
+  transport?: string
   model?: string
   sessionId?: string
   totalCostUsd?: number
@@ -13,10 +14,58 @@ export interface AgentMessageMetadata {
   outputTokens?: number
   reasoningTokens?: number
   totalTokens?: number
+  cacheReadInputTokens?: number
+  cacheCreationInputTokens?: number
   finalTextId?: string
   durationMs?: number
   startedAt?: number
   resultSubtype?: string
+}
+
+function tokenCount(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0
+}
+
+export function resolveMessageTokenUsage(metadata?: AgentMessageMetadata) {
+  const inputTokens = tokenCount(metadata?.inputTokens)
+  const cachedTokens =
+    tokenCount(metadata?.cacheReadInputTokens) + tokenCount(metadata?.cacheCreationInputTokens)
+  const outputTokens = tokenCount(metadata?.outputTokens)
+  const normalizedModel = metadata?.model?.toLowerCase() ?? ""
+  const inputIncludesCachedTokens =
+    metadata?.transport === "codex-runtime" ||
+    normalizedModel.includes("codex") ||
+    normalizedModel.startsWith("gpt-")
+  const totalTokens = Math.max(
+    tokenCount(metadata?.totalTokens),
+    inputTokens + outputTokens + (inputIncludesCachedTokens ? 0 : cachedTokens),
+  )
+  return { inputTokens, cachedTokens, outputTokens, totalTokens }
+}
+
+export function resolveChatTokenUsage(
+  messages: ReadonlyArray<{ role?: string; metadata?: AgentMessageMetadata }>,
+  latestUsage?: AgentMessageMetadata,
+): number {
+  const usageByRun = new Map<string, number>()
+  let usageWithoutRun = 0
+  for (const message of messages) {
+    if (message.role !== "assistant") continue
+    const total = resolveMessageTokenUsage(message.metadata).totalTokens
+    if (total === 0) continue
+    const runId = message.metadata?.runId
+    if (runId) usageByRun.set(runId, Math.max(usageByRun.get(runId) ?? 0, total))
+    else usageWithoutRun += total
+  }
+  if (latestUsage) {
+    const total = resolveMessageTokenUsage(latestUsage).totalTokens
+    if (latestUsage.runId) {
+      usageByRun.set(latestUsage.runId, Math.max(usageByRun.get(latestUsage.runId) ?? 0, total))
+    } else {
+      usageWithoutRun += total
+    }
+  }
+  return usageWithoutRun + [...usageByRun.values()].reduce((sum, value) => sum + value, 0)
 }
 
 interface AgentMessageUsageProps {
@@ -50,33 +99,33 @@ export const AgentMessageUsage = memo(function AgentMessageUsage({
   isStreaming = false,
   isMobile = false,
 }: AgentMessageUsageProps) {
-  if (!metadata || isStreaming) return null
+  if (!metadata) return null
 
   const {
-    model,
-    inputTokens = 0,
-    outputTokens = 0,
+    inputTokens: rawInputTokens = 0,
+    outputTokens: rawOutputTokens = 0,
     reasoningTokens,
-    totalTokens = 0,
     durationMs,
     resultSubtype,
   } = metadata
 
-  const hasUsage = inputTokens > 0 || outputTokens > 0
+  const {
+    inputTokens,
+    cachedTokens,
+    outputTokens,
+    totalTokens: displayTokens,
+  } = resolveMessageTokenUsage(metadata)
+
+  const hasUsage = displayTokens > 0
 
   if (!hasUsage) return null
-
-  const normalizedModel = typeof model === "string" ? model.toLowerCase() : ""
-  const isCodexModel = normalizedModel.includes("codex") || normalizedModel.startsWith("gpt-")
-  const displayTokens = isCodexModel
-    ? inputTokens + outputTokens
-    : totalTokens || inputTokens + outputTokens
 
   return (
     <HoverCard openDelay={400} closeDelay={100}>
       <HoverCardTrigger asChild>
         <button
           tabIndex={-1}
+          aria-label={`Token usage${isStreaming ? ", live" : ""}: ${displayTokens.toLocaleString()}`}
           className={cn(
             "h-5 px-1.5 flex items-center text-[10px] rounded-md",
             "text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/50",
@@ -93,8 +142,14 @@ export const AgentMessageUsage = memo(function AgentMessageUsage({
       >
         <div className="space-y-1.5 pb-2">
           {/* Status & Duration group */}
-          {(resultSubtype || (durationMs !== undefined && durationMs > 0)) && (
+          {(isStreaming || resultSubtype || (durationMs !== undefined && durationMs > 0)) && (
             <div className="space-y-1">
+              {isStreaming && (
+                <div className="flex justify-between text-xs gap-4">
+                  <span className="text-muted-foreground">Status:</span>
+                  <span className="font-mono text-foreground">Running</span>
+                </div>
+              )}
               {resultSubtype && (
                 <div className="flex justify-between text-xs gap-4">
                   <span className="text-muted-foreground">Status:</span>
@@ -122,6 +177,13 @@ export const AgentMessageUsage = memo(function AgentMessageUsage({
               </span>
             </div>
           )}
+          {(rawInputTokens > 0 || rawOutputTokens > 0 || cachedTokens > 0) && (
+            <div className="space-y-1 border-t border-border/50 pt-1.5">
+              <UsageRow label="Input" value={inputTokens} />
+              {cachedTokens > 0 && <UsageRow label="Cached input" value={cachedTokens} />}
+              <UsageRow label="Output" value={outputTokens} />
+            </div>
+          )}
           {typeof reasoningTokens === "number" && (
             <div className="flex justify-between text-xs gap-4">
               <span className="text-muted-foreground">Reasoning tokens:</span>
@@ -135,3 +197,12 @@ export const AgentMessageUsage = memo(function AgentMessageUsage({
     </HoverCard>
   )
 })
+
+function UsageRow({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex justify-between text-xs gap-4">
+      <span className="text-muted-foreground">{label}:</span>
+      <span className="font-mono text-foreground">{value.toLocaleString()}</span>
+    </div>
+  )
+}

@@ -1,16 +1,42 @@
 export type ClaudeEffortLevel = "low" | "medium" | "high" | "xhigh" | "max"
 
 const CLAUDE_DEEP_EFFORTS: readonly ClaudeEffortLevel[] = ["low", "medium", "high", "xhigh", "max"]
+const CLAUDE_CONTEXT_WINDOW = 200_000
+const CODEX_CONTEXT_WINDOW = 258_400
 
 // Picker list: only concrete model versions, matching what Claude Code exposes
 // by default. Alias ids ("opus", "best", ...) stay in CLAUDE_MODEL_ID_MAP so
 // previously stored selections keep resolving.
 export const CLAUDE_MODELS = [
-  { id: "claude-opus-5", name: "Opus", version: "5", efforts: CLAUDE_DEEP_EFFORTS },
-  { id: "claude-opus-4-8", name: "Opus", version: "4.8", efforts: CLAUDE_DEEP_EFFORTS },
-  { id: "claude-fable-5", name: "Fable", version: "5", efforts: CLAUDE_DEEP_EFFORTS },
-  { id: "claude-sonnet-5", name: "Sonnet", version: "5", efforts: CLAUDE_DEEP_EFFORTS },
-  { id: "claude-haiku-4-5", name: "Haiku", version: "4.5" },
+  {
+    id: "claude-opus-5",
+    name: "Opus",
+    version: "5",
+    efforts: CLAUDE_DEEP_EFFORTS,
+    contextWindow: CLAUDE_CONTEXT_WINDOW,
+  },
+  {
+    id: "claude-opus-4-8",
+    name: "Opus",
+    version: "4.8",
+    efforts: CLAUDE_DEEP_EFFORTS,
+    contextWindow: CLAUDE_CONTEXT_WINDOW,
+  },
+  {
+    id: "claude-fable-5",
+    name: "Fable",
+    version: "5",
+    efforts: CLAUDE_DEEP_EFFORTS,
+    contextWindow: CLAUDE_CONTEXT_WINDOW,
+  },
+  {
+    id: "claude-sonnet-5",
+    name: "Sonnet",
+    version: "5",
+    efforts: CLAUDE_DEEP_EFFORTS,
+    contextWindow: CLAUDE_CONTEXT_WINDOW,
+  },
+  { id: "claude-haiku-4-5", name: "Haiku", version: "4.5", contextWindow: CLAUDE_CONTEXT_WINDOW },
 ] as const
 
 export const CLAUDE_MODEL_ID_MAP: Record<string, string> = {
@@ -57,6 +83,7 @@ export const CODEX_MODELS = [
     reasoningLevels: CODEX_STANDARD_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
+    contextWindow: CODEX_CONTEXT_WINDOW,
   },
   {
     id: "gpt-5.6-sol",
@@ -64,6 +91,7 @@ export const CODEX_MODELS = [
     reasoningLevels: CODEX_ULTRA_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
+    contextWindow: CODEX_CONTEXT_WINDOW,
   },
   {
     id: "gpt-5.6-terra",
@@ -71,6 +99,7 @@ export const CODEX_MODELS = [
     reasoningLevels: CODEX_ULTRA_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
+    contextWindow: CODEX_CONTEXT_WINDOW,
   },
   {
     id: "gpt-5.6-luna",
@@ -78,6 +107,7 @@ export const CODEX_MODELS = [
     reasoningLevels: CODEX_DEEP_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
+    contextWindow: CODEX_CONTEXT_WINDOW,
   },
   {
     id: "gpt-5.4",
@@ -85,6 +115,7 @@ export const CODEX_MODELS = [
     reasoningLevels: CODEX_STANDARD_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
+    contextWindow: CODEX_CONTEXT_WINDOW,
   },
   {
     id: "gpt-5.4-mini",
@@ -92,6 +123,7 @@ export const CODEX_MODELS = [
     reasoningLevels: CODEX_STANDARD_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: false,
+    contextWindow: CODEX_CONTEXT_WINDOW,
   },
   {
     id: "gpt-5.3-codex-spark",
@@ -99,6 +131,7 @@ export const CODEX_MODELS = [
     reasoningLevels: ["low", "medium", "high", "xhigh"] as readonly CodexReasoningLevel[],
     authSurfaces: ["chatgpt"] as CodexAuthSurface[],
     supportsFastMode: false,
+    contextWindow: CODEX_CONTEXT_WINDOW,
   },
 ] as const
 

@@ -353,6 +353,7 @@ function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaPr
   if (
     prevProps.messageTokenData.totalInputTokens !== nextProps.messageTokenData.totalInputTokens ||
     prevProps.messageTokenData.totalOutputTokens !== nextProps.messageTokenData.totalOutputTokens ||
+    prevProps.messageTokenData.totalChatTokens !== nextProps.messageTokenData.totalChatTokens ||
     prevProps.messageTokenData.contextWindow !== nextProps.messageTokenData.contextWindow ||
     prevProps.messageTokenData.messageCount !== nextProps.messageTokenData.messageCount
   ) {
@@ -813,6 +814,40 @@ export const ChatInputArea = memo(function ChatInputArea({
     subChatReasoningEnabledAtomFamily(subChatId),
   )
   const localModelPicker = useLocalModelPickerSurface()
+
+  const selectedModelContextWindow = useMemo(() => {
+    if (provider === "claude-code") return selectedModel?.contextWindow
+    if (provider === "codex") return selectedCodexModel.contextWindow
+    if (provider === "openrouter" || provider === "nanogpt") {
+      const catalog = provider === "openrouter" ? openrouterCatalog : nanogptCatalog
+      const selectedId = selectedOpencodeModels[provider]
+      return catalog?.models.find((model) => `${provider}/${model.id}` === selectedId)
+        ?.contextWindow
+    }
+    if (provider === "local") {
+      return (
+        localModelPicker.models.find((model) => model.id === localModelPicker.selectedModelId)
+          ?.contextWindow ?? undefined
+      )
+    }
+    return undefined
+  }, [
+    localModelPicker.models,
+    localModelPicker.selectedModelId,
+    nanogptCatalog,
+    openrouterCatalog,
+    provider,
+    selectedCodexModel.contextWindow,
+    selectedModel?.contextWindow,
+    selectedOpencodeModels,
+  ])
+  const contextTokenData = useMemo(
+    () => ({
+      ...messageTokenData,
+      contextWindow: messageTokenData.contextWindow ?? selectedModelContextWindow,
+    }),
+    [messageTokenData, selectedModelContextWindow],
+  )
 
   const selectedModelLabel = useMemo(() => {
     if (provider === "local") {
@@ -2778,9 +2813,9 @@ export const ChatInputArea = memo(function ChatInputArea({
                     </div>
                   ) : (
                     <>
-                      {/* Context window indicator - click to compact */}
+                      {/* Context window indicator */}
                       <AgentContextIndicator
-                        tokenData={messageTokenData}
+                        tokenData={contextTokenData}
                         // onCompact={onCompact}
                         isCompacting={isCompacting}
                         disabled={isStreaming}

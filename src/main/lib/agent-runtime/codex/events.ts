@@ -694,7 +694,8 @@ function normalizeChanges(value: unknown) {
 }
 
 function usage(base: ActivityIdentity, value: unknown): AgentActivityAppend {
-  const usage = record(record(value).last)
+  const tokenUsage = record(value)
+  const usage = record(tokenUsage.last)
   return {
     ...base,
     kind: "usage",
@@ -706,6 +707,7 @@ function usage(base: ActivityIdentity, value: unknown): AgentActivityAppend {
       outputTokens: finiteOrNull(usage.outputTokens),
       cachedTokens: finiteOrNull(usage.cachedInputTokens),
       reasoningTokens: finiteOrNull(usage.reasoningOutputTokens),
+      contextWindow: finiteOrNull(tokenUsage.modelContextWindow),
     },
   }
 }

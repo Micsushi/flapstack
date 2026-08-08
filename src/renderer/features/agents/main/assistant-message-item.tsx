@@ -23,7 +23,11 @@ import { AgentExploringGroup } from "../ui/agent-exploring-group"
 import { AgentTaskToolsGroup } from "../ui/agent-task-tools"
 import { AgentPlanFileTool } from "../ui/agent-plan-file-tool"
 import { isPlanFile } from "../ui/agent-tool-utils"
-import { AgentMessageUsage, type AgentMessageMetadata } from "../ui/agent-message-usage"
+import {
+  AgentMessageUsage,
+  resolveMessageTokenUsage,
+  type AgentMessageMetadata,
+} from "../ui/agent-message-usage"
 import { AgentPlanTool } from "../ui/agent-plan-tool"
 import { AgentTaskTool } from "../ui/agent-task-tool"
 import { AgentReasoningOutput } from "../ui/agent-reasoning-output"
@@ -1275,33 +1279,38 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
         )}
       </div>
 
-      {hasTextContent && (!isStreaming || !isLastMessage) && (
+      {(hasTextContent && (!isStreaming || !isLastMessage)) ||
+      (isStreaming && isLastMessage && resolveMessageTokenUsage(msgMetadata).totalTokens > 0) ? (
         <div className="flex justify-between items-center h-6 px-2 mt-1">
           <div className="flex items-center gap-0.5">
-            <CopyButton text={getMessageTextContent(message)} isMobile={isMobile} />
-            <PlayButton
-              text={getMessageTextContent(message)}
-              isMobile={isMobile}
-              chatId={chatId}
-              subChatId={subChatId}
-              messageId={message.id}
-              highlightColor={
-                getHarnessChipMeta(
-                  (msgMetadata as AgentMessageMetadata & { harness?: string })?.harness,
-                ).color
-              }
-            />
-            {timestamp && (
-              <span className="ml-1 text-[10px] text-muted-foreground">{timestamp}</span>
+            {(!isStreaming || !isLastMessage) && (
+              <>
+                <CopyButton text={getMessageTextContent(message)} isMobile={isMobile} />
+                <PlayButton
+                  text={getMessageTextContent(message)}
+                  isMobile={isMobile}
+                  chatId={chatId}
+                  subChatId={subChatId}
+                  messageId={message.id}
+                  highlightColor={
+                    getHarnessChipMeta(
+                      (msgMetadata as AgentMessageMetadata & { harness?: string })?.harness,
+                    ).color
+                  }
+                />
+                {timestamp && (
+                  <span className="ml-1 text-[10px] text-muted-foreground">{timestamp}</span>
+                )}
+              </>
             )}
           </div>
           <div className="flex items-center gap-0.5">
             <AgentMessageUsage
               metadata={msgMetadata}
-              isStreaming={isStreaming}
+              isStreaming={isStreaming && isLastMessage}
               isMobile={isMobile}
             />
-            {onFork && (
+            {onFork && (!isStreaming || !isLastMessage) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
@@ -1320,7 +1329,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             )}
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Git activity badges - commit/PR pills */}
       {(!isStreaming || !isLastMessage) && (

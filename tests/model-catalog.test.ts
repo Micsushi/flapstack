@@ -24,6 +24,7 @@ describe("Claude model catalog", () => {
     ])
     for (const model of CLAUDE_MODELS) {
       expect(model.version).not.toBe("auto")
+      expect(model.contextWindow).toBe(200_000)
     }
   })
 
@@ -65,6 +66,9 @@ describe("Claude model catalog", () => {
       "gpt-5.4-mini",
       "gpt-5.3-codex-spark",
     ])
+    for (const model of CODEX_MODELS) {
+      expect(model.contextWindow).toBe(258_400)
+    }
   })
 
   it("marks Codex fast mode only on supported full models", () => {

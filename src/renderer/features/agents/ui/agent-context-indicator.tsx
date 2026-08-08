@@ -4,15 +4,6 @@ import { memo } from "react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip"
 import { cn } from "../../../lib/utils"
 
-// Claude model context windows
-const CONTEXT_WINDOWS = {
-  opus: 200_000,
-  sonnet: 200_000,
-  haiku: 200_000,
-} as const
-
-type ModelId = keyof typeof CONTEXT_WINDOWS
-
 // Pre-computed token data to avoid re-computing on every render
 export interface MessageTokenData {
   totalInputTokens: number
@@ -20,11 +11,11 @@ export interface MessageTokenData {
   totalCostUsd: number
   messageCount: number
   contextWindow?: number
+  totalChatTokens?: number
 }
 
 interface AgentContextIndicatorProps {
   tokenData: MessageTokenData
-  modelId?: ModelId
   className?: string
   onCompact?: () => void
   isCompacting?: boolean
@@ -88,15 +79,14 @@ function CircularProgress({
 
 export const AgentContextIndicator = memo(function AgentContextIndicator({
   tokenData,
-  modelId = "sonnet",
   className,
   onCompact,
   isCompacting,
   disabled,
 }: AgentContextIndicatorProps) {
   const contextTokens = tokenData.totalInputTokens
-  const contextWindow = tokenData.contextWindow ?? CONTEXT_WINDOWS[modelId]
-  const percentUsed = Math.min(100, (contextTokens / contextWindow) * 100)
+  const contextWindow = tokenData.contextWindow
+  const percentUsed = contextWindow ? Math.min(100, (contextTokens / contextWindow) * 100) : 0
   const isEmpty = contextTokens === 0
 
   const isClickable = onCompact && !disabled && !isCompacting
@@ -125,7 +115,7 @@ export const AgentContextIndicator = memo(function AgentContextIndicator({
         <p className="text-xs">
           {isEmpty ? (
             <span className="text-muted-foreground">
-              Context: 0 / {formatTokens(contextWindow)}
+              Context: 0 / {contextWindow ? formatTokens(contextWindow) : "Unknown"}
             </span>
           ) : (
             <>
@@ -134,10 +124,14 @@ export const AgentContextIndicator = memo(function AgentContextIndicator({
               </span>
               <span className="text-muted-foreground mx-1">·</span>
               <span className="text-muted-foreground">
-                {formatTokens(contextTokens)} / {formatTokens(contextWindow)} context
+                {formatTokens(contextTokens)} /{" "}
+                {contextWindow ? formatTokens(contextWindow) : "Unknown"} context
               </span>
             </>
           )}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Chat total: {(tokenData.totalChatTokens ?? 0).toLocaleString()} tokens
         </p>
       </TooltipContent>
     </Tooltip>

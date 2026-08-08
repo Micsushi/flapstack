@@ -23,6 +23,31 @@ describe("direct runtime chat transport", () => {
     })
   })
 
+  it("persists native context usage with the assistant reply", () => {
+    expect(
+      directRuntimeFinishMetadata({
+        runId: "run",
+        harness: "claude-code",
+        startedAtMs: 1_000,
+        durationMs: 22_000,
+        usage: {
+          inputTokens: 2,
+          outputTokens: 110,
+          cachedTokens: 22_077,
+          reasoningTokens: 100,
+          contextWindow: 200_000,
+        },
+      }),
+    ).toMatchObject({
+      inputTokens: 2,
+      outputTokens: 110,
+      totalTokens: 22_189,
+      cacheReadInputTokens: 22_077,
+      reasoningTokens: 100,
+      modelContextWindow: 200_000,
+    })
+  })
+
   it("persists only when the latest assistant reply came from a direct Runtime", () => {
     const oldDirect = {
       role: "assistant",

@@ -32,6 +32,7 @@ export function useLocalModelPickerSurface() {
         name: model.identity.modelId,
         chat: model.capabilities.chat.state,
         tools: model.capabilities.tools.state,
+        contextWindow: model.identity.contextWindow,
         selectable: catalog.state === "ready" && model.capabilities.chat.state === "supported",
         limitations: model.limitations.map((limitation) => limitation.message),
       })) ?? [],

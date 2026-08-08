@@ -232,6 +232,8 @@ import {
 } from "../ui/agent-diff-view"
 import { AgentPlanSidebar } from "../ui/agent-plan-sidebar"
 import { AgentPreview } from "../ui/agent-preview"
+import { resolveContextUsage } from "../ui/agent-context-usage"
+import { resolveChatTokenUsage, type AgentMessageMetadata } from "../ui/agent-message-usage"
 import { AgentQueueIndicator } from "../ui/agent-queue-indicator"
 import { AgentToolCall } from "../ui/agent-tool-call"
 import { AgentToolRegistry } from "../ui/agent-tool-registry"
@@ -2803,6 +2805,24 @@ const ChatViewInner = memo(function ChatViewInner({
   // Pre-compute token data for ChatInputArea to avoid passing unstable messages array.
   // Prefer the latest assistant metadata that actually includes token/context fields.
   // This keeps the indicator stable while a new assistant message is streaming.
+  const runtimeUsage = useMemo(
+    () => resolveContextUsage(activityPage?.events ?? [], subChatId, provider),
+    [activityPage?.events, provider, subChatId],
+  )
+  const runtimeMessageUsage = useMemo<AgentMessageMetadata | undefined>(
+    () =>
+      runtimeUsage
+        ? {
+            runId: runtimeUsage.runId,
+            transport: `${provider}-runtime`,
+            inputTokens: runtimeUsage.inputTokens,
+            outputTokens: runtimeUsage.outputTokens,
+            reasoningTokens: runtimeUsage.reasoningTokens,
+            cacheReadInputTokens: runtimeUsage.cachedTokens,
+          }
+        : undefined,
+    [runtimeUsage],
+  )
   const messageTokenData = useMemo(() => {
     const lastAssistantWithTokenData = [...messages].reverse().find((msg) => {
       if (msg.role !== "assistant" || !msg.metadata) return false
@@ -2845,12 +2865,14 @@ const ChatViewInner = memo(function ChatViewInner({
         : undefined
 
     const totalInputTokens =
-      provider === "codex"
+      runtimeUsage?.contextTokens ??
+      (provider === "codex"
         ? (codexInputTokensFromTotal ?? metadata?.inputTokens ?? 0)
-        : (metadata?.inputTokens || 0) + cacheReadInputTokens + cacheCreationInputTokens
+        : (metadata?.inputTokens || 0) + cacheReadInputTokens + cacheCreationInputTokens)
     const totalOutputTokens = metadata?.outputTokens || 0
     const totalCostUsd = metadata?.totalCostUsd || 0
-    const contextWindow = metadata?.modelContextWindow
+    const contextWindow = runtimeUsage?.contextWindow ?? metadata?.modelContextWindow
+    const totalChatTokens = resolveChatTokenUsage(messages, runtimeMessageUsage)
 
     // Keep this tied to rendered messages for memo comparator stability.
     const messageCount = messages.length
@@ -2861,8 +2883,9 @@ const ChatViewInner = memo(function ChatViewInner({
       totalCostUsd,
       messageCount,
       contextWindow,
+      totalChatTokens,
     }
-  }, [messages, provider])
+  }, [messages, provider, runtimeMessageUsage, runtimeUsage])
 
   // Track previous streaming state to detect stream stop
   const prevIsStreamingRef = useRef(isStreaming)
