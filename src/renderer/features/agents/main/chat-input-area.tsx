@@ -41,6 +41,7 @@ import {
 } from "../../../lib/atoms"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
+import { measurePerformanceNextFrame } from "../../../lib/performance-counters"
 import {
   enabledOpencodeModelsAtom,
   enabledCursorModelsAtom,
@@ -444,8 +445,13 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [isFocused, setIsFocused] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
   const [inputWidth, setInputWidth] = useState(Number.POSITIVE_INFINITY)
+  const inputResizeObserverRef = useRef<ResizeObserver | null>(null)
+  const inputMeasureFrameRef = useRef<number | null>(null)
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
-  const { data: runtimeChat } = trpc.chats.get.useQuery({ id: parentChatId })
+  const { data: runtimeChat } = trpc.chats.getMetadata.useQuery(
+    { id: parentChatId },
+    { staleTime: 30_000, refetchOnMount: false },
+  )
   const { data: runtimeTask } = trpc.tasks.get.useQuery(
     { id: runtimeChat?.taskId ?? "" },
     { enabled: Boolean(runtimeChat?.taskId) },
@@ -461,8 +467,17 @@ export const ChatInputArea = memo(function ChatInputArea({
     }),
     [chatName, parentChatId, projectLabel, projectPath, repository, runtimeTask?.name],
   )
-  const { data: runtimeReleases = [] } = trpc.agentRuntimeDefaults.capabilities.useQuery()
-  const { data: runtimeDefaults = [] } = trpc.agentRuntimeDefaults.list.useQuery()
+  const { data: runtimeReleases = [] } = trpc.agentRuntimeDefaults.capabilities.useQuery(
+    undefined,
+    {
+      staleTime: 5 * 60_000,
+      refetchOnMount: false,
+    },
+  )
+  const { data: runtimeDefaults = [] } = trpc.agentRuntimeDefaults.list.useQuery(undefined, {
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+  })
   const runtimePreference = (runtimeChat?.runtimePreference ?? "auto") as AgentRuntimePreference
   const resolvedRuntimePreference = resolveConfiguredRuntimePreference({
     harness: provider,
@@ -493,6 +508,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   const customWorktreeValidationRef = useRef(0)
   const [customWorktreeError, setCustomWorktreeError] = useState<string | null>(null)
   const [isValidatingCustomWorktree, setIsValidatingCustomWorktree] = useState(false)
+  const [isWorktreeMenuOpen, setIsWorktreeMenuOpen] = useState(false)
   const trpcUtils = trpc.useUtils()
   const handleRuntimeChange = useCallback(
     async (preference: AgentRuntimePreference) => {
@@ -669,22 +685,57 @@ export const ChatInputArea = memo(function ChatInputArea({
     setSelectedSubChatClaudeEffort(selectedClaudeEffort)
   }, [provider, selectedClaudeEffort, selectedSubChatClaudeEffort, setSelectedSubChatClaudeEffort])
 
-  const { data: codexCredentialStatus } = trpc.credentials.status.useQuery({
-    id: "codex.api-key",
-  })
+  const { data: codexCredentialStatus } = trpc.credentials.status.useQuery(
+    { id: "codex.api-key" },
+    {
+      enabled: isModelDropdownOpen || provider === "codex",
+      staleTime: 5 * 60_000,
+      refetchOnMount: false,
+    },
+  )
   const hasAppCodexApiKey = codexCredentialStatus?.configured === true
   const hiddenModels = useAtomValue(hiddenModelsAtom)
   const enabledCursorModels = useAtomValue(enabledCursorModelsAtom)
 
   // Connection status for providers
-  const { data: claudeCodeIntegration } = trpc.claudeCode.getIntegration.useQuery()
-  const { data: cursorIntegration } = trpc.cursor.getIntegration.useQuery(undefined, {
-    refetchInterval: (query) => (query.state.data?.isConnected ? false : 2_000),
+  const { data: claudeCodeIntegration } = trpc.claudeCode.getIntegration.useQuery(undefined, {
+    enabled: isModelDropdownOpen || provider === "claude-code",
+    staleTime: 60_000,
+    refetchOnMount: false,
   })
-  const { data: codexIntegration } = trpc.codex.getIntegration.useQuery()
-  const { data: cursorModelData } = trpc.cursor.listModels.useQuery()
-  const { data: openrouterCatalog } = trpc.opencode.listModels.useQuery({ provider: "openrouter" })
-  const { data: nanogptCatalog } = trpc.opencode.listModels.useQuery({ provider: "nanogpt" })
+  const { data: cursorIntegration } = trpc.cursor.getIntegration.useQuery(undefined, {
+    enabled: isModelDropdownOpen || provider === "cursor-agent",
+    staleTime: 30_000,
+    refetchOnMount: false,
+    refetchInterval: (query) =>
+      isModelDropdownOpen && !query.state.data?.isConnected ? 2_000 : false,
+  })
+  const { data: codexIntegration } = trpc.codex.getIntegration.useQuery(undefined, {
+    enabled: isModelDropdownOpen || provider === "codex",
+    staleTime: 60_000,
+    refetchOnMount: false,
+  })
+  const { data: cursorModelData } = trpc.cursor.listModels.useQuery(undefined, {
+    enabled: isModelDropdownOpen || provider === "cursor-agent",
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+  })
+  const { data: openrouterCatalog } = trpc.opencode.listModels.useQuery(
+    { provider: "openrouter" },
+    {
+      enabled: isModelDropdownOpen || provider === "openrouter",
+      staleTime: 5 * 60_000,
+      refetchOnMount: false,
+    },
+  )
+  const { data: nanogptCatalog } = trpc.opencode.listModels.useQuery(
+    { provider: "nanogpt" },
+    {
+      enabled: isModelDropdownOpen || provider === "nanogpt",
+      staleTime: 5 * 60_000,
+      refetchOnMount: false,
+    },
+  )
   const cursorLoginMutation = trpc.cursor.startLogin.useMutation({
     onSuccess: () => {
       toast.info("Complete Cursor login in the browser, then reopen this menu.")
@@ -787,24 +838,20 @@ export const ChatInputArea = memo(function ChatInputArea({
     if (selectedCursorModel.id) setSelectedSubChatCursorModelId(selectedCursorModel.id)
   }, [provider, selectedCursorModel.id, setSelectedSubChatCursorModelId])
 
-  const { data: customClaudeCredentialStatus } = trpc.credentials.status.useQuery({
-    id: "claude.custom-api-token",
-  })
+  const { data: customClaudeCredentialStatus } = trpc.credentials.status.useQuery(
+    { id: "claude.custom-api-token" },
+    {
+      enabled: isModelDropdownOpen || provider === "claude-code",
+      staleTime: 5 * 60_000,
+      refetchOnMount: false,
+    },
+  )
   const hasCustomClaudeConfig = customClaudeCredentialStatus?.configured === true
   const isClaudeConnected = Boolean(claudeCodeIntegration?.isConnected) || hasCustomClaudeConfig
 
   // Determine current Ollama model (selected or recommended)
   const currentOllamaModel =
     selectedOllamaModel || availableModels.recommendedModel || availableModels.ollamaModels[0]
-
-  // Debug: log selected Ollama model
-  useEffect(() => {
-    if (availableModels.isOffline) {
-      console.log(
-        `[Ollama UI] selectedOllamaModel atom value: ${selectedOllamaModel || "(null)"}, currentOllamaModel: ${currentOllamaModel}`,
-      )
-    }
-  }, [selectedOllamaModel, currentOllamaModel, availableModels.isOffline])
 
   const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(
     subChatReasoningEnabledAtomFamily(subChatId),
@@ -1082,7 +1129,14 @@ export const ChatInputArea = memo(function ChatInputArea({
   ])
   const { data: worktreeOptions = [] } = trpc.chats.listWorktreeOptions.useQuery(
     { id: parentChatId },
-    { enabled: !!parentChatId && !sandboxId },
+    {
+      enabled:
+        !!parentChatId &&
+        !sandboxId &&
+        (isWorktreeMenuOpen || Boolean(currentTargetWorktreePath || runtimeChat?.worktreePath)),
+      staleTime: 60_000,
+      refetchOnMount: false,
+    },
   )
   const createWorktreeMutation = trpc.chats.createWorktreeForExistingChat.useMutation({
     onSuccess: (chat) => {
@@ -1143,7 +1197,9 @@ export const ChatInputArea = memo(function ChatInputArea({
     },
     {
       enabled: Boolean(parentChatId) && !sandboxId,
-      refetchInterval: 5_000,
+      staleTime: 60_000,
+      refetchOnMount: false,
+      refetchOnWindowFocus: false,
     },
   )
   const worktreeWasReplaced = resolvedWorktreeStatus?.status === "replaced"
@@ -2043,26 +2099,47 @@ export const ChatInputArea = memo(function ChatInputArea({
     ...(hasWorktreeChoices ? ["Project checkout"] : []),
   ]
 
+  const setInputContainerRef = useCallback((element: HTMLDivElement | null) => {
+    inputResizeObserverRef.current?.disconnect()
+    inputResizeObserverRef.current = null
+    if (inputMeasureFrameRef.current !== null) {
+      cancelAnimationFrame(inputMeasureFrameRef.current)
+      inputMeasureFrameRef.current = null
+    }
+    if (!element) return
+    let pendingSize = { width: 0, height: 0 }
+    let appliedSize = { width: -1, height: -1 }
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry) return
+      pendingSize = entry.contentRect
+      if (inputMeasureFrameRef.current !== null) return
+      inputMeasureFrameRef.current = requestAnimationFrame(() => {
+        inputMeasureFrameRef.current = null
+        const { width, height } = pendingSize
+        if (appliedSize.width === width && appliedSize.height === height) return
+        appliedSize = { width, height }
+        element.style.setProperty("--chat-input-height", `${height}px`)
+        element.style.setProperty("--chat-input-width", `${width}px`)
+        element.parentElement?.style.setProperty("--chat-input-height", `${height}px`)
+        element.parentElement?.style.setProperty("--chat-input-width", `${width}px`)
+        setInputWidth((current) => (current === width ? current : width))
+      })
+    })
+    observer.observe(element)
+    inputResizeObserverRef.current = observer
+  }, [])
+
+  useEffect(
+    () => () => {
+      inputResizeObserverRef.current?.disconnect()
+      if (inputMeasureFrameRef.current !== null) cancelAnimationFrame(inputMeasureFrameRef.current)
+    },
+    [],
+  )
+
   return (
     <div
-      ref={(el) => {
-        if (!el) return
-        if (el.dataset.observed) return
-        el.dataset.observed = "true"
-        const parent = el.parentElement
-        const observer = new ResizeObserver((entries) => {
-          const { height, width } = entries[0]?.contentRect ?? {
-            height: 0,
-            width: 0,
-          }
-          el.style.setProperty("--chat-input-height", `${height}px`)
-          el.style.setProperty("--chat-input-width", `${width}px`)
-          parent?.style.setProperty("--chat-input-height", `${height}px`)
-          parent?.style.setProperty("--chat-input-width", `${width}px`)
-          setInputWidth(width)
-        })
-        observer.observe(el)
-      }}
+      ref={setInputContainerRef}
       className="px-2 pb-2 shadow-sm shadow-background relative z-10"
       data-compact-input={inputWidth < 560 || undefined}
     >
@@ -2220,7 +2297,10 @@ export const ChatInputArea = memo(function ChatInputArea({
                   <div className="group/model-controls flex min-w-0 items-center gap-0.5">
                     <AgentModelSelector
                       open={isModelDropdownOpen}
-                      onOpenChange={setIsModelDropdownOpen}
+                      onOpenChange={(open) => {
+                        measurePerformanceNextFrame(open ? "menu-open" : "menu-close")
+                        setIsModelDropdownOpen(open)
+                      }}
                       selectedAgentId={provider}
                       onSelectedAgentIdChange={(nextProvider) => {
                         if (!canSwitchProvider) return
@@ -2508,7 +2588,20 @@ export const ChatInputArea = memo(function ChatInputArea({
                     )}
 
                     {hasWorktreeChoices && (
-                      <DropdownMenu>
+                      <DropdownMenu
+                        open={isWorktreeMenuOpen}
+                        onOpenChange={(open) => {
+                          setIsWorktreeMenuOpen(open)
+                          if (open) {
+                            void trpcUtils.chats.listWorktreeOptions.invalidate({
+                              id: parentChatId,
+                            })
+                            void trpcUtils.chats.resolveWorktreeStatus.invalidate({
+                              id: parentChatId,
+                            })
+                          }
+                        }}
+                      >
                         <DropdownMenuTrigger asChild>
                           <button
                             className={cn(

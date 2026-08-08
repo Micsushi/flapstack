@@ -1,0 +1,2 @@
+CREATE INDEX `chats_active_pinned_updated_idx` ON `chats` (`archived_at`,`pinned_at`,`updated_at`);--> statement-breakpoint
+CREATE INDEX `sub_chats_chat_created_idx` ON `sub_chats` (`chat_id`,`created_at`);

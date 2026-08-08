@@ -76,6 +76,7 @@ const getLegacyStorageKey = (
 
 // Custom event for notifying other components when open sub-chats change
 export const OPEN_SUB_CHATS_CHANGE_EVENT = "open-sub-chats-change"
+export type OpenSubChatsChangeDetail = { chatId: string; openSubChatIds: string[] }
 
 // Debounce timer to avoid rapid-fire events
 let openSubChatsChangeTimer: ReturnType<typeof setTimeout> | null = null
@@ -91,7 +92,11 @@ const saveToLS = (
   if (type === "open") {
     if (openSubChatsChangeTimer) clearTimeout(openSubChatsChangeTimer)
     openSubChatsChangeTimer = setTimeout(() => {
-      window.dispatchEvent(new CustomEvent(OPEN_SUB_CHATS_CHANGE_EVENT))
+      window.dispatchEvent(
+        new CustomEvent<OpenSubChatsChangeDetail>(OPEN_SUB_CHATS_CHANGE_EVENT, {
+          detail: { chatId, openSubChatIds: Array.isArray(value) ? (value as string[]) : [] },
+        }),
+      )
       openSubChatsChangeTimer = null
     }, 50)
   }

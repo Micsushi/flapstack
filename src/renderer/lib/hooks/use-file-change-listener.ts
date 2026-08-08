@@ -28,6 +28,9 @@ export function useFileChangeListener(
         queryClient.invalidateQueries({
           queryKey: [["changes", "getStatus"]],
         })
+        queryClient.invalidateQueries({
+          queryKey: [["chats", "resolveWorktreeStatus"]],
+        })
         // Invalidate parsed diff caches for both changes + chats routes
         queryClient.invalidateQueries({
           queryKey: [["changes", "getParsedDiff"]],
@@ -99,6 +102,9 @@ export function useGitWatcher(
         // Invalidate git status queries to trigger refetch
         queryClient.invalidateQueries({
           queryKey: [["changes", "getStatus"]],
+        })
+        queryClient.invalidateQueries({
+          queryKey: [["chats", "resolveWorktreeStatus"]],
         })
 
         // Also invalidate parsed diff if files were modified

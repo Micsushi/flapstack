@@ -1499,6 +1499,25 @@ export const chats = sqliteTable(
     index("chats_worktree_path_idx").on(table.worktreePath),
     index("chats_task_id_idx").on(table.taskId),
     index("chats_scope_idx").on(table.scope),
+    index("chats_active_pinned_updated_idx").on(table.archivedAt, table.pinnedAt, table.updatedAt),
+    index("chats_project_active_order_idx").on(
+      table.projectId,
+      table.archivedAt,
+      table.pinnedAt,
+      table.updatedAt,
+    ),
+    index("chats_task_active_order_idx").on(
+      table.taskId,
+      table.archivedAt,
+      table.pinnedAt,
+      table.updatedAt,
+    ),
+    index("chats_scope_active_order_idx").on(
+      table.scope,
+      table.archivedAt,
+      table.pinnedAt,
+      table.updatedAt,
+    ),
   ],
 )
 
@@ -1567,26 +1586,30 @@ export const chatTagAssignmentsRelations = relations(chatTagAssignments, ({ one 
 }))
 
 // ============ SUB-CHATS ============
-export const subChats = sqliteTable("sub_chats", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => createId()),
-  name: text("name"),
-  chatId: text("chat_id")
-    .notNull()
-    .references(() => chats.id, { onDelete: "cascade" }),
-  sessionId: text("session_id"), // Claude SDK session ID for resume
-  streamId: text("stream_id"), // Track in-progress streams
-  mode: text("mode").notNull().default("write"), // "write" | "plan" | "read" | "review"
-  harness: text("harness"),
-  model: text("model"),
-  permissionMode: text("permission_mode"),
-  worktreePath: text("worktree_path"),
-  runStatus: text("run_status"),
-  messages: text("messages").notNull().default("[]"), // JSON array
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-})
+export const subChats = sqliteTable(
+  "sub_chats",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    name: text("name"),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    sessionId: text("session_id"), // Claude SDK session ID for resume
+    streamId: text("stream_id"), // Track in-progress streams
+    mode: text("mode").notNull().default("write"), // "write" | "plan" | "read" | "review"
+    harness: text("harness"),
+    model: text("model"),
+    permissionMode: text("permission_mode"),
+    worktreePath: text("worktree_path"),
+    runStatus: text("run_status"),
+    messages: text("messages").notNull().default("[]"), // JSON array
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [index("sub_chats_chat_created_idx").on(table.chatId, table.createdAt)],
+)
 
 export const subChatsRelations = relations(subChats, ({ one, many }) => ({
   chat: one(chats, {

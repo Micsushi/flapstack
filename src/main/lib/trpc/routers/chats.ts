@@ -473,6 +473,32 @@ export const chatsRouter = router({
         .all()
     }),
 
+  archiveSummary: publicProcedure.query(() => {
+    const db = getDatabase()
+    const chatCount = Number(
+      db
+        .select({ value: sql<number>`count(*)` })
+        .from(chats)
+        .where(isNotNull(chats.archivedAt))
+        .get()?.value ?? 0,
+    )
+    const projectCount = Number(
+      db
+        .select({ value: sql<number>`count(*)` })
+        .from(projects)
+        .where(isNotNull(projects.archivedAt))
+        .get()?.value ?? 0,
+    )
+    const taskCount = Number(
+      db
+        .select({ value: sql<number>`count(*)` })
+        .from(tasks)
+        .where(isNotNull(tasks.archivedAt))
+        .get()?.value ?? 0,
+    )
+    return { chatCount, projectCount, taskCount, total: chatCount + projectCount + taskCount }
+  }),
+
   listTags: publicProcedure.query(() => {
     return getDatabase().select().from(chatTags).orderBy(chatTags.normalizedName).all()
   }),
@@ -566,6 +592,54 @@ export const chatsRouter = router({
 
     return { ...chat, subChats: chatSubChats, project }
   }),
+
+  getMetadata: publicProcedure.input(z.object({ id: z.string() })).query(({ input }) => {
+    const db = getDatabase()
+    const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
+    if (!chat) return null
+
+    const chatSubChats = db
+      .select({
+        id: subChats.id,
+        name: subChats.name,
+        chatId: subChats.chatId,
+        sessionId: subChats.sessionId,
+        streamId: subChats.streamId,
+        mode: subChats.mode,
+        harness: subChats.harness,
+        model: subChats.model,
+        permissionMode: subChats.permissionMode,
+        worktreePath: subChats.worktreePath,
+        runStatus: subChats.runStatus,
+        createdAt: subChats.createdAt,
+        updatedAt: subChats.updatedAt,
+      })
+      .from(subChats)
+      .where(eq(subChats.chatId, input.id))
+      .orderBy(subChats.createdAt)
+      .all()
+
+    const project = chat.projectId
+      ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+      : null
+
+    return { ...chat, subChats: chatSubChats, project }
+  }),
+
+  getTranscript: publicProcedure
+    .input(z.object({ chatId: z.string(), subChatId: z.string() }))
+    .query(({ input }) =>
+      getDatabase()
+        .select({
+          id: subChats.id,
+          chatId: subChats.chatId,
+          messages: subChats.messages,
+          updatedAt: subChats.updatedAt,
+        })
+        .from(subChats)
+        .where(and(eq(subChats.id, input.subChatId), eq(subChats.chatId, input.chatId)))
+        .get(),
+    ),
 
   listWorktreeOptions: publicProcedure.input(z.object({ id: z.string() })).query(({ input }) => {
     return listWorktreeOptions(input.id)

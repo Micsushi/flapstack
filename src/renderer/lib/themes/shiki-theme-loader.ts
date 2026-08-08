@@ -1,4 +1,4 @@
-import * as shiki from "shiki"
+import type { BundledLanguage, BundledTheme, Highlighter } from "shiki"
 import { isBuiltinTheme } from "../vscode-themes"
 import { getBuiltinThemeById } from "./builtin-themes"
 import type { VSCodeFullTheme } from "../atoms"
@@ -7,7 +7,7 @@ import type { VSCodeFullTheme } from "../atoms"
  * Shared Shiki highlighter instance
  * Initialized with default themes, can load additional themes dynamically
  */
-let highlighterPromise: Promise<shiki.Highlighter> | null = null
+let highlighterPromise: Promise<Highlighter> | null = null
 
 // ============================================================================
 // LRU CACHE FOR HIGHLIGHT RESULTS
@@ -59,7 +59,7 @@ const highlightCache = new LRUCache<string, string>(HIGHLIGHT_CACHE_MAX_SIZE)
 /**
  * Languages supported by the highlighter
  */
-const SUPPORTED_LANGUAGES: shiki.BundledLanguage[] = [
+const SUPPORTED_LANGUAGES: BundledLanguage[] = [
   "typescript",
   "javascript",
   "tsx",
@@ -77,7 +77,7 @@ const SUPPORTED_LANGUAGES: shiki.BundledLanguage[] = [
 /**
  * Default themes to load initially - include all shiki bundled themes we might need
  */
-const DEFAULT_THEMES: shiki.BundledTheme[] = [
+const DEFAULT_THEMES: BundledTheme[] = [
   "github-dark",
   "github-light",
   "vitesse-dark",
@@ -91,7 +91,7 @@ const DEFAULT_THEMES: shiki.BundledTheme[] = [
  * Map our custom theme IDs to Shiki bundled themes for syntax highlighting
  * Only themes WITHOUT tokenColors need mapping - themes with tokenColors use their own
  */
-const THEME_TO_SHIKI_MAP: Record<string, shiki.BundledTheme> = {
+const THEME_TO_SHIKI_MAP: Record<string, BundledTheme> = {
   // Flapstack themes use GitHub themes (no tokenColors)
   "flapstack-dark": "github-dark",
   "flapstack-light": "github-light",
@@ -113,12 +113,11 @@ const THEME_TO_SHIKI_MAP: Record<string, shiki.BundledTheme> = {
 /**
  * Get or create the Shiki highlighter instance
  */
-export async function getHighlighter(): Promise<shiki.Highlighter> {
+export async function getHighlighter(): Promise<Highlighter> {
   if (!highlighterPromise) {
-    highlighterPromise = shiki.createHighlighter({
-      themes: DEFAULT_THEMES,
-      langs: SUPPORTED_LANGUAGES,
-    })
+    highlighterPromise = import("shiki").then(({ createHighlighter }) =>
+      createHighlighter({ themes: DEFAULT_THEMES, langs: SUPPORTED_LANGUAGES }),
+    )
   }
   return highlighterPromise
 }
@@ -160,7 +159,7 @@ export async function loadFullTheme(theme: VSCodeFullTheme): Promise<void> {
  */
 function isShikiBundledTheme(themeId: string): boolean {
   // These are the Shiki bundled themes that we load
-  return DEFAULT_THEMES.includes(themeId as shiki.BundledTheme)
+  return DEFAULT_THEMES.includes(themeId as BundledTheme)
 }
 
 /**
@@ -267,8 +266,8 @@ export async function highlightCode(
   const shikiTheme = getShikiThemeForHighlighting(themeId)
 
   const loadedLangs = highlighter.getLoadedLanguages()
-  const lang = loadedLangs.includes(language as shiki.BundledLanguage)
-    ? (language as shiki.BundledLanguage)
+  const lang = loadedLangs.includes(language as BundledLanguage)
+    ? (language as BundledLanguage)
     : "plaintext"
 
   const html = highlighter.codeToHtml(code, {

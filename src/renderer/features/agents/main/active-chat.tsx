@@ -29,6 +29,7 @@ import { ArrowDown, ChevronDown, GitFork, ListTree, TerminalSquare } from "lucid
 import { AnimatePresence, motion } from "motion/react"
 import {
   createContext,
+  lazy,
   memo,
   useCallback,
   useContext,
@@ -45,6 +46,8 @@ import type { FileStatus } from "../../../../shared/changes-types"
 import { ChatTranscriptOverview } from "./chat-transcript-overview"
 import { buildTranscriptMarkers, type TranscriptMarker } from "./chat-transcript-overview-model"
 import { hydrateChatFromPersistedMessages } from "./chat-message-hydration"
+import { createPersistedMessageCache } from "./persisted-message-cache"
+import { normalizePersistedMessages } from "./normalize-persisted-messages"
 import { presentRunError } from "./run-error-presentation"
 import {
   MAX_ATTACHMENT_BYTES,
@@ -71,6 +74,7 @@ import { api } from "../../../lib/mock-api"
 import { trpc, trpcClient } from "../../../lib/trpc"
 import { stopManagedSpeech } from "../../../lib/speech-playback"
 import { cn } from "../../../lib/utils"
+import { hotPathConsole as console } from "../../../lib/hot-path-console"
 import { isDesktopApp } from "../../../lib/utils/platform"
 import { ChangesPanel } from "../../changes"
 import { useCommitActions } from "../../changes/components/commit-input"
@@ -84,15 +88,12 @@ import {
   unifiedSidebarEnabledAtom,
   widgetVisibilityAtomFamily,
 } from "../../details-sidebar/atoms"
-import { DetailsSidebar } from "../../details-sidebar/details-sidebar"
-import { FileViewerSidebar } from "../../file-viewer"
 import { FileSearchDialog } from "../../file-viewer/components/file-search-dialog"
 import {
   terminalBottomHeightAtom,
   terminalDisplayModeAtom,
   terminalSidebarOpenAtomFamily,
 } from "../../terminal/atoms"
-import { TerminalBottomPanelContent, TerminalSidebar } from "../../terminal/terminal-sidebar"
 import { getTerminalScopeKey } from "../../terminal/utils"
 import {
   agentsChangesPanelCollapsedAtom,
@@ -221,17 +222,13 @@ import {
   useAgentSubChatStoreApi,
   type SubChatMeta,
 } from "../stores/sub-chat-store"
-import type { DiffViewMode } from "../ui/agent-diff-view"
 import {
-  AgentDiffView,
   diffViewModeAtom,
   splitUnifiedDiffByFile,
-  type AgentDiffViewRef,
-  type DiffStats,
+  type DiffViewMode,
   type ParsedDiffFile,
-} from "../ui/agent-diff-view"
-import { AgentPlanSidebar } from "../ui/agent-plan-sidebar"
-import { AgentPreview } from "../ui/agent-preview"
+} from "../ui/agent-diff-model"
+import { type AgentDiffViewRef, type DiffStats } from "../ui/agent-diff-view"
 import { resolveContextUsage } from "../ui/agent-context-usage"
 import { resolveChatTokenUsage, type AgentMessageMetadata } from "../ui/agent-message-usage"
 import { AgentQueueIndicator } from "../ui/agent-queue-indicator"
@@ -261,6 +258,41 @@ import { IsolatedMessagesSection, type MessageVirtualizerHandle } from "./isolat
 import { RuntimeActivityFixtureControls } from "../runtime-activity/runtime-activity-fixture-controls"
 // import { selectedTeamIdAtom } from "@/lib/atoms/team"
 const selectedTeamIdAtom = atom<string | null>(null)
+const AgentDiffView = lazy(() =>
+  import("../ui/agent-diff-view").then((module) => ({ default: module.AgentDiffView })),
+)
+const AgentPreview = lazy(() =>
+  import("../ui/agent-preview").then((module) => ({ default: module.AgentPreview })),
+)
+const AgentPlanSidebar = lazy(() =>
+  import("../ui/agent-plan-sidebar").then((module) => ({ default: module.AgentPlanSidebar })),
+)
+const DetailsSidebar = lazy(() =>
+  import("../../details-sidebar/details-sidebar").then((module) => ({
+    default: module.DetailsSidebar,
+  })),
+)
+const FileViewerSidebar = lazy(() =>
+  import("../../file-viewer/components/file-viewer-sidebar").then((module) => ({
+    default: module.FileViewerSidebar,
+  })),
+)
+const TerminalSidebar = lazy(() =>
+  import("../../terminal/terminal-sidebar").then((module) => ({
+    default: module.TerminalSidebar,
+  })),
+)
+const TerminalBottomPanelContent = lazy(() =>
+  import("../../terminal/terminal-sidebar").then((module) => ({
+    default: module.TerminalBottomPanelContent,
+  })),
+)
+const CHAT_METADATA_STALE_TIME = 30_000
+const persistedMessageCache = createPersistedMessageCache<unknown>({
+  parse: JSON.parse,
+  normalize: normalizePersistedMessages,
+})
+const persistedHydrationIdentities = new Map<string, unknown>()
 // import type { PlanType } from "@/lib/config/subscription-plans"
 type PlanType = string
 
@@ -5865,7 +5897,8 @@ function ChatViewScoped({
     { chatId },
     {
       enabled: !!chatId && chatSourceMode === "local",
-      refetchOnMount: "always",
+      staleTime: CHAT_METADATA_STALE_TIME,
+      refetchOnMount: false,
     },
   )
 
@@ -5948,7 +5981,7 @@ function ChatViewScoped({
     return getMatchingProjects(projects ?? [], remoteAgentChat)
   }, [remoteAgentChat, projects, getMatchingProjects])
 
-  const agentSubChats = (agentChat?.subChats ?? []) as Array<{
+  const agentSubChatMetadata = (agentChat?.subChats ?? []) as Array<{
     id: string
     name?: string | null
     mode?: ChatMode | "agent" | null
@@ -5959,8 +5992,25 @@ function ChatViewScoped({
   }>
 
   const canonicalConversationId = useMemo(
-    () => resolveCanonicalConversationId(agentSubChats, activeSubChatId),
-    [activeSubChatId, agentSubChats],
+    () => resolveCanonicalConversationId(agentSubChatMetadata, activeSubChatId),
+    [activeSubChatId, agentSubChatMetadata],
+  )
+  const { data: visibleTranscript } = trpc.chats.getTranscript.useQuery(
+    { chatId, subChatId: canonicalConversationId ?? "" },
+    {
+      enabled: chatSourceMode === "local" && Boolean(chatId) && Boolean(canonicalConversationId),
+      staleTime: 30_000,
+      refetchOnMount: false,
+    },
+  )
+  const agentSubChats = useMemo(
+    () =>
+      agentSubChatMetadata.map((subChat) =>
+        subChat.id === visibleTranscript?.id
+          ? { ...subChat, messages: visibleTranscript.messages }
+          : subChat,
+      ),
+    [agentSubChatMetadata, visibleTranscript],
   )
   const tabsToRender = useMemo(
     () => (canonicalConversationId ? [canonicalConversationId] : []),
@@ -7103,30 +7153,30 @@ Make sure to preserve all functionality from both branches when resolving confli
       const isRemoteChat = !!(agentChat as any)?.isRemote || !!chatSandboxId
       const targetWorktreePath = appStore.get(selectedTargetWorktreePathAtomFamily(subChatId))
       const runWorktreePath = targetWorktreePath || worktreePath
-      const desiredProvider = inferProviderFromMessages(subChatId)
       const desiredSubChat = agentSubChats.find((sc) => sc.id === subChatId)
       const rawDesiredMessages = desiredSubChat?.messages
-      const desiredMessages = Array.isArray(rawDesiredMessages)
-        ? rawDesiredMessages
-        : typeof rawDesiredMessages === "string"
-          ? (() => {
-              try {
-                const parsed = JSON.parse(rawDesiredMessages)
-                return Array.isArray(parsed) ? parsed : []
-              } catch {
-                return []
-              }
-            })()
-          : []
+      const readDesiredMessages = () =>
+        Array.isArray(rawDesiredMessages)
+          ? rawDesiredMessages
+          : typeof rawDesiredMessages === "string"
+            ? persistedMessageCache.read(subChatId, rawDesiredMessages)
+            : []
 
-      // Fast path for existing chats. Only inspect messages when a local empty-chat provider override
-      // might require transport recreation.
       const existing = agentChatStore.get(subChatId)
       if (existing) {
-        hydrateChatFromPersistedMessages(existing, desiredMessages)
+        if (persistedHydrationIdentities.get(subChatId) !== rawDesiredMessages) {
+          hydrateChatFromPersistedMessages(existing, readDesiredMessages())
+          persistedHydrationIdentities.set(subChatId, rawDesiredMessages)
+        }
         if (isRemoteChat) return existing
 
         const existingOpencodeTransport = (existing as any)?.transport
+        const overrideProvider = subChatProviderOverrides[subChatId]
+        if (!(existingOpencodeTransport instanceof OpencodeChatTransport) && !overrideProvider) {
+          return existing
+        }
+
+        const desiredProvider = inferProviderFromMessages(subChatId)
         if (existingOpencodeTransport instanceof OpencodeChatTransport) {
           if (desiredProvider === "openrouter" || desiredProvider === "nanogpt") {
             const fallbackModel =
@@ -7146,7 +7196,6 @@ Make sure to preserve all functionality from both branches when resolving confli
           }
         }
 
-        const overrideProvider = subChatProviderOverrides[subChatId]
         if (!overrideProvider) return existing
 
         const existingProvider: AgentProviderId =
@@ -7161,7 +7210,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                   : "claude-code"
         if (existingProvider === overrideProvider) return existing
 
-        const existingMessageCount = desiredMessages.length
+        const existingMessageCount = readDesiredMessages().length
 
         if (existingMessageCount > 0) return existing
         agentChatStore.delete(subChatId)
@@ -7169,7 +7218,7 @@ Make sure to preserve all functionality from both branches when resolving confli
 
       // Find sub-chat data
       const subChat = desiredSubChat
-      const messages = desiredMessages
+      const messages = readDesiredMessages()
 
       // Get mode from store metadata (falls back to currentMode)
       const subChatMeta = subChatStore.getState().allSubChats.find((sc) => sc.id === subChatId)
@@ -7362,6 +7411,13 @@ Make sure to preserve all functionality from both branches when resolving confli
 
           // Refresh diff stats after agent finishes making changes
           fetchDiffStatsRef.current()
+          const queryClient = getQueryClient()
+          if (queryClient) {
+            void queryClient.invalidateQueries({ queryKey: [["chats", "getFileStats"]] })
+            void queryClient.invalidateQueries({
+              queryKey: [["chats", "getPendingPlanApprovals"]],
+            })
+          }
 
           pruneIfDetachedAndIdle(subChatId, chatId)
 
@@ -7371,6 +7427,7 @@ Make sure to preserve all functionality from both branches when resolving confli
       })
 
       agentChatStore.set(subChatId, newChat, chatId)
+      persistedHydrationIdentities.set(subChatId, rawDesiredMessages)
       // Store streamId at creation time to prevent resume during active streaming
       // tRPC refetch would update stream_id in DB, but store stays stable
       agentChatStore.setStreamId(subChatId, subChat?.stream_id || null)
@@ -7956,14 +8013,6 @@ Make sure to preserve all functionality from both branches when resolving confli
       utils.agents.getAgentChat,
     ],
   )
-
-  // Get or create Chat instance for active sub-chat
-  const activeChat = useMemo(() => {
-    if (!canonicalConversationId || !agentChat || isLocalChatLoading) {
-      return null
-    }
-    return getOrCreateChat(canonicalConversationId)
-  }, [canonicalConversationId, agentChat, getOrCreateChat, isLocalChatLoading])
 
   // Check if active sub-chat is the first one (for renaming parent chat)
   // Use agentSubChats directly to avoid race condition with store initialization

@@ -124,6 +124,7 @@ export function ProgressiveOverflowRow({
   )
   const rowRef = useRef<HTMLDivElement>(null)
   const itemWidthsRef = useRef<number[]>([])
+  const measureFrameRef = useRef<number | null>(null)
   const [visibleIndexes, setVisibleIndexes] = useState(() =>
     forceOverflow ? [] : items.map((_, index) => index),
   )
@@ -173,6 +174,14 @@ export function ProgressiveOverflowRow({
     usageRatio,
   ])
 
+  const scheduleMeasure = useCallback(() => {
+    if (measureFrameRef.current !== null) return
+    measureFrameRef.current = requestAnimationFrame(() => {
+      measureFrameRef.current = null
+      measure()
+    })
+  }, [measure])
+
   useLayoutEffect(() => {
     itemWidthsRef.current = []
     setVisibleIndexes(forceOverflow ? [] : items.map((_, index) => index))
@@ -181,17 +190,18 @@ export function ProgressiveOverflowRow({
   useLayoutEffect(() => {
     const row = rowRef.current
     if (!row) return
-    measure()
+    scheduleMeasure()
     if (typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(measure)
+    const observer = new ResizeObserver(scheduleMeasure)
     observer.observe(row)
-    row
-      .querySelectorAll("[data-progressive-overflow-item]")
-      .forEach((item) => observer.observe(item))
     const pinned = row.querySelector("[data-progressive-overflow-pinned]")
     if (pinned) observer.observe(pinned)
-    return () => observer.disconnect()
-  }, [itemSignature, measure])
+    return () => {
+      observer.disconnect()
+      if (measureFrameRef.current !== null) cancelAnimationFrame(measureFrameRef.current)
+      measureFrameRef.current = null
+    }
+  }, [itemSignature, scheduleMeasure])
 
   const visibleIndexSet = new Set(visibleIndexes)
   const visibleItems = items

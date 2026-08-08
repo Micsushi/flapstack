@@ -25,6 +25,11 @@ import { sanitizeForTitle } from "./commandBuffer"
 import { shellEscapePaths } from "./utils"
 import { TerminalSearch } from "./TerminalSearch"
 import type { TerminalProps, TerminalStreamEvent } from "./types"
+import { hotPathConsole as console } from "../../lib/hot-path-console"
+import {
+  incrementPerformanceCounter,
+  measurePerformanceNextFrame,
+} from "../../lib/performance-counters"
 import "xterm/css/xterm.css"
 
 export function Terminal({
@@ -170,6 +175,9 @@ export function Terminal({
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
+
+    incrementPerformanceCounter("terminal-open")
+    measurePerformanceNextFrame("terminal-open")
 
     console.log("[Terminal:useEffect] MOUNT - paneId:", paneId)
     console.log("[Terminal:useEffect] Container rect:", container.getBoundingClientRect())

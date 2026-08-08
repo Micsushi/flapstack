@@ -100,7 +100,7 @@ describe("mobile-events", () => {
     expect(journal.entries.find((entry) => entry.idx === 50)).toEqual(
       expect.objectContaining({ tag: "0050_mobile_projection_families" }),
     )
-    expect(journal.entries.at(-1)).toEqual(
+    expect(journal.entries.find((entry) => entry.idx === 53)).toEqual(
       expect.objectContaining({ idx: 53, tag: "0053_chat-tags" }),
     )
     expect(tableNames()).toEqual(

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 // import { useSearchParams, useRouter } from "next/navigation" // Desktop doesn't use next/navigation
 // Desktop: mock Next.js navigation hooks
@@ -53,13 +53,7 @@ import { trpc } from "../../../lib/trpc"
 import { useIsMobile } from "../../../lib/hooks/use-mobile"
 import { AgentsSidebar } from "../../sidebar/agents-sidebar"
 import { AgentsSubChatsSidebar } from "../../sidebar/agents-subchats-sidebar"
-import { AgentPreview } from "./agent-preview"
-import { AgentDiffView } from "./agent-diff-view"
-import {
-  TerminalSidebar,
-  terminalSidebarOpenAtomFamily,
-  WorkbenchTerminalPane,
-} from "../../terminal"
+import { terminalSidebarOpenAtomFamily } from "../../terminal/atoms"
 import { getTerminalScopeKey } from "../../terminal/utils"
 import { useAgentSubChatStore, type SubChatMeta } from "../stores/sub-chat-store"
 import { useShallow } from "zustand/react/shallow"
@@ -74,10 +68,6 @@ import { RenameDialog } from "../../../components/rename-dialog"
 import { AlignJustify, MessageSquare, PanelsTopLeft, Plus, SquareTerminal, X } from "lucide-react"
 import { AgentsQuickSwitchDialog } from "../components/agents-quick-switch-dialog"
 import { SubChatsQuickSwitchDialog } from "../components/subchats-quick-switch-dialog"
-import { SettingsContent } from "../../settings/settings-content"
-import { AgentsUsageTab } from "../../../components/dialogs/settings-tabs/agents-usage-tab"
-import { KanbanView } from "../../kanban"
-import { PlanView } from "../../plan"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -111,16 +101,8 @@ import { DictationSessionProvider } from "../voice/dictation-session"
 import { reconcileLiveAgentInputs } from "../lib/agent-input-transport"
 import { appStore } from "../../../lib/jotai-store"
 import { useDesktopNotifications } from "../hooks/use-desktop-notifications"
-import { ProjectVaultView } from "../../project-vault/project-vault-view"
-import { SavedWorkspacesView } from "../../saved-workspaces"
-import { OrchestrationFleetView } from "../../orchestration-fleet/orchestration-fleet-view"
 import { getInitialWindowParams, getWindowId } from "../../../contexts/WindowContext"
-import {
-  AutomationsDetailView,
-  AutomationsView,
-  InboxView,
-  useAutomationInboxNotifications,
-} from "../../automations"
+import { useAutomationInboxNotifications } from "../../automations/use-automation-inbox-notifications"
 import { useBetaFeatures } from "../../settings/use-beta-features"
 import {
   formatScopeChatTimestamp,
@@ -190,6 +172,70 @@ import {
   type ChatWorkbenchSnapshot,
 } from "../../../../shared/chat-workbench-history"
 import { SelectRepoPage } from "../../onboarding"
+import {
+  incrementPerformanceCounter,
+  measurePerformanceNextFrame,
+} from "../../../lib/performance-counters"
+
+const SettingsContent = lazy(() =>
+  import("../../settings/settings-content").then((module) => ({ default: module.SettingsContent })),
+)
+const AgentsUsageTab = lazy(() =>
+  import("../../../components/dialogs/settings-tabs/agents-usage-tab").then((module) => ({
+    default: module.AgentsUsageTab,
+  })),
+)
+const KanbanView = lazy(() =>
+  import("../../kanban/kanban-view").then((module) => ({ default: module.KanbanView })),
+)
+const PlanView = lazy(() =>
+  import("../../plan/plan-view").then((module) => ({ default: module.PlanView })),
+)
+const ProjectVaultView = lazy(() =>
+  import("../../project-vault/project-vault-view").then((module) => ({
+    default: module.ProjectVaultView,
+  })),
+)
+const SavedWorkspacesView = lazy(() =>
+  import("../../saved-workspaces/saved-workspaces-view").then((module) => ({
+    default: module.SavedWorkspacesView,
+  })),
+)
+const OrchestrationFleetView = lazy(() =>
+  import("../../orchestration-fleet/orchestration-fleet-view").then((module) => ({
+    default: module.OrchestrationFleetView,
+  })),
+)
+const AutomationsView = lazy(() =>
+  import("../../automations/automations-view").then((module) => ({
+    default: module.AutomationsView,
+  })),
+)
+const AutomationsDetailView = lazy(() =>
+  import("../../automations/automations-detail-view").then((module) => ({
+    default: module.AutomationsDetailView,
+  })),
+)
+const InboxView = lazy(() =>
+  import("../../automations/inbox-view").then((module) => ({ default: module.InboxView })),
+)
+const AgentPreview = lazy(() =>
+  import("./agent-preview").then((module) => ({ default: module.AgentPreview })),
+)
+const AgentDiffView = lazy(() =>
+  import("./agent-diff-view").then((module) => ({ default: module.AgentDiffView })),
+)
+const TerminalSidebar = lazy(() =>
+  import("../../terminal/terminal-sidebar").then((module) => ({
+    default: module.TerminalSidebar,
+  })),
+)
+const WorkbenchTerminalPane = lazy(() =>
+  import("../../terminal/workbench-terminal-pane").then((module) => ({
+    default: module.WorkbenchTerminalPane,
+  })),
+)
+
 // Desktop mock
 const useIsAdmin = () => false
 const TOP_NAVIGATION_ENTER_DELAY_MS = 180
@@ -230,6 +276,35 @@ function parseStoredProjectColors(value: string): Record<string, string> {
   }
 }
 
+function AgentInputPoller() {
+  const selectedChatId = useAtomValue(selectedAgentChatIdAtom)
+  const { notifyAgentNeedsInput } = useDesktopNotifications()
+  const notifiedBackgroundRequestIdsRef = useRef(new Set<string>())
+  const { data: liveAgentInputs = [] } = trpc.agentInput.listWithContext.useQuery(undefined, {
+    refetchInterval: import.meta.env.DEV ? 250 : 1_000,
+  })
+
+  useEffect(() => {
+    const current = appStore.get(pendingUserQuestionsAtom)
+    const reconciled = reconcileLiveAgentInputs(current, liveAgentInputs)
+
+    for (const { request, parentChatId } of liveAgentInputs) {
+      if (
+        parentChatId &&
+        parentChatId !== selectedChatId &&
+        !notifiedBackgroundRequestIdsRef.current.has(request.requestId)
+      ) {
+        notifiedBackgroundRequestIdsRef.current.add(request.requestId)
+        notifyAgentNeedsInput("", { chatId: parentChatId, subChatId: request.chatId })
+      }
+    }
+
+    if (reconciled.changed) appStore.set(pendingUserQuestionsAtom, reconciled.pending)
+  }, [liveAgentInputs, notifyAgentNeedsInput, selectedChatId])
+
+  return null
+}
+
 // Main Component
 function AgentsContentInner() {
   const workspaceWindowParams = useMemo(() => getInitialWindowParams(), [])
@@ -244,6 +319,7 @@ function AgentsContentInner() {
   const [mainBarDropActive, setMainBarDropActive] = useState(false)
   const [openChatTabsHovered, setOpenChatTabsHovered] = useState(false)
   const [openChatScrollbar, setOpenChatScrollbar] = useState({ left: 0, width: 0 })
+  const [openChatContextMenuId, setOpenChatContextMenuId] = useState<string | null>(null)
   const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom)
   const [openChatIds, setOpenChatIds] = useAtom(openAgentChatIdsAtom)
   const [unseenChatIds, setUnseenChatIds] = useAtom(agentsUnseenChangesAtom)
@@ -323,6 +399,8 @@ function AgentsContentInner() {
 
   useEffect(() => {
     if (!selectedChatId) return
+    incrementPerformanceCounter("chat-switch")
+    measurePerformanceNextFrame("chat-switch")
     setSelectedDraftId(null)
     setShowNewChatForm(false)
     setActiveNewChatDraftId(null)
@@ -368,13 +446,11 @@ function AgentsContentInner() {
   const { user } = useUser()
   const { signOut } = useClerk()
   const isAdmin = useIsAdmin()
-  const { notifyAgentNeedsInput } = useDesktopNotifications()
   useAutomationInboxNotifications(betaFeatures.automations)
 
   useEffect(() => {
     if (desktopView !== effectiveDesktopView) setDesktopView(effectiveDesktopView)
   }, [desktopView, effectiveDesktopView, setDesktopView])
-  const notifiedBackgroundRequestIdsRef = useRef(new Set<string>())
 
   // Quick-switch dialog state - Agents (Opt+Ctrl+Tab)
   const [quickSwitchOpen, setQuickSwitchOpen] = useAtom(agentsQuickSwitchOpenAtom)
@@ -439,31 +515,6 @@ function AgentsContentInner() {
   )
   const { data: archivedChats } = trpc.chats.listArchived.useQuery({})
   const { data: scopeTasks = [] } = trpc.tasks.list.useQuery({ includeArchived: true })
-  const { data: liveAgentInputs = [] } = trpc.agentInput.listWithContext.useQuery(undefined, {
-    refetchInterval: import.meta.env.DEV ? 250 : 1_000,
-  })
-
-  useEffect(() => {
-    const current = appStore.get(pendingUserQuestionsAtom)
-    const reconciled = reconcileLiveAgentInputs(current, liveAgentInputs)
-
-    for (const { request, parentChatId } of liveAgentInputs) {
-      if (
-        parentChatId &&
-        parentChatId !== selectedChatId &&
-        !notifiedBackgroundRequestIdsRef.current.has(request.requestId)
-      ) {
-        notifiedBackgroundRequestIdsRef.current.add(request.requestId)
-        notifyAgentNeedsInput("", {
-          chatId: parentChatId,
-          subChatId: request.chatId,
-        })
-      }
-    }
-
-    if (reconciled.changed) appStore.set(pendingUserQuestionsAtom, reconciled.pending)
-  }, [liveAgentInputs, notifyAgentNeedsInput, selectedChatId])
-
   // Fetch all projects for git info (like sidebar does)
   const { data: projects } = trpc.projects.list.useQuery()
 
@@ -2990,7 +3041,7 @@ function AgentsContentInner() {
                         </ContextMenu>
                       )
                     })}
-                    {openChatTabs.map((chat, tabIndex) => {
+                    {openChatTabs.map((chat) => {
                       const isActive =
                         chatWorkbenchNavigation.activeGroupId === null && chat.id === selectedChatId
                       const hasUnseenChanges = unseenChatIds.has(chat.id)
@@ -2998,12 +3049,21 @@ function AgentsContentInner() {
                         chat,
                         openChatProjectColors,
                       )
-                      const tabsToRight = openChatTabs.slice(tabIndex + 1).map(({ id }) => id)
-                      const otherTabs = openChatTabs
-                        .filter(({ id }) => id !== chat.id)
-                        .map(({ id }) => id)
+                      const menuIndex =
+                        openChatContextMenuId === chat.id
+                          ? openChatTabs.findIndex(({ id }) => id === chat.id)
+                          : -1
+                      const tabsToRight =
+                        menuIndex >= 0 ? openChatTabs.slice(menuIndex + 1).map(({ id }) => id) : []
+                      const otherTabs =
+                        menuIndex >= 0
+                          ? openChatTabs.filter(({ id }) => id !== chat.id).map(({ id }) => id)
+                          : []
                       return (
-                        <ContextMenu key={chat.id}>
+                        <ContextMenu
+                          key={chat.id}
+                          onOpenChange={(open) => setOpenChatContextMenuId(open ? chat.id : null)}
+                        >
                           <ContextMenuTrigger asChild>
                             <div
                               data-open-chat-tab-id={chat.id}
@@ -3482,7 +3542,16 @@ function AgentsContentInner() {
 export function AgentsContent() {
   return (
     <DictationSessionProvider>
-      <AgentsContentInner />
+      <AgentInputPoller />
+      <Suspense
+        fallback={
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            LoadingÃ¢â‚¬Â¦
+          </div>
+        }
+      >
+        <AgentsContentInner />
+      </Suspense>
     </DictationSessionProvider>
   )
 }

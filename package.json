@@ -72,6 +72,7 @@
     "performance:stage6:acceptance": "node scripts/stage6-performance.mjs --core --acceptance",
     "performance:stage6:ci": "node scripts/stage6-performance.mjs --core --ci",
     "performance:stage6:verify-electron-runtime": "node scripts/verify-stage6-electron-performance-runtime.mjs",
+    "performance:bundle": "node scripts/report-renderer-bundle.mjs",
     "test:model-catalog": "node scripts/run-project-bin.mjs vitest vitest -- run tests/model-catalog.test.ts",
     "test:codex-model-catalog": "node scripts/check-codex-model-catalog.mjs",
     "check": "node scripts/with-heavy-job-lock.mjs check -- node scripts/check.mjs",

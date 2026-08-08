@@ -14,7 +14,11 @@ import { useResolvedHotkeyDisplay } from "@/lib/hotkeys"
 import { Terminal } from "@/features/terminal/terminal"
 import { TerminalTabs } from "@/features/terminal/terminal-tabs"
 import { getDefaultTerminalBg } from "@/features/terminal/helpers"
-import { terminalsAtom, activeTerminalIdAtom, terminalCwdAtom } from "@/features/terminal/atoms"
+import {
+  terminalsForScopeAtomFamily,
+  activeTerminalForScopeAtomFamily,
+  terminalCwdAtom,
+} from "@/features/terminal/atoms"
 import { trpc } from "@/lib/trpc"
 import type { TerminalInstance } from "@/features/terminal/types"
 import { cn } from "@/lib/utils"
@@ -58,8 +62,10 @@ export const TerminalWidget = memo(function TerminalWidget({
   onExpand,
 }: TerminalWidgetProps) {
   // Terminal state - reuse existing atoms
-  const [allTerminals, setAllTerminals] = useAtom(terminalsAtom)
-  const [allActiveIds, setAllActiveIds] = useAtom(activeTerminalIdAtom)
+  const terminalsAtom = useMemo(() => terminalsForScopeAtomFamily(chatId), [chatId])
+  const activeTerminalAtom = useMemo(() => activeTerminalForScopeAtomFamily(chatId), [chatId])
+  const [terminals, setTerminals] = useAtom(terminalsAtom)
+  const [activeTerminalId, setActiveTerminalId] = useAtom(activeTerminalAtom)
   const terminalCwds = useAtomValue(terminalCwdAtom)
 
   // Theme detection for terminal background
@@ -79,11 +85,6 @@ export const TerminalWidget = memo(function TerminalWidget({
     }
     return getDefaultTerminalBg(isDark)
   }, [isDark, fullThemeData])
-
-  // Get terminals for this chat
-  const terminals = useMemo(() => allTerminals[chatId] || [], [allTerminals, chatId])
-
-  const activeTerminalId = useMemo(() => allActiveIds[chatId] || null, [allActiveIds, chatId])
 
   const activeTerminal = useMemo(
     () => terminals.find((t) => t.id === activeTerminalId) || null,
@@ -115,31 +116,19 @@ export const TerminalWidget = memo(function TerminalWidget({
       createdAt: Date.now(),
     }
 
-    setAllTerminals((prev) => ({
-      ...prev,
-      [currentChatId]: [...(prev[currentChatId] || []), newTerminal],
-    }))
-
-    setAllActiveIds((prev) => ({
-      ...prev,
-      [currentChatId]: id,
-    }))
-  }, [setAllTerminals, setAllActiveIds])
+    setTerminals((current) => [...current, newTerminal])
+    setActiveTerminalId(id)
+  }, [setTerminals, setActiveTerminalId])
 
   const selectTerminal = useCallback(
     (id: string) => {
-      const currentChatId = chatIdRef.current
-      setAllActiveIds((prev) => ({
-        ...prev,
-        [currentChatId]: id,
-      }))
+      setActiveTerminalId(id)
     },
-    [setAllActiveIds],
+    [setActiveTerminalId],
   )
 
   const closeTerminal = useCallback(
     (id: string) => {
-      const currentChatId = chatIdRef.current
       const currentTerminals = terminalsRef.current
       const currentActiveId = activeTerminalIdRef.current
 
@@ -149,36 +138,25 @@ export const TerminalWidget = memo(function TerminalWidget({
       killMutation.mutate({ paneId: terminal.paneId })
 
       const newTerminals = currentTerminals.filter((t) => t.id !== id)
-      setAllTerminals((prev) => ({
-        ...prev,
-        [currentChatId]: newTerminals,
-      }))
+      setTerminals(newTerminals)
 
       if (currentActiveId === id) {
         const newActive = newTerminals[newTerminals.length - 1]?.id || null
-        setAllActiveIds((prev) => ({
-          ...prev,
-          [currentChatId]: newActive,
-        }))
+        setActiveTerminalId(newActive)
       }
     },
-    [setAllTerminals, setAllActiveIds, killMutation],
+    [setTerminals, setActiveTerminalId, killMutation],
   )
 
   const renameTerminal = useCallback(
     (id: string, name: string) => {
-      const currentChatId = chatIdRef.current
-      setAllTerminals((prev) => ({
-        ...prev,
-        [currentChatId]: (prev[currentChatId] || []).map((t) => (t.id === id ? { ...t, name } : t)),
-      }))
+      setTerminals((current) => current.map((t) => (t.id === id ? { ...t, name } : t)))
     },
-    [setAllTerminals],
+    [setTerminals],
   )
 
   const closeOtherTerminals = useCallback(
     (id: string) => {
-      const currentChatId = chatIdRef.current
       const currentTerminals = terminalsRef.current
 
       currentTerminals.forEach((terminal) => {
@@ -188,22 +166,14 @@ export const TerminalWidget = memo(function TerminalWidget({
       })
 
       const remainingTerminal = currentTerminals.find((t) => t.id === id)
-      setAllTerminals((prev) => ({
-        ...prev,
-        [currentChatId]: remainingTerminal ? [remainingTerminal] : [],
-      }))
-
-      setAllActiveIds((prev) => ({
-        ...prev,
-        [currentChatId]: id,
-      }))
+      setTerminals(remainingTerminal ? [remainingTerminal] : [])
+      setActiveTerminalId(id)
     },
-    [setAllTerminals, setAllActiveIds, killMutation],
+    [setTerminals, setActiveTerminalId, killMutation],
   )
 
   const closeTerminalsToRight = useCallback(
     (id: string) => {
-      const currentChatId = chatIdRef.current
       const currentTerminals = terminalsRef.current
 
       const index = currentTerminals.findIndex((t) => t.id === id)
@@ -215,20 +185,14 @@ export const TerminalWidget = memo(function TerminalWidget({
       })
 
       const remainingTerminals = currentTerminals.slice(0, index + 1)
-      setAllTerminals((prev) => ({
-        ...prev,
-        [currentChatId]: remainingTerminals,
-      }))
+      setTerminals(remainingTerminals)
 
       const currentActiveId = activeTerminalIdRef.current
       if (currentActiveId && !remainingTerminals.find((t) => t.id === currentActiveId)) {
-        setAllActiveIds((prev) => ({
-          ...prev,
-          [currentChatId]: remainingTerminals[remainingTerminals.length - 1]?.id || null,
-        }))
+        setActiveTerminalId(remainingTerminals[remainingTerminals.length - 1]?.id || null)
       }
     },
-    [setAllTerminals, setAllActiveIds, killMutation],
+    [setTerminals, setActiveTerminalId, killMutation],
   )
 
   // Auto-create first terminal when section is rendered and no terminals exist

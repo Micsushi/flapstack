@@ -29,6 +29,7 @@ import {
   type ChatWorkbenchLayout,
 } from "../../../../shared/chat-workbench"
 import { cn } from "../../../lib/utils"
+import { incrementPerformanceCounter } from "../../../lib/performance-counters"
 import { configureChatDragFeedback } from "../lib/chat-drag-feedback"
 import { MoreHorizontal, SquareTerminal, X } from "lucide-react"
 import {
@@ -201,22 +202,30 @@ function ChatWorkbenchComponent({
     if (viewport) return
     const shell = shellRef.current
     if (!shell) return
+    let frame: number | null = null
     const measure = () => {
-      const rect = shell.getBoundingClientRect()
-      if (rect.width > 0 && rect.height > 0) {
-        setMeasuredViewport({ width: rect.width, height: rect.height })
-      }
+      if (frame !== null) return
+      frame = requestAnimationFrame(() => {
+        frame = null
+        const rect = shell.getBoundingClientRect()
+        if (rect.width > 0 && rect.height > 0) {
+          setMeasuredViewport((current) =>
+            current?.width === rect.width && current.height === rect.height
+              ? current
+              : { width: rect.width, height: rect.height },
+          )
+        }
+      })
     }
     measure()
     const observer =
       typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => measure())
     observer?.observe(shell)
-    window.addEventListener("resize", measure)
-    window.visualViewport?.addEventListener("resize", measure)
+    if (!observer) window.addEventListener("resize", measure)
     return () => {
       observer?.disconnect()
-      window.removeEventListener("resize", measure)
-      window.visualViewport?.removeEventListener("resize", measure)
+      if (!observer) window.removeEventListener("resize", measure)
+      if (frame !== null) cancelAnimationFrame(frame)
     }
   }, [viewport])
 
@@ -746,7 +755,10 @@ function SplitChild({
     const previewLatest = () => {
       animationFrame = null
       const action = actionFor(latestCoordinate)
-      if (action) dispatch(action, { previewResize: true })
+      if (action) {
+        incrementPerformanceCounter("divider-preview-frame")
+        dispatch(action, { previewResize: true })
+      }
     }
     const move = (next: globalThis.PointerEvent) => {
       latestCoordinate = split.direction === "row" ? next.clientX : next.clientY
@@ -763,7 +775,10 @@ function SplitChild({
       latestCoordinate = split.direction === "row" ? next.clientX : next.clientY
       cleanup()
       const action = actionFor(latestCoordinate)
-      if (action) dispatch(action)
+      if (action) {
+        incrementPerformanceCounter("divider-durable-update")
+        dispatch(action)
+      }
     }
     const cancel = () => {
       cleanup()
@@ -914,6 +929,7 @@ function ChatGroup({
     : group.chatIds[0]
   const tabsRef = useRef<HTMLDivElement>(null)
   const paneDropBoundsRef = useRef<DOMRect | null>(null)
+  const tabDropBoundsRef = useRef(new Map<string, DOMRect>())
   const [tabsHovered, setTabsHovered] = useState(false)
   const [scrollbar, setScrollbar] = useState({ left: 0, width: 0 })
   const [groupDropZone, setGroupDropZone] = useState<ChatDropZone | null>(null)
@@ -1018,7 +1034,11 @@ function ChatGroup({
   }
 
   const pointerDropZone = (event: DragEvent<HTMLElement>): ChatDropZone => {
-    const rect = paneDropBoundsRef.current ?? event.currentTarget.getBoundingClientRect()
+    let rect = paneDropBoundsRef.current
+    if (!rect) {
+      rect = event.currentTarget.getBoundingClientRect()
+      incrementPerformanceCounter("dnd-geometry-read")
+    }
     paneDropBoundsRef.current = rect
     const x = event.clientX - rect.left
     const headerOffset = showPaneHeader ? 40 : 0
@@ -1063,11 +1083,13 @@ function ChatGroup({
       }}
       onDragEnd={() => {
         paneDropBoundsRef.current = null
+        tabDropBoundsRef.current.clear()
       }}
       onDragLeave={(event) => {
         const next = event.relatedTarget
         if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
           paneDropBoundsRef.current = null
+          tabDropBoundsRef.current.clear()
           setGroupDropZone(null)
           setTabDropTarget(null)
         }
@@ -1113,6 +1135,7 @@ function ChatGroup({
               onDragEnd={() => {
                 setGroupDropZone(null)
                 setTabDropTarget(null)
+                tabDropBoundsRef.current.clear()
                 try {
                   localStorage.removeItem(CHAT_WORKBENCH_DRAG_SESSION_KEY)
                 } catch {
@@ -1167,6 +1190,7 @@ function ChatGroup({
                             screenY: event.screenY,
                             cancelled: false,
                           }
+                          tabDropBoundsRef.current.clear()
                           event.dataTransfer.setData(
                             CHAT_WORKBENCH_DRAG_MIME,
                             JSON.stringify(source),
@@ -1182,7 +1206,12 @@ function ChatGroup({
                         }}
                         onDragOver={(event) => {
                           event.stopPropagation()
-                          const rect = event.currentTarget.getBoundingClientRect()
+                          let rect = tabDropBoundsRef.current.get(chatId)
+                          if (!rect) {
+                            rect = event.currentTarget.getBoundingClientRect()
+                            tabDropBoundsRef.current.set(chatId, rect)
+                            incrementPerformanceCounter("dnd-geometry-read")
+                          }
                           const relativeX = (event.clientX - rect.left) / rect.width
                           const side =
                             relativeX <= 0.25 ? "left" : relativeX >= 0.75 ? "right" : "inside"
@@ -1199,7 +1228,9 @@ function ChatGroup({
                         }}
                         onDrop={(event) => {
                           event.stopPropagation()
-                          const rect = event.currentTarget.getBoundingClientRect()
+                          const rect =
+                            tabDropBoundsRef.current.get(chatId) ??
+                            event.currentTarget.getBoundingClientRect()
                           const relativeX = (event.clientX - rect.left) / rect.width
                           const side =
                             relativeX <= 0.25 ? "left" : relativeX >= 0.75 ? "right" : "inside"
@@ -1209,6 +1240,7 @@ function ChatGroup({
                             side === "inside" ? undefined : index + (side === "right" ? 1 : 0),
                           )
                           setTabDropTarget(null)
+                          tabDropBoundsRef.current.clear()
                           commitDrop(event, { groupId: group.id, zone: "tab" })
                         }}
                       >

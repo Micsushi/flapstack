@@ -1,13 +1,10 @@
-// Why Did You Render - MUST be first import (before React)
-import "./wdyr"
-
 import ReactDOM from "react-dom/client"
 import { App } from "./App"
 import "./styles/globals.css"
-import { preloadDiffHighlighter } from "./lib/themes/diff-view-highlighter"
 
-// Preload shiki highlighter for diff view (prevents delay when opening diff sidebar)
-preloadDiffHighlighter()
+if (import.meta.env.DEV && import.meta.env.VITE_PROFILE_RENDERS === "true") {
+  void import("./wdyr")
+}
 
 // Suppress ResizeObserver loop error - this is a non-fatal browser warning
 // that can occur when layout changes trigger observation callbacks

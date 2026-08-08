@@ -28,13 +28,13 @@ export const api = {
     getAgentChat: {
       useQuery: (args?: { chatId: string }, opts?: AnyObj) => {
         const chatId = args?.chatId
-        const result = trpc.chats.get.useQuery(
+        const result = trpc.chats.getMetadata.useQuery(
           { id: chatId! },
           {
             ...(opts ?? {}),
             enabled: !!chatId && opts?.enabled !== false,
-            staleTime: opts?.staleTime ?? 0,
-            gcTime: opts?.gcTime ?? 30_000,
+            staleTime: opts?.staleTime ?? 30_000,
+            gcTime: opts?.gcTime ?? 5 * 60_000,
           },
         )
 

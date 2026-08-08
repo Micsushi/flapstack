@@ -10,7 +10,6 @@ import {
   TERMINAL_THEME_DARK,
   TERMINAL_THEME_LIGHT,
   getTerminalTheme,
-  RESIZE_DEBOUNCE_MS,
 } from "./config"
 import { FilePathLinkProvider } from "./link-providers"
 import {
@@ -20,7 +19,8 @@ import {
   removeLinkPopup,
 } from "./link-providers/link-popup"
 import { suppressQueryResponses } from "./suppressQueryResponses"
-import { debounce } from "./utils"
+import { createTerminalFitScheduler } from "./terminal-fit-scheduler"
+import { hotPathConsole as console } from "../../lib/hot-path-console"
 
 /**
  * Get the default terminal background color based on theme.
@@ -332,23 +332,17 @@ export function setupResizeHandlers(
   fitAddon: FitAddon,
   onResize: (cols: number, rows: number) => void,
 ): () => void {
-  const debouncedHandleResize = debounce(() => {
-    try {
-      fitAddon.fit()
-      onResize(xterm.cols, xterm.rows)
-    } catch {
-      // Ignore resize errors
-    }
-  }, RESIZE_DEBOUNCE_MS)
-
-  const resizeObserver = new ResizeObserver(debouncedHandleResize)
+  const scheduler = createTerminalFitScheduler({
+    fit: () => fitAddon.fit(),
+    readSize: () => ({ cols: xterm.cols, rows: xterm.rows }),
+    onResize,
+  })
+  const resizeObserver = new ResizeObserver(() => scheduler.schedule())
   resizeObserver.observe(container)
-  window.addEventListener("resize", debouncedHandleResize)
 
   return () => {
-    window.removeEventListener("resize", debouncedHandleResize)
     resizeObserver.disconnect()
-    debouncedHandleResize.cancel()
+    scheduler.cancel()
   }
 }
 

@@ -26,6 +26,7 @@ import { handleAgentInputChunk } from "./agent-input-transport"
 import type { ChatMode } from "../../../../shared/chat-mode"
 import { createDirectRuntimeStream } from "./direct-runtime-chat-transport"
 import { resolveAgentHotlineEnabled } from "../../../../shared/agent-hotline"
+import { createStreamChunkBatcher } from "../../../lib/stream-chunk-batcher"
 import {
   clearProjectVaultGraphSelection,
   readProjectVaultGraphSelection,
@@ -199,16 +200,13 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
       return directStream
     }
 
-    // Stream debug logging
-    const subId = this.config.subChatId.slice(-8)
-    let chunkCount = 0
-    let lastChunkType = ""
-    console.log(
-      `[SD] R:START sub=${subId} cwd=${this.config.cwd} projectPath=${this.config.projectPath || "(not set)"}`,
-    )
-
     return new ReadableStream({
       start: (controller) => {
+        const chunks = createStreamChunkBatcher<UIMessageChunk>({
+          deliver: (batch) => {
+            for (const chunk of batch) controller.enqueue(chunk)
+          },
+        })
         const sub = trpcClient.claude.chat.subscribe(
           {
             subChatId: this.config.subChatId,
@@ -231,9 +229,6 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
           },
           {
             onData: (chunk: UIMessageChunk) => {
-              chunkCount++
-              lastChunkType = chunk.type
-
               handleAgentInputChunk(chunk, {
                 chatId: this.config.chatId,
                 subChatId: this.config.subChatId,
@@ -264,14 +259,6 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
 
               // Handle session init - store MCP servers, plugins, tools info
               if (chunk.type === "session-init") {
-                console.log("[MCP] Received session-init:", {
-                  tools: chunk.tools?.length,
-                  mcpServers: chunk.mcpServers,
-                  plugins: chunk.plugins,
-                  skills: chunk.skills?.length,
-                  // Debug: show all tools to check for MCP tools (format: mcp__servername__toolname)
-                  allTools: chunk.tools,
-                })
                 appStore.set(sessionInfoAtom, {
                   tools: chunk.tools,
                   mcpServers: chunk.mcpServers,
@@ -301,7 +288,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
                 // Use controller.error() instead of controller.close() so that
                 // the SDK Chat properly resets status from "streaming" to "ready"
                 // This allows user to retry sending messages after failed auth
-                console.log(`[SD] R:AUTH_ERR sub=${subId}`)
+                chunks.cancel()
                 controller.error(new Error("Authentication required"))
                 return
               }
@@ -380,18 +367,13 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
                 })
               }
 
-              // Try to enqueue, but don't crash if stream is already closed
               try {
-                controller.enqueue(chunk)
-              } catch (e) {
-                // CRITICAL: Log when enqueue fails - this could explain missing chunks!
-                console.log(
-                  `[SD] R:ENQUEUE_ERR sub=${subId} type=${chunk.type} n=${chunkCount} err=${e}`,
-                )
+                chunks.push(chunk)
+              } catch {
+                // Stream already closed.
               }
 
               if (chunk.type === "finish") {
-                console.log(`[SD] R:FINISH sub=${subId} n=${chunkCount}`)
                 try {
                   controller.close()
                 } catch {
@@ -400,13 +382,11 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
               }
             },
             onError: (err: Error) => {
-              console.log(
-                `[SD] R:ERROR sub=${subId} n=${chunkCount} last=${lastChunkType} err=${err.message}`,
-              )
+              chunks.cancel()
               controller.error(err)
             },
             onComplete: () => {
-              console.log(`[SD] R:COMPLETE sub=${subId} n=${chunkCount} last=${lastChunkType}`)
+              chunks.flush()
               // Note: Don't clear pending questions here - let active-chat.tsx handle it
               // via the stream stop detection effect. Clearing here causes race conditions
               // where sync effect immediately restores from messages.
@@ -422,7 +402,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
 
         // Handle abort
         options.abortSignal?.addEventListener("abort", () => {
-          console.log(`[SD] R:ABORT sub=${subId} n=${chunkCount} last=${lastChunkType}`)
+          chunks.cancel()
           sub.unsubscribe()
           // trpcClient.claude.cancel.mutate({ subChatId: this.config.subChatId })
           try {

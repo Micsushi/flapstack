@@ -148,7 +148,11 @@ import {
   type SelectedChatScope,
   type UndoItem,
 } from "../agents/atoms"
-import { useAgentSubChatStore, OPEN_SUB_CHATS_CHANGE_EVENT } from "../agents/stores/sub-chat-store"
+import {
+  useAgentSubChatStore,
+  OPEN_SUB_CHATS_CHANGE_EVENT,
+  type OpenSubChatsChangeDetail,
+} from "../agents/stores/sub-chat-store"
 import { getWindowId } from "../../contexts/WindowContext"
 import {
   CHAT_WORKBENCH_DRAG_MIME,
@@ -3372,56 +3376,39 @@ export function AgentsSidebar({
     return unified
   }, [chatTagsByChat, localChats, remoteChats])
 
-  // Track open sub-chat changes for reactivity
-  const [openSubChatsVersion, setOpenSubChatsVersion] = useState(0)
+  const openSubChatIdsByChatRef = useRef(new Map<string, string[]>())
+  const [allOpenSubChatIds, setAllOpenSubChatIds] = useState<string[]>([])
   useEffect(() => {
-    const handleChange = () => setOpenSubChatsVersion((v) => v + 1)
+    if (!agentChats) return
+    const windowId = getWindowId()
+    const next = new Map<string, string[]>()
+    for (const chat of agentChats) {
+      try {
+        const stored = localStorage.getItem(`${windowId}:agent-open-sub-chats-${chat.id}`)
+        next.set(chat.id, stored ? (JSON.parse(stored) as string[]) : [])
+      } catch {
+        next.set(chat.id, [])
+      }
+    }
+    openSubChatIdsByChatRef.current = next
+    setAllOpenSubChatIds([...new Set([...next.values()].flat())])
+  }, [agentChats])
+
+  useEffect(() => {
+    const handleChange = (event: Event) => {
+      const { chatId, openSubChatIds } = (event as CustomEvent<OpenSubChatsChangeDetail>).detail
+      openSubChatIdsByChatRef.current.set(chatId, openSubChatIds)
+      setAllOpenSubChatIds([...new Set([...openSubChatIdsByChatRef.current.values()].flat())])
+    }
     window.addEventListener(OPEN_SUB_CHATS_CHANGE_EVENT, handleChange)
     return () => window.removeEventListener(OPEN_SUB_CHATS_CHANGE_EVENT, handleChange)
   }, [])
-
-  // Store previous value to avoid unnecessary React Query refetches
-  const prevOpenSubChatIdsRef = useRef<string[]>([])
-
-  // Collect all open sub-chat IDs from localStorage for all workspaces
-  const allOpenSubChatIds = useMemo(() => {
-    // openSubChatsVersion is used to trigger recalculation when sub-chats change
-    void openSubChatsVersion
-    if (!agentChats) return prevOpenSubChatIdsRef.current
-
-    const windowId = getWindowId()
-    const allIds: string[] = []
-    for (const chat of agentChats) {
-      try {
-        // Use window-prefixed key (matches sub-chat-store.ts)
-        const stored = localStorage.getItem(`${windowId}:agent-open-sub-chats-${chat.id}`)
-        if (stored) {
-          const ids = JSON.parse(stored) as string[]
-          allIds.push(...ids)
-        }
-      } catch {
-        // Skip invalid JSON
-      }
-    }
-
-    // Compare with previous - if content is same, return old reference
-    // This prevents React Query from refetching when array content hasn't changed
-    const prev = prevOpenSubChatIdsRef.current
-    const sorted = [...allIds].sort()
-    const prevSorted = [...prev].sort()
-    if (sorted.length === prevSorted.length && sorted.every((id, i) => id === prevSorted[i])) {
-      return prev
-    }
-
-    prevOpenSubChatIdsRef.current = allIds
-    return allIds
-  }, [agentChats, openSubChatsVersion])
 
   // File changes stats from DB - only for open sub-chats
   const { data: fileStatsData } = trpc.chats.getFileStats.useQuery(
     { openSubChatIds: allOpenSubChatIds },
     {
-      refetchInterval: 5000,
+      staleTime: 30_000,
       enabled: allOpenSubChatIds.length > 0,
       placeholderData: (prev) => prev,
     },
@@ -3431,7 +3418,7 @@ export function AgentsSidebar({
   const { data: pendingPlanApprovalsData } = trpc.chats.getPendingPlanApprovals.useQuery(
     { openSubChatIds: allOpenSubChatIds },
     {
-      refetchInterval: 5000,
+      staleTime: 30_000,
       enabled: allOpenSubChatIds.length > 0,
       placeholderData: (prev) => prev,
     },
@@ -3440,8 +3427,15 @@ export function AgentsSidebar({
   // Fetch all projects for git info
   const { data: projects } = trpc.projects.list.useQuery()
   const { data: tasks } = trpc.tasks.list.useQuery({ includeArchived: false })
-  const { data: archivedProjects } = trpc.projects.listArchived.useQuery()
-  const { data: archivedTasks } = trpc.tasks.listArchived.useQuery()
+  const { data: archiveSummary } = trpc.chats.archiveSummary.useQuery(undefined, {
+    staleTime: 30_000,
+  })
+  const { data: archivedProjects } = trpc.projects.listArchived.useQuery(undefined, {
+    enabled: isArchiveOpen,
+  })
+  const { data: archivedTasks } = trpc.tasks.listArchived.useQuery(undefined, {
+    enabled: isArchiveOpen,
+  })
   const moveDestinations = useMemo(
     () => buildChatMoveDestinations(projects ?? [], tasks ?? []),
     [projects, tasks],
@@ -3457,7 +3451,7 @@ export function AgentsSidebar({
   }, [projects])
 
   // Fetch all archived chats (to get count)
-  const { data: archivedChats } = trpc.chats.listArchived.useQuery({})
+  const { data: archivedChats } = trpc.chats.listArchived.useQuery({}, { enabled: isArchiveOpen })
   // Get utils outside of callbacks - hooks must be called at top level
   const utils = trpc.useUtils()
 
@@ -7323,7 +7317,7 @@ export function AgentsSidebar({
               )}
             </div>
           )}
-          {archivedLifecycleItems.length > 0 && !searchQuery && (
+          {(archiveSummary?.total ?? archivedLifecycleItems.length) > 0 && !searchQuery && (
             <div className="mb-4">
               <button
                 type="button"
@@ -7343,7 +7337,7 @@ export function AgentsSidebar({
                 <DiffIcon className="mr-2 h-3.5 w-3.5" />
                 <span className="whitespace-nowrap text-xs font-medium">Archive</span>
                 <span className="absolute right-2 text-[11px] tabular-nums text-muted-foreground/60">
-                  {archivedLifecycleItems.length}
+                  {archiveSummary?.total ?? archivedLifecycleItems.length}
                 </span>
                 <SidebarDisclosure isCollapsed={!isArchiveOpen} className="mr-12" />
                 <AnimatePresence>{isArchiveOpen && <ExpandedSectionIndicator />}</AnimatePresence>

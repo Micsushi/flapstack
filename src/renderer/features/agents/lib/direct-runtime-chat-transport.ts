@@ -8,6 +8,7 @@ import { directRuntimeFinishMetadata, type DirectRuntimeUsage } from "./runtime-
 import { RuntimeResponseLabelFilter, RuntimeTextChatChunkMapper } from "./runtime-text-chat-chunks"
 import { codexThreadVisibilityAtom } from "../../../lib/atoms"
 import { appStore } from "../../../lib/jotai-store"
+import { createStreamChunkBatcher } from "../../../lib/stream-chunk-batcher"
 
 type DirectRuntimeHarness = "codex" | "claude-code"
 type RuntimeEffort = "minimal" | "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
@@ -52,6 +53,11 @@ export async function createDirectRuntimeStream(input: {
   return new ReadableStream({
     start(controller) {
       let closed = false
+      const chunks = createStreamChunkBatcher<any>({
+        deliver: (batch) => {
+          for (const chunk of batch) controller.enqueue(chunk)
+        },
+      })
       const activityMapper = new RuntimeActivityChatChunkMapper(runId)
       const textMapper = new RuntimeTextChatChunkMapper(
         runId,
@@ -64,6 +70,7 @@ export async function createDirectRuntimeStream(input: {
         if (closed) return
         closed = true
         input.abortSignal?.removeEventListener("abort", abort)
+        chunks.flush()
         try {
           controller.close()
         } catch {
@@ -74,9 +81,9 @@ export async function createDirectRuntimeStream(input: {
         if (closed) return
         void trpcClient.agentRuntimeChat.cancel.mutate({ runId }).catch(() => undefined)
         subscription?.unsubscribe()
-        for (const chunk of textMapper.finish()) controller.enqueue(chunk)
-        for (const chunk of activityMapper.finish()) controller.enqueue(chunk)
-        controller.enqueue({
+        for (const chunk of textMapper.finish()) chunks.push(chunk)
+        for (const chunk of activityMapper.finish()) chunks.push(chunk)
+        chunks.push({
           type: "message-metadata",
           messageMetadata: directRuntimeFinishMetadata({
             runId,
@@ -87,7 +94,7 @@ export async function createDirectRuntimeStream(input: {
             usage: latestUsage,
           }),
         })
-        controller.enqueue({ type: "finish" })
+        chunks.push({ type: "finish" })
         close()
       }
       cancelStream = abort
@@ -121,8 +128,8 @@ export async function createDirectRuntimeStream(input: {
             if (event.type === "started") {
               startedAtMs = Date.now()
             } else if (event.type === "assistant-text") {
-              for (const chunk of activityMapper.beforeText()) controller.enqueue(chunk)
-              for (const chunk of textMapper.map(event)) controller.enqueue(chunk)
+              for (const chunk of activityMapper.beforeText()) chunks.push(chunk)
+              for (const chunk of textMapper.map(event)) chunks.push(chunk)
             } else if (event.type === "activity-batch") {
               const usage = event.events.findLast(
                 (item) =>
@@ -133,11 +140,11 @@ export async function createDirectRuntimeStream(input: {
               if (usage?.kind === "usage") latestUsage = usage.payload
               const activityChunks = activityMapper.map(event.events)
               if (activityChunks.length > 0) {
-                for (const chunk of textMapper.beforeActivity()) controller.enqueue(chunk)
-                for (const chunk of activityChunks) controller.enqueue(chunk)
+                for (const chunk of textMapper.beforeActivity()) chunks.push(chunk)
+                for (const chunk of activityChunks) chunks.push(chunk)
               }
               if (usage?.kind === "usage") {
-                controller.enqueue({
+                chunks.push({
                   type: "message-metadata",
                   messageMetadata: directRuntimeFinishMetadata({
                     runId,
@@ -149,9 +156,9 @@ export async function createDirectRuntimeStream(input: {
                 })
               }
             } else if (event.type === "finished") {
-              for (const chunk of textMapper.finish()) controller.enqueue(chunk)
-              for (const chunk of activityMapper.finish()) controller.enqueue(chunk)
-              controller.enqueue({
+              for (const chunk of textMapper.finish()) chunks.push(chunk)
+              for (const chunk of activityMapper.finish()) chunks.push(chunk)
+              chunks.push({
                 type: "message-metadata",
                 messageMetadata: directRuntimeFinishMetadata({
                   runId,
@@ -161,13 +168,14 @@ export async function createDirectRuntimeStream(input: {
                   usage: latestUsage,
                 }),
               })
-              controller.enqueue({ type: "finish" })
+              chunks.push({ type: "finish" })
               close()
             }
           },
           onError(error) {
             if (closed) return
             closed = true
+            chunks.cancel()
             input.abortSignal?.removeEventListener("abort", abort)
             subscription?.unsubscribe()
             toast.error(`${runtimeLabel(input.harness)} Runtime failed`, {

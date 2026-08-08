@@ -37,7 +37,8 @@ describe("manual UI review fixes", () => {
     const activeChat = read("src/renderer/features/agents/main/active-chat.tsx")
     expect(activeChat).toContain('const STREAMING_WORDS = ["Thinking", "Working", "Cooking"]')
     expect(activeChat).toContain("Loading chat…")
-    expect(activeChat).toContain('refetchOnMount: "always"')
+    expect(activeChat).toContain("refetchOnMount: false")
+    expect(activeChat).not.toContain('refetchOnMount: "always"')
   })
 
   it("provides native-feeling paste and mouse-back navigation", () => {

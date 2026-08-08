@@ -11,7 +11,7 @@ describe("Plan and Kanban production surface", () => {
     const kanban = source("src/renderer/features/kanban/kanban-view.tsx")
 
     expect(atoms).toContain('| "tasks"')
-    expect(content).toContain('import { KanbanView } from "../../kanban"')
+    expect(content).toContain('import("../../kanban/kanban-view")')
     expect(content.match(/effectiveDesktopView === "tasks"/g)).toHaveLength(2)
     expect(content).toContain('(desktopView === "tasks" || desktopView === "plan")')
     expect(content).toContain("!betaFeatures.planning")

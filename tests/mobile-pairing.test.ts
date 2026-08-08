@@ -93,7 +93,7 @@ describe("mobile-pairing", () => {
         idx: 50,
         tag: "0050_mobile_projection_families",
       })
-      expect(sqliteJournal().entries.at(-1)).toMatchObject({
+      expect(sqliteJournal().entries.find((entry) => entry.idx === 53)).toMatchObject({
         idx: 53,
         tag: "0053_chat-tags",
       })

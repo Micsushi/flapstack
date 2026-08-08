@@ -3,7 +3,7 @@ import { useAtom, useAtomValue } from "jotai"
 import { useTheme } from "next-themes"
 import { fullThemeDataAtom } from "@/lib/atoms"
 import { Terminal } from "./terminal"
-import { activeTerminalIdAtom, terminalsAtom } from "./atoms"
+import { activeTerminalForScopeAtomFamily, terminalsForScopeAtomFamily } from "./atoms"
 import { getDefaultTerminalBg } from "./helpers"
 import type { TerminalInstance } from "./types"
 
@@ -15,11 +15,13 @@ export function WorkbenchTerminalPane({
   cwd: string | null | undefined
 }) {
   const scopeKey = `ws:${chatId}`
-  const [terminalsByScope, setTerminalsByScope] = useAtom(terminalsAtom)
-  const [activeIds, setActiveIds] = useAtom(activeTerminalIdAtom)
+  const terminalsAtom = useMemo(() => terminalsForScopeAtomFamily(scopeKey), [scopeKey])
+  const activeIdAtom = useMemo(() => activeTerminalForScopeAtomFamily(scopeKey), [scopeKey])
+  const [terminals, setTerminals] = useAtom(terminalsAtom)
+  const [activeId, setActiveId] = useAtom(activeIdAtom)
   const fullThemeData = useAtomValue(fullThemeDataAtom)
   const { resolvedTheme } = useTheme()
-  const terminal = terminalsByScope[scopeKey]?.[0] ?? null
+  const terminal = terminals[0] ?? null
 
   useEffect(() => {
     if (terminal || !cwd) return
@@ -30,14 +32,14 @@ export function WorkbenchTerminalPane({
       name: "Terminal",
       createdAt: Date.now(),
     }
-    setTerminalsByScope((current) => ({ ...current, [scopeKey]: [instance] }))
-    setActiveIds((current) => ({ ...current, [scopeKey]: id }))
-  }, [cwd, scopeKey, setActiveIds, setTerminalsByScope, terminal])
+    setTerminals([instance])
+    setActiveId(id)
+  }, [cwd, scopeKey, setActiveId, setTerminals, terminal])
 
   useEffect(() => {
-    if (!terminal || activeIds[scopeKey] === terminal.id) return
-    setActiveIds((current) => ({ ...current, [scopeKey]: terminal.id }))
-  }, [activeIds, scopeKey, setActiveIds, terminal])
+    if (!terminal || activeId === terminal.id) return
+    setActiveId(terminal.id)
+  }, [activeId, setActiveId, terminal])
 
   const terminalBg = useMemo(
     () =>

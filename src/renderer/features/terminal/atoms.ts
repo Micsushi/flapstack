@@ -2,6 +2,8 @@ import { atom } from "jotai"
 import { atomFamily, atomWithStorage } from "jotai/utils"
 import { atomWithWindowStorage } from "../../lib/window-storage"
 import type { TerminalInstance } from "./types"
+import { incrementPerformanceCounter } from "../../lib/performance-counters"
+export type { TerminalInstance } from "./types"
 
 // Storage atom for persisting per-chat terminal sidebar state - window-scoped
 const terminalSidebarOpenStorageAtom = atomWithWindowStorage<Record<string, boolean>>(
@@ -83,4 +85,35 @@ export const activeTerminalIdAtom = atomWithWindowStorage<Record<string, string 
   "active-terminal-by-scope",
   {},
   { getOnInit: true },
+)
+
+const EMPTY_TERMINALS: TerminalInstance[] = []
+
+export const terminalsForScopeAtomFamily = atomFamily((scopeKey: string) =>
+  atom(
+    (get) => get(terminalsAtom)[scopeKey] ?? EMPTY_TERMINALS,
+    (
+      get,
+      set,
+      update: TerminalInstance[] | ((current: TerminalInstance[]) => TerminalInstance[]),
+    ) => {
+      const current = get(terminalsAtom)
+      const scoped = current[scopeKey] ?? EMPTY_TERMINALS
+      const next = typeof update === "function" ? update(scoped) : update
+      if (Object.is(scoped, next)) return
+      set(terminalsAtom, { ...current, [scopeKey]: next })
+    },
+  ),
+)
+
+export const activeTerminalForScopeAtomFamily = atomFamily((scopeKey: string) =>
+  atom(
+    (get) => get(activeTerminalIdAtom)[scopeKey] ?? null,
+    (get, set, terminalId: string | null) => {
+      const current = get(activeTerminalIdAtom)
+      if ((current[scopeKey] ?? null) === terminalId) return
+      incrementPerformanceCounter("terminal-activate")
+      set(activeTerminalIdAtom, { ...current, [scopeKey]: terminalId })
+    },
+  ),
 )
