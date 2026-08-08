@@ -19,7 +19,7 @@ import { Kbd } from "@/components/ui/kbd"
 import { cn } from "@/lib/utils"
 import { useResolvedHotkeyDisplay } from "@/lib/hotkeys"
 import {
-  detailsSidebarOpenAtom,
+  detailsSidebarOpenAtomFamily,
   detailsSidebarWidthAtom,
   detailsSidebarTabAtom,
   widgetVisibilityAtomFamily,
@@ -232,8 +232,8 @@ export function DetailsSidebar({
 }: DetailsSidebarProps) {
   const betaFeatures = useBetaFeatures()
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
-  // Global sidebar open state
-  const [isOpen, setIsOpen] = useAtom(detailsSidebarOpenAtom)
+  const sidebarOpenAtom = useMemo(() => detailsSidebarOpenAtomFamily(chatId), [chatId])
+  const [isOpen, setIsOpen] = useAtom(sidebarOpenAtom)
 
   // Active tab state (Details / Files)
   const [activeTab, setActiveTab] = useAtom(detailsSidebarTabAtom)

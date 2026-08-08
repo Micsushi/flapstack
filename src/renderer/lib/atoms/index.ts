@@ -494,6 +494,13 @@ export const crossScopeMoveEnabledAtom = atomWithStorage<boolean>(
   { getOnInit: true },
 )
 
+export const newChatDraftReminderEnabledAtom = atomWithStorage<boolean>(
+  "preferences:new-chat-draft-reminder-enabled",
+  true,
+  undefined,
+  { getOnInit: true },
+)
+
 // Preferences - Default Agent Mode
 // Controls how new chats/sub-chats work.
 // Re-using AgentMode type from features/agents/atoms

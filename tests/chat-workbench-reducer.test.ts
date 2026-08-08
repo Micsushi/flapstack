@@ -5,6 +5,8 @@ import {
   chatWorkbenchLayoutSchema,
   collectChatGroups,
   createChatWorkbenchLayout,
+  createTerminalPresentationId,
+  getTerminalPresentationChatId,
   migrateChatWorkbenchLayout,
   previewChatDrop,
   projectResponsiveChatWorkbench,
@@ -12,6 +14,52 @@ import {
 } from "../src/shared/chat-workbench"
 
 describe("chat workbench reducer", () => {
+  it("gives each chat one stable terminal presentation identity", () => {
+    const terminalId = createTerminalPresentationId("chat-a")
+    expect(terminalId).toBe("terminal:chat-a")
+    expect(getTerminalPresentationChatId(terminalId)).toBe("chat-a")
+    expect(getTerminalPresentationChatId("chat-a")).toBeNull()
+  })
+
+  it("allows four chat panes and four separately movable terminal panes", () => {
+    let layout = createChatWorkbenchLayout(["a", "b", "c", "d"], "a")
+    for (const [index, chatId] of ["b", "c", "d"].entries()) {
+      const split = reduceChatWorkbench(layout, {
+        type: "split",
+        groupId: collectChatGroups(layout.root)[0].id,
+        chatId,
+        zone: index % 2 === 0 ? "right" : "bottom",
+      })
+      expect(split.accepted).toBe(true)
+      if (!split.accepted) throw new Error("expected chat split")
+      layout = split.layout
+    }
+
+    for (const chatId of ["a", "b", "c", "d"]) {
+      const owner = collectChatGroups(layout.root).find((group) => group.chatIds.includes(chatId))
+      if (!owner) throw new Error("expected chat owner")
+      const terminalId = createTerminalPresentationId(chatId)
+      const opened = reduceChatWorkbench(layout, {
+        type: "open-tab",
+        groupId: owner.id,
+        chatId: terminalId,
+      })
+      expect(opened.accepted).toBe(true)
+      if (!opened.accepted) throw new Error("expected terminal tab")
+      const split = reduceChatWorkbench(opened.layout, {
+        type: "split",
+        groupId: owner.id,
+        chatId: terminalId,
+        zone: "right",
+      })
+      expect(split.accepted).toBe(true)
+      if (!split.accepted) throw new Error("expected terminal split")
+      layout = split.layout
+    }
+
+    expect(collectChatGroups(layout.root)).toHaveLength(8)
+  })
+
   it("retains the surviving pane proportions when a middle pane is closed", () => {
     const initial = reduceChatWorkbench(createChatWorkbenchLayout(["a", "b", "c"]), {
       type: "apply-preset",
@@ -238,6 +286,71 @@ describe("chat workbench reducer", () => {
     }
     expect(Math.min(...resized.layout.root.sizes)).toBeGreaterThanOrEqual(0.05)
     expect(resized.layout.root.sizes.reduce((sum, size) => sum + size, 0)).toBeCloseTo(1)
+  })
+
+  it("keeps equivalent dividers linked across a two-by-two layout", () => {
+    const layout = reduceChatWorkbench(createChatWorkbenchLayout(["a", "b", "c", "d"]), {
+      type: "apply-preset",
+      preset: "grid-2x2",
+    }).layout
+    if (layout.root.type !== "split") throw new Error("expected grid root")
+    const top = layout.root.children[0]
+    const bottom = layout.root.children[1]
+    if (top.type !== "split" || bottom.type !== "split") {
+      throw new Error("expected grid rows")
+    }
+
+    const resized = reduceChatWorkbench(layout, {
+      type: "resize-split",
+      splitId: top.id,
+      sizes: [0.65, 0.35],
+    })
+    if (!resized.accepted || resized.layout.root.type !== "split") {
+      throw new Error("expected linked resize")
+    }
+    expect(resized.layout.root.children).toEqual([
+      expect.objectContaining({ id: top.id, sizes: [0.65, 0.35] }),
+      expect.objectContaining({ id: bottom.id, sizes: [0.65, 0.35] }),
+    ])
+
+    const groups = collectChatGroups(layout.root)
+    const columnGrid = chatWorkbenchLayoutSchema.parse({
+      ...layout,
+      root: {
+        type: "split",
+        id: "grid-columns",
+        direction: "row",
+        sizes: [0.5, 0.5],
+        children: [
+          {
+            type: "split",
+            id: "grid-left",
+            direction: "column",
+            sizes: [0.5, 0.5],
+            children: [groups[0], groups[2]],
+          },
+          {
+            type: "split",
+            id: "grid-right",
+            direction: "column",
+            sizes: [0.5, 0.5],
+            children: [groups[1], groups[3]],
+          },
+        ],
+      },
+    })
+    const heightResized = reduceChatWorkbench(columnGrid, {
+      type: "resize-split",
+      splitId: "grid-left",
+      sizes: [0.6, 0.4],
+    })
+    if (!heightResized.accepted || heightResized.layout.root.type !== "split") {
+      throw new Error("expected linked height resize")
+    }
+    expect(heightResized.layout.root.children).toEqual([
+      expect.objectContaining({ id: "grid-left", sizes: [0.6, 0.4] }),
+      expect.objectContaining({ id: "grid-right", sizes: [0.6, 0.4] }),
+    ])
   })
 
   it("collapses responsively as a projection without data loss", () => {

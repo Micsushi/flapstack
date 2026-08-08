@@ -20,6 +20,7 @@ import { CodexProtocolDriftError, mapCodexNotification, permissionActivity } fro
 import {
   spawnCodexProtocolClient,
   type CodexProtocolClient,
+  type CodexProtocolNotification,
   type CodexProtocolServerRequest,
 } from "./protocol-client"
 import { sanitizeRuntimeText } from "../sanitizer"
@@ -45,6 +46,7 @@ type CodexRunState = {
   cancellationPromise: Promise<void> | null
   cancelled: boolean
   archived: boolean
+  pendingNotifications: CodexProtocolNotification[]
 }
 
 type CodexRuntimeAdapterOptions = {
@@ -251,30 +253,40 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       )
     }
     const threadId = requiredThreadId(session, "start turn")
-    const input = this.options.resolveTurnInput
-      ? await this.options.resolveTurnInput(context, prompt)
-      : [{ type: "text", text: prompt, text_elements: [] }]
-    if (!Array.isArray(input) || input.length === 0) {
-      throw new Error("[codex-runtime] Flapstack launch authority returned no turn input.")
-    }
+    const goalObjective = parseGoalObjective(prompt)
     let dispatched = false
     try {
       dispatched = true
-      const response = record(
-        await state.client.request("turn/start", {
+      if (goalObjective) {
+        await state.client.request("thread/goal/set", {
           threadId,
-          clientUserMessageId: context.runId,
-          input,
-          model: context.launch.model,
-          effort: context.launch.controls.modelEffort,
-          ...(context.outputSchema ? { outputSchema: context.outputSchema } : {}),
-          ...(context.launch.controls.serviceTier
-            ? { serviceTier: context.launch.controls.serviceTier }
-            : {}),
-        }),
-      )
-      const turn = record(response.turn)
-      state.turnId = requiredString(turn.id, "turn/start did not return turn.id")
+          objective: goalObjective,
+          status: "active",
+        })
+        state.turnId = await this.waitForGoalTurn(state)
+      } else {
+        const input = this.options.resolveTurnInput
+          ? await this.options.resolveTurnInput(context, prompt)
+          : [{ type: "text", text: prompt, text_elements: [] }]
+        if (!Array.isArray(input) || input.length === 0) {
+          throw new Error("[codex-runtime] Flapstack launch authority returned no turn input.")
+        }
+        const response = record(
+          await state.client.request("turn/start", {
+            threadId,
+            clientUserMessageId: context.runId,
+            input,
+            model: context.launch.model,
+            effort: context.launch.controls.modelEffort,
+            ...(context.outputSchema ? { outputSchema: context.outputSchema } : {}),
+            ...(context.launch.controls.serviceTier
+              ? { serviceTier: context.launch.controls.serviceTier }
+              : {}),
+          }),
+        )
+        const turn = record(response.turn)
+        state.turnId = requiredString(turn.id, "turn/start did not return turn.id")
+      }
     } catch (error) {
       if (dispatched) state.uncertain = true
       throw error
@@ -302,7 +314,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     }
     state.streaming = true
     try {
-      for await (const notification of state.client.notifications()) {
+      for await (const notification of notificationsForState(state)) {
         const events = mapCodexNotification(notification)
         await this.append(context, events)
         for (const event of events) yield event
@@ -470,6 +482,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       cancellationPromise: null,
       cancelled: false,
       archived: false,
+      pendingNotifications: [],
     }
     client.setRequestHandler((request) => this.handleServerRequest(context, request))
     this.states.set(context.runId, state)
@@ -551,6 +564,15 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     for (const event of events) {
       if (event.kind === "usage") await this.options.onUsage?.(context, event)
     }
+  }
+
+  private async waitForGoalTurn(state: CodexRunState): Promise<string> {
+    for await (const notification of state.client.notifications()) {
+      state.pendingNotifications.push(notification)
+      const turnId = notificationTurnId(notification.params)
+      if (turnId) return turnId
+    }
+    throw new Error("[codex-runtime] Goal started without a provider turn.")
   }
 
   private requiredState(runId: string): CodexRunState {
@@ -776,6 +798,23 @@ function reconcileThread(thread: Record<string, unknown>): "running" | "complete
 
 function notificationTurnId(params: Record<string, unknown>): string | null {
   return string(params.turnId) ?? string(record(params.turn).id)
+}
+
+function parseGoalObjective(prompt: string): string | null {
+  const match = prompt.trim().match(/^\/goal\s+([\s\S]+)$/i)
+  if (!match) return null
+  const objective = match[1]?.trim() ?? ""
+  if (!objective || objective.length > 4_000) {
+    throw new Error("[codex-runtime] Goal text must contain 1 to 4,000 characters.")
+  }
+  return objective
+}
+
+async function* notificationsForState(
+  state: CodexRunState,
+): AsyncIterable<CodexProtocolNotification> {
+  yield* state.pendingNotifications.splice(0)
+  yield* state.client.notifications()
 }
 
 function codexTurnFailureMessage(value: unknown): string {

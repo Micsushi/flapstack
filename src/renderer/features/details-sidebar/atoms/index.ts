@@ -163,6 +163,22 @@ export const detailsSidebarOpenAtom = atomWithWindowStorage<boolean>(
   { getOnInit: true },
 )
 
+const detailsSidebarOpenByChatAtom = atomWithWindowStorage<Record<string, boolean>>(
+  "overview:sidebarOpenByChat",
+  {},
+  { getOnInit: true },
+)
+
+export const detailsSidebarOpenAtomFamily = atomFamily((chatId: string) =>
+  atom(
+    (get) => get(detailsSidebarOpenByChatAtom)[chatId] ?? false,
+    (get, set, isOpen: boolean) => {
+      const current = get(detailsSidebarOpenByChatAtom)
+      set(detailsSidebarOpenByChatAtom, { ...current, [chatId]: isOpen })
+    },
+  ),
+)
+
 // Details sidebar active tab (per-window, persisted)
 export type DetailsSidebarTab = "details" | "files"
 

@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useCallback,
   memo,
   useMemo,
   useRef,
@@ -16,6 +17,8 @@ import {
   CHAT_WORKBENCH_DRAG_SESSION_KEY,
   CHAT_WORKBENCH_EXTERNAL_GROUP_ID,
   collectChatGroups,
+  createTerminalPresentationId,
+  getTerminalPresentationChatId,
   previewChatDrop,
   projectResponsiveChatWorkbench,
   reduceChatWorkbench,
@@ -27,7 +30,7 @@ import {
 } from "../../../../shared/chat-workbench"
 import { cn } from "../../../lib/utils"
 import { configureChatDragFeedback } from "../lib/chat-drag-feedback"
-import { MoreHorizontal, X } from "lucide-react"
+import { MoreHorizontal, SquareTerminal, X } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,6 +56,11 @@ export const CHAT_WORKBENCH_A11Y = {
   status: "Chat workbench status",
 } as const
 
+export const CHAT_WORKBENCH_MIN_CHAT_WIDTH = 350
+export const CHAT_WORKBENCH_MIN_CHAT_HEIGHT = 360
+export const CHAT_WORKBENCH_MIN_TERMINAL_WIDTH = 280
+export const CHAT_WORKBENCH_MIN_TERMINAL_HEIGHT = 180
+
 export type ChatWorkbenchChat = {
   id: string
   name?: string | null
@@ -70,6 +78,10 @@ type ChatWorkbenchGroupDragSource = {
   sourceWindowId: string
 }
 type ChatWorkbenchAnyDragSource = ChatWorkbenchDragSource | ChatWorkbenchGroupDragSource
+type ChatWorkbenchDispatch = (
+  action: ChatWorkbenchAction,
+  options?: { previewResize?: boolean },
+) => void
 type ChatMoveMenu = {
   savedGroups: ReadonlyArray<{ id: string; name: string }>
   activeSavedGroupId: string | null
@@ -104,7 +116,11 @@ function ChatWorkbenchComponent({
   onLayoutChange: (layout: ChatWorkbenchLayout, action: ChatWorkbenchAction) => void
   onActiveChatChange: (chatId: string) => void
   onChatViewed?: (chatId: string) => void
-  renderChat: (chatId: string, active: boolean) => ReactNode
+  renderChat: (
+    presentationId: string,
+    active: boolean,
+    controls: { openTerminal: (chatId: string) => void },
+  ) => ReactNode
   readOnlyChatIds?: ReadonlySet<string>
   windowId?: string
   onCrossWindowDrop?: (
@@ -133,6 +149,7 @@ function ChatWorkbenchComponent({
     height: number
   } | null>(null)
   const [dragPreview, setDragPreview] = useState<ChatDropPreview | null>(null)
+  const [resizePreviewLayout, setResizePreviewLayout] = useState<ChatWorkbenchLayout | null>(null)
   const setStableDragPreview = (preview: ChatDropPreview | null) =>
     setDragPreview((current) => (sameChatDropPreview(current, preview) ? current : preview))
   const dragSessionRef = useRef<{
@@ -145,6 +162,12 @@ function ChatWorkbenchComponent({
     () => new Map(chats.map((chat) => [chat.id, chat.name?.trim() || "New Chat"])),
     [chats],
   )
+  const presentationName = (presentationId: string) => {
+    const terminalChatId = getTerminalPresentationChatId(presentationId)
+    if (!terminalChatId) return chatNames.get(presentationId) ?? "New Chat"
+    const ownerName = chatNames.get(terminalChatId)
+    return ownerName ? `Terminal â€” ${ownerName}` : "Terminal"
+  }
   const chatAccents = useMemo(
     () => new Map(chats.map((chat) => [chat.id, chat.accentColor ?? null])),
     [chats],
@@ -153,21 +176,26 @@ function ChatWorkbenchComponent({
     () => new Set(chats.filter((chat) => chat.hasUnseenChanges).map((chat) => chat.id)),
     [chats],
   )
-  const groups = collectChatGroups(layout.root)
+  const renderedLayout = resizePreviewLayout ?? layout
+  const groups = useMemo(() => collectChatGroups(renderedLayout.root), [renderedLayout.root])
   const projected = useMemo(
     () =>
       viewport || measuredViewport
-        ? projectResponsiveChatWorkbench(layout, {
+        ? projectResponsiveChatWorkbench(renderedLayout, {
             ...(viewport ?? measuredViewport!),
-            minPaneWidth: 360,
-            minPaneHeight: 280,
+            minPaneWidth: CHAT_WORKBENCH_MIN_CHAT_WIDTH,
+            minPaneHeight: CHAT_WORKBENCH_MIN_CHAT_HEIGHT,
           })
-        : { logicalLayout: layout, visibleLayout: layout, collapsedGroupIds: [] },
-    [layout, measuredViewport, viewport],
+        : {
+            logicalLayout: renderedLayout,
+            visibleLayout: renderedLayout,
+            collapsedGroupIds: [],
+          },
+    [measuredViewport, renderedLayout, viewport],
   )
   const visibleLayout = projected.visibleLayout
   const visibleGroups = collectChatGroups(visibleLayout.root)
-  const activeGroup = groups.find((group) => group.id === layout.activeGroupId) ?? groups[0]
+  const activeGroup = groups.find((group) => group.id === renderedLayout.activeGroupId) ?? groups[0]
 
   useEffect(() => {
     if (viewport) return
@@ -202,8 +230,10 @@ function ChatWorkbenchComponent({
     return () => window.removeEventListener("keydown", cancelDrag, true)
   }, [])
 
-  const logicalGroupForChat = (chatId: string) =>
-    groups.find((group) => group.chatIds.includes(chatId))
+  const logicalGroupForChat = useCallback(
+    (chatId: string) => groups.find((group) => group.chatIds.includes(chatId)),
+    [groups],
+  )
 
   const normalizeProjectedAction = (action: ChatWorkbenchAction): ChatWorkbenchAction => {
     if (projected.collapsedGroupIds.length === 0 || !("chatId" in action)) return action
@@ -214,7 +244,7 @@ function ChatWorkbenchComponent({
     return action
   }
 
-  const dispatch = (action: ChatWorkbenchAction) => {
+  const dispatch: ChatWorkbenchDispatch = (action, options) => {
     const normalized = normalizeProjectedAction(action)
     const result = reduceChatWorkbench(layout, normalized)
     if (!result.accepted) {
@@ -225,9 +255,54 @@ function ChatWorkbenchComponent({
       )
       return
     }
+    if (options?.previewResize && normalized.type === "resize-split") {
+      setResizePreviewLayout(result.layout)
+      return
+    }
+    setResizePreviewLayout(null)
     onLayoutChange(result.layout, normalized)
     setAnnouncement(result.announcement ?? describeAction(normalized))
   }
+
+  const openTerminal = useCallback(
+    (chatId: string, targetGroupId: string) => {
+      const terminalId = createTerminalPresentationId(chatId)
+      const existing = logicalGroupForChat(terminalId)
+      if (existing) {
+        const action: ChatWorkbenchAction = {
+          type: "activate-tab",
+          groupId: existing.id,
+          chatId: terminalId,
+        }
+        const activated = reduceChatWorkbench(layout, action)
+        if (activated.accepted) onLayoutChange(activated.layout, action)
+        return
+      }
+      const opened = reduceChatWorkbench(layout, {
+        type: "open-tab",
+        groupId: targetGroupId,
+        chatId: terminalId,
+      })
+      if (!opened.accepted) {
+        setAnnouncement("The Terminal could not be opened in this pane.")
+        return
+      }
+      const split = reduceChatWorkbench(opened.layout, {
+        type: "split",
+        groupId: targetGroupId,
+        chatId: terminalId,
+        zone: "right",
+      })
+      const next = split.accepted ? split : opened
+      onLayoutChange(next.layout, {
+        type: "open-tab",
+        groupId: targetGroupId,
+        chatId: terminalId,
+      })
+      setAnnouncement(split.accepted ? "Opened Terminal beside Chat" : "Opened Terminal as a tab")
+    },
+    [layout, logicalGroupForChat, onLayoutChange],
+  )
 
   const runClaimAction = async (chatId: string) => {
     try {
@@ -261,6 +336,11 @@ function ChatWorkbenchComponent({
       return
     }
     if (source?.sourceWindowId && source.sourceWindowId !== windowId) {
+      if (getTerminalPresentationChatId(source.chatId)) {
+        setDragPreview(null)
+        setAnnouncement("Terminal panes stay with their owning window.")
+        return
+      }
       const target =
         explicitTarget ??
         (dragPreview
@@ -292,7 +372,9 @@ function ChatWorkbenchComponent({
     if (result.accepted && dragPreview.accepted) {
       onLayoutChange(result.layout, dropAction(dragPreview))
       setAnnouncement(result.announcement ?? "Chat moved")
-      onActiveChatChange(dragPreview.request.chatId)
+      onActiveChatChange(
+        getTerminalPresentationChatId(dragPreview.request.chatId) ?? dragPreview.request.chatId,
+      )
     } else {
       setAnnouncement("Chat move cancelled. The source was kept unchanged.")
     }
@@ -312,7 +394,8 @@ function ChatWorkbenchComponent({
       !session ||
       session.cancelled ||
       event.dataTransfer.dropEffect !== "none" ||
-      !onDragOutside
+      !onDragOutside ||
+      getTerminalPresentationChatId(session.source.chatId)
     ) {
       return
     }
@@ -421,13 +504,16 @@ function ChatWorkbenchComponent({
             ? (findGroup(visibleLayout.root, visibleLayout.maximizedGroupId) ?? visibleLayout.root)
             : visibleLayout.root
         }
-        layout={layout}
+        layout={renderedLayout}
         chatNames={chatNames}
+        presentationName={presentationName}
         chatAccents={chatAccents}
         unseenChatIds={unseenChatIds}
         readOnlyChatIds={readOnlyChatIds}
         renderChat={renderChat}
+        openTerminal={openTerminal}
         dispatch={dispatch}
+        cancelResizePreview={() => setResizePreviewLayout(null)}
         onActiveChatChange={onActiveChatChange}
         onChatViewed={onChatViewed}
         dragPreview={dragPreview}
@@ -466,11 +552,14 @@ function WorkbenchNode({
   node,
   layout,
   chatNames,
+  presentationName,
   chatAccents,
   unseenChatIds,
   readOnlyChatIds,
   renderChat,
+  openTerminal,
   dispatch,
+  cancelResizePreview,
   onActiveChatChange,
   onChatViewed,
   dragPreview,
@@ -488,11 +577,18 @@ function WorkbenchNode({
   node: ChatGroupNode
   layout: ChatWorkbenchLayout
   chatNames: ReadonlyMap<string, string>
+  presentationName: (presentationId: string) => string
   chatAccents: ReadonlyMap<string, string | null>
   unseenChatIds: ReadonlySet<string>
   readOnlyChatIds: ReadonlySet<string>
-  renderChat: (chatId: string, active: boolean) => ReactNode
-  dispatch: (action: ChatWorkbenchAction) => void
+  renderChat: (
+    presentationId: string,
+    active: boolean,
+    controls: { openTerminal: (chatId: string) => void },
+  ) => ReactNode
+  openTerminal: (chatId: string, groupId: string) => void
+  dispatch: ChatWorkbenchDispatch
+  cancelResizePreview: () => void
   onActiveChatChange: (chatId: string) => void
   onChatViewed?: (chatId: string) => void
   dragPreview: ChatDropPreview | null
@@ -518,10 +614,12 @@ function WorkbenchNode({
         group={node}
         layout={layout}
         chatNames={chatNames}
+        presentationName={presentationName}
         chatAccents={chatAccents}
         unseenChatIds={unseenChatIds}
         readOnlyChatIds={readOnlyChatIds}
         renderChat={renderChat}
+        openTerminal={openTerminal}
         dispatch={dispatch}
         onActiveChatChange={onActiveChatChange}
         onChatViewed={onChatViewed}
@@ -549,16 +647,25 @@ function WorkbenchNode({
       data-direction={node.direction}
     >
       {node.children.map((child, index) => (
-        <SplitChild key={child.id} split={node} index={index} dispatch={dispatch}>
+        <SplitChild
+          key={child.id}
+          split={node}
+          index={index}
+          dispatch={dispatch}
+          cancelResizePreview={cancelResizePreview}
+        >
           <WorkbenchNode
             node={child}
             layout={layout}
             chatNames={chatNames}
+            presentationName={presentationName}
             chatAccents={chatAccents}
             unseenChatIds={unseenChatIds}
             readOnlyChatIds={readOnlyChatIds}
             renderChat={renderChat}
+            openTerminal={openTerminal}
             dispatch={dispatch}
+            cancelResizePreview={cancelResizePreview}
             onActiveChatChange={onActiveChatChange}
             onChatViewed={onChatViewed}
             dragPreview={dragPreview}
@@ -583,23 +690,44 @@ function SplitChild({
   split,
   index,
   dispatch,
+  cancelResizePreview,
   children,
 }: {
   split: Extract<ChatGroupNode, { type: "split" }>
   index: number
-  dispatch: (action: ChatWorkbenchAction) => void
+  dispatch: ChatWorkbenchDispatch
+  cancelResizePreview: () => void
   children: ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const childMinimum = minimumNodeExtent(split.children[index])
+  const adjacentMinimum = minimumNodeExtent(split.children[index + 1] ?? split.children[index])
   const percentage = split.sizes[index] * 100
   const boundaryPercentage =
     split.sizes.slice(0, index + 1).reduce((sum, size) => sum + size, 0) * 100
-  const resize = (delta: number) => {
+  const resizedSizes = (delta: number, extent: number, baseSizes = split.sizes) => {
     if (index >= split.children.length - 1) return
-    const sizes = [...split.sizes]
-    sizes[index] += delta
-    sizes[index + 1] -= delta
-    dispatch({ type: "resize-split", splitId: split.id, sizes })
+    const currentPair = baseSizes[index] + baseSizes[index + 1]
+    const current = baseSizes[index]
+    const minimumCurrent =
+      (split.direction === "row" ? childMinimum.width : childMinimum.height) / extent
+    const minimumAdjacent =
+      (split.direction === "row" ? adjacentMinimum.width : adjacentMinimum.height) / extent
+    const nextCurrent = Math.min(
+      currentPair - minimumAdjacent,
+      Math.max(minimumCurrent, current + delta),
+    )
+    const sizes = [...baseSizes]
+    sizes[index] = nextCurrent
+    sizes[index + 1] = currentPair - nextCurrent
+    return sizes
+  }
+  const resize = (delta: number, baseSizes = split.sizes) => {
+    const parent = ref.current?.parentElement
+    const extent = split.direction === "row" ? parent?.clientWidth : parent?.clientHeight
+    if (!extent) return
+    const sizes = resizedSizes(delta, extent, baseSizes)
+    if (sizes) dispatch({ type: "resize-split", splitId: split.id, sizes })
   }
   const pointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (index >= split.children.length - 1) return
@@ -608,16 +736,42 @@ function SplitChild({
     const parent = ref.current?.parentElement
     const extent = split.direction === "row" ? parent?.clientWidth : parent?.clientHeight
     if (!extent) return
-    const move = (next: globalThis.PointerEvent) => {
-      const coordinate = split.direction === "row" ? next.clientX : next.clientY
-      resize((coordinate - start) / extent)
+    const baseSizes = [...split.sizes]
+    let latestCoordinate = start
+    let animationFrame: number | null = null
+    const actionFor = (coordinate: number): ChatWorkbenchAction | null => {
+      const sizes = resizedSizes((coordinate - start) / extent, extent, baseSizes)
+      return sizes ? { type: "resize-split", splitId: split.id, sizes } : null
     }
-    const up = () => {
+    const previewLatest = () => {
+      animationFrame = null
+      const action = actionFor(latestCoordinate)
+      if (action) dispatch(action, { previewResize: true })
+    }
+    const move = (next: globalThis.PointerEvent) => {
+      latestCoordinate = split.direction === "row" ? next.clientX : next.clientY
+      if (animationFrame === null) animationFrame = requestAnimationFrame(previewLatest)
+    }
+    const cleanup = () => {
       window.removeEventListener("pointermove", move)
       window.removeEventListener("pointerup", up)
+      window.removeEventListener("pointercancel", cancel)
+      if (animationFrame !== null) cancelAnimationFrame(animationFrame)
+      animationFrame = null
+    }
+    const up = (next: globalThis.PointerEvent) => {
+      latestCoordinate = split.direction === "row" ? next.clientX : next.clientY
+      cleanup()
+      const action = actionFor(latestCoordinate)
+      if (action) dispatch(action)
+    }
+    const cancel = () => {
+      cleanup()
+      cancelResizePreview()
     }
     window.addEventListener("pointermove", move)
     window.addEventListener("pointerup", up, { once: true })
+    window.addEventListener("pointercancel", cancel, { once: true })
   }
   const keyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const backwards =
@@ -633,7 +787,13 @@ function SplitChild({
       <div
         ref={ref}
         className="min-h-0 min-w-0 overflow-hidden"
-        style={{ flexBasis: `${percentage}%`, flexGrow: split.sizes[index], flexShrink: 1 }}
+        style={{
+          flexBasis: `${percentage}%`,
+          flexGrow: split.sizes[index],
+          flexShrink: 1,
+          minWidth: childMinimum.width,
+          minHeight: childMinimum.height,
+        }}
       >
         {children}
       </div>
@@ -669,14 +829,38 @@ function SplitChild({
   )
 }
 
+function minimumNodeExtent(node: ChatGroupNode): { width: number; height: number } {
+  if (node.type === "group") {
+    const terminalOnly = node.chatIds.every((id) => getTerminalPresentationChatId(id) !== null)
+    return terminalOnly
+      ? {
+          width: CHAT_WORKBENCH_MIN_TERMINAL_WIDTH,
+          height: CHAT_WORKBENCH_MIN_TERMINAL_HEIGHT,
+        }
+      : { width: CHAT_WORKBENCH_MIN_CHAT_WIDTH, height: CHAT_WORKBENCH_MIN_CHAT_HEIGHT }
+  }
+  const children = node.children.map(minimumNodeExtent)
+  return node.direction === "row"
+    ? {
+        width: children.reduce((sum, child) => sum + child.width, 0),
+        height: Math.max(...children.map((child) => child.height)),
+      }
+    : {
+        width: Math.max(...children.map((child) => child.width)),
+        height: children.reduce((sum, child) => sum + child.height, 0),
+      }
+}
+
 function ChatGroup({
   group,
   layout,
   chatNames,
+  presentationName,
   chatAccents,
   unseenChatIds,
   readOnlyChatIds,
   renderChat,
+  openTerminal,
   dispatch,
   onActiveChatChange,
   onChatViewed,
@@ -695,10 +879,16 @@ function ChatGroup({
   group: Extract<ChatGroupNode, { type: "group" }>
   layout: ChatWorkbenchLayout
   chatNames: ReadonlyMap<string, string>
+  presentationName: (presentationId: string) => string
   chatAccents: ReadonlyMap<string, string | null>
   unseenChatIds: ReadonlySet<string>
   readOnlyChatIds: ReadonlySet<string>
-  renderChat: (chatId: string, active: boolean) => ReactNode
+  renderChat: (
+    presentationId: string,
+    active: boolean,
+    controls: { openTerminal: (chatId: string) => void },
+  ) => ReactNode
+  openTerminal: (chatId: string, groupId: string) => void
   dispatch: (action: ChatWorkbenchAction) => void
   onActiveChatChange: (chatId: string) => void
   onChatViewed?: (chatId: string) => void
@@ -723,6 +913,7 @@ function ChatGroup({
     ? group.activeChatId
     : group.chatIds[0]
   const tabsRef = useRef<HTMLDivElement>(null)
+  const paneDropBoundsRef = useRef<DOMRect | null>(null)
   const [tabsHovered, setTabsHovered] = useState(false)
   const [scrollbar, setScrollbar] = useState({ left: 0, width: 0 })
   const [groupDropZone, setGroupDropZone] = useState<ChatDropZone | null>(null)
@@ -731,8 +922,11 @@ function ChatGroup({
     side: "left" | "inside" | "right"
   } | null>(null)
   const renderedChat = useMemo(
-    () => renderChat(activeChatId, layout.activeGroupId === group.id),
-    [activeChatId, group.id, layout.activeGroupId, renderChat],
+    () =>
+      renderChat(activeChatId, layout.activeGroupId === group.id, {
+        openTerminal: (chatId) => openTerminal(chatId, group.id),
+      }),
+    [activeChatId, group.id, layout.activeGroupId, openTerminal, renderChat],
   )
   const updateScrollbar = () => {
     const element = tabsRef.current
@@ -759,8 +953,9 @@ function ChatGroup({
   }, [group.chatIds.length])
   const activate = (chatId: string) => {
     dispatch({ type: "activate-tab", groupId: group.id, chatId })
-    onActiveChatChange(chatId)
-    onChatViewed?.(chatId)
+    const ownerChatId = getTerminalPresentationChatId(chatId) ?? chatId
+    onActiveChatChange(ownerChatId)
+    if (!getTerminalPresentationChatId(chatId)) onChatViewed?.(chatId)
   }
   const tabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     let next: number | null = null
@@ -775,7 +970,7 @@ function ChatGroup({
   }
   const preview = (event: DragEvent, zone: ChatDropZone, toIndex?: number) => {
     event.preventDefault()
-    const source = readDrag(event)
+    const source = dragSessionRef.current?.source ?? readDrag(event)
     if (!source) return
     if (isGroupDragSource(source)) {
       event.dataTransfer.dropEffect = "move"
@@ -790,6 +985,10 @@ function ChatGroup({
       targetGroupId: group.id,
       zone,
       toIndex,
+    }
+    if (dragPreview && sameChatDropRequest(dragPreview.request, request)) {
+      event.dataTransfer.dropEffect = dragPreview.accepted ? "move" : "none"
+      return
     }
     if (source.sourceWindowId && source.sourceWindowId !== windowId) {
       const nextPreview: ChatDropPreview =
@@ -819,7 +1018,8 @@ function ChatGroup({
   }
 
   const pointerDropZone = (event: DragEvent<HTMLElement>): ChatDropZone => {
-    const rect = event.currentTarget.getBoundingClientRect()
+    const rect = paneDropBoundsRef.current ?? event.currentTarget.getBoundingClientRect()
+    paneDropBoundsRef.current = rect
     const x = event.clientX - rect.left
     const headerOffset = showPaneHeader ? 40 : 0
     const height = Math.max(0, rect.height - headerOffset)
@@ -842,12 +1042,9 @@ function ChatGroup({
   return (
     <section
       role="region"
-      aria-label={`Chat pane ${chatNames.get(activeChatId) ?? activeChatId}`}
+      aria-label={`${getTerminalPresentationChatId(activeChatId) ? "Terminal" : "Chat"} pane ${presentationName(activeChatId)}`}
       tabIndex={layout.activeGroupId === group.id ? 0 : -1}
-      className={cn(
-        "relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-border outline-none",
-        layout.activeGroupId === group.id && "ring-1 ring-inset ring-primary/70",
-      )}
+      className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-border outline-none"
       data-chat-group={group.id}
       data-active-chat-id={activeChatId}
       data-active-group={layout.activeGroupId === group.id || undefined}
@@ -859,15 +1056,30 @@ function ChatGroup({
         else if (unseenChatIds.has(activeChatId)) onChatViewed?.(activeChatId)
       }}
       onDragOver={(event) => preview(event, pointerDropZone(event))}
-      onDrop={(event) => commitDrop(event, { groupId: group.id, zone: pointerDropZone(event) })}
+      onDrop={(event) => {
+        const zone = pointerDropZone(event)
+        paneDropBoundsRef.current = null
+        commitDrop(event, { groupId: group.id, zone })
+      }}
+      onDragEnd={() => {
+        paneDropBoundsRef.current = null
+      }}
       onDragLeave={(event) => {
         const next = event.relatedTarget
         if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+          paneDropBoundsRef.current = null
           setGroupDropZone(null)
           setTabDropTarget(null)
         }
       }}
     >
+      {layout.activeGroupId === group.id && (
+        <span
+          aria-hidden
+          data-active-pane-outline
+          className="pointer-events-none absolute inset-0 z-50 border border-primary/80"
+        />
+      )}
       {showPaneHeader && (
         <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-muted/30 px-1">
           <div
@@ -919,12 +1131,13 @@ function ChatGroup({
               }}
             >
               {group.chatIds.map((chatId, index) => {
+                const isTerminal = getTerminalPresentationChatId(chatId) !== null
                 const targetGroups = moveMenu.savedGroups.filter(
                   (savedGroup) => savedGroup.id !== moveMenu.activeSavedGroupId,
                 )
                 const canMove =
                   Boolean(moveMenu.activeSavedGroupId && moveMenu.onMoveChatToMainBar) ||
-                  Boolean(moveMenu.onMoveChatToGroup && targetGroups.length > 0)
+                  (!isTerminal && Boolean(moveMenu.onMoveChatToGroup && targetGroups.length > 0))
                 return (
                   <ContextMenu key={chatId}>
                     <ContextMenuTrigger asChild>
@@ -933,18 +1146,16 @@ function ChatGroup({
                         className={cn(
                           "group/tab relative flex h-8 w-44 shrink-0 items-center rounded-md border border-transparent",
                           chatId === activeChatId
-                            ? "border-border bg-background text-foreground shadow-sm"
+                            ? "border-foreground/20 bg-muted/80 text-foreground shadow-sm"
                             : "text-muted-foreground hover:bg-accent",
                         )}
                         style={{ borderTopColor: chatAccents.get(chatId) ?? undefined }}
+                        data-chat-tab={chatId}
                         data-chat-tab-drop-side={
                           tabDropTarget?.chatId === chatId ? tabDropTarget.side : undefined
                         }
                         onDragStart={(event) => {
-                          configureChatDragFeedback(
-                            event.dataTransfer,
-                            chatNames.get(chatId) ?? "Chat",
-                          )
+                          configureChatDragFeedback(event.dataTransfer, presentationName(chatId))
                           const source = {
                             chatId,
                             groupId: logicalGroupForChat(chatId)?.id ?? group.id,
@@ -975,7 +1186,11 @@ function ChatGroup({
                           const relativeX = (event.clientX - rect.left) / rect.width
                           const side =
                             relativeX <= 0.25 ? "left" : relativeX >= 0.75 ? "right" : "inside"
-                          setTabDropTarget({ chatId, side })
+                          setTabDropTarget((current) =>
+                            current?.chatId === chatId && current.side === side
+                              ? current
+                              : { chatId, side },
+                          )
                           preview(
                             event,
                             "tab",
@@ -1014,11 +1229,14 @@ function ChatGroup({
                           aria-selected={chatId === activeChatId}
                           aria-controls={panelId(group.id, chatId)}
                           tabIndex={chatId === activeChatId ? 0 : -1}
-                          className="min-w-0 flex-1 truncate px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          className="flex min-w-0 flex-1 items-center gap-1.5 px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary"
                           onClick={() => activate(chatId)}
                           onKeyDown={(event) => tabKeyDown(event, index)}
                         >
-                          {chatNames.get(chatId) ?? chatId}
+                          {getTerminalPresentationChatId(chatId) && (
+                            <SquareTerminal className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                          )}
+                          <span className="truncate">{presentationName(chatId)}</span>
                           {readOnlyChatIds.has(chatId) ? " (read only)" : ""}
                           {unseenChatIds.has(chatId) && (
                             <span className="sr-only">, new response</span>
@@ -1026,7 +1244,7 @@ function ChatGroup({
                         </button>
                         <button
                           type="button"
-                          aria-label={`Close ${chatNames.get(chatId) ?? "Chat"} presentation`}
+                          aria-label={`Close ${presentationName(chatId)} presentation`}
                           className={cn(
                             "relative mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-0 hover:bg-muted group-hover/tab:opacity-100 focus-visible:opacity-100",
                             chatId === activeChatId && !unseenChatIds.has(chatId) && "opacity-60",
@@ -1064,18 +1282,19 @@ function ChatGroup({
                               Main bar
                             </ContextMenuItem>
                           )}
-                          {targetGroups.map((savedGroup) => (
-                            <ContextMenuItem
-                              key={savedGroup.id}
-                              onSelect={() => moveMenu.onMoveChatToGroup?.(chatId, savedGroup.id)}
-                            >
-                              {savedGroup.name}
-                            </ContextMenuItem>
-                          ))}
+                          {!isTerminal &&
+                            targetGroups.map((savedGroup) => (
+                              <ContextMenuItem
+                                key={savedGroup.id}
+                                onSelect={() => moveMenu.onMoveChatToGroup?.(chatId, savedGroup.id)}
+                              >
+                                {savedGroup.name}
+                              </ContextMenuItem>
+                            ))}
                         </ContextMenuSubContent>
                       </ContextMenuSub>
                       <ContextMenuItem
-                        disabled={!moveMenu.onCreateGroupFromChat}
+                        disabled={isTerminal || !moveMenu.onCreateGroupFromChat}
                         onSelect={() => moveMenu.onCreateGroupFromChat?.(chatId)}
                       >
                         Add to new group
@@ -1217,8 +1436,13 @@ function sameChatDropPreview(
 ): boolean {
   if (current === next) return true
   if (!current || !next || current.accepted !== next.accepted) return false
-  const a = current.request
-  const b = next.request
+  return sameChatDropRequest(current.request, next.request)
+}
+
+function sameChatDropRequest(
+  a: ChatDropPreview["request"],
+  b: ChatDropPreview["request"],
+): boolean {
   return (
     a.chatId === b.chatId &&
     a.sourceGroupId === b.sourceGroupId &&

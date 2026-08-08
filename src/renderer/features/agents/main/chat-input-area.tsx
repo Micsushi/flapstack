@@ -1,7 +1,7 @@
 "use client"
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { AlertTriangle, Camera, ChevronDown, RefreshCw } from "lucide-react"
+import { AlertTriangle, Camera, ChevronDown, ListTodo, Plus, RefreshCw, Target } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { Button } from "../../../components/ui/button"
@@ -32,6 +32,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip"
 import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover"
 import { Switch } from "../../../components/ui/switch"
+import { ProgressiveOverflowRow } from "../../../components/progressive-overflow-row"
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
@@ -136,8 +137,6 @@ import {
   RUN_PERMISSION_MODE_LABELS,
 } from "../constants"
 import { ChatAgentProfileControl } from "../../agent-profiles/chat-agent-profile-control"
-import { buildSelectedSpeechVocabulary } from "../../../../shared/speech-vocabulary"
-import { SpeechVocabularyPopover } from "../voice/speech-vocabulary-popover"
 import { useFeatureVisibility } from "../../settings/use-feature-visibility"
 
 const CUSTOM_PERMISSION_LABELS: Record<(typeof customPermissionCapabilityKeys)[number], string> = {
@@ -443,6 +442,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [hasContent, setHasContent] = useState(false)
   const [isFocused, setIsFocused] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [inputWidth, setInputWidth] = useState(Number.POSITIVE_INFINITY)
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   const { data: runtimeChat } = trpc.chats.get.useQuery({ id: parentChatId })
   const { data: runtimeTask } = trpc.tasks.get.useQuery(
@@ -459,10 +459,6 @@ export const ChatInputArea = memo(function ChatInputArea({
       chat: chatName || `Chat ${parentChatId.slice(0, 8)}`,
     }),
     [chatName, parentChatId, projectLabel, projectPath, repository, runtimeTask?.name],
-  )
-  const speechVocabulary = useMemo(
-    () => buildSelectedSpeechVocabulary(selectedSpeechContext),
-    [selectedSpeechContext],
   )
   const { data: runtimeReleases = [] } = trpc.agentRuntimeDefaults.capabilities.useQuery()
   const { data: runtimeDefaults = [] } = trpc.agentRuntimeDefaults.list.useQuery()
@@ -1308,7 +1304,8 @@ export const ChatInputArea = memo(function ChatInputArea({
     runtimeChat?.worktreePath,
     setStoredTargetWorktreePath,
   ])
-  const canSwitchProvider = messageTokenData.messageCount === 0 && !isStreaming && !sandboxId
+  const hasStartedChat = messageTokenData.messageCount > 0
+  const canSwitchProvider = !hasStartedChat && !isStreaming && !sandboxId
 
   // MCP status - from getAllMcpConfig query (provides global/local grouping)
   const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom)
@@ -2001,6 +1998,16 @@ export const ChatInputArea = memo(function ChatInputArea({
     [editorRef, projectPath, onCacheFileContent, onAddAttachments, onPersistAttachments, trpcUtils],
   )
 
+  const composerSettingLabels = [
+    ...(featureVisibility.isVisible("runtimes") ? ["Runtime"] : []),
+    "Permissions",
+    "Mode",
+    ...(featureVisibility.isVisible("agent-profiles") ? ["Agent profile"] : []),
+    ...(permissionPreview?.degraded ? ["Warning"] : []),
+    ...(requestedPermissionMode === "custom" ? ["Capabilities"] : []),
+    ...(hasWorktreeChoices ? ["Project checkout"] : []),
+  ]
+
   return (
     <div
       ref={(el) => {
@@ -2017,10 +2024,12 @@ export const ChatInputArea = memo(function ChatInputArea({
           el.style.setProperty("--chat-input-width", `${width}px`)
           parent?.style.setProperty("--chat-input-height", `${height}px`)
           parent?.style.setProperty("--chat-input-width", `${width}px`)
+          setInputWidth(width)
         })
         observer.observe(el)
       }}
       className="px-2 pb-2 shadow-sm shadow-background relative z-10"
+      data-compact-input={inputWidth < 560 || undefined}
     >
       <div className="w-full max-w-2xl mx-auto">
         <div
@@ -2043,7 +2052,7 @@ export const ChatInputArea = memo(function ChatInputArea({
           >
             <PromptInput
               className={cn(
-                "mb-9 border bg-input-background relative z-10 p-2 rounded-xl transition-[border-color,box-shadow] duration-150",
+                "border bg-input-background relative z-10 p-2 rounded-xl transition-[border-color,box-shadow] duration-150",
                 isDragOver && "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.2)]",
                 isFocused &&
                   !isDragOver &&
@@ -2345,7 +2354,17 @@ export const ChatInputArea = memo(function ChatInputArea({
                     />
                   </div>
 
-                  <div className="absolute left-0 top-[calc(100%+18px)] flex max-w-[calc(100vw-5rem)] items-center gap-1 overflow-hidden text-xs">
+                  <ProgressiveOverflowRow
+                    usageRatio={0.8}
+                    menuLabel="More composer settings"
+                    className="min-w-0 flex-1 text-xs"
+                    gap={4}
+                    align="start"
+                    side="top"
+                    forceOverflow={hasStartedChat}
+                    overflowLabels={composerSettingLabels}
+                    overflowLayout="rows"
+                  >
                     {featureVisibility.isVisible("runtimes") && (
                       <RuntimeSelector
                         harness={provider}
@@ -2353,6 +2372,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         automaticPreference={resolvedRuntimePreference}
                         onChange={(preference) => void handleRuntimeChange(preference)}
                         disabled={isStreaming || setRuntimePreferenceMutation.isPending}
+                        locked={hasStartedChat}
                       />
                     )}
                     <PermissionSelector
@@ -2373,7 +2393,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                     />
                     <AgentModeSelector value={subChatMode} onChange={updateMode} />
                     {featureVisibility.isVisible("agent-profiles") && (
-                      <ChatAgentProfileControl chatId={parentChatId} />
+                      <ChatAgentProfileControl chatId={parentChatId} locked={hasStartedChat} />
                     )}
 
                     {permissionPreview?.degraded && (
@@ -2749,78 +2769,154 @@ export const ChatInputArea = memo(function ChatInputArea({
                         </DropdownMenuContent>
                       </DropdownMenu>
                     )}
-                  </div>
+                  </ProgressiveOverflowRow>
                 </div>
 
-                <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
-                  {/* Hidden file input - accepts any files */}
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    hidden
-                    multiple
-                    onChange={(e) => {
-                      const inputFiles = Array.from(e.target.files || [])
-                      onAddAttachments(inputFiles)
-                      e.target.value = ""
-                    }}
-                  />
+                {/* Hidden file input - accepts any files */}
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  hidden
+                  multiple
+                  onChange={(e) => {
+                    const inputFiles = Array.from(e.target.files || [])
+                    onAddAttachments(inputFiles)
+                    e.target.value = ""
+                  }}
+                />
 
-                  {/* Voice wave indicator / transcribing state / normal toolbar */}
-                  {isVoiceRecording ? (
+                <ProgressiveOverflowRow
+                  usageRatio={0.94}
+                  menuLabel="More composer actions"
+                  className="ml-auto min-w-0 flex-1 justify-end"
+                  contentClassName="gap-1"
+                  gap={2}
+                  align="end"
+                  side="top"
+                  pinnedEnd={
+                    <div className="ml-0.5">
+                      <AgentSendButton
+                        isStreaming={isStreaming}
+                        isSubmitting={false}
+                        disabled={
+                          (!hasContent &&
+                            images.length === 0 &&
+                            files.length === 0 &&
+                            textContexts.length === 0 &&
+                            (diffTextContexts?.length ?? 0) === 0 &&
+                            queueLength === 0) ||
+                          isUploading ||
+                          Boolean(runtimeBlockedReason) ||
+                          Boolean(worktreeBlockedReason)
+                        }
+                        hasContent={
+                          hasContent ||
+                          images.length > 0 ||
+                          files.length > 0 ||
+                          textContexts.length > 0 ||
+                          (diffTextContexts?.length ?? 0) > 0
+                        }
+                        onClick={() => {
+                          if (
+                            !hasContent &&
+                            images.length === 0 &&
+                            files.length === 0 &&
+                            queueLength > 0 &&
+                            onSendFromQueue &&
+                            firstQueueItemId
+                          ) {
+                            onSendFromQueue(firstQueueItemId)
+                          } else {
+                            void handleEditorSubmit()
+                          }
+                        }}
+                        onStop={onStop}
+                        mode={subChatMode}
+                      />
+                    </div>
+                  }
+                >
+                  {isVoiceRecording && (
                     <VoiceWaveIndicator
                       isRecording={isVoiceRecording}
                       audioLevel={voiceAudioLevel}
                     />
-                  ) : isTranscribing ? (
-                    <div className="flex items-center px-2 h-5">
+                  )}
+                  {isTranscribing && !isVoiceRecording && (
+                    <div className="flex h-5 items-center px-2">
                       <IconSpinner className="size-3.5 text-muted-foreground" />
                     </div>
-                  ) : (
-                    <>
-                      {/* Context window indicator - click to compact */}
-                      <AgentContextIndicator
-                        tokenData={messageTokenData}
-                        // onCompact={onCompact}
-                        isCompacting={isCompacting}
-                        disabled={isStreaming}
-                      />
-
-                      {/* Attachment button */}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 rounded-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={images.length >= 5 && files.length >= 10}
-                      >
-                        <AttachIcon className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 rounded-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
-                        hidden={!featureVisibility.isVisible("visual-context")}
-                        onClick={() => setVisualCaptureOpen(true)}
-                        disabled={!runtimeChat?.projectId}
-                        aria-label="Capture screen or window"
-                        title="Add visual context"
-                      >
-                        <Camera className="h-4 w-4" />
-                      </Button>
-                      {featureVisibility.isVisible("visual-context") && runtimeChat?.projectId && (
-                        <VisualCaptureDialog
-                          open={visualCaptureOpen}
-                          onOpenChange={setVisualCaptureOpen}
-                          projectId={runtimeChat.projectId}
-                          chatId={parentChatId}
-                          taskId={runtimeChat.taskId ?? undefined}
-                          onAddAttachments={onAddAttachments}
-                        />
-                      )}
-                    </>
                   )}
-
+                  {!isVoiceRecording && !isTranscribing && (
+                    <AgentContextIndicator
+                      tokenData={messageTokenData}
+                      isCompacting={isCompacting}
+                      disabled={isStreaming}
+                    />
+                  )}
+                  {!isVoiceRecording && !isTranscribing && (
+                    <DropdownMenu>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 rounded-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                              aria-label="Add to chat"
+                            >
+                              <Plus className="h-4 w-4" aria-hidden="true" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">Add to chat</TooltipContent>
+                      </Tooltip>
+                      <DropdownMenuContent
+                        align="end"
+                        side="top"
+                        sideOffset={6}
+                        className="min-w-56"
+                        onCloseAutoFocus={(event) => event.preventDefault()}
+                      >
+                        <DropdownMenuItem
+                          disabled={images.length >= 5 && files.length >= 10}
+                          onSelect={() => fileInputRef.current?.click()}
+                        >
+                          <AttachIcon className="h-4 w-4" />
+                          Add files
+                        </DropdownMenuItem>
+                        {featureVisibility.isVisible("visual-context") && (
+                          <DropdownMenuItem
+                            disabled={!runtimeChat?.projectId}
+                            onSelect={() => setVisualCaptureOpen(true)}
+                          >
+                            <Camera className="h-4 w-4" />
+                            Add screen or window
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onSelect={() => updateMode("plan")}>
+                          <ListTodo className="h-4 w-4" />
+                          Plan mode
+                          {subChatMode === "plan" && <CheckIcon className="ml-auto h-3.5 w-3.5" />}
+                        </DropdownMenuItem>
+                        {provider === "codex" && (
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              const currentText = editorRef.current?.getValue().trim() ?? ""
+                              editorRef.current?.setValue(
+                                currentText ? `/goal ${currentText}` : "/goal ",
+                              )
+                              requestAnimationFrame(() => editorRef.current?.focus())
+                            }}
+                          >
+                            <Target className="h-4 w-4" />
+                            Set a goal
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
                   {featureVisibility.isVisible("voice") && (
                     <AgentVoiceButton
                       isRecording={isVoiceRecording}
@@ -2833,53 +2929,17 @@ export const ChatInputArea = memo(function ChatInputArea({
                       onStop={() => void handleVoiceMouseUp()}
                     />
                   )}
-                  {featureVisibility.isVisible("voice") && (
-                    <SpeechVocabularyPopover terms={speechVocabulary} />
-                  )}
-
-                  {/* Send/Stop button */}
-                  <div className="ml-0.5">
-                    <AgentSendButton
-                      isStreaming={isStreaming}
-                      isSubmitting={false}
-                      disabled={
-                        (!hasContent &&
-                          images.length === 0 &&
-                          files.length === 0 &&
-                          textContexts.length === 0 &&
-                          (diffTextContexts?.length ?? 0) === 0 &&
-                          queueLength === 0) ||
-                        isUploading ||
-                        Boolean(runtimeBlockedReason) ||
-                        Boolean(worktreeBlockedReason)
-                      }
-                      hasContent={
-                        hasContent ||
-                        images.length > 0 ||
-                        files.length > 0 ||
-                        textContexts.length > 0 ||
-                        (diffTextContexts?.length ?? 0) > 0
-                      }
-                      onClick={() => {
-                        // If input is empty and queue has items, send first queue item
-                        if (
-                          !hasContent &&
-                          images.length === 0 &&
-                          files.length === 0 &&
-                          queueLength > 0 &&
-                          onSendFromQueue &&
-                          firstQueueItemId
-                        ) {
-                          onSendFromQueue(firstQueueItemId)
-                        } else {
-                          void handleEditorSubmit()
-                        }
-                      }}
-                      onStop={onStop}
-                      mode={subChatMode}
-                    />
-                  </div>
-                </div>
+                </ProgressiveOverflowRow>
+                {featureVisibility.isVisible("visual-context") && runtimeChat?.projectId && (
+                  <VisualCaptureDialog
+                    open={visualCaptureOpen}
+                    onOpenChange={setVisualCaptureOpen}
+                    projectId={runtimeChat.projectId}
+                    chatId={parentChatId}
+                    taskId={runtimeChat.taskId ?? undefined}
+                    onAddAttachments={onAddAttachments}
+                  />
+                )}
               </PromptInputActions>
             </PromptInput>
             {runtimeBlockedReason ? (

@@ -73,6 +73,18 @@ describe("manual UI review fixes", () => {
     expect(content).toContain("Rename group…")
   })
 
+  it("uses group color on the full group tab while project color stays on Chat tabs", () => {
+    const content = read("src/renderer/features/agents/ui/agents-content.tsx")
+    const workbench = read("src/renderer/features/agents/workbench/chat-workbench.tsx")
+    expect(content).toContain("resolveGroupTabBackground")
+    expect(content).toContain("backgroundColor: resolveGroupTabBackground")
+    expect(content).not.toContain("borderTopColor: group.color")
+    expect(content).toContain("border-foreground/20 bg-muted")
+    expect(content).toContain("text-foreground/90")
+    expect(content).toContain("text-foreground/80")
+    expect(workbench).toContain("borderTopColor: chatAccents.get(chatId)")
+  })
+
   it("opens an editable dialog when renaming a group", () => {
     const content = read("src/renderer/features/agents/ui/agents-content.tsx")
     expect(content).toContain("<RenameDialog")
@@ -135,11 +147,11 @@ describe("manual UI review fixes", () => {
     expect(workbench).toContain("Main bar")
   })
 
-  it("lets the transcript scrollbar span behind the measured bottom dock", () => {
+  it("keeps the measured bottom dock clear of the transcript scrollbar", () => {
     const activeChat = read("src/renderer/features/agents/main/active-chat.tsx")
     expect(activeChat).toContain("data-chat-bottom-dock")
     expect(activeChat).toContain("--chat-bottom-dock-height")
-    expect(activeChat).toContain("absolute inset-x-0 bottom-0 z-20")
+    expect(activeChat).toContain("absolute bottom-0 left-0 right-1 z-20")
     expect(activeChat).toContain("calc(var(--chat-bottom-dock-height")
   })
 })

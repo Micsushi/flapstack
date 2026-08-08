@@ -26,6 +26,7 @@ import {
   selectedTeamIdAtom,
   type ChatSourceMode,
   showWorkspaceIconAtom,
+  newChatDraftReminderEnabledAtom,
 } from "../../lib/atoms"
 import {
   useRemoteChats,
@@ -139,6 +140,7 @@ import {
   agentsDebugModeAtom,
   selectedChatScopeAtom,
   selectedProjectAtom,
+  newChatFormSessionAtom,
   justCreatedIdsAtom,
   undoStackAtom,
   pendingUserQuestionsAtom,
@@ -165,7 +167,13 @@ import { AgentsHelpPopover } from "../agents/components/agents-help-popover"
 import { getShortcutKey, isDesktopApp } from "../../lib/utils/platform"
 import { useResolvedHotkeyDisplay, useResolvedHotkeyDisplayWithAlt } from "../../lib/hotkeys"
 import { pluralize } from "../agents/utils/pluralize"
-import { useNewChatDrafts, deleteNewChatDraft, type NewChatDraft } from "../agents/lib/drafts"
+import {
+  countVisibleNewChatDraftsForProject,
+  useNewChatDrafts,
+  deleteNewChatDraft,
+  openNewChatDraft,
+  type NewChatDraft,
+} from "../agents/lib/drafts"
 import { TrafficLightSpacer, TrafficLights } from "../agents/components/traffic-light-spacer"
 import { useHotkeys } from "react-hotkeys-hook"
 import { Checkbox } from "../../components/ui/checkbox"
@@ -203,6 +211,12 @@ import {
 import { getNonMainWorktreeLabel } from "./worktree-chip"
 import { ChatTagChip, ChatTagSubmenu, type ChatTagView } from "./chat-tag-menu"
 import { RepositoryOverviewDialog } from "./repository-overview-dialog"
+import {
+  assignStableProjectColors,
+  DEFAULT_PROJECT_COLOR,
+  normalizeHexColor,
+  PROJECT_COLOR_PRESETS,
+} from "./project-colors"
 
 // GitHub avatar with loading placeholder
 const GitHubAvatar = React.memo(function GitHubAvatar({
@@ -265,20 +279,6 @@ const SidebarChip = React.memo(function SidebarChip({
   )
 })
 
-const PROJECT_COLOR_PRESETS = [
-  "#38bdf8",
-  "#22c55e",
-  "#f59e0b",
-  "#f97316",
-  "#ec4899",
-  "#14b8a6",
-  "#84cc16",
-  "#eab308",
-  "#06b6d4",
-  "#64748b",
-]
-
-const DEFAULT_PROJECT_COLOR = PROJECT_COLOR_PRESETS[0]
 const GLOBAL_SECTION_COLOR = "#64748b"
 const ACTIVE_CHAT_BORDER_COLOR = "#a78bfa"
 const SCOPED_SECTION_BACKGROUND_OPACITY = 0.25
@@ -289,20 +289,6 @@ const SIDEBAR_POINTER_DRAG_THRESHOLD = 4
 
 function clampColorChannel(value: number) {
   return Math.max(0, Math.min(255, Math.round(value)))
-}
-
-function normalizeHexColor(color?: string | null) {
-  if (!color) return DEFAULT_PROJECT_COLOR
-  const trimmed = color.trim()
-  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed
-  if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
-    return `#${trimmed
-      .slice(1)
-      .split("")
-      .map((char) => `${char}${char}`)
-      .join("")}`
-  }
-  return DEFAULT_PROJECT_COLOR
 }
 
 function hexToRgb(color?: string | null) {
@@ -335,61 +321,12 @@ function rgbaFromHex(color: string, alpha: number) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-function hslToHex(hue: number, saturation: number, lightness: number) {
-  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation
-  const huePrime = hue / 60
-  const x = chroma * (1 - Math.abs((huePrime % 2) - 1))
-  const match = lightness - chroma / 2
-  let r = 0
-  let g = 0
-  let b = 0
-
-  if (huePrime < 1) {
-    r = chroma
-    g = x
-  } else if (huePrime < 2) {
-    r = x
-    g = chroma
-  } else if (huePrime < 3) {
-    g = chroma
-    b = x
-  } else if (huePrime < 4) {
-    g = x
-    b = chroma
-  } else if (huePrime < 5) {
-    r = x
-    b = chroma
-  } else {
-    r = chroma
-    b = x
-  }
-
-  return rgbToHex({
-    r: (r + match) * 255,
-    g: (g + match) * 255,
-    b: (b + match) * 255,
-  })
-}
-
 function getProjectTint(baseColor?: string | null) {
   const base = mixHexColor(normalizeHexColor(baseColor), "#000000", 0.38)
   const chat = mixHexColor(base, "#ffffff", 0.3)
   const task = mixHexColor(base, "#000000", 0.34)
   const taskChat = mixHexColor(base, "#ffffff", 0.18)
   return { base, task, chat, taskChat }
-}
-
-function getNextAvailableProjectColor(usedColors: Set<string>, colorIndex: number) {
-  const preset = PROJECT_COLOR_PRESETS.find((color) => !usedColors.has(color))
-  if (preset) return preset
-
-  for (let offset = 0; offset < 360; offset += 1) {
-    const hue = (colorIndex * 137.508 + offset * 31) % 360
-    const generated = hslToHex(hue, 0.72, 0.55)
-    if (!usedColors.has(generated)) return generated
-  }
-
-  return DEFAULT_PROJECT_COLOR
 }
 
 function getElementInsertPosition(element: HTMLElement, clientY: number): DragInsertPosition {
@@ -3154,6 +3091,10 @@ export function AgentsSidebar({
   const autoAdvanceTarget = useAtomValue(autoAdvanceTargetAtom)
   const [selectedDraftId, setSelectedDraftId] = useAtom(selectedDraftIdAtom)
   const setShowNewChatForm = useSetAtom(showNewChatFormAtom)
+  const startNewChatFormSession = useSetAtom(newChatFormSessionAtom)
+  const [newChatDraftReminderEnabled, setNewChatDraftReminderEnabled] = useAtom(
+    newChatDraftReminderEnabledAtom,
+  )
   const desktopView = useAtomValue(desktopViewAtom)
   const setDesktopView = useSetAtom(desktopViewAtom)
   const [loadingSubChats] = useAtom(loadingSubChatsAtom)
@@ -3204,6 +3145,24 @@ export function AgentsSidebar({
 
   // Multiple drafts state - uses event-based sync instead of polling
   const drafts = useNewChatDrafts()
+  const remindAboutProjectDrafts = useCallback(
+    (project: { id: string; name: string }) => {
+      if (!newChatDraftReminderEnabled) return
+      window.setTimeout(() => {
+        const draftCount = countVisibleNewChatDraftsForProject(project.id)
+        if (draftCount === 0) return
+
+        toast.info(`${draftCount} unsent draft${draftCount === 1 ? "" : "s"} for ${project.name}`, {
+          description: "They remain available in Quick access > Drafts.",
+          action: {
+            label: "Don't remind me",
+            onClick: () => setNewChatDraftReminderEnabled(false),
+          },
+        })
+      }, 0)
+    },
+    [newChatDraftReminderEnabled, setNewChatDraftReminderEnabled],
+  )
 
   // Read unseen changes from global atoms
   const unseenChanges = useAtomValue(agentsUnseenChangesAtom)
@@ -3927,49 +3886,8 @@ export function AgentsSidebar({
 
   useEffect(() => {
     if (!projects?.length) return
-    setProjectColorsById((prev) => {
-      let changed = false
-      const next = { ...prev }
-      const usedColors = new Set<string>()
-
-      projects.forEach((project, index) => {
-        const normalizedExistingColor = next[project.id]
-          ? normalizeHexColor(next[project.id])
-          : null
-        const existingColor = isReservedArchivedAccentColor(normalizedExistingColor)
-          ? null
-          : normalizedExistingColor
-        const isManualColor = manualProjectColorIds.has(project.id)
-
-        if (isManualColor && existingColor) {
-          if (next[project.id] !== existingColor) {
-            next[project.id] = existingColor
-            changed = true
-          }
-          usedColors.add(existingColor)
-          return
-        }
-
-        if (existingColor && !usedColors.has(existingColor)) {
-          if (next[project.id] !== existingColor) {
-            next[project.id] = existingColor
-            changed = true
-          }
-          usedColors.add(existingColor)
-          return
-        }
-
-        const availableColor = getNextAvailableProjectColor(usedColors, index)
-        if (next[project.id] !== availableColor) {
-          next[project.id] = availableColor
-          changed = true
-        }
-        usedColors.add(availableColor)
-      })
-
-      return changed ? next : prev
-    })
-  }, [manualProjectColorIds, projects])
+    setProjectColorsById((current) => assignStableProjectColors(projects, current))
+  }, [projects])
 
   useEffect(() => {
     localStorage.setItem("flapstack-sidebar-project-colors", JSON.stringify(projectColorsById))
@@ -5755,6 +5673,7 @@ export function AgentsSidebar({
   const handleDraftSelect = useCallback(
     (draftId: string) => {
       // Navigate to NewChatForm with this draft selected
+      openNewChatDraft(draftId)
       setSelectedChatId(null)
       setSelectedDraftId(draftId)
       setShowNewChatForm(false) // Clear explicit new chat state when selecting a draft
@@ -5857,6 +5776,7 @@ export function AgentsSidebar({
     setSelectedChatId(null)
     setSelectedChatIsRemote(false)
     setSelectedDraftId(null)
+    startNewChatFormSession((session) => session + 1)
     setShowNewChatForm(true)
     setDesktopView(null)
     setSearchQuery("")
@@ -5869,6 +5789,7 @@ export function AgentsSidebar({
     setSelectedChatId,
     setSelectedChatIsRemote,
     setSelectedDraftId,
+    startNewChatFormSession,
     setShowNewChatForm,
     setDesktopView,
     isMobileFullscreen,
@@ -5879,6 +5800,8 @@ export function AgentsSidebar({
     (projectId: string) => {
       const project = projects?.find((candidate) => candidate.id === projectId)
       if (!project) return
+
+      remindAboutProjectDrafts(project)
 
       triggerHaptic("light")
       localStorage.setItem("flapstack:new-chat-scope", "project")
@@ -5896,6 +5819,7 @@ export function AgentsSidebar({
       setSelectedChatId(null)
       setSelectedChatIsRemote(false)
       setSelectedDraftId(null)
+      startNewChatFormSession((session) => session + 1)
       setShowNewChatForm(true)
       setDesktopView(null)
       setSearchQuery("")
@@ -5905,12 +5829,14 @@ export function AgentsSidebar({
     },
     [
       projects,
+      remindAboutProjectDrafts,
       triggerHaptic,
       setSelectedChatScope,
       setSelectedProject,
       setSelectedChatId,
       setSelectedChatIsRemote,
       setSelectedDraftId,
+      startNewChatFormSession,
       setShowNewChatForm,
       setDesktopView,
       isMobileFullscreen,
@@ -5938,6 +5864,8 @@ export function AgentsSidebar({
       const project = projects?.find((candidate) => candidate.id === task.projectId)
       if (!project) return
 
+      remindAboutProjectDrafts(project)
+
       triggerHaptic("light")
       localStorage.setItem("flapstack:new-chat-scope", "task")
       localStorage.setItem("flapstack:new-chat-task-id", task.id)
@@ -5960,6 +5888,7 @@ export function AgentsSidebar({
       setSelectedChatId(null)
       setSelectedChatIsRemote(false)
       setSelectedDraftId(null)
+      startNewChatFormSession((session) => session + 1)
       setShowNewChatForm(true)
       setDesktopView(null)
       setSearchQuery("")
@@ -5970,12 +5899,14 @@ export function AgentsSidebar({
     [
       tasks,
       projects,
+      remindAboutProjectDrafts,
       triggerHaptic,
       setSelectedChatScope,
       setSelectedProject,
       setSelectedChatId,
       setSelectedChatIsRemote,
       setSelectedDraftId,
+      startNewChatFormSession,
       setShowNewChatForm,
       setDesktopView,
       isMobileFullscreen,

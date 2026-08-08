@@ -4,10 +4,24 @@ export const CHAT_WORKBENCH_LAYOUT_VERSION = 1 as const
 export const CHAT_WORKBENCH_SESSION_VERSION = 1 as const
 export const CHAT_WORKBENCH_DRAG_VERSION = 1 as const
 export const CHAT_WORKBENCH_MAX_GROUPS = 4
+export const CHAT_WORKBENCH_MAX_TERMINALS = 4
+export const CHAT_WORKBENCH_MAX_PRESENTATION_GROUPS =
+  CHAT_WORKBENCH_MAX_GROUPS + CHAT_WORKBENCH_MAX_TERMINALS
 export const CHAT_WORKBENCH_MAX_WINDOWS = 4
 export const CHAT_WORKBENCH_DRAG_MIME = "application/x-flapstack-chat-workbench"
 export const CHAT_WORKBENCH_EXTERNAL_GROUP_ID = "sidebar"
 export const CHAT_WORKBENCH_DRAG_SESSION_KEY = "flapstack:chat-workbench-drag-session"
+export const CHAT_WORKBENCH_TERMINAL_PREFIX = "terminal:"
+
+export function createTerminalPresentationId(chatId: string): string {
+  return `${CHAT_WORKBENCH_TERMINAL_PREFIX}${chatId}`
+}
+
+export function getTerminalPresentationChatId(presentationId: string): string | null {
+  if (!presentationId.startsWith(CHAT_WORKBENCH_TERMINAL_PREFIX)) return null
+  const chatId = presentationId.slice(CHAT_WORKBENCH_TERMINAL_PREFIX.length).trim()
+  return chatId || null
+}
 
 export type ChatWorkbenchPreset =
   | "single"
@@ -43,9 +57,25 @@ export type ChatWorkbenchLayout = {
   root: ChatGroupNode
   activeGroupId: string
   maximizedGroupId: string | null
+  paneBounds?: Record<string, ChatPaneBounds>
+}
+
+export type ChatPaneBounds = {
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 const idSchema = z.string().trim().min(1).max(256)
+const paneBoundsSchema = z
+  .object({
+    x: z.number().finite().min(0).max(1),
+    y: z.number().finite().min(0).max(1),
+    width: z.number().finite().positive().max(1),
+    height: z.number().finite().positive().max(1),
+  })
+  .strict()
 const groupNodeSchema: z.ZodType<ChatGroupNode> = z.lazy(() =>
   z.union([
     z
@@ -69,8 +99,11 @@ const groupNodeSchema: z.ZodType<ChatGroupNode> = z.lazy(() =>
         type: z.literal("split"),
         id: idSchema,
         direction: z.enum(["row", "column"]),
-        sizes: z.array(z.number().finite().positive()).min(2).max(CHAT_WORKBENCH_MAX_GROUPS),
-        children: z.array(groupNodeSchema).min(2).max(CHAT_WORKBENCH_MAX_GROUPS),
+        sizes: z
+          .array(z.number().finite().positive())
+          .min(2)
+          .max(CHAT_WORKBENCH_MAX_PRESENTATION_GROUPS),
+        children: z.array(groupNodeSchema).min(2).max(CHAT_WORKBENCH_MAX_PRESENTATION_GROUPS),
       })
       .strict()
       .superRefine((split, context) => {
@@ -87,14 +120,25 @@ export const chatWorkbenchLayoutSchema = z
     root: groupNodeSchema,
     activeGroupId: idSchema,
     maximizedGroupId: idSchema.nullable(),
+    paneBounds: z.record(idSchema, paneBoundsSchema).optional(),
   })
   .strict()
   .superRefine((layout, context) => {
     const groups = collectChatGroups(layout.root)
     const groupIds = new Set(groups.map((group) => group.id))
     const allChatIds = groups.flatMap((group) => group.chatIds)
-    if (groups.length > CHAT_WORKBENCH_MAX_GROUPS) {
+    const chatGroups = groups.filter((group) =>
+      group.chatIds.some((id) => getTerminalPresentationChatId(id) === null),
+    )
+    const terminalIds = allChatIds.filter((id) => getTerminalPresentationChatId(id) !== null)
+    if (groups.length > CHAT_WORKBENCH_MAX_PRESENTATION_GROUPS) {
+      context.addIssue({ code: "custom", message: "Too many workbench panes are visible." })
+    }
+    if (chatGroups.length > CHAT_WORKBENCH_MAX_GROUPS) {
       context.addIssue({ code: "custom", message: "At most four Chat groups may be visible." })
+    }
+    if (terminalIds.length > CHAT_WORKBENCH_MAX_TERMINALS) {
+      context.addIssue({ code: "custom", message: "At most four Terminal panes may be visible." })
     }
     if (!groupIds.has(layout.activeGroupId)) {
       context.addIssue({ code: "custom", message: "Active group must exist." })
@@ -104,6 +148,17 @@ export const chatWorkbenchLayoutSchema = z
     }
     if (new Set(allChatIds).size !== allChatIds.length) {
       context.addIssue({ code: "custom", message: "A Chat may appear only once in a layout." })
+    }
+    if (layout.paneBounds) {
+      const boundIds = Object.keys(layout.paneBounds)
+      if (boundIds.length !== groupIds.size || boundIds.some((groupId) => !groupIds.has(groupId))) {
+        context.addIssue({ code: "custom", message: "Pane bounds must match visible groups." })
+      }
+      for (const bounds of Object.values(layout.paneBounds)) {
+        if (bounds.x + bounds.width > 1.000001 || bounds.y + bounds.height > 1.000001) {
+          context.addIssue({ code: "custom", message: "Pane bounds must stay inside the layout." })
+        }
+      }
     }
   })
 
@@ -302,12 +357,17 @@ export function reduceChatWorkbench(
     if (!split || split.type !== "split" || split.children.length !== action.sizes.length) {
       return rejected(layout, "invalid-target")
     }
+    const linkedIds = findLinkedSplitIds(layout.root, action.splitId)
+    const sizes = normalizeSizes(action.sizes)
     const root = mapNode(layout.root, (node) =>
-      node.id === action.splitId && node.type === "split"
-        ? { ...node, sizes: normalizeSizes(action.sizes) }
+      linkedIds.has(node.id) &&
+      node.type === "split" &&
+      node.direction === split.direction &&
+      node.children.length === sizes.length
+        ? { ...node, sizes }
         : node,
     )
-    return accepted(validate({ ...layout, root }))
+    return accepted(validate(withoutPaneBounds({ ...layout, root })))
   }
   if (action.type === "toggle-maximize") {
     if (!findGroup(layout.root, action.groupId)) return rejected(layout, "invalid-target")
@@ -339,15 +399,17 @@ export function reduceChatWorkbench(
       ? layout.activeGroupId
       : groups[0].id
     return accepted(
-      validate({
-        ...layout,
-        root,
-        activeGroupId,
-        maximizedGroupId:
-          layout.maximizedGroupId && groups.some((group) => group.id === layout.maximizedGroupId)
-            ? layout.maximizedGroupId
-            : null,
-      }),
+      validate(
+        withoutPaneBounds({
+          ...layout,
+          root,
+          activeGroupId,
+          maximizedGroupId:
+            layout.maximizedGroupId && groups.some((group) => group.id === layout.maximizedGroupId)
+              ? layout.maximizedGroupId
+              : null,
+        }),
+      ),
       "Closed Chat presentation",
     )
   }
@@ -441,10 +503,7 @@ export function previewChatDrop(
     return { accepted: false, request, reason: "invalid-source" }
   }
   if (!target) return { accepted: false, request, reason: "invalid-target" }
-  if (
-    request.zone !== "tab" &&
-    collectChatGroups(layout.root).length >= CHAT_WORKBENCH_MAX_GROUPS
-  ) {
+  if (request.zone !== "tab" && !canSplitPresentation(layout, request.chatId)) {
     return {
       accepted: false,
       request,
@@ -522,12 +581,14 @@ export function projectResponsiveChatWorkbench(
   }
   return {
     logicalLayout: layout,
-    visibleLayout: validate({
-      ...layout,
-      root: visibleGroup,
-      activeGroupId: visibleGroup.id,
-      maximizedGroupId: null,
-    }),
+    visibleLayout: validate(
+      withoutPaneBounds({
+        ...layout,
+        root: visibleGroup,
+        activeGroupId: visibleGroup.id,
+        maximizedGroupId: null,
+      }),
+    ),
     collapsedGroupIds: groups.filter((group) => group.id !== active.id).map((group) => group.id),
   }
 }
@@ -652,7 +713,7 @@ function moveTab(
   })
   if (!findGroup(root, target.id)?.chatIds.includes(action.chatId))
     return rejected(layout, "invalid-target")
-  return accepted(validate({ ...layout, root, activeGroupId: target.id }))
+  return accepted(validate(withoutPaneBounds({ ...layout, root, activeGroupId: target.id })))
 }
 
 function moveGroup(
@@ -680,7 +741,14 @@ function moveGroup(
         : node,
     )
     return accepted(
-      validate({ ...layout, root, activeGroupId: liveTarget.id, maximizedGroupId: null }),
+      validate(
+        withoutPaneBounds({
+          ...layout,
+          root,
+          activeGroupId: liveTarget.id,
+          maximizedGroupId: null,
+        }),
+      ),
       "Merged Chat pane tabs",
     )
   }
@@ -697,7 +765,14 @@ function moveGroup(
       : node,
   )
   return accepted(
-    validate({ ...layout, root, activeGroupId: source.id, maximizedGroupId: null }),
+    validate(
+      withoutPaneBounds({
+        ...layout,
+        root,
+        activeGroupId: source.id,
+        maximizedGroupId: null,
+      }),
+    ),
     `Moved Chat pane ${action.zone}`,
   )
 }
@@ -712,7 +787,7 @@ function splitChat(
   )
   if (!source) return rejected(layout, "invalid-source")
   if (!target) return rejected(layout, "invalid-target")
-  if (collectChatGroups(layout.root).length >= CHAT_WORKBENCH_MAX_GROUPS) {
+  if (!canSplitPresentation(layout, action.chatId)) {
     return {
       accepted: false,
       layout,
@@ -741,7 +816,32 @@ function splitChat(
         )
       : node,
   )
-  return accepted(validate({ ...layout, root, activeGroupId: newGroup.id, maximizedGroupId: null }))
+  return accepted(
+    validate(
+      withoutPaneBounds({
+        ...layout,
+        root,
+        activeGroupId: newGroup.id,
+        maximizedGroupId: null,
+      }),
+    ),
+  )
+}
+
+function canSplitPresentation(layout: ChatWorkbenchLayout, presentationId: string): boolean {
+  const groups = collectChatGroups(layout.root)
+  if (groups.length >= CHAT_WORKBENCH_MAX_PRESENTATION_GROUPS) return false
+  if (getTerminalPresentationChatId(presentationId)) {
+    return (
+      groups.filter((group) =>
+        group.chatIds.some((id) => getTerminalPresentationChatId(id) !== null),
+      ).length <= CHAT_WORKBENCH_MAX_TERMINALS
+    )
+  }
+  return (
+    groups.filter((group) => group.chatIds.some((id) => getTerminalPresentationChatId(id) === null))
+      .length < CHAT_WORKBENCH_MAX_GROUPS
+  )
 }
 
 function removeChat(node: ChatGroupNode, groupId: string, chatId: string): ChatGroupNode | null {
@@ -793,6 +893,29 @@ function findNode(node: ChatGroupNode, id: string): ChatGroupNode | null {
   return null
 }
 
+function findLinkedSplitIds(root: ChatGroupNode, splitId: string): Set<string> {
+  if (root.id === splitId) return new Set([splitId])
+  if (root.type === "group") return new Set([splitId])
+  const target = root.children.find((child) => child.id === splitId)
+  if (target?.type === "split") {
+    return new Set(
+      root.children
+        .filter(
+          (child) =>
+            child.type === "split" &&
+            child.direction === target.direction &&
+            child.children.length === target.children.length,
+        )
+        .map((child) => child.id),
+    )
+  }
+  for (const child of root.children) {
+    if (!findNode(child, splitId)) continue
+    return findLinkedSplitIds(child, splitId)
+  }
+  return new Set([splitId])
+}
+
 function findGroup(
   node: ChatGroupNode,
   id: string,
@@ -842,6 +965,11 @@ function uniqueIds(ids: string[]): string[] {
 
 function clampIndex(index: number | undefined, length: number): number {
   return Math.max(0, Math.min(index === undefined ? length : Math.trunc(index), length))
+}
+
+function withoutPaneBounds(layout: ChatWorkbenchLayout): ChatWorkbenchLayout {
+  const { paneBounds: _paneBounds, ...rest } = layout
+  return rest
 }
 
 function validate(layout: ChatWorkbenchLayout): ChatWorkbenchLayout {

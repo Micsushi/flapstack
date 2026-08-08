@@ -1,5 +1,5 @@
 import type { AgentRuntimePreference } from "../../../../shared/agent-runtime"
-import { Check, ChevronDown } from "lucide-react"
+import { Check, ChevronDown, LockKeyhole } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,6 +18,7 @@ export function RuntimeSelector({
   value,
   onChange,
   disabled = false,
+  locked = false,
   id,
   automaticPreference,
 }: {
@@ -25,6 +26,7 @@ export function RuntimeSelector({
   value: AgentRuntimePreference
   onChange(value: AgentRuntimePreference): void
   disabled?: boolean
+  locked?: boolean
   id?: string
   automaticPreference?: Exclude<AgentRuntimePreference, "auto">
 }) {
@@ -36,6 +38,24 @@ export function RuntimeSelector({
     value === "auto"
       ? `Automatic runtime (${automaticRuntimeLabel})`
       : runtimePreferenceLabel(value)
+
+  if (locked) {
+    return (
+      <button
+        id={id}
+        data-tour="runtime"
+        type="button"
+        aria-label={`Runtime locked after the first message: ${selectedLabel}`}
+        title="Runtime locked after the first message"
+        disabled
+        className="flex h-7 max-w-[220px] cursor-not-allowed items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground opacity-70"
+      >
+        <RuntimePreferenceIcon preference={value} />
+        <span className="truncate">{selectedLabel}</span>
+        <LockKeyhole className="h-3 w-3 shrink-0" aria-hidden="true" />
+      </button>
+    )
+  }
 
   return (
     <DropdownMenu>

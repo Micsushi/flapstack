@@ -6,19 +6,8 @@ import { motion } from "motion/react"
 import { ResizableSidebar } from "@/components/ui/resizable-sidebar"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from "@/components/ui/dropdown-menu"
-import {
-  IconDoubleChevronRight,
-  CustomTerminalIcon,
-  IconSidePeek,
-  IconBottomPanel,
-} from "@/components/ui/icons"
-import { AlignJustify, Check, ChevronsDown } from "lucide-react"
+import { IconDoubleChevronRight, CustomTerminalIcon } from "@/components/ui/icons"
+import { AlignJustify, ChevronsDown } from "lucide-react"
 import { Kbd } from "@/components/ui/kbd"
 import { useResolvedHotkeyDisplay } from "@/lib/hotkeys"
 import { Terminal } from "./terminal"
@@ -31,7 +20,6 @@ import {
   terminalsAtom,
   activeTerminalIdAtom,
   terminalCwdAtom,
-  type TerminalDisplayMode,
 } from "./atoms"
 import { trpc } from "@/lib/trpc"
 import type { TerminalInstance } from "./types"
@@ -86,49 +74,6 @@ function getNextTerminalName(terminals: TerminalInstance[]): string {
   return `Terminal ${maxNumber + 1}`
 }
 
-const TERMINAL_MODES = [
-  { value: "side-peek" as const, label: "Sidebar", Icon: IconSidePeek },
-  { value: "bottom" as const, label: "Bottom", Icon: IconBottomPanel },
-]
-
-function TerminalModeSwitcher({
-  mode,
-  onModeChange,
-}: {
-  mode: TerminalDisplayMode
-  onModeChange: (mode: TerminalDisplayMode) => void
-}) {
-  const currentMode = TERMINAL_MODES.find((m) => m.value === mode) ?? TERMINAL_MODES[0]
-  const CurrentIcon = currentMode.Icon
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 w-6 p-0 flex-shrink-0 hover:bg-foreground/10"
-        >
-          <CurrentIcon className="size-4 text-muted-foreground" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-[140px]">
-        {TERMINAL_MODES.map(({ value, label, Icon }) => (
-          <DropdownMenuItem
-            key={value}
-            onClick={() => onModeChange(value)}
-            className="flex items-center gap-2"
-          >
-            <Icon className="size-4 text-muted-foreground" />
-            <span className="flex-1">{label}</span>
-            {mode === value && <Check className="size-4 text-muted-foreground ml-auto" />}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
 export function TerminalSidebar({
   chatId,
   scopeKey,
@@ -142,7 +87,7 @@ export function TerminalSidebar({
   // Per-chat terminal sidebar state (sidebar open/close is per-workspace, not per-scope)
   const terminalSidebarAtom = useMemo(() => terminalSidebarOpenAtomFamily(chatId), [chatId])
   const [isOpen, setIsOpen] = useAtom(terminalSidebarAtom)
-  const [displayMode, setDisplayMode] = useAtom(terminalDisplayModeAtom)
+  const [displayMode] = useAtom(terminalDisplayModeAtom)
   const [allTerminals, setAllTerminals] = useAtom(terminalsAtom)
   const [allActiveIds, setAllActiveIds] = useAtom(activeTerminalIdAtom)
   const terminalCwds = useAtomValue(terminalCwdAtom)
@@ -543,7 +488,6 @@ export function TerminalSidebar({
                 {toggleTerminalHotkey && <Kbd>{toggleTerminalHotkey}</Kbd>}
               </TooltipContent>
             </Tooltip>
-            <TerminalModeSwitcher mode={displayMode} onModeChange={setDisplayMode} />
           </div>
 
           {/* Terminal Tabs */}
@@ -624,7 +568,6 @@ export function TerminalBottomPanelContent({
   const [allTerminals, setAllTerminals] = useAtom(terminalsAtom)
   const [allActiveIds, setAllActiveIds] = useAtom(activeTerminalIdAtom)
   const terminalCwds = useAtomValue(terminalCwdAtom)
-  const [displayMode, setDisplayMode] = useAtom(terminalDisplayModeAtom)
   const trpcUtils = trpc.useUtils()
 
   const { resolvedTheme } = useTheme()
@@ -810,7 +753,6 @@ export function TerminalBottomPanelContent({
               {toggleTerminalHotkey && <Kbd>{toggleTerminalHotkey}</Kbd>}
             </TooltipContent>
           </Tooltip>
-          <TerminalModeSwitcher mode={displayMode} onModeChange={setDisplayMode} />
         </div>
 
         {/* Terminal Tabs */}

@@ -294,6 +294,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                   <TooltipTrigger asChild>
                     <button
                       type="button"
+                      data-floating-message-jump
                       onClick={jumpToMessage}
                       className="absolute -right-11 top-1 z-20 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-foreground shadow-lg transition-colors hover:bg-accent"
                       aria-label="Jump to this prompt"
@@ -389,7 +390,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
               )}
 
               {/* Match assistant-message actions below the user bubble. */}
-              <div className="mt-1 flex h-6 items-center justify-end gap-0.5 px-2">
+              <div className="@container mt-1 flex h-6 items-center justify-end gap-0.5 px-2">
                 {timestamp && (
                   <span className="mr-1 text-[10px] text-muted-foreground">{timestamp}</span>
                 )}
@@ -397,10 +398,12 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
+                        data-message-inline-action
                         onClick={() => onRollback(userMsg)}
                         disabled={isRollingBack}
                         tabIndex={-1}
                         className={cn(
+                          "hidden @[420px]:inline-flex",
                           "p-1.5 rounded-md transition-all duration-150 ease-out hover:bg-accent/80 active:scale-[0.97]",
                           isRollingBack && "!opacity-50 cursor-not-allowed",
                         )}
@@ -414,7 +417,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                   </Tooltip>
                 )}
                 {textContent.trim() && (
-                  <>
+                  <span data-message-inline-action className="hidden items-center @[420px]:flex">
                     <PlayButton
                       text={textContent}
                       isMobile={isMobile}
@@ -424,7 +427,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                       expandDirection="left"
                     />
                     <CopyButton text={textContent} isMobile={isMobile} />
-                  </>
+                  </span>
                 )}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -437,6 +440,32 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="min-w-[190px]">
+                    <div className="flex items-center gap-0.5 px-1 pb-1 @[420px]:hidden">
+                      {canRollback && (
+                        <button
+                          type="button"
+                          onClick={() => onRollback(userMsg)}
+                          disabled={isRollingBack}
+                          className="rounded-md p-1.5 hover:bg-accent"
+                          aria-label="Rollback to here"
+                        >
+                          <IconTextUndo className="h-3.5 w-3.5 text-muted-foreground" />
+                        </button>
+                      )}
+                      {textContent.trim() && (
+                        <>
+                          <PlayButton
+                            text={textContent}
+                            isMobile={isMobile}
+                            chatId={chatId}
+                            subChatId={subChatId}
+                            messageId={userMsgId}
+                            expandDirection="left"
+                          />
+                          <CopyButton text={textContent} isMobile={isMobile} />
+                        </>
+                      )}
+                    </div>
                     {canEditLatest && (
                       <DropdownMenuItem
                         onClick={() => {

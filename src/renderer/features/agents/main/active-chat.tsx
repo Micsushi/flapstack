@@ -80,7 +80,7 @@ import { DiffSidebarHeader } from "../../changes/components/diff-sidebar-header"
 import { usePushAction } from "../../changes/hooks/use-push-action"
 import { getStatusIndicator } from "../../changes/utils/status"
 import {
-  detailsSidebarOpenAtom,
+  detailsSidebarOpenAtomFamily,
   unifiedSidebarEnabledAtom,
   widgetVisibilityAtomFamily,
 } from "../../details-sidebar/atoms"
@@ -99,7 +99,7 @@ import {
   agentsChangesPanelWidthAtom,
   agentsDiffSidebarWidthAtom,
   agentsPlanSidebarWidthAtom,
-  agentsPreviewSidebarOpenAtom,
+  agentsPreviewSidebarOpenAtomFamily,
   agentsPreviewSidebarWidthAtom,
   agentsSubChatsSidebarModeAtom,
   openAgentChatIdsAtom,
@@ -1872,6 +1872,12 @@ const ChatViewInner = memo(function ChatViewInner({
   // Track chat container height via CSS custom property (no re-renders)
   const chatContainerObserverRef = useRef<ResizeObserver | null>(null)
   const bottomDockObserverRef = useRef<ResizeObserver | null>(null)
+  const chatContainerHeightRef = useRef(0)
+  const bottomDockHeightRef = useRef(0)
+  const syncCompactChatHeight = useCallback(() => {
+    const usableChatHeight = chatContainerHeightRef.current - bottomDockHeightRef.current
+    chatContainerRef.current?.toggleAttribute("data-compact-chat-height", usableChatHeight < 400)
+  }, [])
 
   // Ref for the inner content wrapper (for ResizeObserver-based scroll-to-bottom)
   const contentWrapperRef = useRef<HTMLDivElement | null>(null)
@@ -5028,6 +5034,8 @@ const ChatViewInner = memo(function ChatViewInner({
                 }
                 el.style.setProperty("--chat-container-height", `${height}px`)
                 el.style.setProperty("--chat-container-width", `${width}px`)
+                chatContainerHeightRef.current = height
+                syncCompactChatHeight()
                 parent?.style.setProperty("--chat-container-height", `${height}px`)
                 parent?.style.setProperty("--chat-container-width", `${width}px`)
               })
@@ -5087,6 +5095,16 @@ const ChatViewInner = memo(function ChatViewInner({
                   >
                     <div className="font-medium">{runErrorPresentation.title}</div>
                     <div className="mt-0.5 text-xs opacity-90">{runErrorPresentation.message}</div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 h-7 border-red-500/35 bg-background/60 px-2.5 text-xs hover:bg-red-500/10"
+                      aria-label="Retry failed message"
+                      onClick={() => void regenerate()}
+                    >
+                      Retry
+                    </Button>
                     {runErrorPresentation.technicalDetail && (
                       <details className="mt-1 text-xs opacity-80">
                         <summary className="cursor-pointer select-none">Technical details</summary>
@@ -5110,13 +5128,15 @@ const ChatViewInner = memo(function ChatViewInner({
             const root = element.parentElement
             const observer = new ResizeObserver(([entry]) => {
               const height = entry?.contentRect.height ?? 0
+              bottomDockHeightRef.current = height
+              syncCompactChatHeight()
               root?.style.setProperty("--chat-bottom-dock-height", `${height}px`)
               root?.style.setProperty("--chat-input-height", `${height}px`)
             })
             observer.observe(element)
             bottomDockObserverRef.current = observer
           }}
-          className="absolute inset-x-0 bottom-0 z-20"
+          className="absolute bottom-0 left-0 right-1 z-20"
           data-chat-bottom-dock
         >
           {/* Shared question dialog. Background chats never open it automatically. */}
@@ -5348,7 +5368,8 @@ function ChatViewScoped({
   // Check if any chat has unseen changes
   const hasAnyUnseenChanges = unseenChanges.size > 0
   const [, forceUpdate] = useState({})
-  const [isPreviewSidebarOpen, setIsPreviewSidebarOpen] = useAtom(agentsPreviewSidebarOpenAtom)
+  const previewSidebarAtom = useMemo(() => agentsPreviewSidebarOpenAtomFamily(chatId), [chatId])
+  const [isPreviewSidebarOpen, setIsPreviewSidebarOpen] = useAtom(previewSidebarAtom)
   // Per-chat diff sidebar state - each chat remembers its own open/close state
   const diffSidebarAtom = useMemo(() => diffSidebarOpenAtomFamily(chatId), [chatId])
   const [isDiffSidebarOpen, setIsDiffSidebarOpen] = useAtom(diffSidebarAtom)
@@ -5377,7 +5398,8 @@ function ChatViewScoped({
 
   // Details sidebar state (unified sidebar that combines all right sidebars)
   const isUnifiedSidebarEnabled = useAtomValue(unifiedSidebarEnabledAtom)
-  const [isDetailsSidebarOpen, setIsDetailsSidebarOpen] = useAtom(detailsSidebarOpenAtom)
+  const detailsSidebarAtom = useMemo(() => detailsSidebarOpenAtomFamily(chatId), [chatId])
+  const [isDetailsSidebarOpen, setIsDetailsSidebarOpen] = useAtom(detailsSidebarAtom)
   const headerWidgetVisibilityAtom = useMemo(() => widgetVisibilityAtomFamily(chatId), [chatId])
   const headerWidgetVisibility = useAtomValue(headerWidgetVisibilityAtom)
   const handleCopyFullChat = useCallback(() => {
@@ -5422,6 +5444,11 @@ function ChatViewScoped({
   const terminalSidebarAtom = useMemo(() => terminalSidebarOpenAtomFamily(chatId), [chatId])
   const [isTerminalSidebarOpen, setIsTerminalSidebarOpen] = useAtom(terminalSidebarAtom)
   const terminalDisplayMode = useAtomValue(terminalDisplayModeAtom)
+  const isLegacyTerminalOpen = onOpenTerminal ? false : isTerminalSidebarOpen
+  const openTerminal = useCallback(() => {
+    if (onOpenTerminal) onOpenTerminal()
+    else setIsTerminalSidebarOpen(true)
+  }, [onOpenTerminal, setIsTerminalSidebarOpen])
 
   // Keyboard shortcut: Cmd+J to toggle terminal
   useEffect(() => {
@@ -5430,13 +5457,14 @@ function ChatViewScoped({
       if (e.metaKey && !e.altKey && !e.shiftKey && !e.ctrlKey && e.code === "KeyJ") {
         e.preventDefault()
         e.stopPropagation()
-        setIsTerminalSidebarOpen(!isTerminalSidebarOpen)
+        if (onOpenTerminal) onOpenTerminal()
+        else setIsTerminalSidebarOpen(!isTerminalSidebarOpen)
       }
     }
 
     window.addEventListener("keydown", handleKeyDown, true)
     return () => window.removeEventListener("keydown", handleKeyDown, true)
-  }, [acceptsTopLevelShortcuts, isTerminalSidebarOpen, setIsTerminalSidebarOpen])
+  }, [acceptsTopLevelShortcuts, isTerminalSidebarOpen, onOpenTerminal, setIsTerminalSidebarOpen])
 
   // Mutual exclusion: Details sidebar vs Plan/Terminal/Diff(side-peek) sidebars
   // When one opens, close the conflicting ones and remember for restoration
@@ -5460,7 +5488,7 @@ function ChatViewScoped({
   const prevSidebarStatesRef = useRef({
     details: isDetailsSidebarOpen,
     plan: isPlanSidebarOpen && !!currentPlanPath,
-    terminal: isTerminalSidebarOpen,
+    terminal: isLegacyTerminalOpen,
   })
 
   useEffect(() => {
@@ -5473,8 +5501,8 @@ function ChatViewScoped({
     const detailsJustClosed = !isDetailsSidebarOpen && prev.details
     const planJustOpened = isPlanOpen && !prev.plan
     const planJustClosed = !isPlanOpen && prev.plan
-    const terminalJustOpened = isTerminalSidebarOpen && !prev.terminal
-    const terminalJustClosed = !isTerminalSidebarOpen && prev.terminal
+    const terminalJustOpened = isLegacyTerminalOpen && !prev.terminal
+    const terminalJustClosed = !isLegacyTerminalOpen && prev.terminal
 
     // Terminal in "bottom" mode doesn't conflict with Details sidebar
     const terminalConflictsWithDetails = terminalDisplayMode === "side-peek"
@@ -5485,7 +5513,7 @@ function ChatViewScoped({
         auto.planClosedByDetails = true
         setIsPlanSidebarOpen(false)
       }
-      if (isTerminalSidebarOpen && terminalConflictsWithDetails) {
+      if (isLegacyTerminalOpen && terminalConflictsWithDetails) {
         auto.terminalClosedByDetails = true
         setIsTerminalSidebarOpen(false)
       }
@@ -5525,13 +5553,13 @@ function ChatViewScoped({
     prevSidebarStatesRef.current = {
       details: isDetailsSidebarOpen,
       plan: isPlanOpen,
-      terminal: isTerminalSidebarOpen,
+      terminal: isLegacyTerminalOpen,
     }
   }, [
     isDetailsSidebarOpen,
     isPlanSidebarOpen,
     currentPlanPath,
-    isTerminalSidebarOpen,
+    isLegacyTerminalOpen,
     terminalDisplayMode,
     setIsDetailsSidebarOpen,
     setIsPlanSidebarOpen,
@@ -8044,13 +8072,13 @@ Make sure to preserve all functionality from both branches when resolving confli
         )}
       {worktreePath &&
         (!isUnifiedSidebarEnabled || !headerWidgetVisibility.includes("terminal")) &&
-        !isTerminalSidebarOpen && (
+        !isLegacyTerminalOpen && (
           <Tooltip delayDuration={500}>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => setIsTerminalSidebarOpen(true)}
+                onClick={openTerminal}
                 className="h-7 w-7 flex-shrink-0 rounded-md p-0 text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                 aria-label="Open terminal"
               >
@@ -8162,7 +8190,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                           diffStats={diffStats}
                           onOpenTerminal={onOpenTerminal}
                           canOpenTerminal={!!worktreePath}
-                          isTerminalOpen={isTerminalSidebarOpen}
+                          isTerminalOpen={isLegacyTerminalOpen}
                           isArchived={isArchived}
                           onRestore={handleRestoreWorkspace}
                           onOpenLocally={handleOpenLocally}
@@ -8703,7 +8731,7 @@ Make sure to preserve all functionality from both branches when resolving confli
             )}
 
             {/* Terminal Sidebar - shows when worktree exists (desktop only) */}
-            {worktreePath && (
+            {worktreePath && !onOpenTerminal && (
               <TerminalSidebar
                 chatId={chatId}
                 scopeKey={terminalScopeKey}
@@ -8738,7 +8766,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                   planRefetchTrigger={planEditRefetchTrigger}
                   activeSubChatId={activeSubChatIdForPlan}
                   isPlanSidebarOpen={isPlanSidebarOpen && !!currentPlanPath}
-                  isTerminalSidebarOpen={isTerminalSidebarOpen}
+                  isTerminalSidebarOpen={isLegacyTerminalOpen}
                   isDiffSidebarOpen={isDiffSidebarOpen}
                   diffDisplayMode={diffDisplayMode}
                   canOpenDiff={canOpenDiff}
@@ -8751,7 +8779,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                   gitStatus={gitStatus}
                   isGitStatusLoading={isGitStatusLoading}
                   currentBranch={branchData?.current}
-                  onExpandTerminal={() => setIsTerminalSidebarOpen(true)}
+                  onExpandTerminal={openTerminal}
                   onExpandPlan={() => setIsPlanSidebarOpen(true)}
                   onExpandDiff={() => setIsDiffSidebarOpen(true)}
                   onFileSelect={(filePath) => {
@@ -8770,27 +8798,30 @@ Make sure to preserve all functionality from both branches when resolving confli
           </div>
 
           {/* Terminal Bottom Panel - renders below the main row when displayMode is "bottom" */}
-          {terminalDisplayMode === "bottom" && worktreePath && !isMobileFullscreen && (
-            <ResizableBottomPanel
-              isOpen={isTerminalSidebarOpen}
-              onClose={() => setIsTerminalSidebarOpen(false)}
-              heightAtom={terminalBottomHeightAtom}
-              minHeight={150}
-              maxHeight={500}
-              showResizeTooltip={true}
-              closeHotkey={toggleTerminalHotkey ?? undefined}
-              className="bg-background border-t"
-              style={{ borderTopWidth: "0.5px" }}
-            >
-              <TerminalBottomPanelContent
-                chatId={chatId}
-                scopeKey={terminalScopeKey}
-                cwd={worktreePath}
-                workspaceId={chatId}
+          {terminalDisplayMode === "bottom" &&
+            worktreePath &&
+            !isMobileFullscreen &&
+            !onOpenTerminal && (
+              <ResizableBottomPanel
+                isOpen={isTerminalSidebarOpen}
                 onClose={() => setIsTerminalSidebarOpen(false)}
-              />
-            </ResizableBottomPanel>
-          )}
+                heightAtom={terminalBottomHeightAtom}
+                minHeight={150}
+                maxHeight={500}
+                showResizeTooltip={true}
+                closeHotkey={toggleTerminalHotkey ?? undefined}
+                className="bg-background border-t"
+                style={{ borderTopWidth: "0.5px" }}
+              >
+                <TerminalBottomPanelContent
+                  chatId={chatId}
+                  scopeKey={terminalScopeKey}
+                  cwd={worktreePath}
+                  workspaceId={chatId}
+                  onClose={() => setIsTerminalSidebarOpen(false)}
+                />
+              </ResizableBottomPanel>
+            )}
         </div>
       </TextSelectionProvider>
     </FileOpenProvider>

@@ -54,9 +54,11 @@ describe("chat workbench top-level navigation", () => {
       { activeGroupId: null, groups: [] },
       single,
       split,
+      () => 0,
     )
 
     expect(navigation.groups).toHaveLength(1)
+    expect(navigation.groups[0]?.color).toBe("blue")
     expect(navigation.groups[0]?.layout).toEqual(split)
     expect(navigation.activeGroupId).toBe(navigation.groups[0]?.id)
   })
@@ -289,15 +291,35 @@ describe("chat workbench top-level navigation", () => {
       },
       ["a", "b"],
       "b",
+      () => 0,
     )
 
     expect(created.groups).toHaveLength(1)
+    expect(created.groups[0]!.color).toBe("blue")
     expect(created.activeGroupId).toBe(created.groups[0]!.id)
     expect(collectChatGroups(created.groups[0]!.layout.root)[0]?.chatIds).toEqual(["b"])
     expect(resolveChatWorkbenchNavigationItems(created, ["a"])).toEqual([
       { kind: "chat", id: "a" },
       { kind: "group", id: created.groups[0]!.id },
     ])
+  })
+
+  it("randomly assigns an unused color when a group is first created", () => {
+    const layout = createChatWorkbenchLayout(["a"], "a")
+    const created = createChatWorkbenchGroup(
+      {
+        activeGroupId: null,
+        groups: [
+          { id: "workbench-group-1", name: "First", color: "blue", layout },
+          { id: "workbench-group-2", name: "Second", color: "green", layout },
+        ],
+      },
+      ["c"],
+      "c",
+      () => 0,
+    )
+
+    expect(created.groups.at(-1)?.color).toBe("cyan")
   })
 
   it("appends a detached Chat to the empty tail of the main bar", () => {
