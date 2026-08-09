@@ -32,22 +32,24 @@ describe("sidebar section header scope selection", () => {
     },
   )
 
-  it("keeps the existing expand and collapse behavior for non-project sections", () => {
+  it("keeps Global as an in-sidebar disclosure without opening a scope screen", () => {
     expect(
       resolveSectionHeaderScopeSelection({
         isProjectSection: false,
+        isGlobalSection: true,
         hasOpenChats: false,
         willExpand: true,
         scope: { type: "global", id: "global", name: "Global chats" },
       }),
-    ).toEqual({ type: "global", id: "global", name: "Global chats" })
+    ).toBeUndefined()
     expect(
       resolveSectionHeaderScopeSelection({
         isProjectSection: false,
+        isGlobalSection: true,
         hasOpenChats: false,
         willExpand: false,
         scope: { type: "global", id: "global", name: "Global chats" },
       }),
-    ).toBeNull()
+    ).toBeUndefined()
   })
 })

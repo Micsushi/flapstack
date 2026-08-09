@@ -32,6 +32,14 @@ describe("latest message editing", () => {
     expect(messageGroupSource).toContain("Edit message")
   })
 
+  it("only moves inline user-message actions into overflow at narrow widths", () => {
+    expect(messageGroupSource).toContain("renderUserMessageOptionsMenu(true)")
+    expect(messageGroupSource).toContain("renderUserMessageOptionsMenu(false)")
+    expect(messageGroupSource).toContain('<span className="inline-flex @[420px]:hidden">')
+    expect(messageGroupSource).toContain('<span className="hidden @[420px]:inline-flex">')
+    expect(messageGroupSource).not.toContain("px-1 pb-1 @[420px]:hidden")
+  })
+
   it("rewinds the turn and restores files only when a checkpoint exists", () => {
     expect(chatsRouterSource).toContain("editLatestUserMessage")
     expect(chatsRouterSource).toContain("await restoreCheckpoint(run.beforeCheckpointId)")

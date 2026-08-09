@@ -87,6 +87,9 @@ export function betaFeatureForTrpcPath(path: string): BetaFeatureId | null {
   }
   if (router === "savedWorkspaces") return "savedWorkspaces"
   if (router === "automations") return "automations"
+  if (router === "changes" && procedure === "getRepositoryOverview") {
+    return "branchesAndWorktrees"
+  }
   if (router === "planSources" || router === "taskProposals") return "planning"
   if (router === "tasks" && ["board", "moveCard", "archiveCard"].includes(procedure ?? "")) {
     return "planning"

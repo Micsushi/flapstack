@@ -100,6 +100,9 @@ export interface DesktopApi {
   windowToggleFullscreen: () => Promise<void>
   windowIsFullscreen: () => Promise<boolean>
   setTrafficLightVisibility: (visible: boolean) => Promise<void>
+  undo: () => Promise<void>
+  redo: () => Promise<void>
+  showApplicationMenu: (menu: "File" | "Edit" | "View" | "Help") => Promise<boolean>
   onFullscreenChange: (callback: (isFullscreen: boolean) => void) => () => void
   onFocusChange: (callback: (isFocused: boolean) => void) => () => void
 

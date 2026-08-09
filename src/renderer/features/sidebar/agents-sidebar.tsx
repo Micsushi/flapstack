@@ -3,7 +3,8 @@
 import React from "react"
 import { useState, useRef, useMemo, useEffect, useCallback, memo } from "react"
 import { createPortal, flushSync } from "react-dom"
-import { motion, AnimatePresence } from "motion/react"
+import { motion, AnimatePresence, useReducedMotion } from "motion/react"
+import flapstackLogo from "../../../../build/icons/32x32.png"
 import { Button as ButtonCustom } from "../../components/ui/button"
 import { cn } from "../../lib/utils"
 import { useSetAtom, useAtom, useAtomValue } from "jotai"
@@ -60,8 +61,6 @@ import {
   Tag,
   Plus,
   SquarePen,
-  ArrowRightLeft,
-  Copy,
   Inbox,
   Workflow,
   Network,
@@ -206,6 +205,7 @@ import {
   resolveBoundaryHighlightIds,
   resolveMoveIndicatorIds,
   resolveSidebarDragCursor,
+  setProjectQuickAccessMembership,
   resolveTaskEndDropTarget,
   resolveTaskGroupDropTarget,
   resolveTaskHeaderDropPosition,
@@ -291,6 +291,25 @@ const TASK_SECTION_BACKGROUND_OPACITY = 0.34
 const SCOPED_CHAT_BACKGROUND_OPACITY = 0.09
 const SCOPED_CHAT_BACKGROUND_HOVER_OPACITY = 0.14
 const SIDEBAR_POINTER_DRAG_THRESHOLD = 4
+const QUICK_ACCESS_PROJECTS_STORAGE_KEY = "flapstack-sidebar-quick-access-projects"
+const QUICK_ACCESS_PROJECT_DROP_KIND = "quick-access-project"
+const REGULAR_PROJECT_DROP_KIND = "regular-project"
+const PROJECT_CHILD_MOTION_VARIANTS = {
+  collapsed: {
+    opacity: 0,
+    y: -14,
+    scaleY: 0.92,
+    clipPath: "inset(0 0 100% 0 round 6px)",
+    transition: { duration: 0.16, ease: [0.4, 0, 1, 1] },
+  },
+  expanded: {
+    opacity: 1,
+    y: 0,
+    scaleY: 1,
+    clipPath: "inset(0 0 0% 0 round 6px)",
+    transition: { duration: 0.22, ease: [0.16, 1, 0.3, 1] },
+  },
+} as const
 
 function clampColorChannel(value: number) {
   return Math.max(0, Math.min(255, Math.round(value)))
@@ -1329,8 +1348,10 @@ const AgentChatItem = React.memo(function AgentChatItem({
                             <DropdownMenuSeparator />
                           </>
                         )}
-                        <DropdownMenuItem onSelect={() => onToggleStar(chatId)} className="gap-2">
-                          <Star className="h-3.5 w-3.5 text-muted-foreground" />
+                        <DropdownMenuItem onSelect={() => onTogglePin(chatId)}>
+                          {isPinned ? "Unpin chat" : "Pin chat"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => onToggleStar(chatId)}>
                           {isStarred ? "Unstar chat" : "Star chat"}
                         </DropdownMenuItem>
                         <DropdownMenuItem
@@ -1338,13 +1359,54 @@ const AgentChatItem = React.memo(function AgentChatItem({
                         >
                           Rename chat
                         </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={() => onArchive(chatId)}
+                          disabled={archivePending}
+                        >
+                          {archivePending ? "Archiving..." : "Archive chat"}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        {chatBranch && (
+                          <DropdownMenuItem onSelect={() => onCopyBranch(chatBranch)}>
+                            Copy branch name
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem
+                          onSelect={() =>
+                            copyChat({
+                              chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
+                              format: "handoff",
+                              isRemote,
+                            })
+                          }
+                        >
+                          Copy full chat history
+                        </DropdownMenuItem>
+                        {isDesktop && (
+                          <DropdownMenuItem
+                            onSelect={async () => {
+                              const result = await window.desktopApi?.newWindow({ chatId })
+                              if (result?.blocked) {
+                                const creationFailure = asWorkbenchWindowCreationFailure(result)
+                                if (creationFailure) {
+                                  showWorkbenchWindowCreationFeedback(creationFailure)
+                                } else if (result.reason === "already-open") {
+                                  toast.info("This chat is already open in another window", {
+                                    description: "Switching to the existing window.",
+                                    duration: 3000,
+                                  })
+                                }
+                              }
+                            }}
+                          >
+                            Open in new window
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSeparator />
                         {!isRemote && <ChatTagSubmenu chatId={chatId} assignedTags={chatTags} />}
                         {!isRemote && (
                           <DropdownMenuSub>
-                            <DropdownMenuSubTrigger className="gap-2">
-                              <ArrowRightLeft className="h-3.5 w-3.5 text-muted-foreground" />
-                              Move to...
-                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubTrigger>Move to...</DropdownMenuSubTrigger>
                             <DropdownMenuSubContent
                               sideOffset={6}
                               alignOffset={-4}
@@ -1384,24 +1446,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
                             </DropdownMenuSubContent>
                           </DropdownMenuSub>
                         )}
-                        {chatBranch && (
-                          <DropdownMenuItem onSelect={() => onCopyBranch(chatBranch)}>
-                            Copy branch name
-                          </DropdownMenuItem>
-                        )}
-                        <DropdownMenuItem
-                          className="gap-2"
-                          onSelect={() =>
-                            copyChat({
-                              chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
-                              format: "handoff",
-                              isRemote,
-                            })
-                          }
-                        >
-                          <Copy className="h-3.5 w-3.5 text-muted-foreground" />
-                          Copy full chat history
-                        </DropdownMenuItem>
                         <DropdownMenuSub>
                           <DropdownMenuSubTrigger>Export chat</DropdownMenuSubTrigger>
                           <DropdownMenuSubContent sideOffset={6} alignOffset={-4}>
@@ -1474,26 +1518,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
                             </DropdownMenuItem>
                           </DropdownMenuSubContent>
                         </DropdownMenuSub>
-                        {isDesktop && (
-                          <DropdownMenuItem
-                            onSelect={async () => {
-                              const result = await window.desktopApi?.newWindow({ chatId })
-                              if (result?.blocked) {
-                                const creationFailure = asWorkbenchWindowCreationFailure(result)
-                                if (creationFailure) {
-                                  showWorkbenchWindowCreationFeedback(creationFailure)
-                                } else if (result.reason === "already-open") {
-                                  toast.info("This chat is already open in another window", {
-                                    description: "Switching to the existing window.",
-                                    duration: 3000,
-                                  })
-                                }
-                              }
-                            }}
-                          >
-                            Open in new window
-                          </DropdownMenuItem>
-                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -1573,6 +1597,9 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 <ContextMenuSeparator />
               </>
             )}
+            <ContextMenuItem onClick={() => onTogglePin(chatId)}>
+              {isPinned ? "Unpin chat" : "Pin chat"}
+            </ContextMenuItem>
             <ContextMenuItem onClick={() => onToggleStar(chatId)}>
               {isStarred ? "Unstar chat" : "Star chat"}
             </ContextMenuItem>
@@ -1581,12 +1608,52 @@ const AgentChatItem = React.memo(function AgentChatItem({
             >
               Rename chat
             </ContextMenuItem>
+            <ContextMenuItem onClick={() => onArchive(chatId)} disabled={archivePending}>
+              {archivePending ? "Archiving..." : "Archive chat"}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            {chatBranch && (
+              <ContextMenuItem onClick={() => onCopyBranch(chatBranch)}>
+                Copy branch name
+              </ContextMenuItem>
+            )}
+            <ContextMenuItem
+              data-dev-chat-copy-source="sidebar-menu"
+              data-chat-id={chatId}
+              onClick={() =>
+                copyChat({
+                  chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
+                  format: "handoff",
+                  isRemote,
+                })
+              }
+            >
+              Copy full chat history
+            </ContextMenuItem>
+            {isDesktop && (
+              <ContextMenuItem
+                onClick={async () => {
+                  const result = await window.desktopApi?.newWindow({ chatId })
+                  if (result?.blocked) {
+                    const creationFailure = asWorkbenchWindowCreationFailure(result)
+                    if (creationFailure) {
+                      showWorkbenchWindowCreationFeedback(creationFailure)
+                    } else if (result.reason === "already-open") {
+                      toast.info("This chat is already open in another window", {
+                        description: "Switching to the existing window.",
+                        duration: 3000,
+                      })
+                    }
+                  }
+                }}
+              >
+                Open in new window
+              </ContextMenuItem>
+            )}
+            <ContextMenuSeparator />
             {!isRemote && (
               <ContextMenuSub>
-                <ContextMenuSubTrigger className="gap-2">
-                  <ArrowRightLeft className="h-3.5 w-3.5 text-muted-foreground" />
-                  Move to...
-                </ContextMenuSubTrigger>
+                <ContextMenuSubTrigger>Move to...</ContextMenuSubTrigger>
                 <ContextMenuSubContent
                   sideOffset={6}
                   alignOffset={-4}
@@ -1624,26 +1691,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 </ContextMenuSubContent>
               </ContextMenuSub>
             )}
-            {chatBranch && (
-              <ContextMenuItem onClick={() => onCopyBranch(chatBranch)}>
-                Copy branch name
-              </ContextMenuItem>
-            )}
-            <ContextMenuItem
-              className="gap-2"
-              data-dev-chat-copy-source="sidebar-menu"
-              data-chat-id={chatId}
-              onClick={() =>
-                copyChat({
-                  chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
-                  format: "handoff",
-                  isRemote,
-                })
-              }
-            >
-              <Copy className="h-3.5 w-3.5 text-muted-foreground" />
-              Copy full chat history
-            </ContextMenuItem>
             <ContextMenuSub>
               <ContextMenuSubTrigger>Export chat</ContextMenuSubTrigger>
               <ContextMenuSubContent sideOffset={6} alignOffset={-4}>
@@ -1716,26 +1763,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 </ContextMenuItem>
               </ContextMenuSubContent>
             </ContextMenuSub>
-            {isDesktop && (
-              <ContextMenuItem
-                onClick={async () => {
-                  const result = await window.desktopApi?.newWindow({ chatId })
-                  if (result?.blocked) {
-                    const creationFailure = asWorkbenchWindowCreationFailure(result)
-                    if (creationFailure) {
-                      showWorkbenchWindowCreationFeedback(creationFailure)
-                    } else if (result.reason === "already-open") {
-                      toast.info("This chat is already open in another window", {
-                        description: "Switching to the existing window.",
-                        duration: 3000,
-                      })
-                    }
-                  }
-                }}
-              >
-                Open in new window
-              </ContextMenuItem>
-            )}
           </>
         )}
       </ContextMenuContent>
@@ -1782,6 +1809,7 @@ function chatListSectionPropsAreEqual(
   if (prevProps.dragOverPosition !== nextProps.dragOverPosition) return false
   if (prevProps.dragOverSectionPosition !== nextProps.dragOverSectionPosition) return false
   if (prevProps.projectColor !== nextProps.projectColor) return false
+  if (prevProps.isQuickAccessProject !== nextProps.isQuickAccessProject) return false
   if (prevProps.projectColorsById !== nextProps.projectColorsById) return false
   if (prevProps.showWhenEmpty !== nextProps.showWhenEmpty) return false
   if (prevProps.showEmptyState !== nextProps.showEmptyState) return false
@@ -1825,6 +1853,7 @@ interface ChatListSectionProps {
   hideHeader?: boolean
   parentProjectId?: string | null
   projectColor?: string | null
+  isQuickAccessProject?: boolean
   projectColorsById?: Record<string, string>
   showWhenEmpty?: boolean
   showEmptyState?: boolean
@@ -1918,8 +1947,8 @@ interface ChatListSectionProps {
   onCreateProjectTask?: (projectId: string) => void
   onCreateTaskChat?: (taskId: string) => void
   onOpenRepositoryOverview?: (projectId: string) => void
-  planningEnabled?: boolean
   onChangeProjectColor?: (projectId: string, color: string) => void
+  onSetProjectQuickAccess?: (projectId: string, isInQuickAccess: boolean) => void
   onToggleSection?: (sectionId: string) => void
   onSelectScope?: (scope: SelectedChatScope) => void
   onDragStartItem: (kind: string, id: string) => void
@@ -1947,6 +1976,7 @@ const ChatListSection = React.memo(function ChatListSection({
   hideHeader = false,
   parentProjectId,
   projectColor,
+  isQuickAccessProject = false,
   projectColorsById,
   showWhenEmpty = false,
   showEmptyState = false,
@@ -2006,8 +2036,8 @@ const ChatListSection = React.memo(function ChatListSection({
   onCreateProjectTask,
   onCreateTaskChat,
   onOpenRepositoryOverview,
-  planningEnabled = false,
   onChangeProjectColor,
+  onSetProjectQuickAccess,
   onToggleSection,
   onSelectScope,
   onDragStartItem,
@@ -2178,6 +2208,7 @@ const ChatListSection = React.memo(function ChatListSection({
       onToggleSection?.(sectionId)
       const scopeSelection = resolveSectionHeaderScopeSelection({
         isProjectSection,
+        isGlobalSection,
         hasOpenChats,
         willExpand,
         scope: getHeaderScope(),
@@ -2192,6 +2223,7 @@ const ChatListSection = React.memo(function ChatListSection({
     getHeaderScope,
     hasOpenChats,
     isCollapsed,
+    isGlobalSection,
     isProjectSection,
     onSelectScope,
     onToggleSection,
@@ -2239,22 +2271,33 @@ const ChatListSection = React.memo(function ChatListSection({
             <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
             New chat
           </DropdownMenuItem>
-          {planningEnabled && (
-            <DropdownMenuItem
-              className="gap-2"
-              onSelect={() => onCreateProjectTask?.(lifecycleTarget.id)}
-            >
-              <ListPlus className="h-3.5 w-3.5 text-muted-foreground" />
-              New task
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuSeparator />
           <DropdownMenuItem
             className="gap-2"
-            onSelect={() => onOpenRepositoryOverview?.(lifecycleTarget.id)}
+            onSelect={() => onCreateProjectTask?.(lifecycleTarget.id)}
           >
-            <Trees className="h-3.5 w-3.5 text-muted-foreground" />
-            Branches and worktrees
+            <ListPlus className="h-3.5 w-3.5 text-muted-foreground" />
+            New task
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {onOpenRepositoryOverview && (
+            <DropdownMenuItem
+              className="gap-2"
+              onSelect={() => onOpenRepositoryOverview(lifecycleTarget.id)}
+            >
+              <Trees className="h-3.5 w-3.5 text-muted-foreground" />
+              Branches and worktrees
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem
+            className="gap-2"
+            onSelect={() => onSetProjectQuickAccess?.(lifecycleTarget.id, !isQuickAccessProject)}
+          >
+            {isQuickAccessProject ? (
+              <Library className="h-3.5 w-3.5 text-muted-foreground" />
+            ) : (
+              <Zap className="h-3.5 w-3.5 text-muted-foreground" />
+            )}
+            {isQuickAccessProject ? "Move to Projects" : "Move to Quick access"}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <div
@@ -2356,22 +2399,33 @@ const ChatListSection = React.memo(function ChatListSection({
             <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
             New chat
           </ContextMenuItem>
-          {planningEnabled && (
-            <ContextMenuItem
-              className="gap-2"
-              onClick={() => onCreateProjectTask?.(lifecycleTarget.id)}
-            >
-              <ListPlus className="h-3.5 w-3.5 text-muted-foreground" />
-              New task
-            </ContextMenuItem>
-          )}
-          <ContextMenuSeparator />
           <ContextMenuItem
             className="gap-2"
-            onClick={() => onOpenRepositoryOverview?.(lifecycleTarget.id)}
+            onClick={() => onCreateProjectTask?.(lifecycleTarget.id)}
           >
-            <Trees className="h-3.5 w-3.5 text-muted-foreground" />
-            Branches and worktrees
+            <ListPlus className="h-3.5 w-3.5 text-muted-foreground" />
+            New task
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          {onOpenRepositoryOverview && (
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() => onOpenRepositoryOverview(lifecycleTarget.id)}
+            >
+              <Trees className="h-3.5 w-3.5 text-muted-foreground" />
+              Branches and worktrees
+            </ContextMenuItem>
+          )}
+          <ContextMenuItem
+            className="gap-2"
+            onClick={() => onSetProjectQuickAccess?.(lifecycleTarget.id, !isQuickAccessProject)}
+          >
+            {isQuickAccessProject ? (
+              <Library className="h-3.5 w-3.5 text-muted-foreground" />
+            ) : (
+              <Zap className="h-3.5 w-3.5 text-muted-foreground" />
+            )}
+            {isQuickAccessProject ? "Move to Projects" : "Move to Quick access"}
           </ContextMenuItem>
           <ContextMenuSeparator />
           <div
@@ -2496,9 +2550,13 @@ const ChatListSection = React.memo(function ChatListSection({
             <ContextMenuTrigger asChild>
               <div
                 data-sidebar-drag-source
-                data-sidebar-drag-target-kind={sectionDragKind}
-                data-sidebar-drag-target-id={effectiveSectionDragId}
-                data-sidebar-drop-container={Boolean(lifecycleTarget)}
+                data-sidebar-drag-target-kind={
+                  isGlobalSection ? QUICK_ACCESS_PROJECT_DROP_KIND : sectionDragKind
+                }
+                data-sidebar-drag-target-id={
+                  isGlobalSection ? "quick-access" : effectiveSectionDragId
+                }
+                data-sidebar-drop-container={Boolean(lifecycleTarget) || isGlobalSection}
                 data-sidebar-task-header={isTaskSection || undefined}
                 data-sidebar-task-header-split={
                   (isTaskSection && (isCollapsed || chats.length === 0)) || undefined
@@ -2531,7 +2589,8 @@ const ChatListSection = React.memo(function ChatListSection({
                       : isMultiSelectMode
                         ? "pl-3 pr-3"
                         : "pl-2 pr-1",
-                  (lifecycleTarget || isGlobalSection) && !isMultiSelectMode && "pr-12",
+                  lifecycleTarget && !isMultiSelectMode && "pr-12",
+                  isGlobalSection && !isMultiSelectMode && "pr-7",
                   Boolean(lifecycleTarget) &&
                     !isMultiSelectMode &&
                     "cursor-grab active:cursor-grabbing",
@@ -2614,7 +2673,7 @@ const ChatListSection = React.memo(function ChatListSection({
                     }}
                     className={cn(
                       "absolute top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 focus-visible:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
-                      lifecycleTarget ? "right-1" : "right-6",
+                      "right-1",
                       isTopLevelScopedSection || isTaskSection
                         ? "text-white/75 hover:bg-white/10 hover:text-white"
                         : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
@@ -2635,14 +2694,14 @@ const ChatListSection = React.memo(function ChatListSection({
                         : undefined
                     }
                   >
-                    {lifecycleTarget?.type === "project" ? (
+                    {isGlobalSection || lifecycleTarget?.type === "project" ? (
                       <SquarePen className="h-3.5 w-3.5" />
                     ) : (
                       <Plus className="h-3.5 w-3.5" />
                     )}
                   </button>
                 )}
-                {(lifecycleTarget || isGlobalSection) && !isMultiSelectMode && (
+                {lifecycleTarget && !isMultiSelectMode && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button
@@ -2659,24 +2718,13 @@ const ChatListSection = React.memo(function ChatListSection({
                           "group-data-[pointer-drag-source=true]/section:!opacity-0",
                           "group-data-[pressing=true]/sidebar:!opacity-0 group-data-[pressing=true]/sidebar:pointer-events-none",
                         )}
-                        aria-label={
-                          isGlobalSection
-                            ? "Global chat actions"
-                            : `${lifecycleTarget!.type} actions`
-                        }
+                        aria-label={`${lifecycleTarget.type} actions`}
                       >
                         <MoreHorizontal className="h-3.5 w-3.5" />
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-52" sideOffset={4}>
-                      {isGlobalSection ? (
-                        <DropdownMenuItem className="gap-2" onSelect={onCreateGlobalChat}>
-                          <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
-                          New chat
-                        </DropdownMenuItem>
-                      ) : (
-                        dropdownLifecycleMenu
-                      )}
+                      {dropdownLifecycleMenu}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}
@@ -2943,6 +2991,9 @@ const SidebarGroupHeader = memo(function SidebarGroupHeader({
   onToggle,
   actions,
   className,
+  dropTargetKind,
+  dropTargetId,
+  isDropTargetActive = false,
 }: {
   title: string
   icon: React.ComponentType<{ className?: string }>
@@ -2950,12 +3001,19 @@ const SidebarGroupHeader = memo(function SidebarGroupHeader({
   onToggle: () => void
   actions?: React.ReactNode
   className?: string
+  dropTargetKind?: string
+  dropTargetId?: string
+  isDropTargetActive?: boolean
 }) {
   return (
     <div
+      data-sidebar-drag-target-kind={dropTargetKind}
+      data-sidebar-drag-target-id={dropTargetId}
+      data-sidebar-drop-container={Boolean(dropTargetKind) || undefined}
       className={cn(
         "group group/disclosure group/header relative flex h-7 w-full items-center gap-1 rounded-lg px-1 text-muted-foreground transition-colors hover:bg-foreground/5",
         !isCollapsed && "mb-2",
+        isDropTargetActive && "bg-primary/10 text-foreground ring-1 ring-inset ring-primary/40",
         className,
       )}
     >
@@ -3037,6 +3095,7 @@ export function AgentsSidebar({
   isMobileFullscreen = false,
   onChatSelect,
 }: AgentsSidebarProps) {
+  const shouldReduceMotion = useReducedMotion()
   const stableWindowId = useMemo(() => getWindowId(), [])
   const [groupedChatIds, setGroupedChatIds] = useState(() =>
     getGroupedChatIds(
@@ -3067,6 +3126,9 @@ export function AgentsSidebar({
   const [repositoryOverviewProjectId, setRepositoryOverviewProjectId] = useState<string | null>(
     null,
   )
+  useEffect(() => {
+    if (!betaFeatures.branchesAndWorktrees) setRepositoryOverviewProjectId(null)
+  }, [betaFeatures.branchesAndWorktrees])
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [isArchiveOpen, setIsArchiveOpen] = useState(false)
   const [archiveSearchQuery, setArchiveSearchQuery] = useState("")
@@ -3174,6 +3236,14 @@ export function AgentsSidebar({
     }
   })
   const [manualOrderByKey, setManualOrderByKey] = useState<Record<string, string[]>>({})
+  const [quickAccessProjectIds, setQuickAccessProjectIds] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem(QUICK_ACCESS_PROJECTS_STORAGE_KEY)
+      return stored ? new Set<string>(JSON.parse(stored) as string[]) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
   const [projectColorsById, setProjectColorsById] = useState<Record<string, string>>(() => {
     try {
       const storedProjectColors = localStorage.getItem("flapstack-sidebar-project-colors")
@@ -3832,6 +3902,13 @@ export function AgentsSidebar({
   useEffect(() => {
     localStorage.setItem("flapstack-sidebar-manual-order", JSON.stringify(manualOrderByKey))
   }, [manualOrderByKey])
+
+  useEffect(() => {
+    localStorage.setItem(
+      QUICK_ACCESS_PROJECTS_STORAGE_KEY,
+      JSON.stringify([...quickAccessProjectIds]),
+    )
+  }, [quickAccessProjectIds])
 
   useEffect(() => {
     if (!projects?.length) return
@@ -4718,12 +4795,17 @@ export function AgentsSidebar({
         const fromProject = projects?.find((project) => project.id === fromId)
         const toProject = projects?.find((project) => project.id === toId)
         if (!fromProject || !toProject) return null
+        const fromQuickAccess = quickAccessProjectIds.has(fromId)
+        if (fromQuickAccess !== quickAccessProjectIds.has(toId)) return null
         const fromPinned = Boolean(fromProject.pinnedAt)
         const toPinned = Boolean(toProject.pinnedAt)
         if (!samePinGroup(fromPinned, toPinned)) return null
         const activeIds = chatSections
           .filter((section) => section.kind === "project" && section.lifecycleTarget)
           .filter((section) => Boolean(section.lifecycleTarget?.isPinned) === fromPinned)
+          .filter(
+            (section) => quickAccessProjectIds.has(section.lifecycleTarget!.id) === fromQuickAccess,
+          )
           .map((section) => section.lifecycleTarget!.id)
         return { key: "projects", activeIds }
       }
@@ -4864,6 +4946,7 @@ export function AgentsSidebar({
       pinnedAgents,
       pinnedChatIds,
       projects,
+      quickAccessProjectIds,
       starredAgents,
       taggedAgents,
       tasks,
@@ -4949,6 +5032,13 @@ export function AgentsSidebar({
       position: SidebarDropPosition,
     ) => {
       if (
+        dragged.kind === "project" &&
+        (targetKind === QUICK_ACCESS_PROJECT_DROP_KIND || targetKind === REGULAR_PROJECT_DROP_KIND)
+      ) {
+        return { kind: targetKind, id: targetId, position: "inside" as const }
+      }
+
+      if (
         dragged.kind === "project-child" &&
         !getDraggedLocalChat(dragged) &&
         targetKind === "project"
@@ -5019,6 +5109,19 @@ export function AgentsSidebar({
         return
       }
       if (
+        activeDraggingItem.kind === "project" &&
+        (normalizedTarget.kind === QUICK_ACCESS_PROJECT_DROP_KIND ||
+          normalizedTarget.kind === REGULAR_PROJECT_DROP_KIND)
+      ) {
+        const moveToQuickAccess = normalizedTarget.kind === QUICK_ACCESS_PROJECT_DROP_KIND
+        setDragOverItemState(
+          quickAccessProjectIds.has(activeDraggingItem.id) === moveToQuickAccess
+            ? null
+            : normalizedTarget,
+        )
+        return
+      }
+      if (
         canMoveChatAcrossScope(
           activeDraggingItem,
           normalizedTarget.kind,
@@ -5055,6 +5158,7 @@ export function AgentsSidebar({
       draggingItem,
       getReorderContext,
       normalizeDropTarget,
+      quickAccessProjectIds,
       setDragOverItemState,
     ],
   )
@@ -5069,6 +5173,21 @@ export function AgentsSidebar({
       },
     ) => {
       if (draggedItem.id === dropTarget.id) return
+
+      if (
+        draggedItem.kind === "project" &&
+        (dropTarget.kind === QUICK_ACCESS_PROJECT_DROP_KIND ||
+          dropTarget.kind === REGULAR_PROJECT_DROP_KIND)
+      ) {
+        setQuickAccessProjectIds((current) =>
+          setProjectQuickAccessMembership(
+            current,
+            draggedItem.id,
+            dropTarget.kind === QUICK_ACCESS_PROJECT_DROP_KIND,
+          ),
+        )
+        return
+      }
 
       const crossScopeTarget = getCrossScopeDropTarget(
         dropTarget.kind,
@@ -5749,6 +5868,12 @@ export function AgentsSidebar({
     },
     [projects],
   )
+
+  const handleSetProjectQuickAccess = useCallback((projectId: string, isInQuickAccess: boolean) => {
+    setQuickAccessProjectIds((current) =>
+      setProjectQuickAccessMembership(current, projectId, isInQuickAccess),
+    )
+  }, [])
 
   const openNewGlobalChat = useCallback(() => {
     triggerHaptic("light")
@@ -6520,10 +6645,28 @@ export function AgentsSidebar({
 
   const visibleProjectSections = useMemo(
     () =>
-      visibleChatSections.filter(
-        (section) => section.kind === "project" || section.kind === "task",
-      ),
-    [visibleChatSections],
+      visibleChatSections.filter((section) => {
+        if (section.kind !== "project" && section.kind !== "task") return false
+        const projectId =
+          section.lifecycleTarget?.type === "project"
+            ? section.lifecycleTarget.id
+            : section.parentProjectId
+        return !projectId || !quickAccessProjectIds.has(projectId)
+      }),
+    [quickAccessProjectIds, visibleChatSections],
+  )
+
+  const visibleQuickAccessProjectSections = useMemo(
+    () =>
+      visibleChatSections.filter((section) => {
+        if (section.kind !== "project" && section.kind !== "task") return false
+        const projectId =
+          section.lifecycleTarget?.type === "project"
+            ? section.lifecycleTarget.id
+            : section.parentProjectId
+        return Boolean(projectId && quickAccessProjectIds.has(projectId))
+      }),
+    [quickAccessProjectIds, visibleChatSections],
   )
 
   const visibleOtherSections = useMemo(
@@ -6533,14 +6676,6 @@ export function AgentsSidebar({
       ),
     [visibleChatSections],
   )
-
-  const quickAccessHasChats =
-    pinnedAgents.length > 0 ||
-    starredAgents.length > 0 ||
-    taggedAgents.length > 0 ||
-    pinnedTasks.some((task) => task.chats.length > 0) ||
-    starredTasks.some((task) => task.chats.length > 0) ||
-    visibleOtherSections.some((section) => section.chats.length > 0)
 
   const boundaryHighlightIds = useMemo(
     () =>
@@ -6648,8 +6783,10 @@ export function AgentsSidebar({
     onBulkUnpin: handleBulkUnpin,
     onBulkArchive: handleBulkArchive,
     onCreateTaskChat: openNewTaskChat,
-    onOpenRepositoryOverview: setRepositoryOverviewProjectId,
-    planningEnabled: betaFeatures.planning,
+    onOpenRepositoryOverview: betaFeatures.branchesAndWorktrees
+      ? setRepositoryOverviewProjectId
+      : undefined,
+    onSetProjectQuickAccess: handleSetProjectQuickAccess,
     onToggleSection: handleToggleSection,
     onSelectScope: handleSelectScope,
     onDragStartItem: handleDragStartItem,
@@ -6678,9 +6815,23 @@ export function AgentsSidebar({
       dragOverItem?.kind === "project" &&
       dragOverItem.id === section.lifecycleTarget.id &&
       dragOverItem.position === "after"
+    const isProjectChild = Boolean(section.parentProjectId)
 
     return (
-      <React.Fragment key={section.id}>
+      <motion.div
+        key={section.id}
+        layout="position"
+        initial={isProjectChild && !shouldReduceMotion ? "collapsed" : false}
+        animate={isProjectChild && !shouldReduceMotion ? "expanded" : undefined}
+        exit={isProjectChild && !shouldReduceMotion ? "collapsed" : undefined}
+        variants={isProjectChild ? PROJECT_CHILD_MOTION_VARIANTS : undefined}
+        transition={
+          shouldReduceMotion
+            ? { duration: 0, layout: { duration: 0 } }
+            : { layout: { duration: 0.22, ease: [0.16, 1, 0.3, 1] } }
+        }
+        style={isProjectChild ? { transformOrigin: "top center" } : undefined}
+      >
         <ChatListSection
           {...sharedChatListSectionProps}
           title={section.title}
@@ -6690,6 +6841,14 @@ export function AgentsSidebar({
           parentProjectId={section.parentProjectId}
           kind={section.kind}
           projectColor={section.projectColor}
+          isQuickAccessProject={Boolean(
+            (section.lifecycleTarget?.type === "project" || section.parentProjectId) &&
+            quickAccessProjectIds.has(
+              section.lifecycleTarget?.type === "project"
+                ? section.lifecycleTarget.id
+                : section.parentProjectId!,
+            ),
+          )}
           showWhenEmpty={section.showWhenEmpty}
           showEmptyState={section.showEmptyState}
           isCollapsed={collapsedSectionIds.has(section.id)}
@@ -6701,11 +6860,14 @@ export function AgentsSidebar({
             draggingItem!.id === (section.sectionDragId ?? section.lifecycleTarget?.id)
           }
           isDragOverSection={
-            Boolean(section.sectionDragId || section.lifecycleTarget) &&
-            Boolean(dragOverItem) &&
-            dragOverItem!.kind ===
-              (section.sectionDragId ? "project-child" : section.lifecycleTarget?.type) &&
-            dragOverItem!.id === (section.sectionDragId ?? section.lifecycleTarget?.id)
+            (Boolean(section.sectionDragId || section.lifecycleTarget) &&
+              Boolean(dragOverItem) &&
+              dragOverItem!.kind ===
+                (section.sectionDragId ? "project-child" : section.lifecycleTarget?.type) &&
+              dragOverItem!.id === (section.sectionDragId ?? section.lifecycleTarget?.id)) ||
+            (section.kind === "global" &&
+              dragOverItem?.kind === QUICK_ACCESS_PROJECT_DROP_KIND &&
+              dragOverItem.id === "quick-access")
           }
           isSectionBoundaryHighlighted={
             Boolean(section.sectionDragId) && boundaryHighlightIds.has(section.sectionDragId!)
@@ -6769,7 +6931,7 @@ export function AgentsSidebar({
               }}
             />
           )}
-      </React.Fragment>
+      </motion.div>
     )
   }
 
@@ -6828,8 +6990,29 @@ export function AgentsSidebar({
         <SidebarHeader isDesktop={isDesktop} isFullscreen={isFullscreen} />
       )}
 
-      {/* Global search stays at the top of the sidebar. */}
-      <div className="relative flex flex-shrink-0 items-center gap-1 px-2 pb-2 pt-3">
+      {!isMobileFullscreen && (
+        <div className="flex h-8 flex-shrink-0 items-center gap-2 px-2 pt-1">
+          <img src={flapstackLogo} className="h-4 w-4 shrink-0" alt="" />
+          <span className="min-w-0 truncate text-xs font-medium text-foreground/80">Flapstack</span>
+          <ButtonCustom
+            variant="ghost"
+            size="icon"
+            onClick={onToggleSidebar}
+            className="ml-auto h-7 w-7 shrink-0 rounded-md text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+            aria-label="Close sidebar"
+          >
+            <IconDoubleChevronLeft className="h-4 w-4" />
+          </ButtonCustom>
+        </div>
+      )}
+
+      {/* Search follows the sidebar identity on its own full-width row. */}
+      <div
+        className={cn(
+          "relative flex flex-shrink-0 items-center px-2 pb-2",
+          isMobileFullscreen ? "pt-3" : "pt-1",
+        )}
+      >
         <div className="relative min-w-0 flex-1">
           <SearchIcon className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -6877,17 +7060,6 @@ export function AgentsSidebar({
             )}
           />
         </div>
-        {!isMobileFullscreen && (
-          <ButtonCustom
-            variant="ghost"
-            size="icon"
-            onClick={onToggleSidebar}
-            className="h-7 w-7 shrink-0 rounded-md text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
-            aria-label="Close sidebar"
-          >
-            <IconDoubleChevronLeft className="h-4 w-4" />
-          </ButtonCustom>
-        )}
         {(isSearchFocused || searchQuery.trim().length > 0) && (
           <div
             className="absolute inset-x-2 top-full z-30 pt-2"
@@ -7089,16 +7261,10 @@ export function AgentsSidebar({
               className="mt-3.5"
               isCollapsed={collapsedSectionIds.has("quick-access")}
               onToggle={() => handleToggleSection("quick-access")}
+              dropTargetKind="quick-access-project"
+              dropTargetId="quick-access"
+              isDropTargetActive={dragOverItem?.kind === QUICK_ACCESS_PROJECT_DROP_KIND}
             />
-          )}
-
-          {!searchQuery && !collapsedSectionIds.has("quick-access") && !quickAccessHasChats && (
-            <div
-              data-sidebar-empty-state="quick-access"
-              className="mb-0.5 ml-9 flex h-7 items-center text-xs text-muted-foreground/60"
-            >
-              No chats
-            </div>
           )}
 
           {!searchQuery &&
@@ -7109,24 +7275,24 @@ export function AgentsSidebar({
                 kind: "pinned" as const,
                 chats: pinnedAgents,
                 tasks: pinnedTasks,
-                hideWhenEmpty: false,
               },
               {
                 title: "Starred",
                 kind: "starred" as const,
                 chats: starredAgents,
                 tasks: starredTasks,
-                hideWhenEmpty: false,
               },
               {
                 title: "Tagged",
                 kind: "tagged" as const,
                 chats: taggedAgents,
                 tasks: [],
-                hideWhenEmpty: true,
               },
             ]
-              .filter((section) => !section.hideWhenEmpty || section.chats.length > 0)
+              .filter(
+                (section) =>
+                  section.chats.length > 0 || section.tasks.some((task) => task.chats.length > 0),
+              )
               .map((section) => (
                 <div
                   key={section.kind}
@@ -7165,36 +7331,39 @@ export function AgentsSidebar({
                     }
                   />
                   {!collapsedSectionIds.has(section.kind) &&
-                    section.tasks.map((task) => (
-                      <ChatListSection
-                        {...sharedChatListSectionProps}
-                        key={`${section.kind}-task-${task.taskId}`}
-                        title={task.title}
-                        sectionId={`${section.kind}-task-${task.taskId}`}
-                        kind="task"
-                        projectColor={task.projectColor}
-                        isCollapsed={collapsedSectionIds.has(`${section.kind}-task-${task.taskId}`)}
-                        lifecycleTarget={{
-                          type: "task",
-                          id: task.taskId,
-                          isPinned: task.isPinned,
-                          isStarred: task.isStarred,
-                        }}
-                        parentProjectId={task.projectId}
-                        chats={task.chats}
-                        showEmptyState={task.chats.length === 0}
-                        lifecyclePending={
-                          pinTaskMutation.isPending ||
-                          unpinTaskMutation.isPending ||
-                          archiveTaskMutation.isPending
-                        }
-                      />
-                    ))}
+                    section.tasks
+                      .filter((task) => task.chats.length > 0)
+                      .map((task) => (
+                        <ChatListSection
+                          {...sharedChatListSectionProps}
+                          key={`${section.kind}-task-${task.taskId}`}
+                          title={task.title}
+                          sectionId={`${section.kind}-task-${task.taskId}`}
+                          kind="task"
+                          projectColor={task.projectColor}
+                          isCollapsed={collapsedSectionIds.has(
+                            `${section.kind}-task-${task.taskId}`,
+                          )}
+                          lifecycleTarget={{
+                            type: "task",
+                            id: task.taskId,
+                            isPinned: task.isPinned,
+                            isStarred: task.isStarred,
+                          }}
+                          parentProjectId={task.projectId}
+                          chats={task.chats}
+                          lifecyclePending={
+                            pinTaskMutation.isPending ||
+                            unpinTaskMutation.isPending ||
+                            archiveTaskMutation.isPending
+                          }
+                        />
+                      ))}
                 </div>
               ))}
 
-          {/* Drafts Section - always show regardless of chat source mode */}
-          {!searchQuery && !collapsedSectionIds.has("quick-access") && (
+          {/* Drafts appear in Quick access only while saved drafts exist. */}
+          {!searchQuery && !collapsedSectionIds.has("quick-access") && drafts.length > 0 && (
             <div className="mx-2 mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150">
               <div
                 onClick={() => handleToggleSection("drafts")}
@@ -7227,11 +7396,6 @@ export function AgentsSidebar({
               </div>
               {!collapsedSectionIds.has("drafts") && (
                 <div className="list-none p-0 m-0 mb-1 ml-4 pl-2">
-                  {drafts.length === 0 && (
-                    <div className="flex h-7 items-center text-xs text-muted-foreground/60">
-                      No drafts
-                    </div>
-                  )}
                   {drafts.map((draft) => (
                     <DraftItem
                       key={draft.id}
@@ -7261,16 +7425,20 @@ export function AgentsSidebar({
             </div>
           )}
 
-          {/* Global and remote chat structures live under Quick access. */}
+          {/* Global is the final built-in row; promoted projects always follow it. */}
           {(searchQuery || !collapsedSectionIds.has("quick-access")) && (
             <div
               className={cn(
+                "mx-2",
                 !searchQuery && "animate-in fade-in-0 slide-in-from-top-1 duration-150",
               )}
             >
-              {visibleOtherSections.map((section, index) =>
-                renderSidebarSection(section, index, visibleOtherSections.length),
-              )}
+              <AnimatePresence initial={false} mode="popLayout">
+                {[...visibleOtherSections, ...visibleQuickAccessProjectSections].map(
+                  (section, index, sections) =>
+                    renderSidebarSection(section, index, sections.length),
+                )}
+              </AnimatePresence>
             </div>
           )}
           {!searchQuery && (
@@ -7280,6 +7448,9 @@ export function AgentsSidebar({
               className="mt-3.5"
               isCollapsed={collapsedSectionIds.has("projects-group")}
               onToggle={() => handleToggleSection("projects-group")}
+              dropTargetKind="regular-project"
+              dropTargetId="projects"
+              isDropTargetActive={dragOverItem?.kind === REGULAR_PROJECT_DROP_KIND}
               actions={
                 <>
                   <DropdownMenu>
@@ -7364,9 +7535,11 @@ export function AgentsSidebar({
                   No chats
                 </div>
               )}
-              {visibleProjectSections.map((section, index) =>
-                renderSidebarSection(section, index, visibleProjectSections.length),
-              )}
+              <AnimatePresence initial={false} mode="popLayout">
+                {visibleProjectSections.map((section, index) =>
+                  renderSidebarSection(section, index, visibleProjectSections.length),
+                )}
+              </AnimatePresence>
             </div>
           )}
           {(archiveSummary?.total ?? archivedLifecycleItems.length) > 0 && !searchQuery && (
@@ -7714,16 +7887,19 @@ export function AgentsSidebar({
         allProjects={projects ?? []}
         remoteSubChatId={null}
       />
-      <RepositoryOverviewDialog
-        open={Boolean(repositoryOverviewProjectId)}
-        onOpenChange={(open) => !open && setRepositoryOverviewProjectId(null)}
-        projectName={
-          projects?.find((project) => project.id === repositoryOverviewProjectId)?.name ?? "Project"
-        }
-        projectPath={
-          projects?.find((project) => project.id === repositoryOverviewProjectId)?.path ?? null
-        }
-      />
+      {betaFeatures.branchesAndWorktrees && (
+        <RepositoryOverviewDialog
+          open={Boolean(repositoryOverviewProjectId)}
+          onOpenChange={(open) => !open && setRepositoryOverviewProjectId(null)}
+          projectName={
+            projects?.find((project) => project.id === repositoryOverviewProjectId)?.name ??
+            "Project"
+          }
+          projectPath={
+            projects?.find((project) => project.id === repositoryOverviewProjectId)?.path ?? null
+          }
+        />
+      )}
     </>
   )
 }

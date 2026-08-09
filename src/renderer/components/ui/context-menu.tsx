@@ -40,8 +40,8 @@ const ContextMenuSubTrigger = React.forwardRef<
     className={cn(overlaySubTrigger, inset && "pl-8", className)}
     {...props}
   >
-    <span className="flex-1 inline-flex items-center gap-1.5">{children}</span>
-    <CaretRightIcon className={overlayChevron} />
+    {children}
+    <CaretRightIcon data-menu-chevron className={overlayChevron} />
   </ContextMenuPrimitive.SubTrigger>
 ))
 ContextMenuSubTrigger.displayName = ContextMenuPrimitive.SubTrigger.displayName

@@ -237,6 +237,62 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
   const isAttachmentOnlyMessage =
     !textContent.trim() && (imageParts.length > 0 || textMentions.length > 0)
   const timestamp = formatMessageTimestamp(userMsg)
+  const renderUserMessageOptionsMenu = (includeToolbarActions: boolean) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          tabIndex={-1}
+          aria-label="User message options"
+          className="p-1.5 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
+        >
+          <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[190px]">
+        {includeToolbarActions && (
+          <div className="flex items-center gap-0.5 px-1 pb-1">
+            {canRollback && (
+              <button
+                type="button"
+                onClick={() => onRollback(userMsg)}
+                disabled={isRollingBack}
+                className="rounded-md p-1.5 hover:bg-accent"
+                aria-label="Rollback to here"
+              >
+                <IconTextUndo className="h-3.5 w-3.5 text-muted-foreground" />
+              </button>
+            )}
+            {textContent.trim() && (
+              <>
+                <PlayButton
+                  text={textContent}
+                  isMobile={isMobile}
+                  chatId={chatId}
+                  subChatId={subChatId}
+                  messageId={userMsgId}
+                  expandDirection="left"
+                />
+                <CopyButton text={textContent} isMobile={isMobile} />
+              </>
+            )}
+          </div>
+        )}
+        {canEditLatest && (
+          <DropdownMenuItem
+            onClick={() => {
+              setEditValue(textContent)
+              setIsEditing(true)
+            }}
+          >
+            Edit message
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onClick={() => setFloatingUserMessages(!floatingUserMessages)}>
+          {floatingMenuLabel}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
 
   return (
     <MessageGroupWrapper isLastGroup={isLastGroup}>
@@ -429,60 +485,12 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                     <CopyButton text={textContent} isMobile={isMobile} />
                   </span>
                 )}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      tabIndex={-1}
-                      aria-label="User message options"
-                      className="p-1.5 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
-                    >
-                      <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="min-w-[190px]">
-                    <div className="flex items-center gap-0.5 px-1 pb-1 @[420px]:hidden">
-                      {canRollback && (
-                        <button
-                          type="button"
-                          onClick={() => onRollback(userMsg)}
-                          disabled={isRollingBack}
-                          className="rounded-md p-1.5 hover:bg-accent"
-                          aria-label="Rollback to here"
-                        >
-                          <IconTextUndo className="h-3.5 w-3.5 text-muted-foreground" />
-                        </button>
-                      )}
-                      {textContent.trim() && (
-                        <>
-                          <PlayButton
-                            text={textContent}
-                            isMobile={isMobile}
-                            chatId={chatId}
-                            subChatId={subChatId}
-                            messageId={userMsgId}
-                            expandDirection="left"
-                          />
-                          <CopyButton text={textContent} isMobile={isMobile} />
-                        </>
-                      )}
-                    </div>
-                    {canEditLatest && (
-                      <DropdownMenuItem
-                        onClick={() => {
-                          setEditValue(textContent)
-                          setIsEditing(true)
-                        }}
-                      >
-                        Edit message
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuItem
-                      onClick={() => setFloatingUserMessages(!floatingUserMessages)}
-                    >
-                      {floatingMenuLabel}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <span className="inline-flex @[420px]:hidden">
+                  {renderUserMessageOptionsMenu(true)}
+                </span>
+                <span className="hidden @[420px]:inline-flex">
+                  {renderUserMessageOptionsMenu(false)}
+                </span>
               </div>
             </div>
 

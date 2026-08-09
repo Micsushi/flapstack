@@ -56,8 +56,8 @@ export const overlayItemTransition = "transition-colors"
 /** Combined item styles */
 export const overlayItem = `${overlayItemBase} ${overlayItemHover} ${overlayItemFocus} ${overlayItemHighlighted} ${overlayItemDisabled} ${overlayItemTransition}`
 
-/** Item with icon styles (includes svg handling) */
-export const overlayItemWithIcon = `${overlayItem} [&_svg]:pointer-events-none [&_svg]:shrink-0`
+/** Text-only action item styles. Checkbox/radio indicators use their own primitive. */
+export const overlayItemWithIcon = `${overlayItem} [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([data-menu-chevron])]:hidden`
 
 // =============================================================================
 // Sub-trigger Styles (for nested menus)

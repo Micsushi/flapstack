@@ -8,6 +8,7 @@ import {
   nativeImage,
   dialog,
   screen,
+  Menu,
 } from "electron"
 import { sleep } from "../../shared/sleep"
 import { join } from "path"
@@ -389,6 +390,23 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle("window:is-fullscreen", (event) => {
     return getWindowFromEvent(event)?.isFullScreen() ?? false
+  })
+  ipcMain.handle("window:undo", (event) => {
+    getWindowFromEvent(event)?.webContents.undo()
+  })
+  ipcMain.handle("window:redo", (event) => {
+    getWindowFromEvent(event)?.webContents.redo()
+  })
+  ipcMain.handle("window:show-application-menu", (event, label: unknown) => {
+    const win = getWindowFromEvent(event)
+    if (!win || typeof label !== "string" || !["File", "Edit", "View", "Help"].includes(label)) {
+      return false
+    }
+
+    const submenu = Menu.getApplicationMenu()?.items.find((item) => item.label === label)?.submenu
+    if (!submenu) return false
+    submenu.popup({ window: win })
+    return true
   })
 
   // Traffic light visibility control (for hybrid native/custom approach)

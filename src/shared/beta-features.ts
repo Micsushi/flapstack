@@ -4,6 +4,7 @@ export const BETA_FEATURE_IDS = [
   "savedWorkspaces",
   "automations",
   "planning",
+  "branchesAndWorktrees",
 ] as const
 
 export type BetaFeatureId = (typeof BETA_FEATURE_IDS)[number]
@@ -15,6 +16,7 @@ export const DEFAULT_BETA_FEATURE_SETTINGS: BetaFeatureSettings = {
   savedWorkspaces: false,
   automations: false,
   planning: false,
+  branchesAndWorktrees: false,
 }
 
 export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
@@ -46,6 +48,11 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
     id: "planning",
     label: "Planning & Task Board",
     description: "Plan sources, task proposals, plan promotion, and Kanban controls.",
+  },
+  {
+    id: "branchesAndWorktrees",
+    label: "Branches & Worktrees",
+    description: "Read-only repository branch and worktree overview.",
   },
 ]
 

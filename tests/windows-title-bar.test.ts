@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 
-const windowSource = readFileSync("src/main/windows/main.ts", "utf8")
 const titleBarSource = readFileSync("src/renderer/components/windows-title-bar.tsx", "utf8")
 const sidebarSource = readFileSync("src/renderer/features/sidebar/agents-sidebar.tsx", "utf8")
+const preloadSource = readFileSync("src/preload/index.ts", "utf8")
+const windowSource = readFileSync("src/main/windows/main.ts", "utf8")
 
 describe("Windows title bar", () => {
   it("uses native Windows controls over the custom title bar", () => {
@@ -19,15 +20,36 @@ describe("Windows title bar", () => {
     expect(titleBarSource).not.toContain("windowMaximize")
   })
 
+  it("shows native app menus with working undo and redo controls", () => {
+    expect(titleBarSource).toContain('aria-label="Undo"')
+    expect(titleBarSource).toContain('aria-label="Redo"')
+    expect(titleBarSource).toContain('["File", "Edit", "View", "Help"]')
+    expect(titleBarSource).toContain("showApplicationMenu")
+    expect(preloadSource).toContain('ipcRenderer.invoke("window:undo")')
+    expect(preloadSource).toContain('ipcRenderer.invoke("window:redo")')
+    expect(windowSource).toContain('ipcMain.handle("window:show-application-menu"')
+  })
+
+  it("moves the Flapstack identity beside the sidebar control above search", () => {
+    const brandIndex = sidebarSource.indexOf(">Flapstack</span>")
+    const searchIndex = sidebarSource.indexOf('aria-label="Search projects and chats"')
+
+    expect(brandIndex).toBeGreaterThan(-1)
+    expect(brandIndex).toBeLessThan(searchIndex)
+    expect(sidebarSource.slice(brandIndex, searchIndex)).toContain('aria-label="Close sidebar"')
+    expect(titleBarSource).not.toContain("flapstackLogo")
+    expect(titleBarSource).not.toContain(">Flapstack</span>")
+  })
+
   it("keeps one sidebar close control without a Windows traffic-light spacer", () => {
     expect(sidebarSource.match(/aria-label="Close sidebar"/g)).toHaveLength(1)
     expect(sidebarSource).toContain('{getPlatform() === "darwin" && (')
   })
 
-  it("keeps the sidebar search accessible without visible placeholder text", () => {
+  it("keeps the full-width sidebar search accessible without visible placeholder text", () => {
     expect(sidebarSource).not.toContain('placeholder="Search projects and chats..."')
     expect(sidebarSource).toContain('aria-label="Search projects and chats"')
-    expect(sidebarSource).toContain("items-center gap-1 px-2 pb-2 pt-3")
+    expect(sidebarSource).toContain('isMobileFullscreen ? "pt-3" : "pt-1"')
   })
 
   it("uses a slightly larger uniform gap between sidebar navigation groups", () => {

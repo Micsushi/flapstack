@@ -17,7 +17,7 @@ import { projectVaultsRouter } from "../src/main/lib/trpc/routers/project-vaults
 import { savedWorkspacesRouter } from "../src/main/lib/trpc/routers/saved-workspaces"
 import { spawnedAgentsRouter } from "../src/main/lib/trpc/routers/spawned-agents"
 import { tasksRouter } from "../src/main/lib/trpc/routers/tasks"
-import { DEFAULT_BETA_FEATURE_SETTINGS } from "../src/shared/beta-features"
+import { BETA_FEATURE_REGISTRY, DEFAULT_BETA_FEATURE_SETTINGS } from "../src/shared/beta-features"
 
 let directory = ""
 let previousConfigDir: string | undefined
@@ -42,9 +42,13 @@ describe("beta service gates", () => {
     expect(setBetaFeatureEnabled("automations", true)).toMatchObject({ automations: true })
     expect(getBetaFeatureSettings()).toMatchObject({
       automations: true,
+      branchesAndWorktrees: false,
       orchestration: false,
       projectMemory: false,
     })
+    expect(BETA_FEATURE_REGISTRY).toContainEqual(
+      expect.objectContaining({ id: "branchesAndWorktrees", label: "Branches & Worktrees" }),
+    )
   })
 
   it("blocks disabled local service procedures", async () => {
@@ -65,6 +69,7 @@ describe("beta service gates", () => {
     expect(betaFeatureForTrpcPath("tasks.archive")).toBeNull()
     expect(betaFeatureForTrpcPath("tasks.create")).toBeNull()
     expect(betaFeatureForTrpcPath("tasks.board")).toBe("planning")
+    expect(betaFeatureForTrpcPath("changes.getRepositoryOverview")).toBe("branchesAndWorktrees")
     await expect(
       spawnedAgentsRouter.createCaller(context).getTaskOverview({ taskId: "task" }),
     ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })

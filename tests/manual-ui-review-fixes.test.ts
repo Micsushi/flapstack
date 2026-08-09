@@ -50,12 +50,13 @@ describe("manual UI review fixes", () => {
     expect(layout).toContain("lastChatIdRef.current")
   })
 
-  it("keeps quick-access categories visible and removes duplicate sidebar branding", () => {
+  it("keeps Quick access available without empty built-in categories", () => {
     const sidebar = read("src/renderer/features/sidebar/agents-sidebar.tsx")
     expect(sidebar).toContain('title="Quick access"')
     expect(sidebar).toContain('title: "Pinned"')
     expect(sidebar).toContain('title: "Starred"')
-    expect(sidebar).toContain("No drafts")
+    expect(sidebar).toContain("drafts.length > 0")
+    expect(sidebar).not.toContain("No drafts")
     expect(sidebar).not.toContain("flapstackAppIcon")
   })
 

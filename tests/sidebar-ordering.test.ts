@@ -7,6 +7,7 @@ import {
   resolveBoundaryHighlightIds,
   resolveMoveIndicatorIds,
   resolveSidebarDragCursor,
+  setProjectQuickAccessMembership,
   resolveTaskEndDropTarget,
   resolveTaskGroupDropTarget,
   resolveTaskHeaderDropPosition,
@@ -25,6 +26,17 @@ describe("sidebar ordering", () => {
     expect(orderSidebarProjects(projects, "name-desc")).toEqual(["b", "a"])
     expect(orderSidebarProjects(projects, "newest")).toEqual(["a", "b"])
     expect(orderSidebarProjects(projects, "oldest")).toEqual(["b", "a"])
+  })
+
+  it("moves projects into and out of Quick Access without mutating the prior set", () => {
+    const original = new Set(["project-a"])
+
+    expect([...setProjectQuickAccessMembership(original, "project-b", true)]).toEqual([
+      "project-a",
+      "project-b",
+    ])
+    expect([...setProjectQuickAccessMembership(original, "project-a", false)]).toEqual([])
+    expect([...original]).toEqual(["project-a"])
   })
 
   it("moves a mixed project child up before a task in one drop", () => {

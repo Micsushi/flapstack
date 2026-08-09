@@ -1,5 +1,16 @@
 export type DragInsertPosition = "before" | "after"
 export type SidebarDropPosition = DragInsertPosition | "inside"
+
+export function setProjectQuickAccessMembership(
+  current: ReadonlySet<string>,
+  projectId: string,
+  isInQuickAccess: boolean,
+): Set<string> {
+  const next = new Set(current)
+  if (isInQuickAccess) next.add(projectId)
+  else next.delete(projectId)
+  return next
+}
 export type SidebarProjectOrder = "name-asc" | "name-desc" | "newest" | "oldest"
 
 export function orderSidebarProjects(

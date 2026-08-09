@@ -85,6 +85,10 @@ contextBridge.exposeInMainWorld("desktopApi", {
   setWindowFramePreference: (useNativeFrame: boolean) =>
     ipcRenderer.invoke("window:set-frame-preference", useNativeFrame),
   getWindowFrameState: () => ipcRenderer.invoke("window:get-frame-state"),
+  undo: () => ipcRenderer.invoke("window:undo"),
+  redo: () => ipcRenderer.invoke("window:redo"),
+  showApplicationMenu: (menu: "File" | "Edit" | "View" | "Help") =>
+    ipcRenderer.invoke("window:show-application-menu", menu),
 
   // Window events
   onFullscreenChange: (callback: (isFullscreen: boolean) => void) => {
@@ -442,6 +446,9 @@ export interface DesktopApi {
   // Windows-specific frame preference
   setWindowFramePreference: (useNativeFrame: boolean) => Promise<boolean>
   getWindowFrameState: () => Promise<boolean>
+  undo: () => Promise<void>
+  redo: () => Promise<void>
+  showApplicationMenu: (menu: "File" | "Edit" | "View" | "Help") => Promise<boolean>
   onFullscreenChange: (callback: (isFullscreen: boolean) => void) => () => void
   onFocusChange: (callback: (isFocused: boolean) => void) => () => void
   zoomIn: () => Promise<void>
