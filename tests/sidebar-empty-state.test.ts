@@ -7,12 +7,17 @@ const sidebarSource = readFileSync(
 ).replace(/\r\n/g, "\n")
 
 describe("sidebar empty chat states", () => {
-  it("shows No chats for every expanded empty chat container", () => {
+  it("shows empty states only for persistent chat containers", () => {
     expect(sidebarSource).toContain('data-sidebar-empty-state="chats"')
-    expect(sidebarSource).toContain('data-sidebar-empty-state="quick-access"')
+    expect(sidebarSource).not.toContain('data-sidebar-empty-state="quick-access"')
     expect(sidebarSource).toContain('data-sidebar-empty-state="projects"')
     expect(sidebarSource).toContain("!isCollapsed && showEmptyState")
     expect(sidebarSource).toContain("No chats")
+    expect(sidebarSource).toContain("showEmptyState: !searchQuery.trim() && global.length === 0")
+    expect(sidebarSource).toContain(
+      "section.chats.length > 0 || section.tasks.some((task) => task.chats.length > 0)",
+    )
+    expect(sidebarSource).toContain("drafts.length > 0")
     expect(sidebarSource).toContain("section.tasks.every((task) => task.chats.length === 0)")
     expect(sidebarSource).toMatch(
       /showEmptyState:\s*!searchQuery\.trim\(\)\s*&&\s*projectGroup\.chats\.length === 0\s*&&\s*projectGroup\.taskGroups\.length === 0/,
