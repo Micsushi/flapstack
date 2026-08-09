@@ -14,8 +14,8 @@ describe("sidebar empty chat states", () => {
     expect(sidebarSource).toContain("!isCollapsed && showEmptyState")
     expect(sidebarSource).toContain("No chats")
     expect(sidebarSource).toContain("section.tasks.every((task) => task.chats.length === 0)")
-    expect(sidebarSource).toContain(
-      "!searchQuery.trim() &&\n            projectGroup.chats.length === 0 &&\n            projectGroup.taskGroups.length === 0",
+    expect(sidebarSource).toMatch(
+      /showEmptyState:\s*!searchQuery\.trim\(\)\s*&&\s*projectGroup\.chats\.length === 0\s*&&\s*projectGroup\.taskGroups\.length === 0/,
     )
     expect(sidebarSource).toContain(
       "showEmptyState: !searchQuery.trim() && taskGroup.chats.length === 0",
