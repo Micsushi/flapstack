@@ -435,9 +435,10 @@ export function DetailsSidebar({
 
               case "info":
                 return (
-                  <WidgetCard key="info" widgetId="info" title="Workspace">
+                  <WidgetCard key="info" widgetId="info" title="Chat details">
                     <InfoSection
                       chatId={chatId}
+                      activeSubChatId={activeSubChatId}
                       worktreePath={worktreePath}
                       remoteInfo={remoteInfo}
                     />

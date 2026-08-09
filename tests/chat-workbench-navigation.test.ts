@@ -374,4 +374,14 @@ describe("chat workbench top-level navigation", () => {
       { kind: "chat", id: "b" },
     ])
   })
+
+  it("removes a saved group without exposing its Chats when they are closed", () => {
+    const grouped = createChatWorkbenchGroup({ activeGroupId: null, groups: [] }, ["a"], "a")
+    const removed = removeChatWorkbenchGroup(grouped, grouped.groups[0]!.id, ["b"], "close-chats")
+
+    expect(removed.groups).toEqual([])
+    expect(removed.activeGroupId).toBeNull()
+    expect(removed.order).toEqual([{ kind: "chat", id: "b" }])
+    expect(resolveChatWorkbenchNavigationItems(removed, ["b"])).toEqual([{ kind: "chat", id: "b" }])
+  })
 })

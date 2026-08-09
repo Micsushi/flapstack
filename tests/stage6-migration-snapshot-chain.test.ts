@@ -30,19 +30,25 @@ describe("stage 6 migration snapshots", () => {
     const snapshot53 = readJson<Snapshot>("drizzle/meta/0053_snapshot.json")
     const snapshot54 = readJson<Snapshot>("drizzle/meta/0054_snapshot.json")
     const snapshot55 = readJson<Snapshot>("drizzle/meta/0055_snapshot.json")
+    const snapshot56 = readJson<Snapshot>("drizzle/meta/0056_snapshot.json")
+    const snapshot57 = readJson<Snapshot>("drizzle/meta/0057_snapshot.json")
 
-    expect(journal.entries.slice(-5).map(({ idx, tag }) => ({ idx, tag }))).toEqual([
+    expect(journal.entries.slice(-7).map(({ idx, tag }) => ({ idx, tag }))).toEqual([
       { idx: 51, tag: "0051_runtime_composition_attempts" },
       { idx: 52, tag: "0052_project-vault-custom-notes" },
       { idx: 53, tag: "0053_chat-tags" },
       { idx: 54, tag: "0054_performance_indexes" },
       { idx: 55, tag: "0055_sidebar_query_indexes" },
+      { idx: 56, tag: "0056_default_chat_tags" },
+      { idx: 57, tag: "0057_chat_tag_icons" },
     ])
     expect(snapshot51.prevId).toBe(snapshot50.id)
     expect(snapshot52.prevId).toBe(snapshot51.id)
     expect(snapshot53.prevId).toBe(snapshot52.id)
     expect(snapshot54.prevId).toBe(snapshot53.id)
     expect(snapshot55.prevId).toBe(snapshot54.id)
+    expect(snapshot56.prevId).toBe(snapshot55.id)
+    expect(snapshot57.prevId).toBe(snapshot56.id)
     expect(
       new Set([
         snapshot50.id,
@@ -51,8 +57,10 @@ describe("stage 6 migration snapshots", () => {
         snapshot53.id,
         snapshot54.id,
         snapshot55.id,
+        snapshot56.id,
+        snapshot57.id,
       ]).size,
-    ).toBe(6)
+    ).toBe(8)
 
     expect(snapshot50.tables).not.toHaveProperty("runtime_composition_attempts")
     expect(snapshot51.tables).toHaveProperty("runtime_composition_attempts")

@@ -393,6 +393,20 @@
       "when": 1786155674596,
       "tag": "0055_sidebar_query_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "6",
+      "when": 1786231482784,
+      "tag": "0056_default_chat_tags",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "6",
+      "when": 1786232081077,
+      "tag": "0057_chat_tag_icons",
+      "breakpoints": true
     }
   ]
 }

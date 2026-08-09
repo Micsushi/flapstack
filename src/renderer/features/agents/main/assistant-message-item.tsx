@@ -692,6 +692,56 @@ function ProducerChips({ metadata }: { metadata: AgentMessageMetadata | undefine
   )
 }
 
+function AssistantMessageOptionsMenu({
+  includeToolbarActions,
+  text,
+  metadata,
+  isMobile,
+  chatId,
+  subChatId,
+  messageId,
+  onFork,
+}: {
+  includeToolbarActions: boolean
+  text: string
+  metadata: AgentMessageMetadata
+  isMobile: boolean
+  chatId: string
+  subChatId: string
+  messageId: string
+  onFork?: () => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          aria-label="Assistant message options"
+          tabIndex={-1}
+          className="p-1 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
+        >
+          <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-[160px]">
+        {includeToolbarActions && (
+          <div className="flex items-center gap-0.5 px-1 pb-1">
+            <CopyButton text={text} isMobile={isMobile} />
+            <PlayButton
+              text={text}
+              isMobile={isMobile}
+              chatId={chatId}
+              subChatId={subChatId}
+              messageId={messageId}
+            />
+            <AgentMessageUsage metadata={metadata} isStreaming={false} isMobile={isMobile} />
+          </div>
+        )}
+        {onFork && <DropdownMenuItem onClick={onFork}>Fork from here</DropdownMenuItem>}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export const AssistantMessageItem = memo(function AssistantMessageItem({
   message,
   isLastMessage,
@@ -1285,39 +1335,30 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
           <div className="flex items-center gap-0.5">
             {(!isStreaming || !isLastMessage) && (
               <>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      aria-label="Assistant message options"
-                      tabIndex={-1}
-                      className="p-1 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
-                    >
-                      <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="min-w-[160px]">
-                    <div className="flex items-center gap-0.5 px-1 pb-1 @[420px]:hidden">
-                      <CopyButton text={getMessageTextContent(message)} isMobile={isMobile} />
-                      <PlayButton
-                        text={getMessageTextContent(message)}
-                        isMobile={isMobile}
-                        chatId={chatId}
-                        subChatId={subChatId}
-                        messageId={message.id}
-                      />
-                      <AgentMessageUsage
-                        metadata={msgMetadata}
-                        isStreaming={false}
-                        isMobile={isMobile}
-                      />
-                    </div>
-                    {onFork && (
-                      <DropdownMenuItem onClick={() => onFork(message.id)}>
-                        Fork from here
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <span className="inline-flex @[420px]:hidden">
+                  <AssistantMessageOptionsMenu
+                    includeToolbarActions
+                    text={getMessageTextContent(message)}
+                    metadata={msgMetadata}
+                    isMobile={isMobile}
+                    chatId={chatId}
+                    subChatId={subChatId}
+                    messageId={message.id}
+                    onFork={onFork ? () => onFork(message.id) : undefined}
+                  />
+                </span>
+                <span className="hidden @[420px]:inline-flex">
+                  <AssistantMessageOptionsMenu
+                    includeToolbarActions={false}
+                    text={getMessageTextContent(message)}
+                    metadata={msgMetadata}
+                    isMobile={isMobile}
+                    chatId={chatId}
+                    subChatId={subChatId}
+                    messageId={message.id}
+                    onFork={onFork ? () => onFork(message.id) : undefined}
+                  />
+                </span>
                 <span
                   data-message-inline-action
                   className="hidden items-center gap-0.5 @[420px]:flex"

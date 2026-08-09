@@ -408,6 +408,13 @@ export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
     ["codex", "thread", "task", "archive", "recent", "project", "hidden"],
   ),
   control(
+    "preferences-group-close",
+    "preferences",
+    "When closing a group",
+    "Ask first, keep its Chats on the main bar, or close every Chat in the group",
+    ["group", "close", "main bar", "remember", "always"],
+  ),
+  control(
     "preferences-coauthor",
     "preferences",
     "Claude commit attribution",

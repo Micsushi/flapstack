@@ -57,6 +57,7 @@ import {
   BookOpenText,
   BookOpen,
   Star,
+  Tag,
   Plus,
   SquarePen,
   ArrowRightLeft,
@@ -188,7 +189,7 @@ import { exportChat, copyChat, type ExportFormat } from "../agents/lib/export-ch
 import { ScopedSearchPanel } from "../search/scoped-search-panel"
 import { StartAgentDialog } from "../agent-profiles/start-agent-dialog"
 import { getModelChipMeta } from "../agents/constants"
-import { ProviderChipIcon } from "../agents/components/provider-chip-icon"
+import { hasProviderChipIcon, ProviderChipIcon } from "../agents/components/provider-chip-icon"
 import { focusScopedSearchResultAtom } from "../agents/search/chat-search-atoms"
 import { useBetaFeatures } from "../settings/use-beta-features"
 import { useFeatureVisibility } from "../settings/use-feature-visibility"
@@ -587,7 +588,7 @@ function SidebarDisclosure({
   return (
     <span
       className={cn(
-        "ml-auto mr-10 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover/disclosure:opacity-100 group-focus-within/disclosure:opacity-100",
+        "flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover/disclosure:opacity-100",
         className,
       )}
       aria-hidden="true"
@@ -986,6 +987,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
     | "remote-chat"
     | "pinned-chat"
     | "starred-chat"
+    | "tagged-chat"
   dragItemId?: string
   taskEndTargetId?: string
   isOnlyTaskChat: boolean
@@ -1002,6 +1004,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   const modelLabel = model?.trim()
   const harnessChip = getModelChipMeta(modelLabel, harness)
   const identityChipLabel = harness ? harnessChip.name : null
+  const hasProviderIcon = hasProviderChipIcon(harness)
   const hasInlineStatus = hasPendingQuestion || isLoading || hasUnseenChanges || hasPendingPlan
   const effectiveDragItemId = dragItemId ?? chatId
   const suppressClickRef = useRef(false)
@@ -1502,14 +1505,14 @@ const AgentChatItem = React.memo(function AgentChatItem({
                   <div className="flex min-w-0 flex-wrap items-center gap-1">
                     {identityChipLabel && (
                       <SidebarChip
-                        className={harnessChip.className}
+                        className={cn(
+                          harnessChip.className,
+                          hasProviderIcon && "h-4 w-4 justify-center px-0 leading-none",
+                        )}
                         title={harness ? `${harnessChip.name} · ${modelLabel}` : modelLabel}
                       >
-                        <ProviderChipIcon
-                          provider={harness}
-                          className="mr-1 h-2.5 w-2.5 shrink-0"
-                        />
-                        {identityChipLabel}
+                        <ProviderChipIcon provider={harness} className="h-2.5 w-2.5 shrink-0" />
+                        {!hasProviderIcon && identityChipLabel}
                       </SidebarChip>
                     )}
                     {hasCustomWorktree && (
@@ -1519,12 +1522,9 @@ const AgentChatItem = React.memo(function AgentChatItem({
                     )}
                   </div>
                 )}
-                {chatTags.slice(0, 2).map((tag) => (
+                {chatTags.slice(0, 3).map((tag) => (
                   <ChatTagChip key={tag.id} tag={tag} compact />
                 ))}
-                {chatTags.length > 2 && (
-                  <span className="text-[9px] text-muted-foreground">+{chatTags.length - 2}</span>
-                )}
                 {displayText && <span className="truncate min-w-0">{displayText}</span>}
                 <span className="flex-1 min-w-0" />
                 <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -1819,7 +1819,7 @@ function chatListSectionPropsAreEqual(
 
 interface ChatListSectionProps {
   title: string
-  kind?: "pinned" | "starred" | "remote" | "global" | "project" | "task"
+  kind?: "pinned" | "starred" | "tagged" | "remote" | "global" | "project" | "task"
   sectionId?: string
   sectionDragId?: string
   hideHeader?: boolean
@@ -2028,7 +2028,7 @@ const ChatListSection = React.memo(function ChatListSection({
   const isGlobalSection = kind === "global"
   const isProjectSection = kind === "project"
   const isTaskSection = kind === "task"
-  const isReferenceSection = kind === "pinned" || kind === "starred"
+  const isReferenceSection = kind === "pinned" || kind === "starred" || kind === "tagged"
   const [startAgentDialogOpen, setStartAgentDialogOpen] = useState(false)
   const isTopLevelScopedSection = isGlobalSection || isProjectSection
   const sectionDragKind =
@@ -2071,7 +2071,9 @@ const ChatListSection = React.memo(function ChatListSection({
               ? "pinned-chat"
               : kind === "starred"
                 ? "starred-chat"
-                : "global-chat"
+                : kind === "tagged"
+                  ? "tagged-chat"
+                  : "global-chat"
   const scopedTint = getProjectTint(
     isGlobalSection || isReferenceSection ? GLOBAL_SECTION_COLOR : projectColor,
   )
@@ -2099,8 +2101,7 @@ const ChatListSection = React.memo(function ChatListSection({
   }, [filteredChats])
 
   const canCollapse = Boolean(
-    sectionId &&
-    (isTopLevelScopedSection || isTaskSection || kind === "pinned" || kind === "starred"),
+    sectionId && (isTopLevelScopedSection || isTaskSection || isReferenceSection),
   )
   const headerIcon = isProjectSection ? (
     <FolderGit2 className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
@@ -2114,6 +2115,8 @@ const ChatListSection = React.memo(function ChatListSection({
     <Pin className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
   ) : kind === "starred" ? (
     <Star className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
+  ) : kind === "tagged" ? (
+    <Tag className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
   ) : (
     <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
   )
@@ -2528,6 +2531,7 @@ const ChatListSection = React.memo(function ChatListSection({
                       : isMultiSelectMode
                         ? "pl-3 pr-3"
                         : "pl-2 pr-1",
+                  (lifecycleTarget || isGlobalSection) && !isMultiSelectMode && "pr-12",
                   Boolean(lifecycleTarget) &&
                     !isMultiSelectMode &&
                     "cursor-grab active:cursor-grabbing",
@@ -2559,7 +2563,7 @@ const ChatListSection = React.memo(function ChatListSection({
                   )}
                   <h3
                     className={cn(
-                      "whitespace-nowrap truncate flex-1",
+                      "min-w-0 truncate whitespace-nowrap",
                       isTopLevelScopedSection || isTaskSection || isReferenceSection
                         ? cn(
                             "text-[11px] font-semibold tracking-wide text-white",
@@ -2570,17 +2574,17 @@ const ChatListSection = React.memo(function ChatListSection({
                   >
                     {title}
                   </h3>
+                  {canCollapse && (
+                    <SidebarDisclosure
+                      isCollapsed={isCollapsed}
+                      className={cn(
+                        isTopLevelScopedSection || isTaskSection || isReferenceSection
+                          ? "text-white/80"
+                          : "text-muted-foreground",
+                      )}
+                    />
+                  )}
                 </div>
-                {canCollapse && (
-                  <SidebarDisclosure
-                    isCollapsed={isCollapsed}
-                    className={cn(
-                      isTopLevelScopedSection || isTaskSection || isReferenceSection
-                        ? "text-white/80"
-                        : "text-muted-foreground",
-                    )}
-                  />
-                )}
                 {(lifecycleTarget || isGlobalSection) && !isMultiSelectMode && (
                   <button
                     type="button"
@@ -2958,12 +2962,15 @@ const SidebarGroupHeader = memo(function SidebarGroupHeader({
       <button
         type="button"
         onClick={onToggle}
-        className="flex min-w-0 w-full items-center gap-2 rounded-lg px-1 text-left"
+        className={cn(
+          "flex min-w-0 w-full items-center gap-2 rounded-lg px-1 text-left",
+          actions && "pr-12",
+        )}
         aria-expanded={!isCollapsed}
       >
         <Icon className="h-3.5 w-3.5 flex-shrink-0" />
-        <span className="truncate text-xs font-medium">{title}</span>
-        <SidebarDisclosure isCollapsed={isCollapsed} className="mr-12" />
+        <span className="min-w-0 truncate text-xs font-medium">{title}</span>
+        <SidebarDisclosure isCollapsed={isCollapsed} />
       </button>
       {actions && (
         <div className="pointer-events-none absolute right-1 top-1/2 flex w-10 -translate-y-1/2 items-center justify-end opacity-0 transition-opacity group-hover/header:pointer-events-auto group-hover/header:opacity-100">
@@ -4317,292 +4324,304 @@ export function AgentsSidebar({
   const clerkUsername = clerkUser?.username
 
   // Filter and group chats. Pinned chats stay in their parent, then appear again in the reference group.
-  const { pinnedAgents, starredAgents, pinnedTasks, starredTasks, chatSections, filteredChats } =
-    useMemo(() => {
-      if (!agentChats) {
-        return {
-          pinnedAgents: [],
-          starredAgents: [],
-          pinnedTasks: [],
-          starredTasks: [],
-          chatSections: [],
-          filteredChats: [],
-        }
+  const {
+    pinnedAgents,
+    starredAgents,
+    taggedAgents,
+    pinnedTasks,
+    starredTasks,
+    chatSections,
+    filteredChats,
+  } = useMemo(() => {
+    if (!agentChats) {
+      return {
+        pinnedAgents: [],
+        starredAgents: [],
+        taggedAgents: [],
+        pinnedTasks: [],
+        starredTasks: [],
+        chatSections: [],
+        filteredChats: [],
       }
+    }
 
-      const filtered = searchQuery.trim()
-        ? agentChats.filter((chat) => {
-            const query = searchQuery.toLocaleLowerCase()
-            return (
-              (chat.name ?? "").toLocaleLowerCase().includes(query) ||
-              chat.tags.some((tag) => tag.name.toLocaleLowerCase().includes(query))
-            )
-          })
-        : agentChats
+    const filtered = searchQuery.trim()
+      ? agentChats.filter((chat) => {
+          const query = searchQuery.toLocaleLowerCase()
+          return (
+            (chat.name ?? "").toLocaleLowerCase().includes(query) ||
+            chat.tags.some((tag) => tag.name.toLocaleLowerCase().includes(query))
+          )
+        })
+      : agentChats
 
-      const activeProjectIds = new Set((projects ?? []).map((project) => project.id))
-      const activeTaskIds = new Set((tasks ?? []).map((task) => task.id))
-      const activeFiltered = filtered.filter((chat) => {
-        if (chat.isRemote) return true
-        if (projects && chat.projectId && !activeProjectIds.has(chat.projectId)) return false
-        if (tasks && chat.taskId && !activeTaskIds.has(chat.taskId)) return false
-        return true
+    const activeProjectIds = new Set((projects ?? []).map((project) => project.id))
+    const activeTaskIds = new Set((tasks ?? []).map((task) => task.id))
+    const activeFiltered = filtered.filter((chat) => {
+      if (chat.isRemote) return true
+      if (projects && chat.projectId && !activeProjectIds.has(chat.projectId)) return false
+      if (tasks && chat.taskId && !activeTaskIds.has(chat.taskId)) return false
+      return true
+    })
+    const prioritySort = <T extends { id: string; updatedAt: Date | null }>(
+      items: T[],
+      orderKey: string,
+    ) =>
+      [...items].sort((a, b) => {
+        const pinDelta = Number(pinnedChatIds.has(b.id)) - Number(pinnedChatIds.has(a.id))
+        if (pinDelta !== 0) return pinDelta
+        const order = new Map((manualOrderByKey[orderKey] ?? []).map((id, index) => [id, index]))
+        const aOrder = order.get(a.id) ?? Number.MAX_SAFE_INTEGER
+        const bOrder = order.get(b.id) ?? Number.MAX_SAFE_INTEGER
+        if (aOrder !== bOrder) return aOrder - bOrder
+        const aTime = a.updatedAt?.getTime() ?? 0
+        const bTime = b.updatedAt?.getTime() ?? 0
+        return bTime - aTime
       })
-      const prioritySort = <T extends { id: string; updatedAt: Date | null }>(
-        items: T[],
-        orderKey: string,
-      ) =>
-        [...items].sort((a, b) => {
-          const pinDelta = Number(pinnedChatIds.has(b.id)) - Number(pinnedChatIds.has(a.id))
-          if (pinDelta !== 0) return pinDelta
-          const order = new Map((manualOrderByKey[orderKey] ?? []).map((id, index) => [id, index]))
-          const aOrder = order.get(a.id) ?? Number.MAX_SAFE_INTEGER
-          const bOrder = order.get(b.id) ?? Number.MAX_SAFE_INTEGER
-          if (aOrder !== bOrder) return aOrder - bOrder
-          const aTime = a.updatedAt?.getTime() ?? 0
-          const bTime = b.updatedAt?.getTime() ?? 0
-          return bTime - aTime
-        })
 
-      const pinned = activeFiltered.filter((chat) => pinnedChatIds.has(chat.id))
-      const starred = activeFiltered.filter((chat) => starredChatIds.has(chat.id))
-      const remote = activeFiltered.filter((chat) => chat.isRemote)
-      const local = activeFiltered.filter((chat) => !chat.isRemote)
-      const global = local.filter(
-        (chat) => chat.scope === "global" || (!chat.projectId && !chat.taskId),
-      )
-      const tasksList = tasks ?? []
-      const projectsList = projects ?? []
-      const tasksById = new Map(tasksList.map((task) => [task.id, task]))
-      const taskOrder = new Map(tasksList.map((task, index) => [task.id, index]))
-      const projectOrder = new Map(projectsList.map((project, index) => [project.id, index]))
-      const projectChats = local.filter((chat) => chat.projectId)
-      const chatsByProject = new Map<string, typeof projectChats>()
+    const pinned = activeFiltered.filter((chat) => pinnedChatIds.has(chat.id))
+    const starred = activeFiltered.filter((chat) => starredChatIds.has(chat.id))
+    const tagged = activeFiltered.filter((chat) => chat.tags.length > 0)
+    const remote = activeFiltered.filter((chat) => chat.isRemote)
+    const local = activeFiltered.filter((chat) => !chat.isRemote)
+    const global = local.filter(
+      (chat) => chat.scope === "global" || (!chat.projectId && !chat.taskId),
+    )
+    const tasksList = tasks ?? []
+    const projectsList = projects ?? []
+    const tasksById = new Map(tasksList.map((task) => [task.id, task]))
+    const taskOrder = new Map(tasksList.map((task, index) => [task.id, index]))
+    const projectOrder = new Map(projectsList.map((project, index) => [project.id, index]))
+    const projectChats = local.filter((chat) => chat.projectId)
+    const chatsByProject = new Map<string, typeof projectChats>()
 
-      for (const chat of projectChats) {
-        const projectId = chat.projectId
-        if (!projectId) continue
+    for (const chat of projectChats) {
+      const projectId = chat.projectId
+      if (!projectId) continue
+      const chats = chatsByProject.get(projectId) ?? []
+      chats.push(chat)
+      chatsByProject.set(projectId, chats)
+    }
+
+    const projectIds = new Set<string>([
+      ...projectsList.map((project) => project.id),
+      ...Array.from(chatsByProject.keys()),
+    ])
+
+    const groupedProjects = Array.from(projectIds)
+      .map((projectId) => {
         const chats = chatsByProject.get(projectId) ?? []
-        chats.push(chat)
-        chatsByProject.set(projectId, chats)
-      }
+        const directChats = prioritySort(
+          chats.filter((chat) => !chat.taskId),
+          `project:${projectId}:chats`,
+        )
+        const groupedTaskChats = new Map<string, typeof chats>()
 
-      const projectIds = new Set<string>([
-        ...projectsList.map((project) => project.id),
-        ...Array.from(chatsByProject.keys()),
-      ])
-
-      const groupedProjects = Array.from(projectIds)
-        .map((projectId) => {
-          const chats = chatsByProject.get(projectId) ?? []
-          const directChats = prioritySort(
-            chats.filter((chat) => !chat.taskId),
-            `project:${projectId}:chats`,
-          )
-          const groupedTaskChats = new Map<string, typeof chats>()
-
-          for (const chat of chats) {
-            if (!chat.taskId) continue
-            const taskChats = groupedTaskChats.get(chat.taskId) ?? []
-            taskChats.push(chat)
-            groupedTaskChats.set(chat.taskId, taskChats)
-          }
-
-          const taskIds = new Set<string>([
-            ...tasksList.filter((task) => task.projectId === projectId).map((task) => task.id),
-            ...Array.from(groupedTaskChats.keys()),
-          ])
-
-          const taskGroups = Array.from(taskIds)
-            .map((taskId) => ({
-              taskId,
-              title: tasksById.get(taskId)?.name ?? "Task",
-              isPinned: Boolean(tasksById.get(taskId)?.pinnedAt),
-              isStarred: starredTaskIds.has(taskId),
-              chats: prioritySort(groupedTaskChats.get(taskId) ?? [], `task:${taskId}:chats`),
-            }))
-            .sort((a, b) => {
-              const pinDelta = Number(b.isPinned) - Number(a.isPinned)
-              if (pinDelta !== 0) return pinDelta
-              const aOrder = taskOrder.get(a.taskId) ?? Number.MAX_SAFE_INTEGER
-              const bOrder = taskOrder.get(b.taskId) ?? Number.MAX_SAFE_INTEGER
-              if (aOrder !== bOrder) return aOrder - bOrder
-              return a.title.localeCompare(b.title)
-            })
-
-          const project = projectsMap.get(projectId)
-          return {
-            projectId,
-            title: project?.name || project?.gitRepo || "Project",
-            isPinned: Boolean(project?.pinnedAt),
-            isStarred: starredProjectIds.has(projectId),
-            chats: directChats,
-            taskGroups,
-          }
-        })
-        .sort((a, b) => {
-          const pinDelta = Number(b.isPinned) - Number(a.isPinned)
-          if (pinDelta !== 0) return pinDelta
-          const manualProjectOrder = new Map(
-            (manualOrderByKey.projects ?? []).map((id, index) => [id, index]),
-          )
-          const aManual = manualProjectOrder.get(a.projectId) ?? Number.MAX_SAFE_INTEGER
-          const bManual = manualProjectOrder.get(b.projectId) ?? Number.MAX_SAFE_INTEGER
-          if (aManual !== bManual) return aManual - bManual
-          const aOrder = projectOrder.get(a.projectId) ?? Number.MAX_SAFE_INTEGER
-          const bOrder = projectOrder.get(b.projectId) ?? Number.MAX_SAFE_INTEGER
-          if (aOrder !== bOrder) return aOrder - bOrder
-          return a.title.localeCompare(b.title)
-        })
-
-      const sections: Array<{
-        id: string
-        title: string
-        chats: typeof activeFiltered
-        kind?: "pinned" | "starred" | "remote" | "global" | "project" | "task"
-        lifecycleTarget?: {
-          type: "project" | "task"
-          id: string
-          isPinned: boolean
-          isStarred?: boolean
+        for (const chat of chats) {
+          if (!chat.taskId) continue
+          const taskChats = groupedTaskChats.get(chat.taskId) ?? []
+          taskChats.push(chat)
+          groupedTaskChats.set(chat.taskId, taskChats)
         }
-        parentProjectId?: string
-        sectionDragId?: string
-        hideHeader?: boolean
-        projectColor?: string | null
-        showEmptyState?: boolean
-      }> = []
-      if (remote.length > 0)
-        sections.push({
-          id: "remote",
-          title: "Remote sandboxes",
-          chats: prioritySort(remote, "remote:chats"),
-          kind: "remote",
-        })
-      if (global.length > 0)
-        sections.push({
-          id: "global",
-          title: "Global chats",
-          chats: prioritySort(global, "global:chats"),
-          kind: "global",
-        })
-      for (const projectGroup of groupedProjects) {
-        sections.push({
-          id: `project-${projectGroup.projectId}`,
-          title: projectGroup.title,
-          chats: [],
-          kind: "project",
-          lifecycleTarget: {
-            type: "project",
-            id: projectGroup.projectId,
-            isPinned: projectGroup.isPinned,
-            isStarred: projectGroup.isStarred,
-          },
-          projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
-          showEmptyState:
-            !searchQuery.trim() &&
-            projectGroup.chats.length === 0 &&
-            projectGroup.taskGroups.length === 0,
-        })
-        const childItems = [
-          ...projectGroup.chats.map((chat) => ({
-            id: `chat:${chat.id}`,
-            type: "chat" as const,
-            updatedAt: chat.updatedAt,
-            isPinned: pinnedChatIds.has(chat.id),
-            chat,
-          })),
-          ...projectGroup.taskGroups.map((taskGroup) => ({
-            id: `task:${taskGroup.taskId}`,
-            type: "task" as const,
-            updatedAt:
-              taskGroup.chats.reduce<Date | null>((latest, chat) => {
-                if (!chat.updatedAt) return latest
-                if (!latest || chat.updatedAt.getTime() > latest.getTime()) return chat.updatedAt
-                return latest
-              }, null) ?? null,
-            isPinned: taskGroup.isPinned,
-            taskGroup,
-          })),
-        ].sort((a, b) => {
-          const pinDelta = Number(b.isPinned) - Number(a.isPinned)
-          if (pinDelta !== 0) return pinDelta
 
-          const order = new Map(
-            (manualOrderByKey[`project:${projectGroup.projectId}:children`] ?? []).map(
-              (id, index) => [id, index],
-            ),
-          )
-          const aManual = order.get(a.id) ?? Number.MAX_SAFE_INTEGER
-          const bManual = order.get(b.id) ?? Number.MAX_SAFE_INTEGER
-          if (aManual !== bManual) return aManual - bManual
-          const aTime = a.updatedAt?.getTime() ?? 0
-          const bTime = b.updatedAt?.getTime() ?? 0
-          return bTime - aTime
-        })
-        for (const childItem of childItems) {
-          if (childItem.type === "chat") {
-            sections.push({
-              id: `project-chat-${childItem.chat.id}`,
-              title: "",
-              chats: [childItem.chat],
-              kind: "project",
-              parentProjectId: projectGroup.projectId,
-              sectionDragId: childItem.id,
-              hideHeader: true,
-              projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
-            })
-            continue
-          }
-          const { taskGroup } = childItem
+        const taskIds = new Set<string>([
+          ...tasksList.filter((task) => task.projectId === projectId).map((task) => task.id),
+          ...Array.from(groupedTaskChats.keys()),
+        ])
+
+        const taskGroups = Array.from(taskIds)
+          .map((taskId) => ({
+            taskId,
+            title: tasksById.get(taskId)?.name ?? "Task",
+            isPinned: Boolean(tasksById.get(taskId)?.pinnedAt),
+            isStarred: starredTaskIds.has(taskId),
+            chats: prioritySort(groupedTaskChats.get(taskId) ?? [], `task:${taskId}:chats`),
+          }))
+          .sort((a, b) => {
+            const pinDelta = Number(b.isPinned) - Number(a.isPinned)
+            if (pinDelta !== 0) return pinDelta
+            const aOrder = taskOrder.get(a.taskId) ?? Number.MAX_SAFE_INTEGER
+            const bOrder = taskOrder.get(b.taskId) ?? Number.MAX_SAFE_INTEGER
+            if (aOrder !== bOrder) return aOrder - bOrder
+            return a.title.localeCompare(b.title)
+          })
+
+        const project = projectsMap.get(projectId)
+        return {
+          projectId,
+          title: project?.name || project?.gitRepo || "Project",
+          isPinned: Boolean(project?.pinnedAt),
+          isStarred: starredProjectIds.has(projectId),
+          chats: directChats,
+          taskGroups,
+        }
+      })
+      .sort((a, b) => {
+        const pinDelta = Number(b.isPinned) - Number(a.isPinned)
+        if (pinDelta !== 0) return pinDelta
+        const manualProjectOrder = new Map(
+          (manualOrderByKey.projects ?? []).map((id, index) => [id, index]),
+        )
+        const aManual = manualProjectOrder.get(a.projectId) ?? Number.MAX_SAFE_INTEGER
+        const bManual = manualProjectOrder.get(b.projectId) ?? Number.MAX_SAFE_INTEGER
+        if (aManual !== bManual) return aManual - bManual
+        const aOrder = projectOrder.get(a.projectId) ?? Number.MAX_SAFE_INTEGER
+        const bOrder = projectOrder.get(b.projectId) ?? Number.MAX_SAFE_INTEGER
+        if (aOrder !== bOrder) return aOrder - bOrder
+        return a.title.localeCompare(b.title)
+      })
+
+    const sections: Array<{
+      id: string
+      title: string
+      chats: typeof activeFiltered
+      kind?: "pinned" | "starred" | "tagged" | "remote" | "global" | "project" | "task"
+      lifecycleTarget?: {
+        type: "project" | "task"
+        id: string
+        isPinned: boolean
+        isStarred?: boolean
+      }
+      parentProjectId?: string
+      sectionDragId?: string
+      hideHeader?: boolean
+      projectColor?: string | null
+      showWhenEmpty?: boolean
+      showEmptyState?: boolean
+    }> = []
+    if (remote.length > 0)
+      sections.push({
+        id: "remote",
+        title: "Remote sandboxes",
+        chats: prioritySort(remote, "remote:chats"),
+        kind: "remote",
+      })
+    sections.push({
+      id: "global",
+      title: "Global",
+      chats: prioritySort(global, "global:chats"),
+      kind: "global",
+      showWhenEmpty: true,
+      showEmptyState: !searchQuery.trim() && global.length === 0,
+    })
+    for (const projectGroup of groupedProjects) {
+      sections.push({
+        id: `project-${projectGroup.projectId}`,
+        title: projectGroup.title,
+        chats: [],
+        kind: "project",
+        lifecycleTarget: {
+          type: "project",
+          id: projectGroup.projectId,
+          isPinned: projectGroup.isPinned,
+          isStarred: projectGroup.isStarred,
+        },
+        projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
+        showEmptyState:
+          !searchQuery.trim() &&
+          projectGroup.chats.length === 0 &&
+          projectGroup.taskGroups.length === 0,
+      })
+      const childItems = [
+        ...projectGroup.chats.map((chat) => ({
+          id: `chat:${chat.id}`,
+          type: "chat" as const,
+          updatedAt: chat.updatedAt,
+          isPinned: pinnedChatIds.has(chat.id),
+          chat,
+        })),
+        ...projectGroup.taskGroups.map((taskGroup) => ({
+          id: `task:${taskGroup.taskId}`,
+          type: "task" as const,
+          updatedAt:
+            taskGroup.chats.reduce<Date | null>((latest, chat) => {
+              if (!chat.updatedAt) return latest
+              if (!latest || chat.updatedAt.getTime() > latest.getTime()) return chat.updatedAt
+              return latest
+            }, null) ?? null,
+          isPinned: taskGroup.isPinned,
+          taskGroup,
+        })),
+      ].sort((a, b) => {
+        const pinDelta = Number(b.isPinned) - Number(a.isPinned)
+        if (pinDelta !== 0) return pinDelta
+
+        const order = new Map(
+          (manualOrderByKey[`project:${projectGroup.projectId}:children`] ?? []).map(
+            (id, index) => [id, index],
+          ),
+        )
+        const aManual = order.get(a.id) ?? Number.MAX_SAFE_INTEGER
+        const bManual = order.get(b.id) ?? Number.MAX_SAFE_INTEGER
+        if (aManual !== bManual) return aManual - bManual
+        const aTime = a.updatedAt?.getTime() ?? 0
+        const bTime = b.updatedAt?.getTime() ?? 0
+        return bTime - aTime
+      })
+      for (const childItem of childItems) {
+        if (childItem.type === "chat") {
           sections.push({
-            id: `task-${taskGroup.taskId}`,
-            title: taskGroup.title,
-            chats: taskGroup.chats,
-            kind: "task",
-            lifecycleTarget: {
-              type: "task",
-              id: taskGroup.taskId,
-              isPinned: taskGroup.isPinned,
-              isStarred: taskGroup.isStarred,
-            },
+            id: `project-chat-${childItem.chat.id}`,
+            title: "",
+            chats: [childItem.chat],
+            kind: "project",
             parentProjectId: projectGroup.projectId,
             sectionDragId: childItem.id,
+            hideHeader: true,
             projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
-            showEmptyState: !searchQuery.trim() && taskGroup.chats.length === 0,
           })
+          continue
         }
-      }
-
-      const referenceTasks = groupedProjects.flatMap((projectGroup) =>
-        projectGroup.taskGroups.map((taskGroup) => ({
-          ...taskGroup,
-          projectId: projectGroup.projectId,
+        const { taskGroup } = childItem
+        sections.push({
+          id: `task-${taskGroup.taskId}`,
+          title: taskGroup.title,
+          chats: taskGroup.chats,
+          kind: "task",
+          lifecycleTarget: {
+            type: "task",
+            id: taskGroup.taskId,
+            isPinned: taskGroup.isPinned,
+            isStarred: taskGroup.isStarred,
+          },
+          parentProjectId: projectGroup.projectId,
+          sectionDragId: childItem.id,
           projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
-        })),
-      )
-
-      return {
-        pinnedAgents: prioritySort(pinned, "pinned:chats"),
-        starredAgents: prioritySort(starred, "starred:chats"),
-        pinnedTasks: referenceTasks.filter((task) => task.isPinned),
-        starredTasks: referenceTasks.filter((task) => task.isStarred),
-        chatSections: sections,
-        filteredChats: sections.flatMap((section) => section.chats),
+          showEmptyState: !searchQuery.trim() && taskGroup.chats.length === 0,
+        })
       }
-    }, [
-      searchQuery,
-      agentChats,
-      pinnedChatIds,
-      starredChatIds,
-      tasks,
-      projects,
-      projectsMap,
-      manualOrderByKey,
-      projectColorsById,
-      starredProjectIds,
-      starredTaskIds,
-    ])
+    }
+
+    const referenceTasks = groupedProjects.flatMap((projectGroup) =>
+      projectGroup.taskGroups.map((taskGroup) => ({
+        ...taskGroup,
+        projectId: projectGroup.projectId,
+        projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
+      })),
+    )
+
+    return {
+      pinnedAgents: prioritySort(pinned, "pinned:chats"),
+      starredAgents: prioritySort(starred, "starred:chats"),
+      taggedAgents: prioritySort(tagged, "tagged:chats"),
+      pinnedTasks: referenceTasks.filter((task) => task.isPinned),
+      starredTasks: referenceTasks.filter((task) => task.isStarred),
+      chatSections: sections,
+      filteredChats: sections.flatMap((section) => section.chats),
+    }
+  }, [
+    searchQuery,
+    agentChats,
+    pinnedChatIds,
+    starredChatIds,
+    tasks,
+    projects,
+    projectsMap,
+    manualOrderByKey,
+    projectColorsById,
+    starredProjectIds,
+    starredTaskIds,
+  ])
 
   const selectedLocalChat = useMemo(() => {
     if (!selectedChatId) return null
@@ -4765,6 +4784,17 @@ export function AgentsSidebar({
         }
       }
 
+      if (kind === "tagged-chat") {
+        const fromPinned = chatIsPinned(fromId)
+        if (!samePinGroup(fromPinned, chatIsPinned(toId))) return null
+        return {
+          key: "tagged:chats",
+          activeIds: taggedAgents
+            .filter((chat) => chatIsPinned(chat.id) === fromPinned)
+            .map((chat) => chat.id),
+        }
+      }
+
       const fromChat = agentChats.find((chat) => chat.id === fromId)
       const toChat = agentChats.find((chat) => chat.id === toId)
       if (!fromChat || !toChat) return null
@@ -4828,7 +4858,16 @@ export function AgentsSidebar({
 
       return null
     },
-    [agentChats, chatSections, pinnedAgents, pinnedChatIds, projects, starredAgents, tasks],
+    [
+      agentChats,
+      chatSections,
+      pinnedAgents,
+      pinnedChatIds,
+      projects,
+      starredAgents,
+      taggedAgents,
+      tasks,
+    ],
   )
 
   const getProjectChildHeaderDropTarget = useCallback(
@@ -6498,6 +6537,7 @@ export function AgentsSidebar({
   const quickAccessHasChats =
     pinnedAgents.length > 0 ||
     starredAgents.length > 0 ||
+    taggedAgents.length > 0 ||
     pinnedTasks.some((task) => task.chats.length > 0) ||
     starredTasks.some((task) => task.chats.length > 0) ||
     visibleOtherSections.some((section) => section.chats.length > 0)
@@ -6650,6 +6690,7 @@ export function AgentsSidebar({
           parentProjectId={section.parentProjectId}
           kind={section.kind}
           projectColor={section.projectColor}
+          showWhenEmpty={section.showWhenEmpty}
           showEmptyState={section.showEmptyState}
           isCollapsed={collapsedSectionIds.has(section.id)}
           isDraggingSection={
@@ -6788,7 +6829,7 @@ export function AgentsSidebar({
       )}
 
       {/* Global search stays at the top of the sidebar. */}
-      <div className="relative flex flex-shrink-0 items-center gap-1 px-2 pb-2 pt-1">
+      <div className="relative flex flex-shrink-0 items-center gap-1 px-2 pb-2 pt-3">
         <div className="relative min-w-0 flex-1">
           <SearchIcon className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -7037,8 +7078,8 @@ export function AgentsSidebar({
           ref={scrollContainerRef}
           onScroll={handleAgentsScroll}
           className={cn(
-            "h-full overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent",
-            isMultiSelectMode ? "px-0" : "px-2",
+            "h-full overflow-y-auto [scrollbar-gutter:stable] scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent",
+            !isMultiSelectMode && "pl-1",
           )}
         >
           {!searchQuery && (
@@ -7068,78 +7109,89 @@ export function AgentsSidebar({
                 kind: "pinned" as const,
                 chats: pinnedAgents,
                 tasks: pinnedTasks,
+                hideWhenEmpty: false,
               },
               {
                 title: "Starred",
                 kind: "starred" as const,
                 chats: starredAgents,
                 tasks: starredTasks,
+                hideWhenEmpty: false,
               },
-            ].map((section) => (
-              <div
-                key={section.kind}
-                className="mx-2 mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150"
-              >
-                <ChatListSection
-                  {...sharedChatListSectionProps}
-                  title={section.title}
-                  sectionId={section.kind}
-                  kind={section.kind}
-                  projectColor={null}
-                  projectColorsById={projectColorsById}
-                  showWhenEmpty
-                  showEmptyState={
-                    section.chats.length === 0 &&
-                    section.tasks.every((task) => task.chats.length === 0)
-                  }
-                  isCollapsed={collapsedSectionIds.has(section.kind)}
-                  draggingKind={draggingItem?.kind}
-                  draggingId={draggingItem?.id}
-                  dragOverKind={dragOverItem?.kind}
-                  dragOverId={dragOverItem?.id}
-                  dragOverPosition={dragOverItem?.position}
-                  chats={section.chats}
-                  onCreateGlobalChat={openNewGlobalChat}
-                  onCreateProjectChat={openNewProjectChat}
-                  onCreateProjectTask={createProjectTask}
-                  onChangeProjectColor={handleChangeProjectColor}
-                  lifecyclePending={
-                    pinProjectMutation.isPending ||
-                    unpinProjectMutation.isPending ||
-                    archiveProjectMutation.isPending ||
-                    pinTaskMutation.isPending ||
-                    unpinTaskMutation.isPending ||
-                    archiveTaskMutation.isPending
-                  }
-                />
-                {!collapsedSectionIds.has(section.kind) &&
-                  section.tasks.map((task) => (
-                    <ChatListSection
-                      {...sharedChatListSectionProps}
-                      key={`${section.kind}-task-${task.taskId}`}
-                      title={task.title}
-                      sectionId={`${section.kind}-task-${task.taskId}`}
-                      kind="task"
-                      projectColor={task.projectColor}
-                      isCollapsed={collapsedSectionIds.has(`${section.kind}-task-${task.taskId}`)}
-                      lifecycleTarget={{
-                        type: "task",
-                        id: task.taskId,
-                        isPinned: task.isPinned,
-                        isStarred: task.isStarred,
-                      }}
-                      parentProjectId={task.projectId}
-                      chats={task.chats}
-                      showEmptyState={task.chats.length === 0}
-                      lifecyclePending={
-                        pinTaskMutation.isPending ||
-                        unpinTaskMutation.isPending ||
-                        archiveTaskMutation.isPending
-                      }
-                    />
-                  ))}
-              </div>
-            ))}
+              {
+                title: "Tagged",
+                kind: "tagged" as const,
+                chats: taggedAgents,
+                tasks: [],
+                hideWhenEmpty: true,
+              },
+            ]
+              .filter((section) => !section.hideWhenEmpty || section.chats.length > 0)
+              .map((section) => (
+                <div
+                  key={section.kind}
+                  className="mx-2 mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150"
+                >
+                  <ChatListSection
+                    {...sharedChatListSectionProps}
+                    title={section.title}
+                    sectionId={section.kind}
+                    kind={section.kind}
+                    projectColor={null}
+                    projectColorsById={projectColorsById}
+                    showWhenEmpty
+                    showEmptyState={
+                      section.chats.length === 0 &&
+                      section.tasks.every((task) => task.chats.length === 0)
+                    }
+                    isCollapsed={collapsedSectionIds.has(section.kind)}
+                    draggingKind={draggingItem?.kind}
+                    draggingId={draggingItem?.id}
+                    dragOverKind={dragOverItem?.kind}
+                    dragOverId={dragOverItem?.id}
+                    dragOverPosition={dragOverItem?.position}
+                    chats={section.chats}
+                    onCreateGlobalChat={openNewGlobalChat}
+                    onCreateProjectChat={openNewProjectChat}
+                    onCreateProjectTask={createProjectTask}
+                    onChangeProjectColor={handleChangeProjectColor}
+                    lifecyclePending={
+                      pinProjectMutation.isPending ||
+                      unpinProjectMutation.isPending ||
+                      archiveProjectMutation.isPending ||
+                      pinTaskMutation.isPending ||
+                      unpinTaskMutation.isPending ||
+                      archiveTaskMutation.isPending
+                    }
+                  />
+                  {!collapsedSectionIds.has(section.kind) &&
+                    section.tasks.map((task) => (
+                      <ChatListSection
+                        {...sharedChatListSectionProps}
+                        key={`${section.kind}-task-${task.taskId}`}
+                        title={task.title}
+                        sectionId={`${section.kind}-task-${task.taskId}`}
+                        kind="task"
+                        projectColor={task.projectColor}
+                        isCollapsed={collapsedSectionIds.has(`${section.kind}-task-${task.taskId}`)}
+                        lifecycleTarget={{
+                          type: "task",
+                          id: task.taskId,
+                          isPinned: task.isPinned,
+                          isStarred: task.isStarred,
+                        }}
+                        parentProjectId={task.projectId}
+                        chats={task.chats}
+                        showEmptyState={task.chats.length === 0}
+                        lifecyclePending={
+                          pinTaskMutation.isPending ||
+                          unpinTaskMutation.isPending ||
+                          archiveTaskMutation.isPending
+                        }
+                      />
+                    ))}
+                </div>
+              ))}
 
           {/* Drafts Section - always show regardless of chat source mode */}
           {!searchQuery && !collapsedSectionIds.has("quick-access") && (
@@ -7164,14 +7216,14 @@ export function AgentsSidebar({
               >
                 <div className="pointer-events-none flex min-w-0 flex-1 items-center gap-1.5 text-left">
                   <FilePenLine className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
-                  <h3 className="flex-1 truncate whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-white">
+                  <h3 className="min-w-0 truncate whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-white">
                     Drafts
                   </h3>
+                  <SidebarDisclosure
+                    isCollapsed={collapsedSectionIds.has("drafts")}
+                    className="text-white/80"
+                  />
                 </div>
-                <SidebarDisclosure
-                  isCollapsed={collapsedSectionIds.has("drafts")}
-                  className="text-white/80"
-                />
               </div>
               {!collapsedSectionIds.has("drafts") && (
                 <div className="list-none p-0 m-0 mb-1 ml-4 pl-2">
@@ -7330,16 +7382,18 @@ export function AgentsSidebar({
                 }}
                 aria-expanded={isArchiveOpen}
                 className={cn(
-                  "group group/archive group/disclosure relative mt-3.5 flex h-7 w-full items-center rounded-lg px-2 text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground",
+                  "group group/archive group/disclosure relative mt-3.5 flex h-7 w-full items-center rounded-lg px-2 pr-12 text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground",
                   isArchiveOpen ? "mb-2" : "mb-1",
                 )}
               >
                 <DiffIcon className="mr-2 h-3.5 w-3.5" />
-                <span className="whitespace-nowrap text-xs font-medium">Archive</span>
+                <span className="min-w-0 truncate whitespace-nowrap text-xs font-medium">
+                  Archive
+                </span>
+                <SidebarDisclosure isCollapsed={!isArchiveOpen} />
                 <span className="absolute right-2 text-[11px] tabular-nums text-muted-foreground/60">
                   {archiveSummary?.total ?? archivedLifecycleItems.length}
                 </span>
-                <SidebarDisclosure isCollapsed={!isArchiveOpen} className="mr-12" />
                 <AnimatePresence>{isArchiveOpen && <ExpandedSectionIndicator />}</AnimatePresence>
               </button>
               {isArchiveOpen && (

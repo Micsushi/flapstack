@@ -16,6 +16,7 @@ const assistantMessageSource = readFileSync(
   "src/renderer/features/agents/main/assistant-message-item.tsx",
   "utf8",
 )
+const activeChatSource = readFileSync("src/renderer/features/agents/main/active-chat.tsx", "utf8")
 
 describe("stopped reasoning disclosure", () => {
   it("keeps the stop row visible and only exposes expansion when details exist", () => {
@@ -31,10 +32,16 @@ describe("latest message editing", () => {
     expect(messageGroupSource).toContain("Edit message")
   })
 
-  it("removes the turn only after restoring its exact pre-run checkpoint", () => {
+  it("rewinds the turn and restores files only when a checkpoint exists", () => {
     expect(chatsRouterSource).toContain("editLatestUserMessage")
     expect(chatsRouterSource).toContain("await restoreCheckpoint(run.beforeCheckpointId)")
+    expect(chatsRouterSource).not.toContain("This older message has no safe pre-run checkpoint")
     expect(chatsRouterSource).toContain("messages.slice(0, userIndex)")
+  })
+
+  it("shows the server reason if editing still fails", () => {
+    expect(activeChatSource).toContain('toast.error("Failed to edit message", {')
+    expect(activeChatSource).toContain("description: editErrorMessage")
   })
 })
 

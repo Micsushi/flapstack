@@ -12,12 +12,25 @@ export const CHAT_TAG_COLORS = [
   "violet",
 ] as const
 
+export const CHAT_TAG_ICONS = [
+  "alert",
+  "ban",
+  "reply",
+  "eye",
+  "clock",
+  "star",
+  "flag",
+  "bookmark",
+] as const
+
 export type ChatTagColor = (typeof CHAT_TAG_COLORS)[number]
+export type ChatTagIcon = (typeof CHAT_TAG_ICONS)[number]
 export type ChatTag = {
   id: string
   name: string
   normalizedName: string
   color: ChatTagColor
+  icon: ChatTagIcon | null
   createdAt: number | null
   updatedAt: number | null
 }
@@ -35,6 +48,7 @@ export function createChatTagStore(sqlite: Database.Database) {
     name: String(row.name),
     normalizedName: String(row.normalized_name),
     color: row.color as ChatTagColor,
+    icon: row.icon == null ? null : (String(row.icon) as ChatTagIcon),
     createdAt: row.created_at == null ? null : Number(row.created_at),
     updatedAt: row.updated_at == null ? null : Number(row.updated_at),
   })
@@ -46,16 +60,16 @@ export function createChatTagStore(sqlite: Database.Database) {
         .all()
         .map((row) => rowToTag(row as Record<string, unknown>))
     },
-    create(input: { name: string; color: ChatTagColor }): ChatTag {
+    create(input: { name: string; color: ChatTagColor; icon?: ChatTagIcon | null }): ChatTag {
       const names = normalizeName(input.name)
       const now = Date.now()
       const id = createId()
       try {
         sqlite
           .prepare(
-            "INSERT INTO chat_tags (id, name, normalized_name, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO chat_tags (id, name, normalized_name, color, icon, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
           )
-          .run(id, names.name, names.normalizedName, input.color, now, now)
+          .run(id, names.name, names.normalizedName, input.color, input.icon ?? null, now, now)
       } catch (error) {
         if (error instanceof Error && /unique/i.test(error.message)) {
           throw new Error(`A tag named '${names.name}' already exists`)
@@ -66,14 +80,33 @@ export function createChatTagStore(sqlite: Database.Database) {
         sqlite.prepare("SELECT * FROM chat_tags WHERE id = ?").get(id) as Record<string, unknown>,
       )
     },
-    update(input: { id: string; name: string; color: ChatTagColor }): ChatTag {
+    update(input: {
+      id: string
+      name: string
+      color: ChatTagColor
+      icon?: ChatTagIcon | null
+    }): ChatTag {
       const names = normalizeName(input.name)
       try {
-        const result = sqlite
-          .prepare(
-            "UPDATE chat_tags SET name = ?, normalized_name = ?, color = ?, updated_at = ? WHERE id = ?",
-          )
-          .run(names.name, names.normalizedName, input.color, Date.now(), input.id)
+        const result =
+          input.icon === undefined
+            ? sqlite
+                .prepare(
+                  "UPDATE chat_tags SET name = ?, normalized_name = ?, color = ?, updated_at = ? WHERE id = ?",
+                )
+                .run(names.name, names.normalizedName, input.color, Date.now(), input.id)
+            : sqlite
+                .prepare(
+                  "UPDATE chat_tags SET name = ?, normalized_name = ?, color = ?, icon = ?, updated_at = ? WHERE id = ?",
+                )
+                .run(
+                  names.name,
+                  names.normalizedName,
+                  input.color,
+                  input.icon,
+                  Date.now(),
+                  input.id,
+                )
         if (result.changes === 0) throw new Error("Tag not found")
       } catch (error) {
         if (error instanceof Error && /unique/i.test(error.message)) {

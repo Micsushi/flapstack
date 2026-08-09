@@ -1,5 +1,19 @@
 import { useState } from "react"
-import { Check, Plus, Tag } from "lucide-react"
+import {
+  Ban,
+  Bookmark,
+  Check,
+  CircleAlert,
+  Clock3,
+  Eye,
+  Flag,
+  Minus,
+  Plus,
+  Reply,
+  Star,
+  Tag,
+  type LucideIcon,
+} from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "../../components/ui/button"
 import {
@@ -13,7 +27,20 @@ import { Input } from "../../components/ui/input"
 import { cn } from "../../lib/utils"
 import { trpc } from "../../lib/trpc"
 
-export type ChatTagView = { id: string; name: string; color: string }
+export type ChatTagView = { id: string; name: string; color: string; icon?: string | null }
+
+export const CHAT_TAG_ICONS = {
+  alert: CircleAlert,
+  ban: Ban,
+  reply: Reply,
+  eye: Eye,
+  clock: Clock3,
+  star: Star,
+  flag: Flag,
+  bookmark: Bookmark,
+} satisfies Record<string, LucideIcon>
+
+type ChatTagIconName = keyof typeof CHAT_TAG_ICONS
 
 const tagStyles: Record<string, string> = {
   slate: "border-slate-500/30 bg-slate-500/10 text-slate-300",
@@ -26,17 +53,23 @@ const tagStyles: Record<string, string> = {
   violet: "border-violet-500/30 bg-violet-500/10 text-violet-300",
 }
 
+export function ChatTagIcon({ icon, className }: { icon?: string | null; className?: string }) {
+  const Icon = icon ? CHAT_TAG_ICONS[icon as ChatTagIconName] : null
+  return Icon ? <Icon className={className} aria-hidden="true" /> : null
+}
+
 export function ChatTagChip({ tag, compact = false }: { tag: ChatTagView; compact?: boolean }) {
   return (
     <span
       title={tag.name}
       className={cn(
-        "inline-flex max-w-24 items-center truncate rounded border font-medium",
+        "inline-flex max-w-24 shrink-0 items-center truncate rounded border font-medium",
         compact ? "h-4 px-1 text-[9px]" : "h-5 px-1.5 text-[10px]",
         tagStyles[tag.color] ?? tagStyles.slate,
       )}
     >
-      {tag.name}
+      <ChatTagIcon icon={tag.icon} className="h-2.5 w-2.5 shrink-0" />
+      <span className={cn(tag.icon && "ml-1")}>{tag.name}</span>
     </span>
   )
 }
@@ -54,6 +87,7 @@ export function ChatTagSubmenu({
   const [color, setColor] = useState<
     "slate" | "blue" | "cyan" | "green" | "amber" | "orange" | "rose" | "violet"
   >("violet")
+  const [icon, setIcon] = useState<ChatTagIconName | null>(null)
   const assignedIds = new Set(assignedTags.map((tag) => tag.id))
   const refresh = async () => {
     await Promise.all([
@@ -67,6 +101,7 @@ export function ChatTagSubmenu({
     onSuccess: async (tag) => {
       await assign.mutateAsync({ chatId, tagId: tag.id })
       setName("")
+      setIcon(null)
     },
     onError: (error) => toast.error(error.message),
   })
@@ -97,12 +132,16 @@ export function ChatTagSubmenu({
                 }}
                 className="gap-2"
               >
-                <span
-                  className={cn(
-                    "h-2.5 w-2.5 rounded-full",
-                    tagStyles[tag.color]?.split(" ")[1] ?? "bg-slate-500/20",
-                  )}
-                />
+                {tag.icon ? (
+                  <ChatTagIcon icon={tag.icon} className="h-3.5 w-3.5 shrink-0" />
+                ) : (
+                  <span
+                    className={cn(
+                      "h-2.5 w-2.5 rounded-full",
+                      tagStyles[tag.color]?.split(" ")[1] ?? "bg-slate-500/20",
+                    )}
+                  />
+                )}
                 <span className="min-w-0 flex-1 truncate">{tag.name}</span>
                 {checked && <Check className="h-3.5 w-3.5" />}
               </DropdownMenuItem>
@@ -129,7 +168,7 @@ export function ChatTagSubmenu({
               size="icon"
               className="h-7 w-7 shrink-0"
               disabled={!name.trim() || create.isPending}
-              onClick={() => create.mutate({ name, color })}
+              onClick={() => create.mutate({ name, color, icon })}
               aria-label="Create tag"
             >
               <Plus className="h-3.5 w-3.5" />
@@ -150,6 +189,35 @@ export function ChatTagSubmenu({
                 )}
                 onClick={() => setColor(candidate as typeof color)}
               />
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1.5" aria-label="Tag icon">
+            <button
+              type="button"
+              aria-label="No tag icon"
+              aria-pressed={icon === null}
+              className={cn(
+                "flex h-6 w-6 items-center justify-center rounded-md border text-muted-foreground hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring",
+                icon === null && "border-foreground/50 bg-accent text-foreground",
+              )}
+              onClick={() => setIcon(null)}
+            >
+              <Minus className="h-3.5 w-3.5" />
+            </button>
+            {Object.entries(CHAT_TAG_ICONS).map(([candidate, Icon]) => (
+              <button
+                key={candidate}
+                type="button"
+                aria-label={`${candidate} tag icon`}
+                aria-pressed={candidate === icon}
+                className={cn(
+                  "flex h-6 w-6 items-center justify-center rounded-md border text-muted-foreground hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring",
+                  candidate === icon && "border-foreground/50 bg-accent text-foreground",
+                )}
+                onClick={() => setIcon(candidate as ChatTagIconName)}
+              >
+                <Icon className="h-3.5 w-3.5" />
+              </button>
             ))}
           </div>
         </div>

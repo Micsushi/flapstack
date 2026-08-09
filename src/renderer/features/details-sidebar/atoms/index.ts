@@ -21,7 +21,7 @@ export interface WidgetConfig {
 }
 
 export const WIDGET_REGISTRY: WidgetConfig[] = [
-  { id: "info", label: "Workspace", icon: Box, canExpand: false, defaultVisible: true },
+  { id: "info", label: "Chat details", icon: Box, canExpand: false, defaultVisible: true },
   {
     id: "orchestration",
     label: "Agent orchestration",

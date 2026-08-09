@@ -42,6 +42,8 @@ export type ChatWorkbenchNavigation = {
   order?: ChatWorkbenchNavigationItem[]
 }
 
+export type ChatWorkbenchGroupCloseBehavior = "keep-chats" | "close-chats"
+
 export function chatWorkbenchNavigationStorageKey(stableWindowId: string): string {
   return `${stableWindowId}:chat-workbench-navigation-v1`
 }
@@ -389,6 +391,7 @@ export function removeChatWorkbenchGroup(
   navigation: ChatWorkbenchNavigation,
   groupId: string,
   visibleChatIds: readonly string[],
+  behavior: ChatWorkbenchGroupCloseBehavior = "keep-chats",
 ): ChatWorkbenchNavigation {
   const group = navigation.groups.find((candidate) => candidate.id === groupId)
   if (!group) return navigation
@@ -396,7 +399,9 @@ export function removeChatWorkbenchGroup(
   const resolved = resolveChatWorkbenchNavigationItems(navigation, visibleChatIds)
   const order = resolved.flatMap((item): ChatWorkbenchNavigationItem[] =>
     item.kind === "group" && item.id === groupId
-      ? chatIds.map((id) => ({ kind: "chat", id }))
+      ? behavior === "keep-chats"
+        ? chatIds.map((id) => ({ kind: "chat", id }))
+        : []
       : [item],
   )
   return {

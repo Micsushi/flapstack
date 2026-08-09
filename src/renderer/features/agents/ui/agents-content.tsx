@@ -28,6 +28,7 @@ import {
   agentsSubChatsSidebarModeAtom,
   agentsSubChatsSidebarWidthAtom,
   desktopViewAtom,
+  lastMessagedProjectIdAtom,
   selectedProjectAtom,
   SUBCHATS_SIDEBAR_PANEL_ENABLED,
   pendingUserQuestionsAtom,
@@ -44,7 +45,9 @@ import {
   subChatsQuickSwitchSelectedIndexAtom,
   type CtrlTabTarget,
   getReleasedCtrlTabTarget,
+  groupCloseBehaviorAtom,
   chatSourceModeAtom,
+  type GroupCloseBehavior,
 } from "../../../lib/atoms"
 import { NewChatForm } from "../main/new-chat-form"
 import { ChatView } from "../main/active-chat"
@@ -64,6 +67,7 @@ import { ResizableSidebar } from "../../../components/ui/resizable-sidebar"
 // import { useCombinedAuth } from "@/lib/hooks/use-combined-auth"
 const useCombinedAuth = () => ({ userId: null }) // Desktop mock
 import { Button } from "../../../components/ui/button"
+import { Checkbox } from "../../../components/ui/checkbox"
 import { RenameDialog } from "../../../components/rename-dialog"
 import { AlignJustify, MessageSquare, PanelsTopLeft, Plus, SquareTerminal, X } from "lucide-react"
 import { AgentsQuickSwitchDialog } from "../components/agents-quick-switch-dialog"
@@ -339,6 +343,8 @@ function AgentsContentInner() {
     groupId: string
     chatId: string
   } | null>(null)
+  const [groupClosePromptId, setGroupClosePromptId] = useState<string | null>(null)
+  const [rememberGroupCloseChoice, setRememberGroupCloseChoice] = useState(false)
   const chatWorkbenchNavigationRef = useRef(chatWorkbenchNavigation)
   const chatWorkbenchLayoutRef = useRef(chatWorkbenchLayout)
   const chatWorkbenchHistoryRef = useRef(createChatWorkbenchHistory())
@@ -382,8 +388,10 @@ function AgentsContentInner() {
       ? null
       : desktopView
   const [selectedChatIsRemote, setSelectedChatIsRemote] = useAtom(selectedChatIsRemoteAtom)
-  const selectedChatScope = useAtomValue(selectedChatScopeAtom)
-  const selectedProject = useAtomValue(selectedProjectAtom)
+  const [selectedChatScope, setSelectedChatScope] = useAtom(selectedChatScopeAtom)
+  const [selectedProject, setSelectedProject] = useAtom(selectedProjectAtom)
+  const lastMessagedProjectId = useAtomValue(lastMessagedProjectIdAtom)
+  const [groupCloseBehavior, setGroupCloseBehavior] = useAtom(groupCloseBehaviorAtom)
   const createSavedWorkspace = trpc.savedWorkspaces.create.useMutation()
   const setChatSourceMode = useSetAtom(chatSourceModeAtom)
   const chatSourceMode = useAtomValue(chatSourceModeAtom)
@@ -523,6 +531,48 @@ function AgentsContentInner() {
     if (!projects) return new Map()
     return new Map(projects.map((p) => [p.id, p]))
   }, [projects])
+
+  const handleOpenNewChatFromMainBar = useCallback(() => {
+    const project = lastMessagedProjectId ? (projectsMap.get(lastMessagedProjectId) ?? null) : null
+    localStorage.setItem("flapstack:new-chat-scope", project ? "project" : "global")
+    localStorage.removeItem("flapstack:new-chat-task-id")
+    setSelectedChatScope(
+      project
+        ? { type: "project", id: project.id, name: project.name }
+        : { type: "global", id: "global", name: "Global chats" },
+    )
+    setSelectedProject(
+      project
+        ? {
+            id: project.id,
+            name: project.name,
+            path: project.path,
+            gitRemoteUrl: project.gitRemoteUrl,
+            gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+            gitOwner: project.gitOwner,
+            gitRepo: project.gitRepo,
+          }
+        : null,
+    )
+    setSelectedChatId(null)
+    setSelectedChatIsRemote(false)
+    setSelectedDraftId(null)
+    setActiveNewChatDraftId(null)
+    setNewChatFormSession((session) => session + 1)
+    setShowNewChatForm(true)
+    setDesktopView(null)
+  }, [
+    lastMessagedProjectId,
+    projectsMap,
+    setDesktopView,
+    setNewChatFormSession,
+    setSelectedChatId,
+    setSelectedChatIsRemote,
+    setSelectedChatScope,
+    setSelectedDraftId,
+    setSelectedProject,
+    setShowNewChatForm,
+  ])
 
   // Fetch current chat data for preview info
   const { data: chatData } = api.agents.getAgentChat.useQuery(
@@ -1534,28 +1584,6 @@ function AgentsContentInner() {
     ],
   )
 
-  const handleCloseWorkbenchGroup = useCallback(
-    (groupId: string) => {
-      const current = chatWorkbenchNavigationRef.current
-      const wasActive = current.activeGroupId === groupId
-      recordWorkbenchMutation()
-      const next = removeChatWorkbenchGroup(
-        current,
-        groupId,
-        openChatTabs.map((chat) => chat.id),
-      )
-      persistWorkbenchNavigation(next)
-      if (wasActive && selectedChatId) showSingleChatLayout(selectedChatId)
-    },
-    [
-      openChatTabs,
-      persistWorkbenchNavigation,
-      recordWorkbenchMutation,
-      selectedChatId,
-      showSingleChatLayout,
-    ],
-  )
-
   const saveRenamedWorkbenchGroup = useCallback(
     (name: string) => {
       if (renamingWorkbenchGroup) {
@@ -1736,6 +1764,102 @@ function AgentsContentInner() {
       setSelectedChatId,
       setSelectedChatIsRemote,
     ],
+  )
+
+  const closeWorkbenchGroup = useCallback(
+    (groupId: string, behavior: Exclude<GroupCloseBehavior, "ask">) => {
+      const current = chatWorkbenchNavigationRef.current
+      const group = current.groups.find((candidate) => candidate.id === groupId)
+      if (!group) {
+        setGroupClosePromptId(null)
+        return
+      }
+
+      const chatIds = [
+        ...new Set(
+          collectChatGroups(group.layout.root)
+            .flatMap((pane) => pane.chatIds)
+            .map(
+              (presentationId) => getTerminalPresentationChatId(presentationId) ?? presentationId,
+            ),
+        ),
+      ]
+      const wasActive = current.activeGroupId === groupId
+      recordWorkbenchMutation()
+      const nextNavigation = removeChatWorkbenchGroup(
+        current,
+        groupId,
+        openChatTabs.map((chat) => chat.id),
+        behavior,
+      )
+      persistWorkbenchNavigation(nextNavigation)
+
+      if (behavior === "keep-chats") {
+        if (wasActive && selectedChatId) showSingleChatLayout(selectedChatId)
+        setGroupClosePromptId(null)
+        setRememberGroupCloseChoice(false)
+        return
+      }
+
+      const closingIds = new Set(chatIds)
+      chatIds.forEach((chatId) => window.desktopApi?.releaseChat?.(chatId))
+      closeWorkbenchChats(chatIds)
+      const remainingChatIds = openChatIds.filter((chatId) => !closingIds.has(chatId))
+      setOpenChatIds(remainingChatIds)
+
+      if (wasActive) {
+        const nextItem = resolveChatWorkbenchNavigationItems(nextNavigation, remainingChatIds)[0]
+        if (nextItem?.kind === "group") {
+          handleSelectWorkbenchGroup(nextItem.id)
+        } else if (nextItem?.kind === "chat") {
+          showSingleChatLayout(nextItem.id)
+          void handleSelectOpenChatTab(nextItem.id)
+        } else {
+          setSelectedChatId(null)
+          setSelectedChatIsRemote(false)
+          setChatSourceMode("local")
+        }
+      }
+
+      setGroupClosePromptId(null)
+      setRememberGroupCloseChoice(false)
+    },
+    [
+      closeWorkbenchChats,
+      handleSelectOpenChatTab,
+      handleSelectWorkbenchGroup,
+      openChatIds,
+      openChatTabs,
+      persistWorkbenchNavigation,
+      recordWorkbenchMutation,
+      selectedChatId,
+      setChatSourceMode,
+      setOpenChatIds,
+      setSelectedChatId,
+      setSelectedChatIsRemote,
+      showSingleChatLayout,
+    ],
+  )
+
+  const handleCloseWorkbenchGroup = useCallback(
+    (groupId: string) => {
+      if (groupCloseBehavior === "ask") {
+        setRememberGroupCloseChoice(false)
+        setGroupClosePromptId(groupId)
+        return
+      }
+      closeWorkbenchGroup(groupId, groupCloseBehavior)
+    },
+    [closeWorkbenchGroup, groupCloseBehavior],
+  )
+
+  const handleGroupCloseChoice = useCallback(
+    (behavior: Exclude<GroupCloseBehavior, "ask">) => {
+      if (!groupClosePromptId) return
+      if (rememberGroupCloseChoice) setGroupCloseBehavior(behavior)
+      closeWorkbenchGroup(groupClosePromptId, behavior)
+    },
+    [closeWorkbenchGroup, groupClosePromptId, rememberGroupCloseChoice, setGroupCloseBehavior],
   )
 
   const reorderOpenChatTab = useCallback(
@@ -3301,6 +3425,23 @@ function AgentsContentInner() {
                           </button>
                         </div>
                       )}
+                    <button
+                      type="button"
+                      data-main-taskbar-new-chat
+                      aria-label="Open a new Chat"
+                      title={
+                        lastMessagedProjectId && projectsMap.has(lastMessagedProjectId)
+                          ? `New Chat in ${projectsMap.get(lastMessagedProjectId)?.name}`
+                          : "New Global Chat"
+                      }
+                      className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/60 bg-background/60 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary/70"
+                      style={
+                        { WebkitAppRegion: "no-drag", order: 2_147_483_647 } as React.CSSProperties
+                      }
+                      onClick={handleOpenNewChatFromMainBar}
+                    >
+                      <Plus className="h-4 w-4" aria-hidden />
+                    </button>
                     {mainBarDropActive && (
                       <span
                         aria-hidden
@@ -3472,6 +3613,50 @@ function AgentsContentInner() {
         title="Rename group"
         placeholder="Group name"
       />
+
+      <AlertDialog
+        open={groupClosePromptId !== null}
+        onOpenChange={(open) => {
+          if (open) return
+          setGroupClosePromptId(null)
+          setRememberGroupCloseChoice(false)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Close this group?</AlertDialogTitle>
+          </AlertDialogHeader>
+          <AlertDialogBody className="space-y-4">
+            <AlertDialogDescription>
+              Choose whether to close every Chat in the group or keep the Chats open as separate
+              tabs on the main bar.
+            </AlertDialogDescription>
+            <label
+              htmlFor="remember-group-close-choice"
+              className="flex cursor-pointer items-center gap-2 text-sm text-foreground"
+            >
+              <Checkbox
+                id="remember-group-close-choice"
+                checked={rememberGroupCloseChoice}
+                onCheckedChange={(checked) => setRememberGroupCloseChoice(checked === true)}
+              />
+              <span>Always use this choice</span>
+            </label>
+          </AlertDialogBody>
+          <AlertDialogFooter className="flex-wrap">
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => handleGroupCloseChoice("keep-chats")}>
+              Keep Chats on main bar
+            </AlertDialogAction>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground shadow-sm shadow-black/5 hover:bg-destructive/90"
+              onClick={() => handleGroupCloseChoice("close-chats")}
+            >
+              Close all Chats
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={loneChatGroupPrompt !== null}

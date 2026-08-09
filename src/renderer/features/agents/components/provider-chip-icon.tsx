@@ -1,6 +1,12 @@
 import { Route, Sparkles, Zap } from "lucide-react"
 import { ClaudeCodeIcon, CodexIcon, CursorIcon } from "../../../components/ui/icons"
 
+export function hasProviderChipIcon(provider?: string | null): boolean {
+  return ["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt", "local"].includes(
+    provider ?? "",
+  )
+}
+
 export function ProviderChipIcon({
   provider,
   className,

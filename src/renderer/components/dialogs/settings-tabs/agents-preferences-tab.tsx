@@ -7,6 +7,7 @@ import {
   codexThreadVisibilityAtom,
   defaultAgentModeAtom,
   desktopNotificationsEnabledAtom,
+  groupCloseBehaviorAtom,
   reasoningOutputEnabledAtom,
   notifyWhenFocusedAtom,
   newChatDraftReminderEnabledAtom,
@@ -14,6 +15,7 @@ import {
   preferredEditorAtom,
   type AgentMode,
   type AutoAdvanceTarget,
+  type GroupCloseBehavior,
 } from "../../../lib/atoms"
 import type { CodexThreadVisibility } from "../../../../shared/codex-thread-visibility"
 import { CHAT_MODES, CHAT_MODE_META } from "../../../../shared/chat-mode"
@@ -151,6 +153,7 @@ export function AgentsPreferencesTab() {
   const [analyticsOptOut, setAnalyticsOptOut] = useAtom(analyticsOptOutAtom)
   const [autoAdvanceTarget, setAutoAdvanceTarget] = useAtom(autoAdvanceTargetAtom)
   const [crossScopeMoveEnabled, setCrossScopeMoveEnabled] = useAtom(crossScopeMoveEnabledAtom)
+  const [groupCloseBehavior, setGroupCloseBehavior] = useAtom(groupCloseBehaviorAtom)
   const [newChatDraftReminderEnabled, setNewChatDraftReminderEnabled] = useAtom(
     newChatDraftReminderEnabledAtom,
   )
@@ -411,7 +414,38 @@ export function AgentsPreferencesTab() {
       {/* Navigation */}
       <div className="bg-background rounded-lg border border-border overflow-hidden">
         <div
-          className="flex items-center justify-between p-4 outline-none"
+          className="flex items-center justify-between gap-6 p-4 outline-none"
+          data-settings-id="preferences-group-close"
+          tabIndex={-1}
+        >
+          <div className="flex min-w-0 flex-col space-y-1">
+            <span className="text-sm font-medium text-foreground">When closing a group</span>
+            <span className="text-xs text-muted-foreground">
+              Ask first, keep its Chats on the main bar, or close every Chat in the group.
+            </span>
+          </div>
+          <Select
+            value={groupCloseBehavior}
+            onValueChange={(value: GroupCloseBehavior) => setGroupCloseBehavior(value)}
+          >
+            <SelectTrigger className="w-auto min-w-40 shrink-0 px-2">
+              <span className="text-xs">
+                {groupCloseBehavior === "ask"
+                  ? "Ask every time"
+                  : groupCloseBehavior === "keep-chats"
+                    ? "Keep Chats on main bar"
+                    : "Close all Chats"}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ask">Ask every time</SelectItem>
+              <SelectItem value="keep-chats">Keep Chats on main bar</SelectItem>
+              <SelectItem value="close-chats">Close all Chats</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div
+          className="flex items-center justify-between border-t border-border p-4 outline-none"
           data-settings-id="preferences-drag-chats"
           tabIndex={-1}
         >

@@ -235,6 +235,15 @@ export const selectedProjectAtom = atomWithWindowStorage<SelectedProject>(
   { getOnInit: true },
 )
 
+// Global across windows: the project of the last Chat that accepted a user message.
+// Null means the last message was Global, or no message has been sent yet.
+export const lastMessagedProjectIdAtom = atomWithStorage<string | null>(
+  "agents:lastMessagedProjectId",
+  null,
+  undefined,
+  { getOnInit: true },
+)
+
 export type SelectedChatScope =
   | { type: "global"; id: "global"; name: string }
   | { type: "project"; id: string; name: string }

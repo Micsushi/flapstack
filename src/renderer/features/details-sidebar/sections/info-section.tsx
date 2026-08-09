@@ -1,7 +1,18 @@
 "use client"
 
-import { memo, useState, useCallback, useEffect } from "react"
+import { memo, useState, useCallback, useEffect, useMemo } from "react"
 import { useAtomValue } from "jotai"
+import {
+  Bot,
+  CalendarDays,
+  Coins,
+  Cpu,
+  Gauge,
+  Layers3,
+  MessageSquareText,
+  RefreshCw,
+  Tags,
+} from "lucide-react"
 import {
   GitBranchFilledIcon,
   FolderFilledIcon,
@@ -15,9 +26,12 @@ import { preferredEditorAtom } from "@/lib/atoms"
 import { useResolvedHotkeyDisplay } from "@/lib/hotkeys"
 import { APP_META } from "../../../../shared/external-apps"
 import { EDITOR_ICONS } from "@/lib/editor-icons"
+import { ProviderChipIcon } from "@/features/agents/components/provider-chip-icon"
+import { ChatTagChip, type ChatTagView } from "@/features/sidebar/chat-tag-menu"
 
 interface InfoSectionProps {
   chatId: string
+  activeSubChatId?: string | null
   worktreePath: string | null
   isExpanded?: boolean
   /** Remote chat data for sandbox workspaces */
@@ -107,6 +121,57 @@ function PropertyRow({
   )
 }
 
+function PropertyContentRow({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex min-h-7 items-start py-1">
+      <div className="flex w-[100px] shrink-0 items-center gap-1.5 pt-0.5">
+        <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate text-xs text-muted-foreground">{label}</span>
+      </div>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1 pl-2 text-xs">
+        {children}
+      </div>
+    </div>
+  )
+}
+
+const countFormatter = new Intl.NumberFormat()
+const dateFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+})
+
+function formatProvider(provider?: string | null): string {
+  switch (provider) {
+    case "claude-code":
+      return "Anthropic"
+    case "codex":
+      return "OpenAI"
+    case "cursor-agent":
+      return "Cursor"
+    case "openrouter":
+      return "OpenRouter"
+    case "nanogpt":
+      return "NanoGPT"
+    case "local":
+      return "Local"
+    default:
+      return provider || "Not set"
+  }
+}
+
+function formatDate(value?: Date | string | null): string {
+  return value ? dateFormatter.format(new Date(value)) : "Unknown"
+}
+
 /**
  * Info Section for Details Sidebar
  * Shows workspace info: branch, PR, path
@@ -114,6 +179,7 @@ function PropertyRow({
  */
 export const InfoSection = memo(function InfoSection({
   chatId,
+  activeSubChatId,
   worktreePath,
   isExpanded = false,
   remoteInfo,
@@ -131,6 +197,31 @@ export const InfoSection = memo(function InfoSection({
 
   // Check if this is a remote sandbox chat (no local worktree)
   const isRemoteChat = !worktreePath && !!remoteInfo
+
+  const { data: chatMetadata, isLoading: isMetadataLoading } = trpc.chats.getMetadata.useQuery(
+    { id: chatId },
+    { enabled: !!chatId && !isRemoteChat },
+  )
+  const { data: chatStats } = trpc.chats.getChatStats.useQuery(
+    { chatId },
+    { enabled: !!chatId && !isRemoteChat },
+  )
+  const { data: tagAssignments = [] } = trpc.chats.listTagAssignments.useQuery(undefined, {
+    enabled: !!chatId && !isRemoteChat,
+  })
+  const assignedTags = useMemo(
+    () =>
+      tagAssignments
+        .filter((assignment) => assignment.chatId === chatId)
+        .map((assignment) => assignment.tag as ChatTagView),
+    [chatId, tagAssignments],
+  )
+  const selectedSubChat =
+    chatMetadata?.subChats.find((subChat) => subChat.id === activeSubChatId) ??
+    chatMetadata?.subChats.at(-1)
+  const provider = selectedSubChat?.harness ?? chatMetadata?.harness
+  const model = selectedSubChat?.model ?? chatMetadata?.model
+  const totalTokens = chatStats?.totalTokens ?? 0
 
   // Fetch branch data directly (only for local chats)
   const { data: branchData, isLoading: isBranchLoading } = trpc.changes.getBranches.useQuery(
@@ -203,7 +294,7 @@ export const InfoSection = memo(function InfoSection({
   }
 
   // Show loading state while branch data is loading (only for local chats)
-  if (!isRemoteChat && isBranchLoading) {
+  if (!isRemoteChat && (isBranchLoading || isMetadataLoading)) {
     return (
       <div className="px-2 py-1.5 flex flex-col gap-0.5">
         <div className="flex items-center min-h-[28px]">
@@ -228,18 +319,58 @@ export const InfoSection = memo(function InfoSection({
     )
   }
 
-  const hasContent = branchName || worktreePath || repositoryName || remoteInfo?.sandboxId
-
-  if (!hasContent) {
-    return (
-      <div className="px-2 py-2">
-        <div className="text-xs text-muted-foreground">No workspace info available</div>
-      </div>
-    )
-  }
-
   return (
     <div className="px-2 py-1.5 flex flex-col gap-0.5">
+      {!isRemoteChat && (
+        <>
+          <PropertyRow
+            icon={Layers3}
+            label="Project"
+            value={chatMetadata?.project?.name ?? "Global"}
+          />
+          <PropertyContentRow icon={Bot} label="Provider">
+            <ProviderChipIcon provider={provider} className="h-3.5 w-3.5 shrink-0" />
+            <span>{formatProvider(provider)}</span>
+          </PropertyContentRow>
+          <PropertyRow icon={Cpu} label="Model" value={model || "Provider default"} />
+          <PropertyContentRow icon={Tags} label="Tags">
+            {assignedTags.length > 0 ? (
+              assignedTags.map((tag) => <ChatTagChip key={tag.id} tag={tag} />)
+            ) : (
+              <span className="text-muted-foreground">None</span>
+            )}
+          </PropertyContentRow>
+          <PropertyRow
+            icon={MessageSquareText}
+            label="Messages"
+            value={countFormatter.format(chatStats?.messageCount ?? 0)}
+          />
+          <PropertyRow
+            icon={Coins}
+            label="Tokens used"
+            value={countFormatter.format(totalTokens)}
+          />
+          <PropertyRow
+            icon={Gauge}
+            label="Context"
+            value={
+              chatStats?.contextWindow
+                ? `${countFormatter.format(chatStats.latestContextTokens)} / ${countFormatter.format(chatStats.contextWindow)}`
+                : "Unavailable"
+            }
+          />
+          <PropertyRow
+            icon={CalendarDays}
+            label="Created"
+            value={formatDate(chatMetadata?.createdAt)}
+          />
+          <PropertyRow
+            icon={RefreshCw}
+            label="Updated"
+            value={formatDate(chatMetadata?.updatedAt)}
+          />
+        </>
+      )}
       {/* Repository - only for remote chats */}
       {repositoryName && (
         <PropertyRow

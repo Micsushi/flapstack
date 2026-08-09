@@ -1266,6 +1266,7 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
         ...(!useNativeFrame && {
           titleBarOverlay: {
             color: "#00000000",
+            symbolColor: nativeTheme.shouldUseDarkColors ? "#f4f4f5" : "#18181b",
             height: 32,
           },
         }),

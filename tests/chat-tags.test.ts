@@ -29,17 +29,33 @@ afterEach(() => {
 })
 
 describe("chat tags", () => {
-  it("creates reusable labels and persists assignments", () => {
+  it("includes practical starter tags with semantic default colors", () => {
     const store = createChatTagStore(sqlite)
-    const tag = store.create({ name: "Needs review", color: "violet" })
-    store.assign({ chatId: "chat-a", tagId: tag.id })
 
     expect(store.list()).toEqual([
-      expect.objectContaining({ name: "Needs review", color: "violet" }),
+      expect.objectContaining({ name: "Blocked", color: "violet", icon: "ban" }),
+      expect.objectContaining({ name: "Follow-up", color: "amber", icon: "reply" }),
+      expect.objectContaining({ name: "Important", color: "rose", icon: "alert" }),
+      expect.objectContaining({ name: "Review", color: "blue", icon: "eye" }),
+      expect.objectContaining({ name: "Waiting", color: "slate", icon: "clock" }),
     ])
+  })
+
+  it("creates reusable labels and persists assignments", () => {
+    const store = createChatTagStore(sqlite)
+    const tag = store.create({ name: "Needs review", color: "violet", icon: "eye" })
+    store.assign({ chatId: "chat-a", tagId: tag.id })
+
+    expect(store.list()).toContainEqual(
+      expect.objectContaining({ name: "Needs review", color: "violet", icon: "eye" }),
+    )
     expect(store.listForChats(["chat-a"]).get("chat-a")).toEqual([
       expect.objectContaining({ id: tag.id, name: "Needs review" }),
     ])
+
+    expect(store.update({ id: tag.id, name: "Review later", color: "blue" })).toEqual(
+      expect.objectContaining({ name: "Review later", color: "blue", icon: "eye" }),
+    )
 
     store.unassign({ chatId: "chat-a", tagId: tag.id })
     expect(store.listForChats(["chat-a"]).get("chat-a")).toEqual([])
@@ -47,7 +63,7 @@ describe("chat tags", () => {
 
   it("normalizes names and rejects duplicate labels case-insensitively", () => {
     const store = createChatTagStore(sqlite)
-    store.create({ name: "  Important  ", color: "amber" })
-    expect(() => store.create({ name: "important", color: "blue" })).toThrow(/already exists/i)
+    store.create({ name: "  Needs input  ", color: "amber" })
+    expect(() => store.create({ name: "needs input", color: "blue" })).toThrow(/already exists/i)
   })
 })

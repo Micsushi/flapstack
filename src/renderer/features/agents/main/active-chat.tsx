@@ -121,6 +121,7 @@ import {
   filteredSubChatIdAtom,
   isCreatingPrAtom,
   justCreatedIdsAtom,
+  lastMessagedProjectIdAtom,
   loadingSubChatsAtom,
   MODEL_ID_MAP,
   pendingAuthRetryMessageAtom,
@@ -2452,6 +2453,9 @@ const ChatViewInner = memo(function ChatViewInner({
   sendMessageRef.current = sendMessage
   const stopRef = useRef(stop)
   stopRef.current = stop
+  const rememberMessagedProject = useCallback(() => {
+    appStore.set(lastMessagedProjectIdAtom, projectId ?? null)
+  }, [projectId])
 
   const isStreaming = status === "streaming" || status === "submitted"
   const { data: activityPage } = trpc.agentActivity.list.useQuery(
@@ -2483,7 +2487,8 @@ const ChatViewInner = memo(function ChatViewInner({
       role: "user",
       parts: [{ type: "text", text: "/compact" }],
     })
-  }, [])
+    rememberMessagedProject()
+  }, [rememberMessagedProject])
 
   // Handler to stop streaming - memoized to prevent ChatInputArea re-renders
   const handleStop = useCallback(async () => {
@@ -2606,12 +2611,13 @@ const ChatViewInner = memo(function ChatViewInner({
         })
         toast.success("Reply sent")
       }
+      rememberMessagedProject()
 
       // Clear state and selection
       setQuickCommentState(null)
       window.getSelection()?.removeAllRanges()
     },
-    [addToQueue, subChatId],
+    [addToQueue, rememberMessagedProject, subChatId],
   )
 
   // Handler for quick comment cancel
@@ -3078,13 +3084,18 @@ const ChatViewInner = memo(function ChatViewInner({
     }
   }, [parentChatId, subChatId])
 
-  const sendUserMessage = useCallback(async (text: string) => {
-    shouldAutoScrollRef.current = true
-    await sendMessageRef.current({
-      role: "user",
-      parts: [{ type: "text", text }],
-    })
-  }, [])
+  const sendUserMessage = useCallback(
+    async (text: string) => {
+      shouldAutoScrollRef.current = true
+      const sendPromise = sendMessageRef.current({
+        role: "user",
+        parts: [{ type: "text", text }],
+      })
+      rememberMessagedProject()
+      await sendPromise
+    },
+    [rememberMessagedProject],
+  )
 
   // Handle answering questions
   const handleQuestionsAnswer = useCallback(
@@ -3298,7 +3309,8 @@ const ChatViewInner = memo(function ChatViewInner({
       role: "user",
       parts: [{ type: "text", text: "Implement plan" }],
     })
-  }, [queueModePersistence, setSubChatMode, subChatId])
+    rememberMessagedProject()
+  }, [queueModePersistence, rememberMessagedProject, setSubChatMode, subChatId])
 
   // Handle pending "Build plan" from sidebar
   useEffect(() => {
@@ -3602,7 +3614,9 @@ const ChatViewInner = memo(function ChatViewInner({
 
           shouldAutoScrollRef.current = true
           subChatStore.getState().updateSubChatTimestamp(subChatId)
-          void sendMessageRef.current({ role: "user", parts: preservedParts }).catch((error) => {
+          const sendPromise = sendMessageRef.current({ role: "user", parts: preservedParts })
+          rememberMessagedProject()
+          void sendPromise.catch((error: unknown) => {
             console.error("[handleEditLatestMessage] Error sending replacement:", error)
             editorRef.current?.setValue(editedText || "")
             toast.error("Failed to send edited message")
@@ -3637,7 +3651,15 @@ const ChatViewInner = memo(function ChatViewInner({
         editorRef.current?.focus()
       } catch (error) {
         console.error("[handleRollback] Error:", error)
-        toast.error(intent === "edit" ? "Failed to edit message" : "Failed to rollback")
+        if (intent === "edit") {
+          const editErrorMessage =
+            error instanceof Error ? error.message : "The message could not be edited."
+          toast.error("Failed to edit message", {
+            description: editErrorMessage,
+          })
+        } else {
+          toast.error("Failed to rollback")
+        }
       } finally {
         setIsRollingBack(false)
       }
@@ -3654,6 +3676,7 @@ const ChatViewInner = memo(function ChatViewInner({
       clearDiffTextContexts,
       clearPastedTexts,
       clearTextContexts,
+      rememberMessagedProject,
       setImagesFromDraft,
       setFilesFromDraft,
       setTextContextsFromDraft,
@@ -4107,6 +4130,7 @@ const ChatViewInner = memo(function ChatViewInner({
             queuedPastedTexts.length > 0 ? queuedPastedTexts : undefined,
           )
           addToQueue(subChatId, item)
+          rememberMessagedProject()
 
           // Clear input and attachments
           editorRef.current?.clear()
@@ -4304,7 +4328,9 @@ const ChatViewInner = memo(function ChatViewInner({
         // Keep following the live response without yanking the transcript before the message renders.
         shouldAutoScrollRef.current = true
 
-        await sendMessageRef.current({ role: "user", parts })
+        const sendPromise = sendMessageRef.current({ role: "user", parts })
+        rememberMessagedProject()
+        await sendPromise
       } finally {
         if (!isStreamingNow) {
           sendInFlightRef.current = false
@@ -4324,6 +4350,7 @@ const ChatViewInner = memo(function ChatViewInner({
       teamId,
       addToQueue,
       setExpiredQuestionsMap,
+      rememberMessagedProject,
     ],
   )
 
@@ -4414,14 +4441,16 @@ const ChatViewInner = memo(function ChatViewInner({
         // Keep following the live response without yanking the transcript before the message renders.
         shouldAutoScrollRef.current = true
 
-        await sendMessageRef.current({ role: "user", parts })
+        const sendPromise = sendMessageRef.current({ role: "user", parts })
+        rememberMessagedProject()
+        await sendPromise
       } catch (error) {
         console.error("[handleSendFromQueue] Error sending queued message:", error)
         // Requeue the item at the front so it isn't lost
         useMessageQueueStore.getState().prependItem(subChatId, item)
       }
     },
-    [subChatId, popItemFromQueue, handleStop],
+    [subChatId, popItemFromQueue, handleStop, rememberMessagedProject],
   )
 
   const handleRemoveFromQueue = useCallback(
@@ -4604,7 +4633,9 @@ const ChatViewInner = memo(function ChatViewInner({
       // Keep following the live response without yanking the transcript before the message renders.
       shouldAutoScrollRef.current = true
 
-      await sendMessageRef.current({ role: "user", parts })
+      const sendPromise = sendMessageRef.current({ role: "user", parts })
+      rememberMessagedProject()
+      await sendPromise
     } catch (error) {
       console.error("[handleForceSend] Error sending message:", error)
       // Restore editor content so the user can retry
@@ -4620,6 +4651,7 @@ const ChatViewInner = memo(function ChatViewInner({
     subChatId,
     handleStop,
     clearAll,
+    rememberMessagedProject,
   ])
 
   // NOTE: Auto-processing of queue is now handled globally by QueueProcessor
@@ -8163,7 +8195,7 @@ Make sure to preserve all functionality from both branches when resolving confli
             </TooltipContent>
           </Tooltip>
         )}
-      {(worktreePath || sandboxId) && isUnifiedSidebarEnabled && !isDetailsSidebarOpen && (
+      {isUnifiedSidebarEnabled && !isDetailsSidebarOpen && !isMobileFullscreen && (
         <Tooltip delayDuration={500}>
           <TooltipTrigger asChild>
             <Button
@@ -8824,49 +8856,47 @@ Make sure to preserve all functionality from both branches when resolving confli
 
             {/* Unified Details Sidebar - combines all right sidebars into one (rightmost) */}
             {/* Show for both local (worktreePath) and remote (sandboxId) chats */}
-            {isUnifiedSidebarEnabled &&
-              !isMobileFullscreen &&
-              (worktreePath || sandboxId || agentChat?.projectId || agentChat?.taskId) && (
-                <DetailsSidebar
-                  chatId={chatId}
-                  taskId={agentChat?.taskId}
-                  projectId={agentChat?.projectId}
-                  worktreePath={worktreePath}
-                  planPath={currentPlanPath}
-                  mode={currentMode}
-                  onBuildPlan={handleApprovePlanFromSidebar}
-                  planRefetchTrigger={planEditRefetchTrigger}
-                  activeSubChatId={activeSubChatIdForPlan}
-                  isPlanSidebarOpen={isPlanSidebarOpen && !!currentPlanPath}
-                  isTerminalSidebarOpen={isLegacyTerminalOpen}
-                  isDiffSidebarOpen={isDiffSidebarOpen}
-                  diffDisplayMode={diffDisplayMode}
-                  canOpenDiff={canOpenDiff}
-                  setIsDiffSidebarOpen={setIsDiffSidebarOpen}
-                  diffStats={diffStats}
-                  parsedFileDiffs={parsedFileDiffs}
-                  onCommit={worktreePath ? handleCommitChanges : undefined}
-                  onCommitAndPush={worktreePath ? handleCommitAndPush : undefined}
-                  isCommitting={isCommittingCombined}
-                  gitStatus={gitStatus}
-                  isGitStatusLoading={isGitStatusLoading}
-                  currentBranch={branchData?.current}
-                  onExpandTerminal={openTerminal}
-                  onExpandPlan={() => setIsPlanSidebarOpen(true)}
-                  onExpandDiff={() => setIsDiffSidebarOpen(true)}
-                  onFileSelect={(filePath) => {
-                    // Set the selected file path
-                    setSelectedFilePath(filePath)
-                    // Set filtered files to just this file
-                    setFilteredDiffFiles([filePath])
-                    // Open the diff sidebar
-                    setIsDiffSidebarOpen(true)
-                  }}
-                  onOpenFile={setFileViewerPath}
-                  remoteInfo={remoteInfo}
-                  isRemoteChat={!!remoteInfo}
-                />
-              )}
+            {isUnifiedSidebarEnabled && !isMobileFullscreen && (
+              <DetailsSidebar
+                chatId={chatId}
+                taskId={agentChat?.taskId}
+                projectId={agentChat?.projectId}
+                worktreePath={worktreePath}
+                planPath={currentPlanPath}
+                mode={currentMode}
+                onBuildPlan={handleApprovePlanFromSidebar}
+                planRefetchTrigger={planEditRefetchTrigger}
+                activeSubChatId={activeSubChatIdForPlan}
+                isPlanSidebarOpen={isPlanSidebarOpen && !!currentPlanPath}
+                isTerminalSidebarOpen={isLegacyTerminalOpen}
+                isDiffSidebarOpen={isDiffSidebarOpen}
+                diffDisplayMode={diffDisplayMode}
+                canOpenDiff={canOpenDiff}
+                setIsDiffSidebarOpen={setIsDiffSidebarOpen}
+                diffStats={diffStats}
+                parsedFileDiffs={parsedFileDiffs}
+                onCommit={worktreePath ? handleCommitChanges : undefined}
+                onCommitAndPush={worktreePath ? handleCommitAndPush : undefined}
+                isCommitting={isCommittingCombined}
+                gitStatus={gitStatus}
+                isGitStatusLoading={isGitStatusLoading}
+                currentBranch={branchData?.current}
+                onExpandTerminal={openTerminal}
+                onExpandPlan={() => setIsPlanSidebarOpen(true)}
+                onExpandDiff={() => setIsDiffSidebarOpen(true)}
+                onFileSelect={(filePath) => {
+                  // Set the selected file path
+                  setSelectedFilePath(filePath)
+                  // Set filtered files to just this file
+                  setFilteredDiffFiles([filePath])
+                  // Open the diff sidebar
+                  setIsDiffSidebarOpen(true)
+                }}
+                onOpenFile={setFileViewerPath}
+                remoteInfo={remoteInfo}
+                isRemoteChat={!!remoteInfo}
+              />
+            )}
           </div>
 
           {/* Terminal Bottom Panel - renders below the main row when displayMode is "bottom" */}

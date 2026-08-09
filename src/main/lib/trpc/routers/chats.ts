@@ -23,7 +23,7 @@ import {
   subChats,
   tasks,
 } from "../../db"
-import { CHAT_TAG_COLORS } from "../../chat-tags"
+import { CHAT_TAG_COLORS, CHAT_TAG_ICONS } from "../../chat-tags"
 import { restoreCheckpoint } from "../../checkpoints"
 import {
   createWorktreeForChat,
@@ -82,6 +82,7 @@ const newChatPermissionModeSchema = z.enum([
   "full-access",
 ])
 const chatTagColorSchema = z.enum(CHAT_TAG_COLORS)
+const chatTagIconSchema = z.enum(CHAT_TAG_ICONS)
 
 function normalizedTagName(name: string) {
   const clean = name.trim().replace(/\s+/g, " ")
@@ -513,13 +514,19 @@ export const chatsRouter = router({
   }),
 
   createTag: publicProcedure
-    .input(z.object({ name: z.string().max(32), color: chatTagColorSchema }))
+    .input(
+      z.object({
+        name: z.string().max(32),
+        color: chatTagColorSchema,
+        icon: chatTagIconSchema.nullable().optional(),
+      }),
+    )
     .mutation(({ input }) => {
       const names = normalizedTagName(input.name)
       try {
         return getDatabase()
           .insert(chatTags)
-          .values({ ...names, color: input.color })
+          .values({ ...names, color: input.color, icon: input.icon ?? null })
           .returning()
           .get()
       } catch (error) {
@@ -531,12 +538,24 @@ export const chatsRouter = router({
     }),
 
   updateTag: publicProcedure
-    .input(z.object({ id: z.string(), name: z.string().max(32), color: chatTagColorSchema }))
+    .input(
+      z.object({
+        id: z.string(),
+        name: z.string().max(32),
+        color: chatTagColorSchema,
+        icon: chatTagIconSchema.nullable().optional(),
+      }),
+    )
     .mutation(({ input }) => {
       const names = normalizedTagName(input.name)
       const updated = getDatabase()
         .update(chatTags)
-        .set({ ...names, color: input.color, updatedAt: new Date() })
+        .set({
+          ...names,
+          color: input.color,
+          ...(input.icon === undefined ? {} : { icon: input.icon }),
+          updatedAt: new Date(),
+        })
         .where(eq(chatTags.id, input.id))
         .returning()
         .get()
@@ -1855,9 +1874,9 @@ export const chatsRouter = router({
     }),
 
   /**
-   * Remove the latest user turn and restore the filesystem snapshot captured
-   * immediately before its run. The caller can then place that prompt back in
-   * the composer without leaving the removed response's edits behind.
+   * Remove the latest completed user turn so the caller can resend an edited
+   * prompt. Restore its exact pre-run filesystem snapshot when one is available;
+   * older runs without checkpoints fall back to a conversation-only rewind.
    */
   editLatestUserMessage: publicProcedure
     .input(z.object({ subChatId: z.string(), userMessageId: z.string() }))
@@ -1910,14 +1929,8 @@ export const chatsRouter = router({
         .orderBy(desc(agentRuns.startedAt))
         .get()
 
-      const chat = db.select().from(chats).where(eq(chats.id, subChat.chatId)).get()
       if (run?.beforeCheckpointId) {
         await restoreCheckpoint(run.beforeCheckpointId)
-      } else if (subChat.worktreePath || chat?.worktreePath) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: "This older message has no safe pre-run checkpoint",
-        })
       }
 
       let truncatedMessages = messages.slice(0, userIndex).map((message) => {
@@ -3078,7 +3091,12 @@ export const chatsRouter = router({
         chatSubChats = singleSubChat ? [singleSubChat] : []
       } else {
         // Get stats for all sub-chats
-        chatSubChats = db.select().from(subChats).where(eq(subChats.chatId, input.chatId)).all()
+        chatSubChats = db
+          .select()
+          .from(subChats)
+          .where(eq(subChats.chatId, input.chatId))
+          .orderBy(subChats.updatedAt)
+          .all()
       }
 
       let messageCount = 0
@@ -3088,13 +3106,32 @@ export const chatsRouter = router({
       const toolUsage: Record<string, number> = {}
       let totalInputTokens = 0
       let totalOutputTokens = 0
+      let contextWindow = 0
+      let latestContextTokens = 0
+      const usageByRun = new Map<string, number>()
+      let usageWithoutRun = 0
 
       for (const subChat of chatSubChats) {
         try {
           const messages = JSON.parse(subChat.messages || "[]") as Array<{
             role: string
             parts?: Array<{ type: string; toolName?: string }>
-            metadata?: { usage?: { inputTokens?: number; outputTokens?: number } }
+            metadata?: {
+              runId?: string
+              transport?: string
+              model?: string
+              inputTokens?: number
+              outputTokens?: number
+              totalTokens?: number
+              cacheReadInputTokens?: number
+              cacheCreationInputTokens?: number
+              modelContextWindow?: number
+              usage?: {
+                inputTokens?: number
+                outputTokens?: number
+                contextWindow?: number
+              }
+            }
           }>
 
           for (const msg of messages) {
@@ -3113,9 +3150,51 @@ export const chatsRouter = router({
               }
 
               // aggregate token usage
-              if (msg.metadata?.usage) {
-                totalInputTokens += msg.metadata.usage.inputTokens || 0
-                totalOutputTokens += msg.metadata.usage.outputTokens || 0
+              if (msg.metadata) {
+                const outputTokens =
+                  msg.metadata.usage?.outputTokens ?? msg.metadata.outputTokens ?? 0
+                const inputTokens =
+                  msg.metadata.usage?.inputTokens ??
+                  msg.metadata.inputTokens ??
+                  (msg.metadata.totalTokens == null
+                    ? 0
+                    : Math.max(0, msg.metadata.totalTokens - outputTokens))
+                const cachedTokens =
+                  (msg.metadata.cacheReadInputTokens ?? 0) +
+                  (msg.metadata.cacheCreationInputTokens ?? 0)
+                const normalizedModel = msg.metadata.model?.toLowerCase() ?? ""
+                const inputIncludesCachedTokens =
+                  msg.metadata.transport === "codex-runtime" ||
+                  normalizedModel.includes("codex") ||
+                  normalizedModel.startsWith("gpt-")
+                const countedInputTokens =
+                  inputTokens + (inputIncludesCachedTokens ? 0 : cachedTokens)
+                const messageTotalTokens = Math.max(
+                  typeof msg.metadata.totalTokens === "number" &&
+                    Number.isFinite(msg.metadata.totalTokens) &&
+                    msg.metadata.totalTokens > 0
+                    ? msg.metadata.totalTokens
+                    : 0,
+                  countedInputTokens + outputTokens,
+                )
+
+                totalInputTokens += countedInputTokens
+                totalOutputTokens += outputTokens
+                if (messageTotalTokens > 0) {
+                  if (msg.metadata.runId) {
+                    usageByRun.set(
+                      msg.metadata.runId,
+                      Math.max(usageByRun.get(msg.metadata.runId) ?? 0, messageTotalTokens),
+                    )
+                  } else {
+                    usageWithoutRun += messageTotalTokens
+                  }
+                }
+                contextWindow =
+                  msg.metadata.usage?.contextWindow ??
+                  msg.metadata.modelContextWindow ??
+                  contextWindow
+                latestContextTokens = countedInputTokens
               }
             }
           }
@@ -3123,6 +3202,9 @@ export const chatsRouter = router({
           // skip invalid json
         }
       }
+
+      const totalTokens =
+        usageWithoutRun + [...usageByRun.values()].reduce((sum, value) => sum + value, 0)
 
       return {
         messageCount,
@@ -3132,6 +3214,9 @@ export const chatsRouter = router({
         toolUsage,
         totalInputTokens,
         totalOutputTokens,
+        totalTokens,
+        contextWindow,
+        latestContextTokens,
         subChatCount: chatSubChats.length,
       }
     }),

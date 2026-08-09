@@ -11,6 +11,9 @@ describe("Windows title bar", () => {
       /titleBarStyle:[\s\S]{0,160}process\.platform === "win32" && !useNativeFrame[\s\S]{0,80}\? "hidden"/,
     )
     expect(windowSource).toContain("titleBarOverlay:")
+    expect(windowSource).toContain(
+      'symbolColor: nativeTheme.shouldUseDarkColors ? "#f4f4f5" : "#18181b"',
+    )
     expect(windowSource).toContain("height: 32")
     expect(titleBarSource).not.toContain("<Button")
     expect(titleBarSource).not.toContain("windowMaximize")
@@ -24,6 +27,7 @@ describe("Windows title bar", () => {
   it("keeps the sidebar search accessible without visible placeholder text", () => {
     expect(sidebarSource).not.toContain('placeholder="Search projects and chats..."')
     expect(sidebarSource).toContain('aria-label="Search projects and chats"')
+    expect(sidebarSource).toContain("items-center gap-1 px-2 pb-2 pt-3")
   })
 
   it("uses a slightly larger uniform gap between sidebar navigation groups", () => {

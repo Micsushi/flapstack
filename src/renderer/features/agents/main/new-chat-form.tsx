@@ -28,6 +28,7 @@ import {
   enabledOpencodeModelsAtom,
   enabledCursorModelsAtom,
   justCreatedIdsAtom,
+  lastMessagedProjectIdAtom,
   lastSelectedAgentIdAtom,
   lastSelectedClaudeEffortAtom,
   lastSelectedCodexFastModeAtom,
@@ -1216,6 +1217,10 @@ export function NewChatForm({
   const utils = trpc.useUtils()
   const createChatMutation = trpc.chats.create.useMutation({
     onSuccess: (data) => {
+      appStore.set(
+        lastMessagedProjectIdAtom,
+        chatScope === "global" ? null : (validatedProject?.id ?? null),
+      )
       // Clear editor, images, files, pasted texts, and file contents cache only on success
       editorRef.current?.clear()
       clearImages()

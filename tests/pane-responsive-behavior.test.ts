@@ -33,6 +33,15 @@ describe("pane-local responsive behavior", () => {
     expect(composer).toContain("<AgentSendButton")
   })
 
+  it("only duplicates message toolbar actions into overflow when the toolbar is collapsed", () => {
+    const message = source("src/renderer/features/agents/main/assistant-message-item.tsx")
+
+    expect(message).toContain("includeToolbarActions")
+    expect(message).toContain('className="inline-flex @[420px]:hidden"')
+    expect(message).toContain('className="hidden @[420px]:inline-flex"')
+    expect(message).not.toContain("pb-1 @[420px]:hidden")
+  })
+
   it("reserves the scrollbar gutter beside the chat bottom dock", () => {
     expect(source("src/renderer/features/agents/main/active-chat.tsx")).toContain(
       'className="absolute bottom-0 left-0 right-1 z-20"',

@@ -1547,6 +1547,7 @@ export const chatTags = sqliteTable(
     name: text("name").notNull(),
     normalizedName: text("normalized_name").notNull(),
     color: text("color").notNull(),
+    icon: text("icon"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },

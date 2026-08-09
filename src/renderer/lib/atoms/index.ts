@@ -501,6 +501,14 @@ export const newChatDraftReminderEnabledAtom = atomWithStorage<boolean>(
   { getOnInit: true },
 )
 
+export type GroupCloseBehavior = "ask" | "keep-chats" | "close-chats"
+export const groupCloseBehaviorAtom = atomWithStorage<GroupCloseBehavior>(
+  "preferences:group-close-behavior",
+  "ask",
+  undefined,
+  { getOnInit: true },
+)
+
 // Preferences - Default Agent Mode
 // Controls how new chats/sub-chats work.
 // Re-using AgentMode type from features/agents/atoms
