@@ -11,7 +11,7 @@ describe("sidebar empty chat states", () => {
     expect(sidebarSource).toContain('data-sidebar-empty-state="chats"')
     expect(sidebarSource).not.toContain('data-sidebar-empty-state="quick-access"')
     expect(sidebarSource).toContain('data-sidebar-empty-state="projects"')
-    expect(sidebarSource).toContain("!isCollapsed && showEmptyState")
+    expect(sidebarSource).toContain("<SidebarCollapsibleContent isOpen={!isCollapsed}>")
     expect(sidebarSource).toContain("No chats")
     expect(sidebarSource).toContain("showEmptyState: !searchQuery.trim() && global.length === 0")
     expect(sidebarSource).toContain(
