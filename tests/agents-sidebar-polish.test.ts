@@ -71,12 +71,17 @@ describe("agents sidebar polish", () => {
     expect(source).toContain("betaFeatures.branchesAndWorktrees && (")
   })
 
-  it("tucks project children into their project row when collapsing", () => {
+  it("folds sidebar sections under their headers with reduced-motion support", () => {
     expect(source).toContain("useReducedMotion")
+    expect(source).toContain("SidebarCollapsibleContent")
+    expect(source).toContain('animate={{ height: "auto", opacity: 1, y: 0 }}')
+    expect(source).toContain('className={cn("overflow-hidden", className)}')
+    expect(source).toMatch(/shouldReduceMotion\s*\? \{ duration: 0 \}/)
     expect(source).toContain("PROJECT_CHILD_MOTION_VARIANTS")
-    expect(source).toContain('clipPath: "inset(0 0 100% 0 round 6px)"')
     expect(source).toContain('mode="popLayout"')
     expect(source).toContain('layout="position"')
+    expect(source).not.toContain('clipPath: "inset(0 0 100% 0 round 6px)"')
+    expect(source).not.toContain("animate-in fade-in-0 slide-in-from-top-1 duration-150")
   })
 
   it("uses halved asymmetric vertical padding for chat rows", () => {

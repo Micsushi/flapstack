@@ -11,7 +11,7 @@ import {
 } from "../src/renderer/components/progressive-overflow-row"
 import {
   capProjectLabel,
-  resolveChatHeaderTagMode,
+  resolveChatHeaderTagLayout,
 } from "../src/renderer/features/agents/ui/chat-header-responsive"
 import { RuntimeSelector } from "../src/renderer/features/agents/runtime-settings/runtime-selector"
 
@@ -146,28 +146,50 @@ describe("progressive overflow", () => {
 })
 
 describe("chat header tag priority", () => {
-  it("compacts tags before collapsing controls", () => {
+  it("keeps tags full while controls can collapse into overflow", () => {
     expect(
-      resolveChatHeaderTagMode({
+      resolveChatHeaderTagLayout({
         availableWidth: 360,
         fullTagsWidth: 190,
-        compactTagsWidth: 84,
-        controlsWidth: 180,
+        compactTagWidths: [28, 28],
+        projectTagWidth: 100,
         controlCount: 4,
       }),
-    ).toBe("compact")
+    ).toEqual({ mode: "full", visibleAuxiliaryTagCount: 2 })
   })
 
-  it("keeps only the project tag when compact tags and overflow cannot fit", () => {
+  it("shrinks non-project tags only after every control is in overflow", () => {
     expect(
-      resolveChatHeaderTagMode({
-        availableWidth: 100,
+      resolveChatHeaderTagLayout({
+        availableWidth: 208,
         fullTagsWidth: 240,
-        compactTagsWidth: 80,
-        controlsWidth: 180,
+        compactTagWidths: [28, 28],
+        projectTagWidth: 100,
         controlCount: 4,
       }),
-    ).toBe("minimal")
+    ).toEqual({ mode: "compact", visibleAuxiliaryTagCount: 2 })
+  })
+
+  it("removes non-project tags from the end after compact tags stop fitting", () => {
+    expect(
+      resolveChatHeaderTagLayout({
+        availableWidth: 180,
+        fullTagsWidth: 240,
+        compactTagWidths: [28, 28],
+        projectTagWidth: 100,
+        controlCount: 4,
+      }),
+    ).toEqual({ mode: "compact", visibleAuxiliaryTagCount: 1 })
+
+    expect(
+      resolveChatHeaderTagLayout({
+        availableWidth: 136,
+        fullTagsWidth: 240,
+        compactTagWidths: [28, 28],
+        projectTagWidth: 100,
+        controlCount: 4,
+      }),
+    ).toEqual({ mode: "compact", visibleAuxiliaryTagCount: 0 })
   })
 
   it("caps the always-visible project label at 30 characters", () => {

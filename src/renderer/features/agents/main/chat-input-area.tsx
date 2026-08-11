@@ -2140,7 +2140,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   return (
     <div
       ref={setInputContainerRef}
-      className="px-2 pb-2 shadow-sm shadow-background relative z-10"
+      className="px-2 pb-3 shadow-sm shadow-background relative z-10"
       data-compact-input={inputWidth < 560 || undefined}
     >
       <div className="w-full max-w-2xl mx-auto">

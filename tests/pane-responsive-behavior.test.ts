@@ -22,12 +22,11 @@ describe("pane-local responsive behavior", () => {
     expect(title).toContain('menuLabel="More chat actions"')
     expect(title).toContain("usageRatio={1}")
     expect(title).toContain("collapseOrder={headerCollapseOrder}")
-    expect(title).toContain("onContentWidthChange={setControlsContentWidth}")
     expect(title).toContain("flattenOverflowChildren(headerActions)")
     expect(title).toContain("headerControlItems.map((_, index) => index).reverse()")
     expect(title).toContain('mode === "compact"')
-    expect(title).toContain('tagMode === "minimal"')
-    expect(title).toContain('forceOverflow={tagMode === "minimal"}')
+    expect(title).toContain("visibleAuxiliaryTagCount")
+    expect(title).toContain('forceOverflow={tagLayout.mode === "compact"}')
     const composer = source("src/renderer/features/agents/main/chat-input-area.tsx")
     expect(composer).toContain('menuLabel="More composer settings"')
     expect(composer).toContain("usageRatio={0.8}")
@@ -49,6 +48,18 @@ describe("pane-local responsive behavior", () => {
     expect(source("src/renderer/features/agents/main/active-chat.tsx")).toContain(
       'className="absolute bottom-0 left-0 right-1 z-20"',
     )
+  })
+
+  it("uses one 12px composer edge margin without divider layout inflation", () => {
+    const composer = source("src/renderer/features/agents/main/chat-input-area.tsx")
+    const workbench = source("src/renderer/features/agents/workbench/chat-workbench.tsx")
+
+    expect(composer).toContain('className="px-2 pb-3 shadow-sm shadow-background relative z-10"')
+    expect(workbench).toContain('? "relative w-px cursor-col-resize"')
+    expect(workbench).toContain(': "relative h-px cursor-row-resize"')
+    expect(workbench).toContain('data-resize-hit-area="12"')
+    expect(workbench).not.toContain('"-my-1 h-3 cursor-row-resize"')
+    expect(workbench).not.toContain('"-mx-1 w-3 cursor-col-resize"')
   })
 
   it("enforces distinct Chat and Terminal minimums and removes the old position switcher", () => {

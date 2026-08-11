@@ -877,21 +877,31 @@ function SplitChild({
           aria-valuenow={Math.round(boundaryPercentage)}
           data-pointer-hit-area="12"
           className={cn(
-            "group z-20 flex shrink-0 items-center justify-center bg-transparent outline-none",
+            "group z-20 shrink-0 bg-transparent outline-none",
             split.direction === "row"
-              ? "-mx-1 w-3 cursor-col-resize"
-              : "-my-1 h-3 cursor-row-resize",
+              ? "relative w-px cursor-col-resize"
+              : "relative h-px cursor-row-resize",
           )}
           onPointerDown={pointerDown}
           onKeyDown={keyDown}
         >
           <span
             aria-hidden
+            data-resize-hit-area="12"
             className={cn(
-              "bg-border group-hover:bg-primary/60 group-focus-visible:bg-primary",
-              split.direction === "row" ? "h-full w-px" : "h-px w-full",
+              "absolute flex items-center justify-center",
+              split.direction === "row"
+                ? "inset-y-0 left-1/2 w-3 -translate-x-1/2"
+                : "inset-x-0 top-1/2 h-3 -translate-y-1/2",
             )}
-          />
+          >
+            <span
+              className={cn(
+                "bg-border group-hover:bg-primary/60 group-focus-visible:bg-primary",
+                split.direction === "row" ? "h-full w-px" : "h-px w-full",
+              )}
+            />
+          </span>
         </div>
       )}
     </>

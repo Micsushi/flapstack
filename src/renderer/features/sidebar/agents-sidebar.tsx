@@ -294,20 +294,17 @@ const SIDEBAR_POINTER_DRAG_THRESHOLD = 4
 const QUICK_ACCESS_PROJECTS_STORAGE_KEY = "flapstack-sidebar-quick-access-projects"
 const QUICK_ACCESS_PROJECT_DROP_KIND = "quick-access-project"
 const REGULAR_PROJECT_DROP_KIND = "regular-project"
+const SIDEBAR_DISCLOSURE_EASE = [0.16, 1, 0.3, 1] as const
 const PROJECT_CHILD_MOTION_VARIANTS = {
   collapsed: {
     opacity: 0,
-    y: -14,
-    scaleY: 0.92,
-    clipPath: "inset(0 0 100% 0 round 6px)",
-    transition: { duration: 0.16, ease: [0.4, 0, 1, 1] },
+    y: -4,
+    transition: { duration: 0.12, ease: [0.4, 0, 1, 1] },
   },
   expanded: {
     opacity: 1,
     y: 0,
-    scaleY: 1,
-    clipPath: "inset(0 0 0% 0 round 6px)",
-    transition: { duration: 0.22, ease: [0.16, 1, 0.3, 1] },
+    transition: { duration: 0.18, ease: SIDEBAR_DISCLOSURE_EASE },
   },
 } as const
 
@@ -614,11 +611,47 @@ function SidebarDisclosure({
     >
       <ChevronDown
         className={cn(
-          "h-3.5 w-3.5 flex-shrink-0 transition-transform",
+          "h-3.5 w-3.5 flex-shrink-0 transition-transform duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
           isCollapsed && "-rotate-90",
         )}
       />
     </span>
+  )
+}
+
+function SidebarCollapsibleContent({
+  isOpen,
+  className,
+  children,
+}: {
+  isOpen: boolean
+  className?: string
+  children: React.ReactNode
+}) {
+  const shouldReduceMotion = useReducedMotion()
+
+  return (
+    <AnimatePresence initial={false}>
+      {isOpen && (
+        <motion.div
+          initial={shouldReduceMotion ? false : { height: 0, opacity: 0, y: -4 }}
+          animate={{ height: "auto", opacity: 1, y: 0 }}
+          exit={shouldReduceMotion ? { height: 0 } : { height: 0, opacity: 0, y: -3 }}
+          transition={
+            shouldReduceMotion
+              ? { duration: 0 }
+              : {
+                  height: { duration: 0.18, ease: SIDEBAR_DISCLOSURE_EASE },
+                  opacity: { duration: 0.14, ease: SIDEBAR_DISCLOSURE_EASE },
+                  y: { duration: 0.18, ease: SIDEBAR_DISCLOSURE_EASE },
+                }
+          }
+          className={cn("overflow-hidden", className)}
+        >
+          {children}
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }
 
@@ -2735,194 +2768,196 @@ const ChatListSection = React.memo(function ChatListSection({
             )}
           </ContextMenu>
         )}
-        {!isCollapsed && showEmptyState && (
-          <div
-            data-sidebar-empty-state="chats"
-            className="mb-0.5 ml-9 flex h-7 items-center text-xs text-muted-foreground/60"
-          >
-            No chats
-          </div>
-        )}
-        {!isCollapsed && chats.length > 0 && (
-          <div
-            className={cn(
-              "list-none p-0 m-0",
-              isTaskSection
-                ? "mb-1 ml-3 pl-2"
-                : isProjectSection
-                  ? "mb-0.5 ml-4 pl-2"
-                  : isTopLevelScopedSection || isReferenceSection
-                    ? "mb-1 ml-4 pl-2"
-                    : "mb-2",
-            )}
-          >
-            {chats.map((chat) => {
-              const itemChatTint =
-                isReferenceSection && chat.projectId
-                  ? getProjectTint(projectColorsById?.[chat.projectId] ?? DEFAULT_PROJECT_COLOR)[
-                      chat.taskId ? "taskChat" : "chat"
-                    ]
-                  : chatTint
-              const isLoading = loadingChatIds.has(chat.id)
-              // For remote chats, compare without prefix; for local, compare directly
-              // Remote chat IDs in list have "remote_" prefix, but selectedChatId is the original ID
-              const chatOriginalId = chat.isRemote ? chat.id.replace(/^remote_/, "") : chat.id
-              const isSelected =
-                selectedChatId === chatOriginalId && selectedChatIsRemote === chat.isRemote
-              const isPinned = pinnedChatIds.has(chat.id)
-              const globalIndex = globalIndexMap.get(chat.id) ?? -1
-              const isFocused = focusedChatIndex === globalIndex && focusedChatIndex >= 0
+        <SidebarCollapsibleContent isOpen={!isCollapsed}>
+          {showEmptyState && (
+            <div
+              data-sidebar-empty-state="chats"
+              className="mb-0.5 ml-9 flex h-7 items-center text-xs text-muted-foreground/60"
+            >
+              No chats
+            </div>
+          )}
+          {chats.length > 0 && (
+            <div
+              className={cn(
+                "list-none p-0 m-0",
+                isTaskSection
+                  ? "mb-1 ml-3 pl-2"
+                  : isProjectSection
+                    ? "mb-0.5 ml-4 pl-2"
+                    : isTopLevelScopedSection || isReferenceSection
+                      ? "mb-1 ml-4 pl-2"
+                      : "mb-2",
+              )}
+            >
+              {chats.map((chat) => {
+                const itemChatTint =
+                  isReferenceSection && chat.projectId
+                    ? getProjectTint(projectColorsById?.[chat.projectId] ?? DEFAULT_PROJECT_COLOR)[
+                        chat.taskId ? "taskChat" : "chat"
+                      ]
+                    : chatTint
+                const isLoading = loadingChatIds.has(chat.id)
+                // For remote chats, compare without prefix; for local, compare directly
+                // Remote chat IDs in list have "remote_" prefix, but selectedChatId is the original ID
+                const chatOriginalId = chat.isRemote ? chat.id.replace(/^remote_/, "") : chat.id
+                const isSelected =
+                  selectedChatId === chatOriginalId && selectedChatIsRemote === chat.isRemote
+                const isPinned = pinnedChatIds.has(chat.id)
+                const globalIndex = globalIndexMap.get(chat.id) ?? -1
+                const isFocused = focusedChatIndex === globalIndex && focusedChatIndex >= 0
 
-              // For remote chats, get repo info from meta; for local, from projectsMap
-              const project = chat.projectId ? projectsMap.get(chat.projectId) : null
-              const repoName = chat.isRemote
-                ? chat.meta?.repository
-                : project?.gitRepo || project?.name
-              const displayText = chat.isRemote ? chat.meta?.repository || "Remote project" : ""
+                // For remote chats, get repo info from meta; for local, from projectsMap
+                const project = chat.projectId ? projectsMap.get(chat.projectId) : null
+                const repoName = chat.isRemote
+                  ? chat.meta?.repository
+                  : project?.gitRepo || project?.name
+                const displayText = chat.isRemote ? chat.meta?.repository || "Remote project" : ""
 
-              const isChecked = selectedChatIds.has(chat.id)
-              // Local-first: only cheap local workspace stats are shown. Remote
-              // chats intentionally have no stats (remote stat computation was
-              // removed - it caused 50s+ sidebar loads).
-              const stats = chat.isRemote ? null : workspaceFileStats.get(chat.id)
-              const hasPendingPlan = workspacePendingPlans.has(chat.id)
-              const hasPendingQuestion = workspacePendingQuestions.has(chat.id)
-              const isLastInFilteredChats = globalIndex === filteredChats.length - 1
-              const isLastInSection = chat.id === chats.at(-1)?.id
-              const isJustCreated = justCreatedIds.has(chat.id)
-              const isStarred = starredChatIds.has(chat.id)
-              const worktreeLabel = getNonMainWorktreeLabel({
-                projectPath: project?.path,
-                worktreePath: chat.worktreePath,
-              })
-              const hasCustomWorktree = worktreeLabel !== null
-              const itemDragId = hideHeader ? (sectionDragId ?? chat.id) : chat.id
-              const showBeforeChatDrop =
-                !usesSectionDropSeparator &&
-                dragOverKind === chatDragKind &&
-                dragOverId === itemDragId &&
-                dragOverPosition === "before"
-              const showAfterChatDrop =
-                !usesSectionDropSeparator &&
-                dragOverKind === chatDragKind &&
-                dragOverId === itemDragId &&
-                dragOverPosition === "after"
+                const isChecked = selectedChatIds.has(chat.id)
+                // Local-first: only cheap local workspace stats are shown. Remote
+                // chats intentionally have no stats (remote stat computation was
+                // removed - it caused 50s+ sidebar loads).
+                const stats = chat.isRemote ? null : workspaceFileStats.get(chat.id)
+                const hasPendingPlan = workspacePendingPlans.has(chat.id)
+                const hasPendingQuestion = workspacePendingQuestions.has(chat.id)
+                const isLastInFilteredChats = globalIndex === filteredChats.length - 1
+                const isLastInSection = chat.id === chats.at(-1)?.id
+                const isJustCreated = justCreatedIds.has(chat.id)
+                const isStarred = starredChatIds.has(chat.id)
+                const worktreeLabel = getNonMainWorktreeLabel({
+                  projectPath: project?.path,
+                  worktreePath: chat.worktreePath,
+                })
+                const hasCustomWorktree = worktreeLabel !== null
+                const itemDragId = hideHeader ? (sectionDragId ?? chat.id) : chat.id
+                const showBeforeChatDrop =
+                  !usesSectionDropSeparator &&
+                  dragOverKind === chatDragKind &&
+                  dragOverId === itemDragId &&
+                  dragOverPosition === "before"
+                const showAfterChatDrop =
+                  !usesSectionDropSeparator &&
+                  dragOverKind === chatDragKind &&
+                  dragOverId === itemDragId &&
+                  dragOverPosition === "after"
 
-              return (
-                <React.Fragment key={chat.id}>
-                  {showBeforeChatDrop && (
-                    <DropSeparator
-                      onDragEnter={handleSeparatorDragEnter}
-                      onDragOver={(event) =>
-                        handleSeparatorDragOver(event, chatDragKind, itemDragId, "before")
+                return (
+                  <React.Fragment key={chat.id}>
+                    {showBeforeChatDrop && (
+                      <DropSeparator
+                        onDragEnter={handleSeparatorDragEnter}
+                        onDragOver={(event) =>
+                          handleSeparatorDragOver(event, chatDragKind, itemDragId, "before")
+                        }
+                        onDrop={(event) =>
+                          handleSeparatorDrop(event, chatDragKind, itemDragId, "before")
+                        }
+                      />
+                    )}
+                    <AgentChatItem
+                      key={chat.id}
+                      chatId={chat.id}
+                      chatName={chat.name}
+                      chatBranch={chat.branch}
+                      chatUpdatedAt={chat.updatedAt}
+                      chatProjectId={chat.projectId ?? ""}
+                      chatTaskId={chat.taskId}
+                      parentChatId={chat.parentChatId}
+                      chatScope={chat.scope}
+                      chatTags={chat.tags ?? []}
+                      globalIndex={globalIndex}
+                      isSelected={isSelected}
+                      isLoading={isLoading}
+                      hasUnseenChanges={unseenChanges.has(chat.id)}
+                      hasPendingPlan={hasPendingPlan}
+                      hasPendingQuestion={hasPendingQuestion}
+                      isMultiSelectMode={isMultiSelectMode}
+                      isChecked={isChecked}
+                      isFocused={isFocused}
+                      isMobileFullscreen={isMobileFullscreen}
+                      isDesktop={isDesktop}
+                      isPinned={isPinned}
+                      isStarred={isStarred}
+                      isInWorkbenchGroup={groupedChatIds.has(chatOriginalId)}
+                      harness={chat.harness}
+                      model={chat.model}
+                      hasCustomWorktree={hasCustomWorktree}
+                      worktreeLabel={worktreeLabel}
+                      displayText={displayText}
+                      stats={stats ?? undefined}
+                      selectedChatIdsSize={selectedChatIds.size}
+                      canShowPinOption={canShowPinOption}
+                      areAllSelectedPinned={areAllSelectedPinned}
+                      filteredChatsLength={filteredChats.length}
+                      isLastInFilteredChats={isLastInFilteredChats}
+                      showIcon={showIcon}
+                      onChatClick={onChatClick}
+                      onCheckboxClick={onCheckboxClick}
+                      onMouseEnter={onMouseEnter}
+                      onMouseLeave={onMouseLeave}
+                      onArchive={onArchive}
+                      onTogglePin={onTogglePin}
+                      onToggleStar={onToggleStar}
+                      onRenameClick={onRenameClick}
+                      onCopyBranch={onCopyBranch}
+                      onArchiveAllBelow={onArchiveAllBelow}
+                      onArchiveOthers={onArchiveOthers}
+                      onOpenLocally={onOpenLocally}
+                      moveDestinations={moveDestinations}
+                      movePending={movePending}
+                      onMoveChat={onMoveChat}
+                      onBulkPin={onBulkPin}
+                      onBulkUnpin={onBulkUnpin}
+                      onBulkArchive={onBulkArchive}
+                      archivePending={archivePending}
+                      archiveBatchPending={archiveBatchPending}
+                      isRemote={chat.isRemote}
+                      nameRefCallback={nameRefCallback}
+                      formatTime={formatTime}
+                      isJustCreated={isJustCreated}
+                      dragKind={chatDragKind}
+                      dragItemId={hideHeader ? sectionDragId : undefined}
+                      taskEndTargetId={
+                        isTaskSection && isLastInSection && lifecycleTarget?.type === "task"
+                          ? lifecycleTarget.id
+                          : undefined
                       }
-                      onDrop={(event) =>
-                        handleSeparatorDrop(event, chatDragKind, itemDragId, "before")
+                      isOnlyTaskChat={isTaskSection && chats.length === 1}
+                      tintColor={itemChatTint}
+                      isDragging={draggingKind === chatDragKind && draggingId === itemDragId}
+                      isDragOver={dragOverKind === chatDragKind && dragOverId === itemDragId}
+                      isBoundaryHighlighted={
+                        (!isTaskSection && isSectionBoundaryHighlighted) ||
+                        chatBoundaryHighlightIds.has(chat.id)
                       }
+                      dragOverPosition={
+                        dragOverKind === chatDragKind && dragOverId === itemDragId
+                          ? dragOverPosition
+                          : null
+                      }
+                      onDragStartItem={onDragStartItem}
+                      onDragOverItem={onDragOverItem}
+                      onDropItem={onDropItem}
+                      onDragEndItem={onDragEndItem}
                     />
-                  )}
-                  <AgentChatItem
-                    key={chat.id}
-                    chatId={chat.id}
-                    chatName={chat.name}
-                    chatBranch={chat.branch}
-                    chatUpdatedAt={chat.updatedAt}
-                    chatProjectId={chat.projectId ?? ""}
-                    chatTaskId={chat.taskId}
-                    parentChatId={chat.parentChatId}
-                    chatScope={chat.scope}
-                    chatTags={chat.tags ?? []}
-                    globalIndex={globalIndex}
-                    isSelected={isSelected}
-                    isLoading={isLoading}
-                    hasUnseenChanges={unseenChanges.has(chat.id)}
-                    hasPendingPlan={hasPendingPlan}
-                    hasPendingQuestion={hasPendingQuestion}
-                    isMultiSelectMode={isMultiSelectMode}
-                    isChecked={isChecked}
-                    isFocused={isFocused}
-                    isMobileFullscreen={isMobileFullscreen}
-                    isDesktop={isDesktop}
-                    isPinned={isPinned}
-                    isStarred={isStarred}
-                    isInWorkbenchGroup={groupedChatIds.has(chatOriginalId)}
-                    harness={chat.harness}
-                    model={chat.model}
-                    hasCustomWorktree={hasCustomWorktree}
-                    worktreeLabel={worktreeLabel}
-                    displayText={displayText}
-                    stats={stats ?? undefined}
-                    selectedChatIdsSize={selectedChatIds.size}
-                    canShowPinOption={canShowPinOption}
-                    areAllSelectedPinned={areAllSelectedPinned}
-                    filteredChatsLength={filteredChats.length}
-                    isLastInFilteredChats={isLastInFilteredChats}
-                    showIcon={showIcon}
-                    onChatClick={onChatClick}
-                    onCheckboxClick={onCheckboxClick}
-                    onMouseEnter={onMouseEnter}
-                    onMouseLeave={onMouseLeave}
-                    onArchive={onArchive}
-                    onTogglePin={onTogglePin}
-                    onToggleStar={onToggleStar}
-                    onRenameClick={onRenameClick}
-                    onCopyBranch={onCopyBranch}
-                    onArchiveAllBelow={onArchiveAllBelow}
-                    onArchiveOthers={onArchiveOthers}
-                    onOpenLocally={onOpenLocally}
-                    moveDestinations={moveDestinations}
-                    movePending={movePending}
-                    onMoveChat={onMoveChat}
-                    onBulkPin={onBulkPin}
-                    onBulkUnpin={onBulkUnpin}
-                    onBulkArchive={onBulkArchive}
-                    archivePending={archivePending}
-                    archiveBatchPending={archiveBatchPending}
-                    isRemote={chat.isRemote}
-                    nameRefCallback={nameRefCallback}
-                    formatTime={formatTime}
-                    isJustCreated={isJustCreated}
-                    dragKind={chatDragKind}
-                    dragItemId={hideHeader ? sectionDragId : undefined}
-                    taskEndTargetId={
-                      isTaskSection && isLastInSection && lifecycleTarget?.type === "task"
-                        ? lifecycleTarget.id
-                        : undefined
-                    }
-                    isOnlyTaskChat={isTaskSection && chats.length === 1}
-                    tintColor={itemChatTint}
-                    isDragging={draggingKind === chatDragKind && draggingId === itemDragId}
-                    isDragOver={dragOverKind === chatDragKind && dragOverId === itemDragId}
-                    isBoundaryHighlighted={
-                      (!isTaskSection && isSectionBoundaryHighlighted) ||
-                      chatBoundaryHighlightIds.has(chat.id)
-                    }
-                    dragOverPosition={
-                      dragOverKind === chatDragKind && dragOverId === itemDragId
-                        ? dragOverPosition
-                        : null
-                    }
-                    onDragStartItem={onDragStartItem}
-                    onDragOverItem={onDragOverItem}
-                    onDropItem={onDropItem}
-                    onDragEndItem={onDragEndItem}
-                  />
-                  {showAfterChatDrop && (
-                    <DropSeparator
-                      onDragEnter={handleSeparatorDragEnter}
-                      onDragOver={(event) =>
-                        handleSeparatorDragOver(event, chatDragKind, itemDragId, "after")
-                      }
-                      onDrop={(event) =>
-                        handleSeparatorDrop(event, chatDragKind, itemDragId, "after")
-                      }
-                    />
-                  )}
-                </React.Fragment>
-              )
-            })}
-          </div>
-        )}
+                    {showAfterChatDrop && (
+                      <DropSeparator
+                        onDragEnter={handleSeparatorDragEnter}
+                        onDragOver={(event) =>
+                          handleSeparatorDragOver(event, chatDragKind, itemDragId, "after")
+                        }
+                        onDrop={(event) =>
+                          handleSeparatorDrop(event, chatDragKind, itemDragId, "after")
+                        }
+                      />
+                    )}
+                  </React.Fragment>
+                )
+              })}
+            </div>
+          )}
+        </SidebarCollapsibleContent>
       </div>
       {showAfterSectionDrop && effectiveSectionDragId && (
         <DropSeparator
@@ -3011,7 +3046,7 @@ const SidebarGroupHeader = memo(function SidebarGroupHeader({
       data-sidebar-drag-target-id={dropTargetId}
       data-sidebar-drop-container={Boolean(dropTargetKind) || undefined}
       className={cn(
-        "group group/disclosure group/header relative flex h-7 w-full items-center gap-1 rounded-lg px-1 text-muted-foreground transition-colors hover:bg-foreground/5",
+        "group group/disclosure group/header relative flex h-7 w-full items-center gap-1 rounded-lg px-1 text-muted-foreground transition-[background-color,margin] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none hover:bg-foreground/5",
         !isCollapsed && "mb-2",
         isDropTargetActive && "bg-primary/10 text-foreground ring-1 ring-inset ring-primary/40",
         className,
@@ -7269,172 +7304,165 @@ export function AgentsSidebar({
             />
           )}
 
-          {!searchQuery &&
-            !collapsedSectionIds.has("quick-access") &&
-            [
-              {
-                title: "Pinned",
-                kind: "pinned" as const,
-                chats: pinnedAgents,
-                tasks: pinnedTasks,
-              },
-              {
-                title: "Starred",
-                kind: "starred" as const,
-                chats: starredAgents,
-                tasks: starredTasks,
-              },
-              {
-                title: "Tagged",
-                kind: "tagged" as const,
-                chats: taggedAgents,
-                tasks: [],
-              },
-            ]
-              .filter(
-                (section) =>
-                  section.chats.length > 0 || section.tasks.some((task) => task.chats.length > 0),
-              )
-              .map((section) => (
-                <div
-                  key={section.kind}
-                  className="mx-2 mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150"
-                >
-                  <ChatListSection
-                    {...sharedChatListSectionProps}
-                    title={section.title}
-                    sectionId={section.kind}
-                    kind={section.kind}
-                    projectColor={null}
-                    projectColorsById={projectColorsById}
-                    showWhenEmpty
-                    showEmptyState={
-                      section.chats.length === 0 &&
-                      section.tasks.every((task) => task.chats.length === 0)
-                    }
-                    isCollapsed={collapsedSectionIds.has(section.kind)}
-                    draggingKind={draggingItem?.kind}
-                    draggingId={draggingItem?.id}
-                    dragOverKind={dragOverItem?.kind}
-                    dragOverId={dragOverItem?.id}
-                    dragOverPosition={dragOverItem?.position}
-                    chats={section.chats}
-                    onCreateGlobalChat={openNewGlobalChat}
-                    onCreateProjectChat={openNewProjectChat}
-                    onCreateProjectTask={createProjectTask}
-                    onChangeProjectColor={handleChangeProjectColor}
-                    lifecyclePending={
-                      pinProjectMutation.isPending ||
-                      unpinProjectMutation.isPending ||
-                      archiveProjectMutation.isPending ||
-                      pinTaskMutation.isPending ||
-                      unpinTaskMutation.isPending ||
-                      archiveTaskMutation.isPending
-                    }
-                  />
-                  {!collapsedSectionIds.has(section.kind) &&
-                    section.tasks
-                      .filter((task) => task.chats.length > 0)
-                      .map((task) => (
-                        <ChatListSection
-                          {...sharedChatListSectionProps}
-                          key={`${section.kind}-task-${task.taskId}`}
-                          title={task.title}
-                          sectionId={`${section.kind}-task-${task.taskId}`}
-                          kind="task"
-                          projectColor={task.projectColor}
-                          isCollapsed={collapsedSectionIds.has(
-                            `${section.kind}-task-${task.taskId}`,
-                          )}
-                          lifecycleTarget={{
-                            type: "task",
-                            id: task.taskId,
-                            isPinned: task.isPinned,
-                            isStarred: task.isStarred,
-                          }}
-                          parentProjectId={task.projectId}
-                          chats={task.chats}
-                          lifecyclePending={
-                            pinTaskMutation.isPending ||
-                            unpinTaskMutation.isPending ||
-                            archiveTaskMutation.isPending
-                          }
-                        />
-                      ))}
-                </div>
-              ))}
-
-          {/* Drafts appear in Quick access only while saved drafts exist. */}
-          {!searchQuery && !collapsedSectionIds.has("quick-access") && drafts.length > 0 && (
-            <div className="mx-2 mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150">
-              <div
-                onClick={() => handleToggleSection("drafts")}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter" && event.key !== " ") return
-                  event.preventDefault()
-                  handleToggleSection("drafts")
-                }}
-                role="button"
-                tabIndex={0}
-                aria-expanded={!collapsedSectionIds.has("drafts")}
-                className="group group/disclosure relative mt-1 mb-0.5 flex h-7 cursor-pointer items-center gap-1 rounded-md pl-2 pr-1 transition-[background-color] duration-150 ease-out outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
-                style={{
-                  backgroundColor: rgbaFromHex(
-                    getProjectTint(GLOBAL_SECTION_COLOR).base,
-                    SCOPED_SECTION_BACKGROUND_OPACITY,
-                  ),
-                }}
-              >
-                <div className="pointer-events-none flex min-w-0 flex-1 items-center gap-1.5 text-left">
-                  <FilePenLine className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
-                  <h3 className="min-w-0 truncate whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-white">
-                    Drafts
-                  </h3>
-                  <SidebarDisclosure
-                    isCollapsed={collapsedSectionIds.has("drafts")}
-                    className="text-white/80"
-                  />
-                </div>
-              </div>
-              {!collapsedSectionIds.has("drafts") && (
-                <div className="list-none p-0 m-0 mb-1 ml-4 pl-2">
-                  {drafts.map((draft) => (
-                    <DraftItem
-                      key={draft.id}
-                      draftId={draft.id}
-                      draftText={draft.text}
-                      draftUpdatedAt={draft.updatedAt}
-                      projectGitOwner={draft.project?.gitOwner}
-                      projectGitProvider={draft.project?.gitProvider}
-                      projectGitRepo={draft.project?.gitRepo}
-                      projectName={draft.project?.name}
-                      projectColor={
-                        draft.project?.id
-                          ? (projectColorsById[draft.project.id] ?? DEFAULT_PROJECT_COLOR)
-                          : null
+          <SidebarCollapsibleContent
+            isOpen={Boolean(searchQuery) || !collapsedSectionIds.has("quick-access")}
+          >
+            {!searchQuery &&
+              [
+                {
+                  title: "Pinned",
+                  kind: "pinned" as const,
+                  chats: pinnedAgents,
+                  tasks: pinnedTasks,
+                },
+                {
+                  title: "Starred",
+                  kind: "starred" as const,
+                  chats: starredAgents,
+                  tasks: starredTasks,
+                },
+                {
+                  title: "Tagged",
+                  kind: "tagged" as const,
+                  chats: taggedAgents,
+                  tasks: [],
+                },
+              ]
+                .filter(
+                  (section) =>
+                    section.chats.length > 0 || section.tasks.some((task) => task.chats.length > 0),
+                )
+                .map((section) => (
+                  <div key={section.kind} className="mx-2 mb-0">
+                    <ChatListSection
+                      {...sharedChatListSectionProps}
+                      title={section.title}
+                      sectionId={section.kind}
+                      kind={section.kind}
+                      projectColor={null}
+                      projectColorsById={projectColorsById}
+                      showWhenEmpty
+                      showEmptyState={
+                        section.chats.length === 0 &&
+                        section.tasks.every((task) => task.chats.length === 0)
                       }
-                      isSelected={selectedDraftId === draft.id && !selectedChatId}
-                      isMultiSelectMode={isMultiSelectMode}
-                      isMobileFullscreen={isMobileFullscreen}
-                      showIcon={showWorkspaceIcon}
-                      onSelect={handleDraftSelect}
-                      onDelete={handleDeleteDraft}
-                      formatTime={formatTime}
+                      isCollapsed={collapsedSectionIds.has(section.kind)}
+                      draggingKind={draggingItem?.kind}
+                      draggingId={draggingItem?.id}
+                      dragOverKind={dragOverItem?.kind}
+                      dragOverId={dragOverItem?.id}
+                      dragOverPosition={dragOverItem?.position}
+                      chats={section.chats}
+                      onCreateGlobalChat={openNewGlobalChat}
+                      onCreateProjectChat={openNewProjectChat}
+                      onCreateProjectTask={createProjectTask}
+                      onChangeProjectColor={handleChangeProjectColor}
+                      lifecyclePending={
+                        pinProjectMutation.isPending ||
+                        unpinProjectMutation.isPending ||
+                        archiveProjectMutation.isPending ||
+                        pinTaskMutation.isPending ||
+                        unpinTaskMutation.isPending ||
+                        archiveTaskMutation.isPending
+                      }
                     />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+                    {!collapsedSectionIds.has(section.kind) &&
+                      section.tasks
+                        .filter((task) => task.chats.length > 0)
+                        .map((task) => (
+                          <ChatListSection
+                            {...sharedChatListSectionProps}
+                            key={`${section.kind}-task-${task.taskId}`}
+                            title={task.title}
+                            sectionId={`${section.kind}-task-${task.taskId}`}
+                            kind="task"
+                            projectColor={task.projectColor}
+                            isCollapsed={collapsedSectionIds.has(
+                              `${section.kind}-task-${task.taskId}`,
+                            )}
+                            lifecycleTarget={{
+                              type: "task",
+                              id: task.taskId,
+                              isPinned: task.isPinned,
+                              isStarred: task.isStarred,
+                            }}
+                            parentProjectId={task.projectId}
+                            chats={task.chats}
+                            lifecyclePending={
+                              pinTaskMutation.isPending ||
+                              unpinTaskMutation.isPending ||
+                              archiveTaskMutation.isPending
+                            }
+                          />
+                        ))}
+                  </div>
+                ))}
 
-          {/* Global is the final built-in row; promoted projects always follow it. */}
-          {(searchQuery || !collapsedSectionIds.has("quick-access")) && (
-            <div
-              className={cn(
-                "mx-2",
-                !searchQuery && "animate-in fade-in-0 slide-in-from-top-1 duration-150",
-              )}
-            >
+            {/* Drafts appear in Quick access only while saved drafts exist. */}
+            {!searchQuery && drafts.length > 0 && (
+              <div className="mx-2 mb-0">
+                <div
+                  onClick={() => handleToggleSection("drafts")}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return
+                    event.preventDefault()
+                    handleToggleSection("drafts")
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={!collapsedSectionIds.has("drafts")}
+                  className="group group/disclosure relative mt-1 mb-0.5 flex h-7 cursor-pointer items-center gap-1 rounded-md pl-2 pr-1 transition-[background-color] duration-150 ease-out outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                  style={{
+                    backgroundColor: rgbaFromHex(
+                      getProjectTint(GLOBAL_SECTION_COLOR).base,
+                      SCOPED_SECTION_BACKGROUND_OPACITY,
+                    ),
+                  }}
+                >
+                  <div className="pointer-events-none flex min-w-0 flex-1 items-center gap-1.5 text-left">
+                    <FilePenLine className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
+                    <h3 className="min-w-0 truncate whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-white">
+                      Drafts
+                    </h3>
+                    <SidebarDisclosure
+                      isCollapsed={collapsedSectionIds.has("drafts")}
+                      className="text-white/80"
+                    />
+                  </div>
+                </div>
+                <SidebarCollapsibleContent isOpen={!collapsedSectionIds.has("drafts")}>
+                  <div className="list-none p-0 m-0 mb-1 ml-4 pl-2">
+                    {drafts.map((draft) => (
+                      <DraftItem
+                        key={draft.id}
+                        draftId={draft.id}
+                        draftText={draft.text}
+                        draftUpdatedAt={draft.updatedAt}
+                        projectGitOwner={draft.project?.gitOwner}
+                        projectGitProvider={draft.project?.gitProvider}
+                        projectGitRepo={draft.project?.gitRepo}
+                        projectName={draft.project?.name}
+                        projectColor={
+                          draft.project?.id
+                            ? (projectColorsById[draft.project.id] ?? DEFAULT_PROJECT_COLOR)
+                            : null
+                        }
+                        isSelected={selectedDraftId === draft.id && !selectedChatId}
+                        isMultiSelectMode={isMultiSelectMode}
+                        isMobileFullscreen={isMobileFullscreen}
+                        showIcon={showWorkspaceIcon}
+                        onSelect={handleDraftSelect}
+                        onDelete={handleDeleteDraft}
+                        formatTime={formatTime}
+                      />
+                    ))}
+                  </div>
+                </SidebarCollapsibleContent>
+              </div>
+            )}
+
+            {/* Global is the final built-in row; promoted projects always follow it. */}
+            <div className="mx-2">
               <AnimatePresence initial={false} mode="popLayout">
                 {[...visibleOtherSections, ...visibleQuickAccessProjectSections].map(
                   (section, index, sections) =>
@@ -7442,7 +7470,7 @@ export function AgentsSidebar({
                 )}
               </AnimatePresence>
             </div>
-          )}
+          </SidebarCollapsibleContent>
           {!searchQuery && (
             <SidebarGroupHeader
               title="Projects"
@@ -7522,13 +7550,10 @@ export function AgentsSidebar({
               }
             />
           )}
-          {(searchQuery || !collapsedSectionIds.has("projects-group")) && (
-            <div
-              className={cn(
-                "mx-2",
-                !searchQuery && "animate-in fade-in-0 slide-in-from-top-1 duration-150",
-              )}
-            >
+          <SidebarCollapsibleContent
+            isOpen={Boolean(searchQuery) || !collapsedSectionIds.has("projects-group")}
+          >
+            <div className="mx-2">
               {!searchQuery && visibleProjectSections.length === 0 && (
                 <div
                   data-sidebar-empty-state="projects"
@@ -7543,7 +7568,7 @@ export function AgentsSidebar({
                 )}
               </AnimatePresence>
             </div>
-          )}
+          </SidebarCollapsibleContent>
           {(archiveSummary?.total ?? archivedLifecycleItems.length) > 0 && !searchQuery && (
             <div className="mb-4">
               <button
@@ -7571,8 +7596,8 @@ export function AgentsSidebar({
                 </span>
                 <AnimatePresence>{isArchiveOpen && <ExpandedSectionIndicator />}</AnimatePresence>
               </button>
-              {isArchiveOpen && (
-                <div className="list-none p-0 m-0 animate-in fade-in-0 slide-in-from-top-1 duration-150">
+              <SidebarCollapsibleContent isOpen={isArchiveOpen}>
+                <div className="list-none p-0 m-0">
                   <div className="mb-1 flex items-center gap-1">
                     <div className="relative min-w-0 flex-1">
                       <SearchIcon className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -7705,7 +7730,7 @@ export function AgentsSidebar({
                     ))
                   )}
                 </div>
-              )}
+              </SidebarCollapsibleContent>
             </div>
           )}
         </div>
