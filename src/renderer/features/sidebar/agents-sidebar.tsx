@@ -7244,6 +7244,8 @@ export function AgentsSidebar({
         </ContextMenuContent>
       </ContextMenu>
 
+      <div aria-hidden="true" className="h-0.5 w-full flex-shrink-0 bg-border/70" />
+
       {/* Scrollable Agents List */}
       <div className="flex-1 min-h-0 relative">
         <div
@@ -7723,6 +7725,7 @@ export function AgentsSidebar({
       </div>
 
       {/* Footer - Multi-select toolbar or normal footer */}
+      <div aria-hidden="true" className="h-0.5 w-full flex-shrink-0 bg-border/70" />
       <AnimatePresence mode="wait">
         {isMultiSelectMode ? (
           <motion.div

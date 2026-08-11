@@ -317,6 +317,13 @@ describe("ChatWorkbench", () => {
     ).toBe("3")
     expect(container.textContent).toContain("3 Chat panes are shown as tabs")
     expect(onLayoutChange).not.toHaveBeenCalled()
+
+    const dismiss = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Dismiss responsive layout notice"]',
+    )
+    expect(dismiss).not.toBeNull()
+    await act(async () => dismiss!.click())
+    expect(container.textContent).not.toContain("Chat panes are shown as tabs")
   })
 
   it("keeps transfer actions unavailable until a read-only Chat takes ownership", async () => {

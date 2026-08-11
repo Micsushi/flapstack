@@ -391,4 +391,23 @@ describe("chat workbench reducer", () => {
       }).collapsedGroupIds,
     ).toEqual([])
   })
+
+  it("includes divider space when deciding whether every pane can keep its minimum size", () => {
+    const layout = reduceChatWorkbench(createChatWorkbenchLayout(["a", "b", "c", "d"]), {
+      type: "apply-preset",
+      preset: "grid-2x2",
+    }).layout
+    const project = (width: number, height: number) =>
+      projectResponsiveChatWorkbench(layout, {
+        width,
+        height,
+        minPaneWidth: 350,
+        minPaneHeight: 360,
+        dividerSize: 4,
+      }).collapsedGroupIds
+
+    expect(project(704, 724)).toEqual([])
+    expect(project(703, 724).length).toBeGreaterThan(0)
+    expect(project(704, 723).length).toBeGreaterThan(0)
+  })
 })

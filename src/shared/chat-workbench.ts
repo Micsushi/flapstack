@@ -551,7 +551,13 @@ export function applyChatDrop(
 
 export function projectResponsiveChatWorkbench(
   layout: ChatWorkbenchLayout,
-  viewport: { width: number; height: number; minPaneWidth: number; minPaneHeight: number },
+  viewport: {
+    width: number
+    height: number
+    minPaneWidth: number
+    minPaneHeight: number
+    dividerSize?: number
+  },
 ): {
   logicalLayout: ChatWorkbenchLayout
   visibleLayout: ChatWorkbenchLayout
@@ -564,6 +570,7 @@ export function projectResponsiveChatWorkbench(
       : layout.root,
     viewport.minPaneWidth,
     viewport.minPaneHeight,
+    viewport.dividerSize,
   )
   if (
     groups.length === 1 ||
@@ -597,19 +604,21 @@ function requiredWorkbenchExtent(
   node: ChatGroupNode,
   minPaneWidth: number,
   minPaneHeight: number,
+  dividerSize = 0,
 ): { width: number; height: number } {
   if (node.type === "group") return { width: minPaneWidth, height: minPaneHeight }
   const children = node.children.map((child) =>
-    requiredWorkbenchExtent(child, minPaneWidth, minPaneHeight),
+    requiredWorkbenchExtent(child, minPaneWidth, minPaneHeight, dividerSize),
   )
+  const dividers = Math.max(0, children.length - 1) * dividerSize
   return node.direction === "row"
     ? {
-        width: children.reduce((total, child) => total + child.width, 0),
+        width: children.reduce((total, child) => total + child.width, 0) + dividers,
         height: Math.max(...children.map((child) => child.height)),
       }
     : {
         width: Math.max(...children.map((child) => child.width)),
-        height: children.reduce((total, child) => total + child.height, 0),
+        height: children.reduce((total, child) => total + child.height, 0) + dividers,
       }
 }
 

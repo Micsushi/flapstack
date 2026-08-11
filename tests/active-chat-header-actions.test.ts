@@ -33,17 +33,14 @@ describe("active chat header actions", () => {
 
   it("uses one size and spacing rhythm for desktop header controls", () => {
     expect(activeChatSource).toContain('headerPaddingSidebarOpen: "pt-2.5 pb-12 px-3 pl-2"')
-    expect(titleEditorSource).toContain(
-      'className="ml-auto w-full max-w-[68%] justify-end leading-none"',
-    )
+    expect(titleEditorSource).toContain('"w-[40%] max-w-[40%] flex-none"')
     expect(titleEditorSource).toContain('WebkitAppRegion: "no-drag"')
     expect(titleEditorSource).toContain('<OpenInButton path={localFolderPath} label="Open in" />')
     expect(titleEditorSource).toContain("flattenOverflowChildren(headerActions)")
     expect(titleEditorSource).toContain('menuLabel="More chat actions"')
     expect(titleEditorSource).not.toContain("reserveRestoreSpace")
-    expect(titleEditorSource).toContain("inline-flex h-7 shrink-0")
-    expect(titleEditorSource).not.toContain("inline-flex h-6 shrink-0")
-    expect(titleEditorSource).toContain('Folder className="h-[18px] w-[18px]')
+    expect(titleEditorSource).toContain('forceOverflow={tagMode === "minimal"}')
+    expect(titleEditorSource).not.toContain('Folder className="h-[18px] w-[18px]')
     expect(titleEditorSource).toContain("justify-center")
     expect(subChatSelectorSource).toContain(
       'className="h-7 w-7 p-0 transition-[background-color,transform]',
@@ -55,7 +52,7 @@ describe("active chat header actions", () => {
   })
 
   it("uses one font size and weight for desktop header labels", () => {
-    expect(titleEditorSource.match(/text-\[13px\] font-medium leading-none/g)).toHaveLength(2)
+    expect(titleEditorSource).toContain("text-[13px] font-medium leading-none")
     expect(openInButtonSource).toContain(
       'className="text-[13px] font-medium leading-none truncate max-w-[120px]"',
     )

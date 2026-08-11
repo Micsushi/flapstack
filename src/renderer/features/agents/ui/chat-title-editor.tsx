@@ -9,14 +9,22 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react"
 import { cn } from "../../../lib/utils"
-import { Folder } from "lucide-react"
+import { Folder, GitBranch } from "lucide-react"
 import { ProviderChipIcon } from "../components/provider-chip-icon"
 import { OpenInButton } from "../../../components/open-in-button"
 import { ProgressiveOverflowRow } from "../../../components/progressive-overflow-row"
+import { ChatTagChip, type ChatTagView } from "../../sidebar/chat-tag-menu"
+import {
+  capProjectLabel,
+  resolveChatHeaderTagMode,
+  type ChatHeaderTagMode,
+} from "./chat-header-responsive"
 
 interface ChatTitleEditorProps {
   name: string
@@ -32,6 +40,7 @@ interface ChatTitleEditorProps {
   providerClassName?: string
   projectLabel?: string | null
   projectColor?: string | null
+  chatTags?: ChatTagView[]
   workspaceBranch?: string | null
   localFolderPath?: string
   headerActions?: ReactNode
@@ -63,6 +72,7 @@ function areTitlePropsEqual(prev: ChatTitleEditorProps, next: ChatTitleEditorPro
     prev.providerClassName === next.providerClassName &&
     prev.projectLabel === next.projectLabel &&
     prev.projectColor === next.projectColor &&
+    prev.chatTags === next.chatTags &&
     prev.workspaceBranch === next.workspaceBranch &&
     prev.localFolderPath === next.localFolderPath &&
     prev.headerActions === next.headerActions
@@ -82,6 +92,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   providerClassName,
   projectLabel,
   projectColor,
+  chatTags = [],
   workspaceBranch,
   localFolderPath,
   headerActions,
@@ -89,9 +100,13 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(name)
   const [isSaving, setIsSaving] = useState(false)
-  const [hiddenHeaderIndexes, setHiddenHeaderIndexes] = useState<number[]>([])
+  const [tagMode, setTagMode] = useState<ChatHeaderTagMode>("full")
+  const [controlsContentWidth, setControlsContentWidth] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const headerTailRef = useRef<HTMLDivElement>(null)
+  const fullTagsMeasureRef = useRef<HTMLDivElement>(null)
+  const compactTagsMeasureRef = useRef<HTMLDivElement>(null)
 
   // Sync editValue when name changes externally
   useEffect(() => {
@@ -185,71 +200,107 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   // Fixed height to prevent layout shift when switching between view/edit modes
   const heightClass = isMobile ? "h-7" : "h-8"
   const headerActionItems = flattenOverflowChildren(headerActions)
-  const actionKeys = headerActionItems.map((_, index) => `action-${index}`)
-  const headerOverflowItems = [
-    workspaceBranch
-      ? {
-          key: "branch",
-          node: (
-            <span className="max-w-32 truncate text-xs text-foreground/60">{workspaceBranch}</span>
-          ),
-        }
-      : null,
-    projectLabel
-      ? {
-          key: "project",
-          node: (
-            <span
-              className="inline-flex h-7 shrink-0 items-center justify-center rounded-md border px-2.5 text-[13px] font-medium leading-none"
-              style={{
-                color: projectColor ?? undefined,
-                borderColor: projectColor
-                  ? `color-mix(in srgb, ${projectColor} 45%, transparent)`
-                  : undefined,
-                backgroundColor: projectColor
-                  ? `color-mix(in srgb, ${projectColor} 14%, transparent)`
-                  : undefined,
-              }}
-            >
-              {projectLabel}
-            </span>
-          ),
-        }
-      : null,
-    providerName
-      ? {
-          key: "provider",
-          node: (
-            <span
-              className={cn(
-                "inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border px-2.5 text-[13px] font-medium leading-none",
-                providerClassName,
-              )}
-            >
-              <ProviderChipIcon provider={provider} className="h-4 w-4" />
-              {providerName}
-            </span>
-          ),
-        }
-      : null,
+  const headerControlItems = [
     localFolderPath
       ? {
           key: "open-in",
           node: <OpenInButton path={localFolderPath} label="Open in" />,
         }
       : null,
-    ...headerActionItems.map((node, index) => ({ key: actionKeys[index], node })),
+    ...headerActionItems.map((node, index) => ({ key: `action-${index}`, node })),
   ].filter((item): item is NonNullable<typeof item> => item !== null)
-  const headerCollapseOrder = ["provider", "project", "branch", ...actionKeys.reverse(), "open-in"]
-    .map((key) => headerOverflowItems.findIndex((item) => item.key === key))
-    .filter((index) => index >= 0)
-  const displayChipIndexes = ["project", "provider"]
-    .map((key) => headerOverflowItems.findIndex((item) => item.key === key))
-    .filter((index) => index >= 0)
-  const hideHeadingIcon =
-    !isEditing &&
-    displayChipIndexes.length > 0 &&
-    displayChipIndexes.every((index) => hiddenHeaderIndexes.includes(index))
+  const headerCollapseOrder = headerControlItems.map((_, index) => index).reverse()
+  const projectDisplayLabel = useMemo(
+    () => (projectLabel ? capProjectLabel(projectLabel) : null),
+    [projectLabel],
+  )
+  const tagMeasurementSignature = [
+    projectLabel,
+    provider,
+    providerName,
+    workspaceBranch,
+    ...chatTags.map((tag) => `${tag.id}:${tag.name}:${tag.color}:${tag.icon ?? ""}`),
+  ].join("|")
+
+  useLayoutEffect(() => {
+    const updateTagMode = () => {
+      const availableWidth = headerTailRef.current?.getBoundingClientRect().width ?? 0
+      if (availableWidth <= 0) return
+      setTagMode(
+        resolveChatHeaderTagMode({
+          availableWidth,
+          fullTagsWidth: fullTagsMeasureRef.current?.getBoundingClientRect().width ?? 0,
+          compactTagsWidth: compactTagsMeasureRef.current?.getBoundingClientRect().width ?? 0,
+          controlsWidth: controlsContentWidth,
+          controlCount: headerControlItems.length,
+        }),
+      )
+    }
+
+    updateTagMode()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(updateTagMode)
+    if (headerTailRef.current) observer.observe(headerTailRef.current)
+    if (fullTagsMeasureRef.current) observer.observe(fullTagsMeasureRef.current)
+    if (compactTagsMeasureRef.current) observer.observe(compactTagsMeasureRef.current)
+    return () => observer.disconnect()
+  }, [controlsContentWidth, headerControlItems.length, tagMeasurementSignature])
+
+  const renderHeaderTags = (mode: ChatHeaderTagMode) => (
+    <>
+      {projectLabel && projectDisplayLabel && (
+        <span
+          title={projectLabel}
+          className={cn(
+            "inline-flex h-7 items-center justify-center rounded-md border text-[13px] font-medium leading-none",
+            mode === "compact" ? "w-7 shrink-0 p-0" : "min-w-0 gap-1.5 px-2.5",
+            mode === "minimal" ? "max-w-full" : mode === "full" && "max-w-[30ch] shrink-0",
+          )}
+          style={{
+            color: projectColor ?? undefined,
+            borderColor: projectColor
+              ? `color-mix(in srgb, ${projectColor} 45%, transparent)`
+              : undefined,
+            backgroundColor: projectColor
+              ? `color-mix(in srgb, ${projectColor} 14%, transparent)`
+              : undefined,
+          }}
+        >
+          <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {mode !== "compact" && <span className="min-w-0 truncate">{projectDisplayLabel}</span>}
+        </span>
+      )}
+      {mode !== "minimal" &&
+        chatTags.map((tag) => (
+          <ChatTagChip key={tag.id} tag={tag} header iconOnly={mode === "compact"} />
+        ))}
+      {mode !== "minimal" && providerName && (
+        <span
+          title={providerName}
+          className={cn(
+            "inline-flex h-7 shrink-0 items-center justify-center rounded-md border text-[13px] font-medium leading-none",
+            mode === "compact" ? "w-7 p-0" : "gap-1.5 px-2.5",
+            providerClassName,
+          )}
+        >
+          <ProviderChipIcon provider={provider} className="h-4 w-4 shrink-0" />
+          {mode === "full" && <span>{providerName}</span>}
+        </span>
+      )}
+      {mode !== "minimal" && workspaceBranch && (
+        <span
+          title={workspaceBranch}
+          className={cn(
+            "inline-flex h-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-muted/30 text-[13px] font-medium leading-none text-foreground/70",
+            mode === "compact" ? "w-7 p-0" : "max-w-32 gap-1.5 px-2.5",
+          )}
+        >
+          <GitBranch className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {mode === "full" && <span className="min-w-0 truncate">{workspaceBranch}</span>}
+        </span>
+      )}
+    </>
+  )
 
   return (
     <div
@@ -260,9 +311,6 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
         heightClass,
       )}
     >
-      {!isMobile && !hideHeadingIcon && (
-        <Folder className="h-[18px] w-[18px] shrink-0 text-foreground/80" aria-hidden />
-      )}
       {isEditing ? (
         <input
           ref={inputRef}
@@ -273,7 +321,8 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
           disabled={isSaving}
           placeholder={placeholder}
           className={cn(
-            "min-w-0 flex-1 h-full bg-transparent border-0 outline-none",
+            "min-w-0 h-full bg-transparent border-0 outline-none",
+            isMobile ? "flex-1" : "w-[40%] max-w-[40%] flex-none",
             isMobile ? "text-base" : "text-lg",
             "font-medium leading-none text-foreground",
           )}
@@ -283,7 +332,8 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
         <div
           onClick={handleClick}
           className={cn(
-            "flex h-full min-w-0 flex-1 items-center text-left",
+            "flex h-full min-w-0 items-center text-left",
+            isMobile ? "flex-1" : "w-[40%] max-w-[40%] flex-none",
             isMobile ? "text-base" : "text-lg",
             "font-medium leading-none",
             hasRealName ? "text-foreground cursor-pointer" : "cursor-default",
@@ -302,20 +352,51 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
         </div>
       )}
       {!isMobile && !isEditing && (
-        <ProgressiveOverflowRow
-          usageRatio={1}
-          menuLabel="More chat actions"
-          className="ml-auto w-full max-w-[68%] justify-end leading-none"
-          contentClassName="justify-end"
-          gap={8}
-          collapseOrder={headerCollapseOrder}
-          onHiddenIndexesChange={setHiddenHeaderIndexes}
+        <div
+          ref={headerTailRef}
+          className="relative ml-auto flex h-full min-w-0 flex-1 items-center justify-end gap-2 leading-none"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-          {headerOverflowItems.map(({ key, node }) => (
-            <Fragment key={key}>{node}</Fragment>
-          ))}
-        </ProgressiveOverflowRow>
+          <div
+            className={cn(
+              "flex items-center gap-2",
+              tagMode === "minimal" ? "min-w-0 flex-1" : "shrink-0",
+            )}
+          >
+            {renderHeaderTags(tagMode)}
+          </div>
+          <ProgressiveOverflowRow
+            usageRatio={1}
+            menuLabel="More chat actions"
+            className={cn(
+              "justify-end leading-none",
+              tagMode === "minimal" ? "shrink-0" : "min-w-0 flex-1",
+            )}
+            contentClassName="justify-end"
+            gap={8}
+            collapseOrder={headerCollapseOrder}
+            onContentWidthChange={setControlsContentWidth}
+            forceOverflow={tagMode === "minimal"}
+          >
+            {headerControlItems.map(({ key, node }) => (
+              <Fragment key={key}>{node}</Fragment>
+            ))}
+          </ProgressiveOverflowRow>
+          <div
+            ref={fullTagsMeasureRef}
+            aria-hidden="true"
+            className="pointer-events-none invisible absolute left-0 top-0 flex w-max items-center gap-2"
+          >
+            {renderHeaderTags("full")}
+          </div>
+          <div
+            ref={compactTagsMeasureRef}
+            aria-hidden="true"
+            className="pointer-events-none invisible absolute left-0 top-0 flex w-max items-center gap-2"
+          >
+            {renderHeaderTags("compact")}
+          </div>
+        </div>
       )}
     </div>
   )

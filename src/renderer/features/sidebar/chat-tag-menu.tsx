@@ -58,18 +58,39 @@ export function ChatTagIcon({ icon, className }: { icon?: string | null; classNa
   return Icon ? <Icon className={className} aria-hidden="true" /> : null
 }
 
-export function ChatTagChip({ tag, compact = false }: { tag: ChatTagView; compact?: boolean }) {
+export function ChatTagChip({
+  tag,
+  compact = false,
+  header = false,
+  iconOnly = false,
+}: {
+  tag: ChatTagView
+  compact?: boolean
+  header?: boolean
+  iconOnly?: boolean
+}) {
   return (
     <span
       title={tag.name}
       className={cn(
-        "inline-flex max-w-24 shrink-0 items-center truncate rounded border font-medium",
-        compact ? "h-4 px-1 text-[9px]" : "h-5 px-1.5 text-[10px]",
+        "inline-flex shrink-0 items-center rounded border font-medium",
+        header
+          ? iconOnly
+            ? "h-7 w-7 justify-center p-0"
+            : "h-7 max-w-28 px-2.5 text-[13px] leading-none"
+          : cn("max-w-24", compact ? "h-4 px-1 text-[9px]" : "h-5 px-1.5 text-[10px]"),
         tagStyles[tag.color] ?? tagStyles.slate,
       )}
     >
-      <ChatTagIcon icon={tag.icon} className="h-2.5 w-2.5 shrink-0" />
-      <span className={cn(tag.icon && "ml-1")}>{tag.name}</span>
+      {tag.icon ? (
+        <ChatTagIcon
+          icon={tag.icon}
+          className={cn("shrink-0", header ? "h-3.5 w-3.5" : "h-2.5 w-2.5")}
+        />
+      ) : (
+        iconOnly && <Tag className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      )}
+      {!iconOnly && <span className={cn("min-w-0 truncate", tag.icon && "ml-1")}>{tag.name}</span>}
     </span>
   )
 }

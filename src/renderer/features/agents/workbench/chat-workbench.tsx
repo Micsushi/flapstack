@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useCallback,
   memo,
   useMemo,
@@ -61,6 +62,7 @@ export const CHAT_WORKBENCH_MIN_CHAT_WIDTH = 350
 export const CHAT_WORKBENCH_MIN_CHAT_HEIGHT = 360
 export const CHAT_WORKBENCH_MIN_TERMINAL_WIDTH = 280
 export const CHAT_WORKBENCH_MIN_TERMINAL_HEIGHT = 180
+const CHAT_WORKBENCH_DIVIDER_SIZE = 4
 
 export type ChatWorkbenchChat = {
   id: string
@@ -144,6 +146,8 @@ function ChatWorkbenchComponent({
 }) {
   const shellRef = useRef<HTMLElement>(null)
   const [announcement, setAnnouncement] = useState("")
+  const [responsiveNoticeDismissed, setResponsiveNoticeDismissed] = useState(false)
+  const [responsiveNoticeTop, setResponsiveNoticeTop] = useState(8)
   const [savingWorkspace, setSavingWorkspace] = useState(false)
   const [measuredViewport, setMeasuredViewport] = useState<{
     width: number
@@ -186,6 +190,7 @@ function ChatWorkbenchComponent({
             ...(viewport ?? measuredViewport!),
             minPaneWidth: CHAT_WORKBENCH_MIN_CHAT_WIDTH,
             minPaneHeight: CHAT_WORKBENCH_MIN_CHAT_HEIGHT,
+            dividerSize: CHAT_WORKBENCH_DIVIDER_SIZE,
           })
         : {
             logicalLayout: renderedLayout,
@@ -197,6 +202,45 @@ function ChatWorkbenchComponent({
   const visibleLayout = projected.visibleLayout
   const visibleGroups = collectChatGroups(visibleLayout.root)
   const activeGroup = groups.find((group) => group.id === renderedLayout.activeGroupId) ?? groups[0]
+
+  useEffect(() => {
+    if (projected.collapsedGroupIds.length === 0) setResponsiveNoticeDismissed(false)
+  }, [projected.collapsedGroupIds.length])
+
+  useLayoutEffect(() => {
+    if (projected.collapsedGroupIds.length === 0 || responsiveNoticeDismissed) return
+    const shell = shellRef.current
+    if (!shell) return
+    let frame: number | null = null
+    let observedTitle: HTMLElement | null = null
+    const measure = () => {
+      frame = null
+      const title = shell.querySelector<HTMLElement>("[data-active-group] [data-chat-title]")
+      if (observer && title !== observedTitle) {
+        if (observedTitle) observer.unobserve(observedTitle)
+        if (title) observer.observe(title)
+        observedTitle = title
+      }
+      const shellRect = shell.getBoundingClientRect()
+      const nextTop = title
+        ? title.getBoundingClientRect().bottom + 8
+        : shellRect.top + (showPaneHeaders ? 48 : 8)
+      setResponsiveNoticeTop((current) => (current === nextTop ? current : nextTop))
+    }
+    const schedule = () => {
+      if (frame !== null) return
+      frame = requestAnimationFrame(measure)
+    }
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule)
+    observer?.observe(shell)
+    if (!observer) window.addEventListener("resize", schedule)
+    schedule()
+    return () => {
+      observer?.disconnect()
+      if (!observer) window.removeEventListener("resize", schedule)
+      if (frame !== null) cancelAnimationFrame(frame)
+    }
+  }, [projected.collapsedGroupIds.length, responsiveNoticeDismissed, showPaneHeaders])
 
   useEffect(() => {
     if (viewport) return
@@ -497,14 +541,24 @@ function ChatWorkbenchComponent({
       data-visible-groups={visibleGroups.length}
       data-collapsed-groups={projected.collapsedGroupIds.length}
     >
-      {projected.collapsedGroupIds.length > 0 && (
+      {projected.collapsedGroupIds.length > 0 && !responsiveNoticeDismissed && (
         <div
-          role="status"
-          className="absolute left-2 top-2 z-40 max-w-[min(28rem,calc(100%-1rem))] rounded-md border border-border bg-background/95 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm"
+          className="fixed left-1/2 z-[60] flex max-w-[min(28rem,calc(100vw-1rem))] -translate-x-1/2 items-start gap-2 rounded-md border border-border bg-background/95 py-1.5 pl-2.5 pr-1.5 text-xs text-muted-foreground shadow-sm"
+          style={{ top: responsiveNoticeTop }}
         >
-          {projected.collapsedGroupIds.length} Chat{" "}
-          {projected.collapsedGroupIds.length === 1 ? "pane is" : "panes are"} shown as tabs at this
-          size. Resize the window to restore the saved pane layout.
+          <span role="status">
+            {projected.collapsedGroupIds.length} Chat{" "}
+            {projected.collapsedGroupIds.length === 1 ? "pane is" : "panes are"} shown as tabs at
+            this size. Resize the window to restore the saved pane layout.
+          </span>
+          <button
+            type="button"
+            aria-label="Dismiss responsive layout notice"
+            className="-mr-0.5 -mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => setResponsiveNoticeDismissed(true)}
+          >
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
         </div>
       )}
       <WorkbenchNode

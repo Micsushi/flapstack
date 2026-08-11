@@ -9,6 +9,10 @@ import {
   resolveProgressiveVisibleCount,
   resolveProgressiveVisibleIndexes,
 } from "../src/renderer/components/progressive-overflow-row"
+import {
+  capProjectLabel,
+  resolveChatHeaderTagMode,
+} from "../src/renderer/features/agents/ui/chat-header-responsive"
 import { RuntimeSelector } from "../src/renderer/features/agents/runtime-settings/runtime-selector"
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -138,5 +142,35 @@ describe("progressive overflow", () => {
       document.body.click()
     })
     expect(document.body.contains(settingsPanel)).toBe(false)
+  })
+})
+
+describe("chat header tag priority", () => {
+  it("compacts tags before collapsing controls", () => {
+    expect(
+      resolveChatHeaderTagMode({
+        availableWidth: 360,
+        fullTagsWidth: 190,
+        compactTagsWidth: 84,
+        controlsWidth: 180,
+        controlCount: 4,
+      }),
+    ).toBe("compact")
+  })
+
+  it("keeps only the project tag when compact tags and overflow cannot fit", () => {
+    expect(
+      resolveChatHeaderTagMode({
+        availableWidth: 100,
+        fullTagsWidth: 240,
+        compactTagsWidth: 80,
+        controlsWidth: 180,
+        controlCount: 4,
+      }),
+    ).toBe("minimal")
+  })
+
+  it("caps the always-visible project label at 30 characters", () => {
+    expect(capProjectLabel("a".repeat(31))).toBe(`${"a".repeat(29)}\u2026`)
   })
 })

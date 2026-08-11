@@ -84,6 +84,7 @@ type ProgressiveOverflowRowProps = {
   style?: CSSProperties
   collapseOrder?: number[]
   onHiddenIndexesChange?: (indexes: number[]) => void
+  onContentWidthChange?: (width: number) => void
   forceOverflow?: boolean
   overflowLabels?: string[]
   overflowLayout?: "wrap" | "rows"
@@ -103,6 +104,7 @@ export function ProgressiveOverflowRow({
   style,
   collapseOrder,
   onHiddenIndexesChange,
+  onContentWidthChange,
   forceOverflow = false,
   overflowLabels,
   overflowLayout = "wrap",
@@ -149,6 +151,9 @@ export function ProgressiveOverflowRow({
       (_, index) => itemWidthsRef.current[index] ?? 0,
     )
     if (widths.some((width) => width <= 0)) return
+    onContentWidthChange?.(
+      widths.reduce((total, width) => total + width, 0) + Math.max(0, widths.length - 1) * gap,
+    )
     const nextVisibleIndexes = resolveProgressiveVisibleIndexes({
       containerWidth: row.getBoundingClientRect().width,
       itemWidths: widths,
@@ -170,6 +175,7 @@ export function ProgressiveOverflowRow({
     itemSignature,
     items.length,
     overflowWidth,
+    onContentWidthChange,
     stableCollapseOrder,
     usageRatio,
   ])

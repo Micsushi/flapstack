@@ -2098,6 +2098,14 @@ const ChatViewInner = memo(function ChatViewInner({
       return "#38bdf8"
     }
   }, [projectId])
+  const { data: tagAssignments = [] } = trpc.chats.listTagAssignments.useQuery()
+  const chatTags = useMemo(
+    () =>
+      tagAssignments
+        .filter((assignment) => assignment.chatId === parentChatId)
+        .map((assignment) => assignment.tag),
+    [parentChatId, tagAssignments],
+  )
   const providerMeta = getHarnessChipMeta(provider)
   const isAgentsSidebarOpen = useAtomValue(agentsSidebarOpenAtom)
 
@@ -5069,6 +5077,7 @@ const ChatViewInner = memo(function ChatViewInner({
         {/* Chat title - flex above scroll area (desktop only) */}
         {!isMobile && (
           <div
+            data-chat-title
             className={cn(
               "relative flex-shrink-0 border-b-2 border-border bg-background/95 py-2",
               isSubChatsSidebarOpen && "pt-[52px]",
@@ -5087,6 +5096,7 @@ const ChatViewInner = memo(function ChatViewInner({
               providerClassName={providerMeta.className}
               projectLabel={workspaceRepoName}
               projectColor={projectColor}
+              chatTags={chatTags}
               workspaceBranch={workspaceBranch}
               localFolderPath={localFolderPath}
               headerActions={isActive ? headerActions : undefined}
