@@ -158,6 +158,8 @@ import {
   CHAT_WORKBENCH_DRAG_MIME,
   CHAT_WORKBENCH_DRAG_SESSION_KEY,
   CHAT_WORKBENCH_EXTERNAL_GROUP_ID,
+  CHAT_WORKBENCH_SIDEBAR_DRAG_END_EVENT,
+  CHAT_WORKBENCH_SIDEBAR_DRAG_START_EVENT,
 } from "../../../shared/chat-workbench"
 import {
   CHAT_WORKBENCH_NAVIGATION_CHANGE_EVENT,
@@ -169,6 +171,7 @@ import {
 } from "../../../shared/chat-workbench-navigation"
 import { AgentsHelpPopover } from "../agents/components/agents-help-popover"
 import { getPlatform, getShortcutKey, isDesktopApp } from "../../lib/utils/platform"
+import { recordAppAction } from "../../lib/app-action-history"
 import { useResolvedHotkeyDisplay, useResolvedHotkeyDisplayWithAlt } from "../../lib/hotkeys"
 import { pluralize } from "../agents/utils/pluralize"
 import {
@@ -201,7 +204,9 @@ import {
 } from "./chat-move-destinations"
 import {
   moveIdInOrder,
+  moveProjectToCustomSidebarSection,
   orderSidebarProjects,
+  parseCustomSidebarProjectSections,
   resolveBoundaryHighlightIds,
   resolveMoveIndicatorIds,
   resolveSidebarDragCursor,
@@ -210,11 +215,18 @@ import {
   resolveTaskGroupDropTarget,
   resolveTaskHeaderDropPosition,
   type DragInsertPosition,
+  type CustomSidebarProjectSection,
   type SidebarProjectOrder,
   type SidebarDropPosition,
 } from "./sidebar-ordering"
 import { getNonMainWorktreeLabel } from "./worktree-chip"
 import { ChatTagChip, ChatTagSubmenu, type ChatTagView } from "./chat-tag-menu"
+import {
+  AgentChatLabelBadge,
+  AgentChatWaitBadge,
+  type AgentChatLabelView,
+  type AgentChatWaitView,
+} from "./agent-chat-badge"
 import { RepositoryOverviewDialog } from "./repository-overview-dialog"
 import {
   assignStableProjectColors,
@@ -292,8 +304,35 @@ const SCOPED_CHAT_BACKGROUND_OPACITY = 0.09
 const SCOPED_CHAT_BACKGROUND_HOVER_OPACITY = 0.14
 const SIDEBAR_POINTER_DRAG_THRESHOLD = 4
 const QUICK_ACCESS_PROJECTS_STORAGE_KEY = "flapstack-sidebar-quick-access-projects"
+const CUSTOM_PROJECT_SECTIONS_STORAGE_KEY = "flapstack-sidebar-custom-project-sections"
 const QUICK_ACCESS_PROJECT_DROP_KIND = "quick-access-project"
 const REGULAR_PROJECT_DROP_KIND = "regular-project"
+const CUSTOM_PROJECT_DROP_KIND = "custom-project-section"
+
+type ProjectOrganizationSnapshot = {
+  quickAccessProjectIds: Set<string>
+  customProjectSections: CustomSidebarProjectSection[]
+}
+
+function cloneProjectOrganization(
+  snapshot: ProjectOrganizationSnapshot,
+): ProjectOrganizationSnapshot {
+  return {
+    quickAccessProjectIds: new Set(snapshot.quickAccessProjectIds),
+    customProjectSections: snapshot.customProjectSections.map((section) => ({
+      ...section,
+      projectIds: [...section.projectIds],
+    })),
+  }
+}
+
+function projectOrganizationKey(snapshot: ProjectOrganizationSnapshot) {
+  return JSON.stringify({
+    quickAccessProjectIds: [...snapshot.quickAccessProjectIds].sort(),
+    customProjectSections: snapshot.customProjectSections,
+  })
+}
+
 const SIDEBAR_DISCLOSURE_EASE = [0.16, 1, 0.3, 1] as const
 const PROJECT_CHILD_MOTION_VARIANTS = {
   collapsed: {
@@ -907,6 +946,8 @@ const AgentChatItem = React.memo(function AgentChatItem({
   parentChatId,
   chatScope,
   chatTags,
+  chatAgentLabels,
+  chatAgentWait,
   globalIndex,
   isSelected,
   isLoading,
@@ -976,6 +1017,8 @@ const AgentChatItem = React.memo(function AgentChatItem({
   parentChatId?: string | null
   chatScope?: "global" | "project" | "task" | null
   chatTags: ChatTagView[]
+  chatAgentLabels: AgentChatLabelView[]
+  chatAgentWait?: AgentChatWaitView
   globalIndex: number
   isSelected: boolean
   isLoading: boolean
@@ -1131,12 +1174,37 @@ const AgentChatItem = React.memo(function AgentChatItem({
               chatId,
               groupId: CHAT_WORKBENCH_EXTERNAL_GROUP_ID,
               sourceWindowId: getWindowId(),
+              projectId: chatProjectId || undefined,
             }
             const serialized = JSON.stringify(source)
             event.dataTransfer.setData(CHAT_WORKBENCH_DRAG_MIME, serialized)
-            localStorage.setItem(CHAT_WORKBENCH_DRAG_SESSION_KEY, serialized)
+            try {
+              localStorage.setItem(CHAT_WORKBENCH_DRAG_SESSION_KEY, serialized)
+            } catch {
+              // Native dataTransfer remains the primary in-window path.
+            }
+            window.dispatchEvent(
+              new CustomEvent(CHAT_WORKBENCH_SIDEBAR_DRAG_START_EVENT, {
+                detail: { source, screenX: event.screenX, screenY: event.screenY },
+              }),
+            )
           }}
-          onDragEnd={() => localStorage.removeItem(CHAT_WORKBENCH_DRAG_SESSION_KEY)}
+          onDragEnd={(event) => {
+            try {
+              localStorage.removeItem(CHAT_WORKBENCH_DRAG_SESSION_KEY)
+            } catch {
+              // Ignore unavailable storage in restricted renderer contexts.
+            }
+            window.dispatchEvent(
+              new CustomEvent(CHAT_WORKBENCH_SIDEBAR_DRAG_END_EVENT, {
+                detail: {
+                  dropEffect: event.dataTransfer.dropEffect,
+                  screenX: event.screenX,
+                  screenY: event.screenY,
+                },
+              }),
+            )
+          }}
           onPointerDown={handlePointerDragStart}
           onClick={(e) => {
             if (suppressClickRef.current) {
@@ -1579,6 +1647,10 @@ const AgentChatItem = React.memo(function AgentChatItem({
                     )}
                   </div>
                 )}
+                {chatAgentWait && <AgentChatWaitBadge wait={chatAgentWait} />}
+                {chatAgentLabels.slice(0, 1).map((label) => (
+                  <AgentChatLabelBadge key={label.key} label={label} />
+                ))}
                 {chatTags.slice(0, 3).map((tag) => (
                   <ChatTagChip key={tag.id} tag={tag} compact />
                 ))}
@@ -1923,6 +1995,8 @@ interface ChatListSectionProps {
     worktreePath?: string | null
     meta?: { repository?: string; branch?: string | null } | null
     tags: ChatTagView[]
+    agentLabels: AgentChatLabelView[]
+    agentWait?: AgentChatWaitView
   }>
   selectedChatId: string | null
   selectedChatIsRemote: boolean
@@ -2866,6 +2940,8 @@ const ChatListSection = React.memo(function ChatListSection({
                       parentChatId={chat.parentChatId}
                       chatScope={chat.scope}
                       chatTags={chat.tags ?? []}
+                      chatAgentLabels={chat.agentLabels ?? []}
+                      chatAgentWait={chat.agentWait}
                       globalIndex={globalIndex}
                       isSelected={isSelected}
                       isLoading={isLoading}
@@ -3243,6 +3319,9 @@ export function AgentsSidebar({
     id: string
     name: string
   } | null>(null)
+  const [projectSectionDialog, setProjectSectionDialog] = useState<
+    { mode: "create" } | { mode: "rename"; sectionId: string } | null
+  >(null)
 
   // Confirm archive dialog state
   const [confirmArchiveDialogOpen, setConfirmArchiveDialogOpen] = useState(false)
@@ -3279,6 +3358,34 @@ export function AgentsSidebar({
       return new Set()
     }
   })
+  const [customProjectSections, setCustomProjectSections] = useState<CustomSidebarProjectSection[]>(
+    () =>
+      parseCustomSidebarProjectSections(
+        localStorage.getItem(CUSTOM_PROJECT_SECTIONS_STORAGE_KEY),
+      ).map((section) => ({
+        ...section,
+        projectIds: section.projectIds.filter((projectId) => !quickAccessProjectIds.has(projectId)),
+      })),
+  )
+  const applyProjectOrganization = useCallback((snapshot: ProjectOrganizationSnapshot) => {
+    const cloned = cloneProjectOrganization(snapshot)
+    setQuickAccessProjectIds(cloned.quickAccessProjectIds)
+    setCustomProjectSections(cloned.customProjectSections)
+  }, [])
+  const recordProjectOrganizationChange = useCallback(
+    (label: string, next: ProjectOrganizationSnapshot) => {
+      const before = cloneProjectOrganization({ quickAccessProjectIds, customProjectSections })
+      const after = cloneProjectOrganization(next)
+      if (projectOrganizationKey(before) === projectOrganizationKey(after)) return
+      applyProjectOrganization(after)
+      recordAppAction({
+        label,
+        undo: () => applyProjectOrganization(before),
+        redo: () => applyProjectOrganization(after),
+      })
+    },
+    [applyProjectOrganization, customProjectSections, quickAccessProjectIds],
+  )
   const [projectColorsById, setProjectColorsById] = useState<Record<string, string>>(() => {
     try {
       const storedProjectColors = localStorage.getItem("flapstack-sidebar-project-colors")
@@ -3371,6 +3478,9 @@ export function AgentsSidebar({
   // Fetch all local chats (no project filter)
   const { data: localChats } = trpc.chats.list.useQuery({})
   const { data: tagAssignments = [] } = trpc.chats.listTagAssignments.useQuery()
+  const { data: agentMetadata } = trpc.chats.listAgentMetadata.useQuery(undefined, {
+    refetchInterval: 2_000,
+  })
   const chatTagsByChat = useMemo(() => {
     const result = new Map<string, ChatTagView[]>()
     for (const assignment of tagAssignments) {
@@ -3380,6 +3490,19 @@ export function AgentsSidebar({
     }
     return result
   }, [tagAssignments])
+  const agentLabelsByChat = useMemo(() => {
+    const result = new Map<string, AgentChatLabelView[]>()
+    for (const label of agentMetadata?.labels ?? []) {
+      const labels = result.get(label.chatId) ?? []
+      labels.push(label)
+      result.set(label.chatId, labels)
+    }
+    return result
+  }, [agentMetadata?.labels])
+  const agentWaitByChat = useMemo(
+    () => new Map((agentMetadata?.waits ?? []).map((wait) => [wait.chatId, wait])),
+    [agentMetadata?.waits],
+  )
   const { data: automationInbox } = trpc.automations.inbox.useQuery(
     { unreadOnly: true, limit: 1 },
     { refetchInterval: 5_000, enabled: betaFeatures.automations },
@@ -3420,6 +3543,8 @@ export function AgentsSidebar({
       isRemote: boolean
       pinnedAt?: Date | null
       tags: ChatTagView[]
+      agentLabels: AgentChatLabelView[]
+      agentWait?: AgentChatWaitView
     }> = []
 
     // Add local chats
@@ -3444,6 +3569,8 @@ export function AgentsSidebar({
           prNumber: chat.prNumber,
           pinnedAt: chat.pinnedAt,
           tags: chatTagsByChat.get(chat.id) ?? [],
+          agentLabels: agentLabelsByChat.get(chat.id) ?? [],
+          agentWait: agentWaitByChat.get(chat.id),
           isRemote: false,
         })
       }
@@ -3474,6 +3601,7 @@ export function AgentsSidebar({
           isRemote: true,
           pinnedAt: null,
           tags: [],
+          agentLabels: [],
         })
       }
     }
@@ -3486,7 +3614,7 @@ export function AgentsSidebar({
     })
 
     return unified
-  }, [chatTagsByChat, localChats, remoteChats])
+  }, [agentLabelsByChat, agentWaitByChat, chatTagsByChat, localChats, remoteChats])
 
   const openSubChatIdsByChatRef = useRef(new Map<string, string[]>())
   const [allOpenSubChatIds, setAllOpenSubChatIds] = useState<string[]>([])
@@ -3569,6 +3697,7 @@ export function AgentsSidebar({
 
   // Unified undo stack for workspaces and sub-chats (Jotai atom)
   const [undoStack, setUndoStack] = useAtom(undoStackAtom)
+  const replayingActionHistoryRef = useRef(false)
 
   // Restore chat mutation (for undo)
   const restoreChatMutation = trpc.chats.restore.useMutation({
@@ -3672,28 +3801,13 @@ export function AgentsSidebar({
     [setUndoStack],
   )
 
-  const removeLifecycleFromStack = useCallback(
-    (type: "project" | "task", id: string) => {
-      setUndoStack((prev) => {
-        const index = prev.findIndex((item) => {
-          if (type === "project") return item.type === "project" && item.projectId === id
-          return item.type === "task" && item.taskId === id
-        })
-        if (index !== -1) {
-          clearTimeout(prev[index].timeoutId)
-          return [...prev.slice(0, index), ...prev.slice(index + 1)]
-        }
-        return prev
-      })
-    },
-    [setUndoStack],
-  )
-
   // Remote archive mutations (for sandbox mode)
   const archiveRemoteChatMutation = useArchiveRemoteChat()
   const archiveRemoteChatsBatchMutation = useArchiveRemoteChatsBatch()
   const restoreRemoteChatMutation = useRestoreRemoteChat()
   const renameRemoteChatMutation = useRenameRemoteChat()
+
+  const replayArchiveChatRef = useRef<((input: { id: string }) => Promise<unknown>) | null>(null)
 
   // Archive chat mutation
   const archiveChatMutation = trpc.chats.archive.useMutation({
@@ -3739,22 +3853,30 @@ export function AgentsSidebar({
         }
       }
 
-      // Clear after 10 seconds (Cmd+Z window)
-      const timeoutId = setTimeout(() => {
-        removeWorkspaceFromStack(variables.id)
-      }, 10000)
-
-      // Add to unified undo stack for Cmd+Z
-      setUndoStack((prev) => [
-        ...prev,
-        {
-          type: "workspace",
-          chatId: variables.id,
-          timeoutId,
-        },
-      ])
+      if (!replayingActionHistoryRef.current) {
+        recordAppAction({
+          label: "Archive Chat",
+          undo: async () => {
+            replayingActionHistoryRef.current = true
+            try {
+              await restoreChatMutation.mutateAsync({ id: variables.id })
+            } finally {
+              replayingActionHistoryRef.current = false
+            }
+          },
+          redo: async () => {
+            replayingActionHistoryRef.current = true
+            try {
+              await replayArchiveChatRef.current?.({ id: variables.id })
+            } finally {
+              replayingActionHistoryRef.current = false
+            }
+          },
+        })
+      }
     },
   })
+  replayArchiveChatRef.current = archiveChatMutation.mutateAsync
 
   // Cmd+Z to undo archive (supports multiple undos for workspaces AND sub-chats)
   useEffect(() => {
@@ -3813,6 +3935,10 @@ export function AgentsSidebar({
     setSelectedChatId,
   ])
 
+  const replayArchiveChatsBatchRef = useRef<
+    ((input: { chatIds: string[] }) => Promise<unknown>) | null
+  >(null)
+
   // Batch archive mutation
   const archiveChatsBatchMutation = trpc.chats.archiveBatch.useMutation({
     onSuccess: (_, variables) => {
@@ -3828,16 +3954,32 @@ export function AgentsSidebar({
       utils.chats.list.invalidate()
       utils.chats.listArchived.invalidate()
 
-      // Add each chat to unified undo stack for Cmd+Z
-      const newItems: UndoItem[] = variables.chatIds.map((chatId) => {
-        const timeoutId = setTimeout(() => {
-          removeWorkspaceFromStack(chatId)
-        }, 10000)
-        return { type: "workspace" as const, chatId, timeoutId }
-      })
-      setUndoStack((prev) => [...prev, ...newItems])
+      if (!replayingActionHistoryRef.current) {
+        recordAppAction({
+          label: variables.chatIds.length === 1 ? "Archive Chat" : "Archive Chats",
+          undo: async () => {
+            replayingActionHistoryRef.current = true
+            try {
+              await Promise.all(
+                variables.chatIds.map((id) => restoreChatMutation.mutateAsync({ id })),
+              )
+            } finally {
+              replayingActionHistoryRef.current = false
+            }
+          },
+          redo: async () => {
+            replayingActionHistoryRef.current = true
+            try {
+              await replayArchiveChatsBatchRef.current?.({ chatIds: variables.chatIds })
+            } finally {
+              replayingActionHistoryRef.current = false
+            }
+          },
+        })
+      }
     },
   })
+  replayArchiveChatsBatchRef.current = archiveChatsBatchMutation.mutateAsync
 
   // Reset selected chat when project changes (but not on initial load)
   const prevProjectIdRef = useRef<string | null | undefined>(undefined)
@@ -3946,6 +4088,10 @@ export function AgentsSidebar({
   }, [quickAccessProjectIds])
 
   useEffect(() => {
+    localStorage.setItem(CUSTOM_PROJECT_SECTIONS_STORAGE_KEY, JSON.stringify(customProjectSections))
+  }, [customProjectSections])
+
+  useEffect(() => {
     if (!projects?.length) return
     setProjectColorsById((current) => assignStableProjectColors(projects, current))
   }, [projects])
@@ -3985,6 +4131,12 @@ export function AgentsSidebar({
     onError: () => toast.error("Failed to unpin chat"),
   })
 
+  const moveHistoryRef = useRef(
+    new Map<string, { previous: ChatMoveTarget; next: ChatMoveTarget }>(),
+  )
+  const replayMoveRef = useRef<
+    ((input: ReturnType<typeof toChatMoveMutationInput>) => Promise<unknown>) | null
+  >(null)
   const moveChatMutation = trpc.chats.move.useMutation({
     onSuccess: async (movedChat, variables) => {
       await Promise.all([
@@ -4051,9 +4203,28 @@ export function AgentsSidebar({
         return target.taskId === variables.taskId
       })
       toast.success(destination ? `Chat moved to ${destination.label}` : "Chat moved")
+
+      const move = moveHistoryRef.current.get(variables.id)
+      moveHistoryRef.current.delete(variables.id)
+      if (move && !replayingActionHistoryRef.current) {
+        const replay = async (target: ChatMoveTarget) => {
+          replayingActionHistoryRef.current = true
+          try {
+            await replayMoveRef.current?.(toChatMoveMutationInput(variables.id, target))
+          } finally {
+            replayingActionHistoryRef.current = false
+          }
+        }
+        recordAppAction({
+          label: "Move Chat",
+          undo: () => replay(move.previous),
+          redo: () => replay(move.next),
+        })
+      }
     },
     onError: (error) => toast.error(error.message || "Failed to move chat"),
   })
+  replayMoveRef.current = moveChatMutation.mutateAsync
 
   const handleMoveChat = useCallback(
     (chatId: string, requestedTarget: ChatMoveTarget) => {
@@ -4080,7 +4251,20 @@ export function AgentsSidebar({
         return
       }
 
-      moveChatMutation.mutate(toChatMoveMutationInput(chatId, target))
+      const previous = moveDestinations.find((candidate) =>
+        isCurrentChatMoveTarget(
+          { scope: chat.scope, projectId: chat.projectId, taskId: chat.taskId },
+          candidate,
+        ),
+      )
+      if (!previous) {
+        toast.error("The current Chat location is no longer available")
+        return
+      }
+      moveHistoryRef.current.set(chatId, { previous, next: target })
+      moveChatMutation.mutate(toChatMoveMutationInput(chatId, target), {
+        onError: () => moveHistoryRef.current.delete(chatId),
+      })
     },
     [agentChats, moveChatMutation, moveDestinations],
   )
@@ -4099,6 +4283,7 @@ export function AgentsSidebar({
     onError: () => toast.error("Failed to unpin project"),
   })
 
+  const replayArchiveProjectRef = useRef<((input: { id: string }) => Promise<unknown>) | null>(null)
   const archiveProjectMutation = trpc.projects.archive.useMutation({
     onSuccess: (_, variables) => {
       utils.projects.list.invalidate()
@@ -4114,23 +4299,33 @@ export function AgentsSidebar({
         setSelectedChatId(null)
       }
 
-      const timeoutId = setTimeout(() => {
-        removeLifecycleFromStack("project", variables.id)
-      }, 10000)
-      setUndoStack((prev) => [...prev, { type: "project", projectId: variables.id, timeoutId }])
-
-      toast.success("Project archived", {
-        action: {
-          label: "Undo",
-          onClick: () => {
-            removeLifecycleFromStack("project", variables.id)
-            restoreProjectMutation.mutate({ id: variables.id })
+      if (!replayingActionHistoryRef.current) {
+        recordAppAction({
+          label: "Archive project",
+          undo: async () => {
+            replayingActionHistoryRef.current = true
+            try {
+              await restoreProjectMutation.mutateAsync({ id: variables.id })
+            } finally {
+              replayingActionHistoryRef.current = false
+            }
           },
-        },
-      })
+          redo: async () => {
+            replayingActionHistoryRef.current = true
+            try {
+              await replayArchiveProjectRef.current?.({ id: variables.id })
+            } finally {
+              replayingActionHistoryRef.current = false
+            }
+          },
+        })
+      }
+
+      toast.success("Project archived")
     },
     onError: () => toast.error("Failed to archive project"),
   })
+  replayArchiveProjectRef.current = archiveProjectMutation.mutateAsync
 
   const pinTaskMutation = trpc.tasks.pin.useMutation({
     onSuccess: () => {
@@ -4146,6 +4341,7 @@ export function AgentsSidebar({
     onError: () => toast.error("Failed to unpin task"),
   })
 
+  const replayArchiveTaskRef = useRef<((input: { id: string }) => Promise<unknown>) | null>(null)
   const archiveTaskMutation = trpc.tasks.archive.useMutation({
     onSuccess: (_, variables) => {
       utils.tasks.list.invalidate()
@@ -4159,23 +4355,33 @@ export function AgentsSidebar({
         setSelectedChatId(null)
       }
 
-      const timeoutId = setTimeout(() => {
-        removeLifecycleFromStack("task", variables.id)
-      }, 10000)
-      setUndoStack((prev) => [...prev, { type: "task", taskId: variables.id, timeoutId }])
-
-      toast.success("Task archived", {
-        action: {
-          label: "Undo",
-          onClick: () => {
-            removeLifecycleFromStack("task", variables.id)
-            restoreTaskMutation.mutate({ id: variables.id })
+      if (!replayingActionHistoryRef.current) {
+        recordAppAction({
+          label: "Archive task",
+          undo: async () => {
+            replayingActionHistoryRef.current = true
+            try {
+              await restoreTaskMutation.mutateAsync({ id: variables.id })
+            } finally {
+              replayingActionHistoryRef.current = false
+            }
           },
-        },
-      })
+          redo: async () => {
+            replayingActionHistoryRef.current = true
+            try {
+              await replayArchiveTaskRef.current?.({ id: variables.id })
+            } finally {
+              replayingActionHistoryRef.current = false
+            }
+          },
+        })
+      }
+
+      toast.success("Task archived")
     },
     onError: () => toast.error("Failed to archive task"),
   })
+  replayArchiveTaskRef.current = archiveTaskMutation.mutateAsync
 
   const handleToggleLifecyclePin = useCallback(
     (type: "project" | "task", id: string, isPinned: boolean) => {
@@ -4285,16 +4491,40 @@ export function AgentsSidebar({
     })
   }, [])
 
-  const handleChangeProjectColor = useCallback((projectId: string, color: string) => {
-    const normalizedColor = normalizeHexColor(color)
-    setProjectColorsById((prev) => ({
-      ...prev,
-      [projectId]: isReservedArchivedAccentColor(normalizedColor)
+  const handleChangeProjectColor = useCallback(
+    (projectId: string, color: string) => {
+      const previousColor = projectColorsById[projectId]
+      const wasManual = manualProjectColorIds.has(projectId)
+      const normalizedColor = normalizeHexColor(color)
+      const nextColor = isReservedArchivedAccentColor(normalizedColor)
         ? DEFAULT_PROJECT_COLOR
-        : normalizedColor,
-    }))
-    setManualProjectColorIds((prev) => new Set(prev).add(projectId))
-  }, [])
+        : normalizedColor
+      if (previousColor === nextColor && wasManual) return
+
+      const applyColor = (value: string | undefined, isManual: boolean) => {
+        setProjectColorsById((current) => {
+          const next = { ...current }
+          if (value === undefined) delete next[projectId]
+          else next[projectId] = value
+          return next
+        })
+        setManualProjectColorIds((current) => {
+          const next = new Set(current)
+          if (isManual) next.add(projectId)
+          else next.delete(projectId)
+          return next
+        })
+      }
+
+      applyColor(nextColor, true)
+      recordAppAction({
+        label: "Change project color",
+        undo: () => applyColor(previousColor, wasManual),
+        redo: () => applyColor(nextColor, true),
+      })
+    },
+    [manualProjectColorIds, projectColorsById],
+  )
 
   const handleRenameClick = useCallback(
     (chat: { id: string; name: string | null; isRemote?: boolean }) => {
@@ -4357,6 +4587,15 @@ export function AgentsSidebar({
           throw new Error("Failed to rename local chat")
         }
       }
+      const rename = (name: string) =>
+        isRemote
+          ? renameRemoteChatMutation.mutateAsync({ chatId, name })
+          : renameChatMutation.mutateAsync({ id: chatId, name })
+      recordAppAction({
+        label: "Rename Chat",
+        undo: () => rename(oldName),
+        redo: () => rename(newName),
+      })
       setRenameDialogOpen(false)
     } catch (error) {
       console.error("[handleRenameSave] Rename failed:", error)
@@ -4821,6 +5060,17 @@ export function AgentsSidebar({
     [crossScopeMoveEnabled, getCrossScopeDropTarget, getDraggedLocalChat],
   )
 
+  const getProjectContainerId = useCallback(
+    (projectId: string) => {
+      if (quickAccessProjectIds.has(projectId)) return "quick-access"
+      return (
+        customProjectSections.find((section) => section.projectIds.includes(projectId))?.id ??
+        "projects"
+      )
+    },
+    [customProjectSections, quickAccessProjectIds],
+  )
+
   const getReorderContext = useCallback(
     (kind: string, fromId: string, toId: string): { key: string; activeIds: string[] } | null => {
       const samePinGroup = (fromPinned: boolean, toPinned: boolean) => fromPinned === toPinned
@@ -4830,17 +5080,15 @@ export function AgentsSidebar({
         const fromProject = projects?.find((project) => project.id === fromId)
         const toProject = projects?.find((project) => project.id === toId)
         if (!fromProject || !toProject) return null
-        const fromQuickAccess = quickAccessProjectIds.has(fromId)
-        if (fromQuickAccess !== quickAccessProjectIds.has(toId)) return null
+        const containerId = getProjectContainerId(fromId)
+        if (containerId !== getProjectContainerId(toId)) return null
         const fromPinned = Boolean(fromProject.pinnedAt)
         const toPinned = Boolean(toProject.pinnedAt)
         if (!samePinGroup(fromPinned, toPinned)) return null
         const activeIds = chatSections
           .filter((section) => section.kind === "project" && section.lifecycleTarget)
           .filter((section) => Boolean(section.lifecycleTarget?.isPinned) === fromPinned)
-          .filter(
-            (section) => quickAccessProjectIds.has(section.lifecycleTarget!.id) === fromQuickAccess,
-          )
+          .filter((section) => getProjectContainerId(section.lifecycleTarget!.id) === containerId)
           .map((section) => section.lifecycleTarget!.id)
         return { key: "projects", activeIds }
       }
@@ -4978,10 +5226,10 @@ export function AgentsSidebar({
     [
       agentChats,
       chatSections,
+      getProjectContainerId,
       pinnedAgents,
       pinnedChatIds,
       projects,
-      quickAccessProjectIds,
       starredAgents,
       taggedAgents,
       tasks,
@@ -5068,7 +5316,9 @@ export function AgentsSidebar({
     ) => {
       if (
         dragged.kind === "project" &&
-        (targetKind === QUICK_ACCESS_PROJECT_DROP_KIND || targetKind === REGULAR_PROJECT_DROP_KIND)
+        (targetKind === QUICK_ACCESS_PROJECT_DROP_KIND ||
+          targetKind === REGULAR_PROJECT_DROP_KIND ||
+          targetKind === CUSTOM_PROJECT_DROP_KIND)
       ) {
         return { kind: targetKind, id: targetId, position: "inside" as const }
       }
@@ -5146,11 +5396,17 @@ export function AgentsSidebar({
       if (
         activeDraggingItem.kind === "project" &&
         (normalizedTarget.kind === QUICK_ACCESS_PROJECT_DROP_KIND ||
-          normalizedTarget.kind === REGULAR_PROJECT_DROP_KIND)
+          normalizedTarget.kind === REGULAR_PROJECT_DROP_KIND ||
+          normalizedTarget.kind === CUSTOM_PROJECT_DROP_KIND)
       ) {
-        const moveToQuickAccess = normalizedTarget.kind === QUICK_ACCESS_PROJECT_DROP_KIND
+        const targetContainerId =
+          normalizedTarget.kind === QUICK_ACCESS_PROJECT_DROP_KIND
+            ? "quick-access"
+            : normalizedTarget.kind === REGULAR_PROJECT_DROP_KIND
+              ? "projects"
+              : normalizedTarget.id
         setDragOverItemState(
-          quickAccessProjectIds.has(activeDraggingItem.id) === moveToQuickAccess
+          getProjectContainerId(activeDraggingItem.id) === targetContainerId
             ? null
             : normalizedTarget,
         )
@@ -5192,8 +5448,8 @@ export function AgentsSidebar({
       canMoveChatAcrossScope,
       draggingItem,
       getReorderContext,
+      getProjectContainerId,
       normalizeDropTarget,
-      quickAccessProjectIds,
       setDragOverItemState,
     ],
   )
@@ -5212,15 +5468,23 @@ export function AgentsSidebar({
       if (
         draggedItem.kind === "project" &&
         (dropTarget.kind === QUICK_ACCESS_PROJECT_DROP_KIND ||
-          dropTarget.kind === REGULAR_PROJECT_DROP_KIND)
+          dropTarget.kind === REGULAR_PROJECT_DROP_KIND ||
+          dropTarget.kind === CUSTOM_PROJECT_DROP_KIND)
       ) {
-        setQuickAccessProjectIds((current) =>
-          setProjectQuickAccessMembership(
-            current,
+        const targetCustomSectionId =
+          dropTarget.kind === CUSTOM_PROJECT_DROP_KIND ? dropTarget.id : null
+        recordProjectOrganizationChange("Move project", {
+          quickAccessProjectIds: setProjectQuickAccessMembership(
+            quickAccessProjectIds,
             draggedItem.id,
             dropTarget.kind === QUICK_ACCESS_PROJECT_DROP_KIND,
           ),
-        )
+          customProjectSections: moveProjectToCustomSidebarSection(
+            customProjectSections,
+            draggedItem.id,
+            targetCustomSectionId,
+          ),
+        })
         return
       }
 
@@ -5318,6 +5582,9 @@ export function AgentsSidebar({
       getDraggedLocalChat,
       getReorderContext,
       moveChatMutation,
+      customProjectSections,
+      quickAccessProjectIds,
+      recordProjectOrganizationChange,
     ],
   )
 
@@ -5904,11 +6171,97 @@ export function AgentsSidebar({
     [projects],
   )
 
-  const handleSetProjectQuickAccess = useCallback((projectId: string, isInQuickAccess: boolean) => {
-    setQuickAccessProjectIds((current) =>
-      setProjectQuickAccessMembership(current, projectId, isInQuickAccess),
-    )
-  }, [])
+  const handleSetProjectQuickAccess = useCallback(
+    (projectId: string, isInQuickAccess: boolean) => {
+      recordProjectOrganizationChange(
+        isInQuickAccess ? "Add project to Quick access" : "Move project",
+        {
+          quickAccessProjectIds: setProjectQuickAccessMembership(
+            quickAccessProjectIds,
+            projectId,
+            isInQuickAccess,
+          ),
+          customProjectSections: moveProjectToCustomSidebarSection(
+            customProjectSections,
+            projectId,
+            null,
+          ),
+        },
+      )
+    },
+    [customProjectSections, quickAccessProjectIds, recordProjectOrganizationChange],
+  )
+
+  const handleSaveProjectSection = useCallback(
+    async (name: string) => {
+      const normalizedName = name.trim()
+      if (normalizedName.length > 40) {
+        toast.error("Section names can be at most 40 characters")
+        throw new Error("Section name too long")
+      }
+      if (["quick access", "projects"].includes(normalizedName.toLocaleLowerCase())) {
+        toast.error("Choose a name other than Quick access or Projects")
+        throw new Error("Reserved section name")
+      }
+      const editingId =
+        projectSectionDialog?.mode === "rename" ? projectSectionDialog.sectionId : null
+      if (
+        customProjectSections.some(
+          (section) =>
+            section.id !== editingId &&
+            section.name.toLocaleLowerCase() === normalizedName.toLocaleLowerCase(),
+        )
+      ) {
+        toast.error(`A section named '${normalizedName}' already exists`)
+        throw new Error("Duplicate section name")
+      }
+
+      if (editingId) {
+        recordProjectOrganizationChange("Rename project section", {
+          quickAccessProjectIds,
+          customProjectSections: customProjectSections.map((section) =>
+            section.id === editingId ? { ...section, name: normalizedName } : section,
+          ),
+        })
+      } else {
+        recordProjectOrganizationChange("Create project section", {
+          quickAccessProjectIds,
+          customProjectSections: [
+            ...customProjectSections,
+            { id: crypto.randomUUID(), name: normalizedName, projectIds: [] },
+          ],
+        })
+      }
+    },
+    [
+      customProjectSections,
+      projectSectionDialog,
+      quickAccessProjectIds,
+      recordProjectOrganizationChange,
+    ],
+  )
+
+  const handleDeleteProjectSection = useCallback(
+    (sectionId: string) => {
+      const section = customProjectSections.find((candidate) => candidate.id === sectionId)
+      if (!section) return
+      recordProjectOrganizationChange("Delete project section", {
+        quickAccessProjectIds,
+        customProjectSections: customProjectSections.filter(
+          (candidate) => candidate.id !== sectionId,
+        ),
+      })
+      setCollapsedSectionIds((current) => {
+        const next = new Set(current)
+        next.delete(`custom-project-section:${sectionId}`)
+        return next
+      })
+      toast.success(`${section.name} deleted`, {
+        description: "Its projects moved to Projects.",
+      })
+    },
+    [customProjectSections, quickAccessProjectIds, recordProjectOrganizationChange],
+  )
 
   const openNewGlobalChat = useCallback(() => {
     triggerHaptic("light")
@@ -6686,9 +7039,9 @@ export function AgentsSidebar({
           section.lifecycleTarget?.type === "project"
             ? section.lifecycleTarget.id
             : section.parentProjectId
-        return !projectId || !quickAccessProjectIds.has(projectId)
+        return !projectId || getProjectContainerId(projectId) === "projects"
       }),
-    [quickAccessProjectIds, visibleChatSections],
+    [getProjectContainerId, visibleChatSections],
   )
 
   const visibleQuickAccessProjectSections = useMemo(
@@ -6699,9 +7052,25 @@ export function AgentsSidebar({
           section.lifecycleTarget?.type === "project"
             ? section.lifecycleTarget.id
             : section.parentProjectId
-        return Boolean(projectId && quickAccessProjectIds.has(projectId))
+        return Boolean(projectId && getProjectContainerId(projectId) === "quick-access")
       }),
-    [quickAccessProjectIds, visibleChatSections],
+    [getProjectContainerId, visibleChatSections],
+  )
+
+  const visibleCustomProjectSections = useMemo(
+    () =>
+      customProjectSections.map((customSection) => ({
+        ...customSection,
+        sections: visibleChatSections.filter((section) => {
+          if (section.kind !== "project" && section.kind !== "task") return false
+          const projectId =
+            section.lifecycleTarget?.type === "project"
+              ? section.lifecycleTarget.id
+              : section.parentProjectId
+          return Boolean(projectId && getProjectContainerId(projectId) === customSection.id)
+        }),
+      })),
+    [customProjectSections, getProjectContainerId, visibleChatSections],
   )
 
   const visibleOtherSections = useMemo(
@@ -7488,12 +7857,20 @@ export function AgentsSidebar({
                       <button
                         type="button"
                         className="flex h-5 w-5 items-center justify-center rounded-sm hover:bg-foreground/10 hover:text-foreground"
-                        aria-label="Order projects"
+                        aria-label="Projects options"
                       >
                         <MoreHorizontal className="h-3.5 w-3.5" />
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-52">
+                      <DropdownMenuItem
+                        className="gap-2"
+                        onSelect={() => setProjectSectionDialog({ mode: "create" })}
+                      >
+                        <ListPlus className="h-3.5 w-3.5 text-muted-foreground" />
+                        New section
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
                       <DropdownMenuItem onSelect={() => handleOrderProjects("name-asc")}>
                         Order A to Z
                       </DropdownMenuItem>
@@ -7569,6 +7946,81 @@ export function AgentsSidebar({
               </AnimatePresence>
             </div>
           </SidebarCollapsibleContent>
+          {visibleCustomProjectSections.map((customSection) => {
+            const collapsedId = `custom-project-section:${customSection.id}`
+            return (
+              <React.Fragment key={customSection.id}>
+                {!searchQuery && (
+                  <SidebarGroupHeader
+                    title={customSection.name}
+                    icon={FolderGit2}
+                    className="mt-3.5"
+                    isCollapsed={collapsedSectionIds.has(collapsedId)}
+                    onToggle={() => handleToggleSection(collapsedId)}
+                    dropTargetKind={CUSTOM_PROJECT_DROP_KIND}
+                    dropTargetId={customSection.id}
+                    isDropTargetActive={
+                      dragOverItem?.kind === CUSTOM_PROJECT_DROP_KIND &&
+                      dragOverItem.id === customSection.id
+                    }
+                    actions={
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex h-5 w-5 items-center justify-center rounded-sm hover:bg-foreground/10 hover:text-foreground"
+                            aria-label={`${customSection.name} section actions`}
+                          >
+                            <MoreHorizontal className="h-3.5 w-3.5" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-44">
+                          <DropdownMenuItem
+                            className="gap-2"
+                            onSelect={() =>
+                              setProjectSectionDialog({
+                                mode: "rename",
+                                sectionId: customSection.id,
+                              })
+                            }
+                          >
+                            <SquarePen className="h-3.5 w-3.5 text-muted-foreground" />
+                            Rename section
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="gap-2 text-destructive focus:text-destructive"
+                            onSelect={() => handleDeleteProjectSection(customSection.id)}
+                          >
+                            <TrashIcon className="h-3.5 w-3.5" />
+                            Delete section
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    }
+                  />
+                )}
+                <SidebarCollapsibleContent
+                  isOpen={Boolean(searchQuery) || !collapsedSectionIds.has(collapsedId)}
+                >
+                  <div className="mx-2">
+                    {!searchQuery && customSection.sections.length === 0 && (
+                      <div
+                        data-sidebar-empty-state="custom-project-section"
+                        className="mb-0.5 ml-7 flex h-7 items-center text-xs text-muted-foreground/60"
+                      >
+                        {draggingItem?.kind === "project" ? "Drop project here" : "No projects"}
+                      </div>
+                    )}
+                    <AnimatePresence initial={false} mode="popLayout">
+                      {customSection.sections.map((section, index) =>
+                        renderSidebarSection(section, index, customSection.sections.length),
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </SidebarCollapsibleContent>
+              </React.Fragment>
+            )
+          })}
           {(archiveSummary?.total ?? archivedLifecycleItems.length) > 0 && !searchQuery && (
             <div className="mb-4">
               <button
@@ -7896,6 +8348,21 @@ export function AgentsSidebar({
         isLoading={createTaskMutation.isPending}
         title={newTaskProject ? `New task for ${newTaskProject.name}` : "New task"}
         placeholder="Task name"
+      />
+
+      <RenameDialog
+        isOpen={Boolean(projectSectionDialog)}
+        onClose={() => setProjectSectionDialog(null)}
+        onSave={handleSaveProjectSection}
+        currentName={
+          projectSectionDialog?.mode === "rename"
+            ? (customProjectSections.find(
+                (section) => section.id === projectSectionDialog.sectionId,
+              )?.name ?? "")
+            : ""
+        }
+        title={projectSectionDialog?.mode === "rename" ? "Rename section" : "New section"}
+        placeholder="Section name"
       />
 
       {/* Confirm Archive Dialog */}

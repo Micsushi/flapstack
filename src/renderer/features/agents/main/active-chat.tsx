@@ -45,7 +45,10 @@ import { useShallow } from "zustand/react/shallow"
 import type { FileStatus } from "../../../../shared/changes-types"
 import { ChatTranscriptOverview } from "./chat-transcript-overview"
 import { buildTranscriptMarkers, type TranscriptMarker } from "./chat-transcript-overview-model"
-import { hydrateChatFromPersistedMessages } from "./chat-message-hydration"
+import {
+  hydrateChatFromPersistedMessages,
+  shouldAutoGenerateInitialResponse,
+} from "./chat-message-hydration"
 import { createPersistedMessageCache } from "./persisted-message-cache"
 import { normalizePersistedMessages } from "./normalize-persisted-messages"
 import { presentRunError } from "./run-error-presentation"
@@ -56,7 +59,11 @@ import {
 import { getQueryClient } from "../../../contexts/TRPCProvider"
 import { trackMessageSent } from "../../../lib/analytics"
 import {
+  chatAutoTaggingConfidenceAtom,
+  chatAutoTaggingEnabledAtom,
   chatSourceModeAtom,
+  chatTitleGenerationEnabledAtom,
+  chatTitleStyleAtom,
   defaultAgentModeAtom,
   isDesktopAtom,
   isFullscreenAtom,
@@ -130,6 +137,7 @@ import {
   pendingChatHistoryAtom,
   pendingMentionAtom,
   pendingPlanApprovalsAtom,
+  pendingInitialGenerationIdsAtom,
   pendingPrMessageAtom,
   pendingReviewMessageAtom,
   pendingUserQuestionsAtom,
@@ -308,8 +316,61 @@ const pendingSubChatCleanupTimers = new Map<string, ReturnType<typeof setTimeout
 
 function clearRuntimeCachesForSubChat(subChatId: string) {
   clearSubChatRuntimeCaches(subChatId)
+  persistedMessageCache.delete(subChatId)
+  persistedHydrationIdentities.delete(subChatId)
   scrollPositionCache.delete(subChatId)
 }
+
+// Releasing a sub-chat on unmount also drops its Chat instance and its parsed
+// transcript identity, so A -> B -> A had to reparse a possibly huge transcript
+// synchronously. Keep a few most-recently-viewed idle sub-chats resident and
+// evict past that window, which bounds memory without thrashing tab switches.
+const RETAINED_IDLE_SUB_CHATS = 3
+const idleSubChatLru: string[] = []
+
+function isSubChatReleasable(subChatId: string): boolean {
+  if ((mountedChatViewInnerCounts.get(subChatId) ?? 0) > 0) return false
+  if (useStreamingStatusStore.getState().isStreaming(subChatId)) return false
+  if ((useMessageQueueStore.getState().queues[subChatId]?.length ?? 0) > 0) return false
+  return true
+}
+
+function forgetIdleSubChat(subChatId: string) {
+  const index = idleSubChatLru.indexOf(subChatId)
+  if (index !== -1) idleSubChatLru.splice(index, 1)
+}
+
+/** A sub-chat became visible again: it is live, not a retention candidate. */
+function markSubChatLive(subChatId: string) {
+  forgetIdleSubChat(subChatId)
+}
+
+/**
+ * Mark a sub-chat idle and release whatever falls out of the retention window.
+ * Callers do not need to pre-check liveness: eviction re-checks at eviction time.
+ */
+function retireSubChat(subChatId: string) {
+  forgetIdleSubChat(subChatId)
+  idleSubChatLru.push(subChatId)
+
+  while (idleSubChatLru.length > RETAINED_IDLE_SUB_CHATS) {
+    const oldest = idleSubChatLru.shift()!
+    // A sub-chat that became live again is simply no longer a candidate.
+    if (!isSubChatReleasable(oldest)) continue
+    agentChatStore.delete(oldest)
+    clearRuntimeCachesForSubChat(oldest)
+  }
+}
+
+import.meta.hot?.dispose(() => {
+  persistedMessageCache.clear()
+  persistedHydrationIdentities.clear()
+  scrollPositionCache.clear()
+  for (const timer of pendingSubChatCleanupTimers.values()) clearTimeout(timer)
+  pendingSubChatCleanupTimers.clear()
+  mountedChatViewInnerCounts.clear()
+  idleSubChatLru.length = 0
+})
 
 function getDistanceFromScrollBottom(container: HTMLElement) {
   return Math.max(0, container.scrollHeight - container.scrollTop - container.clientHeight)
@@ -1836,6 +1897,10 @@ const ChatViewInner = memo(function ChatViewInner({
   const subChatStore = useAgentSubChatStoreApi()
   const hasTriggeredRenameRef = useRef(false)
   const hasTriggeredAutoGenerateRef = useRef(false)
+  const [pendingInitialGenerationIds, setPendingInitialGenerationIds] = useAtom(
+    pendingInitialGenerationIdsAtom,
+  )
+  const pendingInitialGeneration = pendingInitialGenerationIds.has(subChatId)
   const notifiedPendingQuestionIdsRef = useRef<Set<string>>(new Set())
   const isVisiblePane = isActive || isSplitPane
   const { notifyAgentNeedsInput } = useDesktopNotifications()
@@ -2099,12 +2164,23 @@ const ChatViewInner = memo(function ChatViewInner({
     }
   }, [projectId])
   const { data: tagAssignments = [] } = trpc.chats.listTagAssignments.useQuery()
+  const { data: agentMetadata } = trpc.chats.listAgentMetadata.useQuery(undefined, {
+    refetchInterval: 2_000,
+  })
   const chatTags = useMemo(
     () =>
       tagAssignments
         .filter((assignment) => assignment.chatId === parentChatId)
         .map((assignment) => assignment.tag),
     [parentChatId, tagAssignments],
+  )
+  const chatAgentLabels = useMemo(
+    () => (agentMetadata?.labels ?? []).filter((label) => label.chatId === parentChatId),
+    [agentMetadata?.labels, parentChatId],
+  )
+  const chatAgentWait = useMemo(
+    () => (agentMetadata?.waits ?? []).find((wait) => wait.chatId === parentChatId),
+    [agentMetadata?.waits, parentChatId],
   )
   const providerMeta = getHarnessChipMeta(provider)
   const isAgentsSidebarOpen = useAtomValue(agentsSidebarOpenAtom)
@@ -2164,6 +2240,7 @@ const ChatViewInner = memo(function ChatViewInner({
     const prevCount = mountedChatViewInnerCounts.get(subChatId) ?? 0
     const nextCount = prevCount + 1
     mountedChatViewInnerCounts.set(subChatId, nextCount)
+    markSubChatLive(subChatId)
 
     const pendingCleanup = pendingSubChatCleanupTimers.get(subChatId)
     if (pendingCleanup) {
@@ -2197,12 +2274,10 @@ const ChatViewInner = memo(function ChatViewInner({
           return
         }
 
-        const currentSubChatState = subChatStore.getState()
-        if (currentSubChatState.activeSubChatId === subChatId) return
         if (useStreamingStatusStore.getState().isStreaming(subChatId)) return
         if ((useMessageQueueStore.getState().queues[subChatId]?.length ?? 0) > 0) return
 
-        clearRuntimeCachesForSubChat(subChatId)
+        retireSubChat(subChatId)
       }, 100)
 
       pendingSubChatCleanupTimers.set(subChatId, timeoutId)
@@ -2473,7 +2548,9 @@ const ChatViewInner = memo(function ChatViewInner({
       direction: "backward",
       corruptionMode: "redacted-placeholder",
     },
-    { enabled: isActive, refetchInterval: isStreaming ? 1_000 : false },
+    // Polled while streaming, which is exactly when the main thread is busiest.
+    // A 100-row activity list is not perceptibly staler at 0.4 Hz than at 1 Hz.
+    { enabled: isActive, refetchInterval: isStreaming ? 2_500 : false },
   )
 
   // Ref for isStreaming to use in callbacks/effects that need fresh value
@@ -2502,6 +2579,7 @@ const ChatViewInner = memo(function ChatViewInner({
   const handleStop = useCallback(async () => {
     // Mark as manually aborted to prevent completion sound
     agentChatStore.setManuallyAborted(subChatId, true)
+    useMessageQueueStore.getState().holdQueue(subChatId)
     await stopRef.current()
   }, [subChatId])
 
@@ -2759,10 +2837,8 @@ const ChatViewInner = memo(function ChatViewInner({
         })
     }
     hydrate()
-    const interval = import.meta.env.DEV ? window.setInterval(hydrate, 500) : null
     return () => {
       disposed = true
-      if (interval !== null) window.clearInterval(interval)
     }
   }, [parentChatId, subChatId])
 
@@ -3876,12 +3952,20 @@ const ChatViewInner = memo(function ChatViewInner({
   // IMPORTANT: Skip if there's an active streamId (prevents double-generation on resume)
   useEffect(() => {
     if (
-      messages.length === 1 &&
-      status === "ready" &&
-      !streamId &&
-      !hasTriggeredAutoGenerateRef.current
+      !hasTriggeredAutoGenerateRef.current &&
+      shouldAutoGenerateInitialResponse({
+        messages,
+        status,
+        streamId,
+        pendingInitialGeneration,
+      })
     ) {
       hasTriggeredAutoGenerateRef.current = true
+      setPendingInitialGenerationIds((current) => {
+        const next = new Set(current)
+        next.delete(subChatId)
+        return next
+      })
       // Trigger rename for pre-populated initial message (from createAgentChat)
       if (!hasTriggeredRenameRef.current && isFirstSubChat) {
         const firstMsg = messages[0]
@@ -3895,7 +3979,17 @@ const ChatViewInner = memo(function ChatViewInner({
       }
       regenerate()
     }
-  }, [status, messages, regenerate, isFirstSubChat, onAutoRename, streamId, subChatId])
+  }, [
+    isFirstSubChat,
+    messages,
+    onAutoRename,
+    pendingInitialGeneration,
+    regenerate,
+    setPendingInitialGenerationIds,
+    status,
+    streamId,
+    subChatId,
+  ])
 
   // Initialize scroll position on mount or tab re-activation.
   // Strategy: restore saved position if user was scrolled up, otherwise scroll to bottom.
@@ -4336,9 +4430,11 @@ const ChatViewInner = memo(function ChatViewInner({
         // Keep following the live response without yanking the transcript before the message renders.
         shouldAutoScrollRef.current = true
 
+        const queueHold = useMessageQueueStore.getState().getQueueHold(subChatId)
         const sendPromise = sendMessageRef.current({ role: "user", parts })
         rememberMessagedProject()
         await sendPromise
+        useMessageQueueStore.getState().resumeQueue(subChatId, queueHold)
       } finally {
         if (!isStreamingNow) {
           sendInFlightRef.current = false
@@ -4449,9 +4545,11 @@ const ChatViewInner = memo(function ChatViewInner({
         // Keep following the live response without yanking the transcript before the message renders.
         shouldAutoScrollRef.current = true
 
+        const queueHold = useMessageQueueStore.getState().getQueueHold(subChatId)
         const sendPromise = sendMessageRef.current({ role: "user", parts })
         rememberMessagedProject()
         await sendPromise
+        useMessageQueueStore.getState().resumeQueue(subChatId, queueHold)
       } catch (error) {
         console.error("[handleSendFromQueue] Error sending queued message:", error)
         // Requeue the item at the front so it isn't lost
@@ -4641,9 +4739,11 @@ const ChatViewInner = memo(function ChatViewInner({
       // Keep following the live response without yanking the transcript before the message renders.
       shouldAutoScrollRef.current = true
 
+      const queueHold = useMessageQueueStore.getState().getQueueHold(subChatId)
       const sendPromise = sendMessageRef.current({ role: "user", parts })
       rememberMessagedProject()
       await sendPromise
+      useMessageQueueStore.getState().resumeQueue(subChatId, queueHold)
     } catch (error) {
       console.error("[handleForceSend] Error sending message:", error)
       // Restore editor content so the user can retry
@@ -5097,6 +5197,8 @@ const ChatViewInner = memo(function ChatViewInner({
               projectLabel={workspaceRepoName}
               projectColor={projectColor}
               chatTags={chatTags}
+              agentLabels={chatAgentLabels}
+              agentWait={chatAgentWait}
               workspaceBranch={workspaceBranch}
               localFolderPath={localFolderPath}
               headerActions={isActive ? headerActions : undefined}
@@ -5446,6 +5548,10 @@ function ChatViewScoped({
   const isFullscreen = useAtomValue(isFullscreenAtom)
   const sidebarOpen = useAtomValue(agentsSidebarOpenAtom)
   const selectedOllamaModel = useAtomValue(selectedOllamaModelAtom)
+  const chatTitleGenerationEnabled = useAtomValue(chatTitleGenerationEnabledAtom)
+  const chatTitleStyle = useAtomValue(chatTitleStyleAtom)
+  const chatAutoTaggingEnabled = useAtomValue(chatAutoTaggingEnabledAtom)
+  const chatAutoTaggingConfidence = useAtomValue(chatAutoTaggingConfidenceAtom)
   const { data: customClaudeCredentialStatus } = trpc.credentials.status.useQuery({
     id: "claude.custom-api-token",
   })
@@ -5673,6 +5779,11 @@ function ChatViewScoped({
   const prefetchedFileContents = diffCache.prefetchedFileContents
   const diffContent = diffCache.diffContent
 
+  // What we last wrote into the diff cache. getParsedDiff is re-polled on every
+  // filesystem event, so without this an unchanged diff still rebuilt the cache
+  // object and re-rendered this entire component every couple of seconds.
+  const appliedDiffRef = useRef<{ hash: string; hasContents: boolean } | null>(null)
+
   // Smart setters that update the cache
   const setDiffStats = useCallback(
     (val: any) => {
@@ -5696,6 +5807,10 @@ function ChatViewScoped({
 
   const setParsedFileDiffs = useCallback(
     (files: ParsedDiffFile[] | null) => {
+      // Clearing the parsed diff (commit, workspace reset) means the cache no
+      // longer reflects any fetched hash, so the next fetch must re-apply even
+      // if the diff itself is unchanged.
+      if (files === null) appliedDiffRef.current = null
       setDiffCache((prev) => ({ ...prev, parsedFileDiffs: files as any }))
     },
     [setDiffCache],
@@ -5703,14 +5818,39 @@ function ChatViewScoped({
 
   const setPrefetchedFileContents = useCallback(
     (contents: Record<string, string>) => {
-      setDiffCache((prev) => ({ ...prev, prefetchedFileContents: contents }))
+      setDiffCache((prev) => {
+        const previous = prev.prefetchedFileContents
+        // Clearing an already-empty map is the common case on every refresh of a
+        // chat with no prefetched contents; returning `prev` avoids a re-render.
+        if (
+          previous === contents ||
+          (previous !== undefined &&
+            Object.keys(previous).length === 0 &&
+            Object.keys(contents).length === 0)
+        ) {
+          return prev
+        }
+        return { ...prev, prefetchedFileContents: contents }
+      })
     },
     [setDiffCache],
   )
 
+  // File bodies are only useful while the diff sidebar is visible. Release them
+  // as soon as it closes; reopening already triggers a contents-enabled refetch.
+  useEffect(() => {
+    if (isDiffSidebarOpen) return
+    setPrefetchedFileContents({})
+    if (appliedDiffRef.current) {
+      appliedDiffRef.current = { ...appliedDiffRef.current, hasContents: false }
+    }
+  }, [isDiffSidebarOpen, setPrefetchedFileContents])
+
   const setDiffContent = useCallback(
     (content: string | null) => {
-      setDiffCache((prev) => ({ ...prev, diffContent: content }))
+      setDiffCache((prev) =>
+        prev.diffContent === content ? prev : { ...prev, diffContent: content },
+      )
     },
     [setDiffCache],
   )
@@ -6042,7 +6182,7 @@ function ChatViewScoped({
     {
       enabled: chatSourceMode === "local" && Boolean(chatId) && Boolean(canonicalConversationId),
       staleTime: 30_000,
-      refetchOnMount: false,
+      refetchOnMount: true,
     },
   )
   const agentSubChats = useMemo(
@@ -6083,8 +6223,7 @@ function ChatViewScoped({
         if (agentChatStore.getParentChatId(subChatId) !== previousParentChatId) continue
         if (useStreamingStatusStore.getState().isStreaming(subChatId)) continue
         if ((useMessageQueueStore.getState().queues[subChatId]?.length ?? 0) > 0) continue
-        agentChatStore.delete(subChatId)
-        clearRuntimeCachesForSubChat(subChatId)
+        retireSubChat(subChatId)
       }
     }
     previousParentChatIdRef.current = chatId
@@ -6105,8 +6244,7 @@ function ChatViewScoped({
       if (useStreamingStatusStore.getState().isStreaming(subChatId)) continue
       if ((useMessageQueueStore.getState().queues[subChatId]?.length ?? 0) > 0) continue
 
-      agentChatStore.delete(subChatId)
-      clearRuntimeCachesForSubChat(subChatId)
+      retireSubChat(subChatId)
     }
   }, [activeSubChatId, chatId, chatSourceMode, tabsToRender])
 
@@ -6333,6 +6471,28 @@ function ChatViewScoped({
   // Fetch diff stats - extracted as callback for reuse in onFinish
   const fetchDiffStatsDebounceRef = useRef<NodeJS.Timeout | null>(null)
   const isFetchingDiffRef = useRef(false)
+  // Whether the in-flight fetch asked for file contents, and whether a caller
+  // was dropped because it needed contents that fetch will not deliver.
+  const inFlightIncludesContentsRef = useRef(false)
+  const pendingContentsFetchRef = useRef(false)
+  // Latest fetchDiffStats, so the contents retry does not have to recurse
+  // through the callback identity it is defined in.
+  const fetchDiffStatsSelfRef = useRef<() => Promise<void>>(async () => {})
+
+  // Read through refs so toggling the sidebar does not change fetchDiffStats'
+  // identity (which would retrigger every effect that depends on it).
+  const isDiffSidebarOpenRef = useRef(isDiffSidebarOpen)
+  isDiffSidebarOpenRef.current = isDiffSidebarOpen
+
+  // Same reasoning for the chat object: only its remote stats are read here.
+  const agentChatRef = useRef(agentChat)
+  agentChatRef.current = agentChat
+
+  // A different chat or worktree means nothing in the diff cache was applied
+  // from the diff we are about to fetch.
+  useEffect(() => {
+    appliedDiffRef.current = null
+  }, [chatId, worktreePath])
 
   const fetchDiffStats = useCallback(async () => {
     console.log("[fetchDiffStats] Called with:", {
@@ -6353,22 +6513,68 @@ function ChatViewScoped({
     // Prevent duplicate parallel fetches
     if (isFetchingDiffRef.current) {
       console.log("[fetchDiffStats] Skipping - already fetching")
+      // Opening the sidebar while a contents-free fetch is in flight used to be
+      // dropped outright, leaving the diff view with parsed files but no bodies.
+      // Remember the stronger requirement and satisfy it once, after this fetch.
+      if (isDiffSidebarOpenRef.current && !inFlightIncludesContentsRef.current) {
+        pendingContentsFetchRef.current = true
+      }
       return
     }
     isFetchingDiffRef.current = true
+    inFlightIncludesContentsRef.current = isDiffSidebarOpenRef.current
     console.log("[fetchDiffStats] Starting fetch...")
 
     try {
       // Desktop: use new getParsedDiff endpoint (all-in-one: parsing + file contents)
       if (worktreePath && chatId) {
-        const result = await trpcClient.chats.getParsedDiff.query({ chatId })
+        // File contents are only rendered by the diff sidebar. Fetching them
+        // while it is closed reads up to 20 files and ships them over IPC every
+        // couple of seconds for a header badge that needs four integers.
+        const includeContents = isDiffSidebarOpenRef.current
+
+        // Tell the main process what we already hold, but only when it also
+        // covers this caller's contents requirement - otherwise it would answer
+        // "unchanged" for a diff whose bodies we are missing.
+        const applied = appliedDiffRef.current
+        const knownDiffHash =
+          applied && (applied.hasContents || !includeContents) ? applied.hash : undefined
+
+        const result = await trpcClient.chats.getParsedDiff.query({
+          chatId,
+          includeContents,
+          knownDiffHash,
+        })
+
+        // Unchanged: no files were read and no bodies were serialized.
+        if (result.unchanged) return
+
+        // Same guard for responses that predate the known-hash round trip (a
+        // concurrent caller may have applied this diff while we were waiting).
+        if (
+          appliedDiffRef.current &&
+          appliedDiffRef.current.hash === result.diffHash &&
+          (appliedDiffRef.current.hasContents || !includeContents)
+        ) {
+          return
+        }
+        // The sidebar may have closed while a contents-enabled request was in
+        // flight. Do not repopulate the large body cache after close; reopening
+        // will request contents again through the queued/open effect path.
+        const responseIncludesContents = includeContents && isDiffSidebarOpenRef.current
+        appliedDiffRef.current = {
+          hash: result.diffHash,
+          hasContents: responseIncludesContents,
+        }
 
         if (result.files.length > 0) {
           // Store parsed files directly (already parsed on server)
           setParsedFileDiffs(result.files)
 
-          // Store prefetched file contents
-          setPrefetchedFileContents(result.fileContents)
+          // Store prefetched file contents. When the sidebar is closed this
+          // clears them, so a changed diff can never surface stale contents; the
+          // sidebar-open effect refetches with contents before they are read.
+          setPrefetchedFileContents(responseIncludesContents ? result.fileContents : {})
 
           // Set diff content to null since we have parsed files
           // (AgentDiffView will use parsedFileDiffs when available)
@@ -6410,7 +6616,7 @@ function ChatViewScoped({
         // Desktop app: use stats already provided in chat data
         // The diff sidebar won't work for remote chats (no worktree), but stats will show
         if (isDesktopApp()) {
-          const remoteStats = (agentChat as any)?.remoteStats
+          const remoteStats = (agentChatRef.current as any)?.remoteStats
           console.log("[fetchDiffStats] Desktop remote chat - using remoteStats:", remoteStats)
 
           if (remoteStats) {
@@ -6497,8 +6703,38 @@ function ChatViewScoped({
     } finally {
       console.log("[fetchDiffStats] Done")
       isFetchingDiffRef.current = false
+      inFlightIncludesContentsRef.current = false
+
+      // Exactly one queued retry for a dropped contents-enabled caller. It runs
+      // off this stack, and any further requirement raised while it runs simply
+      // re-arms the same single flag, so this cannot recurse without bound.
+      if (pendingContentsFetchRef.current) {
+        pendingContentsFetchRef.current = false
+        setTimeout(() => {
+          void fetchDiffStatsSelfRef.current()
+        }, 0)
+      }
     }
-  }, [worktreePath, sandboxId, chatId, agentChat]) // Note: activeSubChatId removed - diff is same for whole chat
+    // Note: activeSubChatId omitted - the diff is the same for the whole chat.
+    // agentChat is read through a ref: only `remoteStats` is used, and rebuilding
+    // this callback whenever chat metadata changes identity re-triggers every
+    // effect that depends on it (each of which runs a git diff).
+  }, [worktreePath, sandboxId, chatId])
+
+  fetchDiffStatsSelfRef.current = fetchDiffStats
+
+  // Remote (sandbox) chats read their stats out of the chat payload, which the
+  // callback now reaches through a ref. Refetch on the numbers themselves so
+  // arriving stats still land without depending on the chat object identity.
+  const remoteStats = (agentChat as any)?.remoteStats as
+    { fileCount?: number; additions?: number; deletions?: number } | undefined
+  const remoteStatsKey = remoteStats
+    ? `${remoteStats.fileCount ?? 0}:${remoteStats.additions ?? 0}:${remoteStats.deletions ?? 0}`
+    : ""
+  useEffect(() => {
+    if (!sandboxId) return
+    void fetchDiffStats()
+  }, [remoteStatsKey, sandboxId, fetchDiffStats])
 
   // Debounced version for calling after stream ends
   const fetchDiffStatsDebounced = useCallback(() => {
@@ -6812,6 +7048,9 @@ Make sure to preserve all functionality from both branches when resolving confli
       console.log(
         "[active-chat] Git status empty but parsedFileDiffs has files, refreshing diff data",
       )
+      // Cleared out of band, so the next fetch must re-apply even if the diff
+      // hash it returns is one we already applied.
+      appliedDiffRef.current = null
       setParsedFileDiffs([])
       setPrefetchedFileContents({})
       setDiffContent(null)
@@ -7125,58 +7364,42 @@ Make sure to preserve all functionality from both branches when resolving confli
       const latestMessages = (chat as any)?.messages
       if (!Array.isArray(latestMessages)) return
       const latestMessagesJson = JSON.stringify(latestMessages)
+      const setTranscriptMessages = (messages: string, updatedAt = new Date()) => {
+        trpcUtils.chats.getTranscript.setData({ chatId, subChatId }, (current) => ({
+          id: current?.id ?? subChatId,
+          chatId: current?.chatId ?? chatId,
+          messages,
+          updatedAt,
+        }))
+      }
 
       if (latestAssistantUsesDirectRuntime(latestMessages)) {
         void trpcClient.chats.mergeRuntimeSubChatMessages
           .mutate({ id: subChatId, messages: latestMessagesJson })
-          .then((updated: { messages?: string } | null | undefined) => {
+          .then((updated) => {
             if (typeof updated?.messages !== "string") return
-            utils.agents.getAgentChat.setData({ chatId }, (old: any) => {
-              if (!old?.subChats || !Array.isArray(old.subChats)) return old
-              return {
-                ...old,
-                subChats: old.subChats.map((sc: any) =>
-                  sc.id === subChatId ? { ...sc, messages: updated.messages } : sc,
-                ),
-              }
-            })
+            setTranscriptMessages(updated.messages, updated.updatedAt ?? new Date())
           })
           .catch((error: unknown) => {
             console.error("[Runtime chat] Failed to persist normal chat messages:", error)
+            void trpcUtils.chats.getTranscript.invalidate({ chatId, subChatId })
           })
+      } else {
+        setTranscriptMessages(latestMessagesJson)
       }
 
-      utils.agents.getAgentChat.setData({ chatId }, (old: any) => {
-        if (!old?.subChats || !Array.isArray(old.subChats)) return old
-
-        let found = false
-        const subChats = old.subChats.map((sc: any) => {
-          if (sc.id !== subChatId) return sc
-          found = true
-          return { ...sc, messages: latestMessagesJson }
-        })
-
-        return found ? { ...old, subChats } : old
-      })
+      // No metadata-cache write: chats.getMetadata does not carry `messages`,
+      // and chats.getTranscript above is the cache transcripts are read from.
     },
-    [chatId, utils],
+    [chatId, trpcUtils],
   )
 
   // If a stream finishes after user already switched to another workspace,
   // eagerly evict this runtime chat once it's idle to avoid permanent retention.
-  const pruneIfDetachedAndIdle = useCallback(
-    (subChatId: string, parentChatId: string) => {
-      if (workbenchActive !== undefined) return
-      const currentSelectedChatId = appStore.get(selectedAgentChatIdAtom)
-      if (!currentSelectedChatId || currentSelectedChatId === parentChatId) return
-      if (useStreamingStatusStore.getState().isStreaming(subChatId)) return
-      if ((useMessageQueueStore.getState().queues[subChatId]?.length ?? 0) > 0) return
-
-      agentChatStore.delete(subChatId)
-      clearRuntimeCachesForSubChat(subChatId)
-    },
-    [workbenchActive],
-  )
+  const pruneIfDetachedAndIdle = useCallback((subChatId: string) => {
+    if (!isSubChatReleasable(subChatId)) return
+    retireSubChat(subChatId)
+  }, [])
 
   // Create or get Chat instance for a sub-chat
   const getOrCreateChat = useCallback(
@@ -7388,7 +7611,7 @@ Make sure to preserve all functionality from both branches when resolving confli
             subChatId,
             parentChatName: agentChat?.name || undefined,
           })
-          pruneIfDetachedAndIdle(subChatId, chatId)
+          pruneIfDetachedAndIdle(subChatId)
         },
         // Clear loading when streaming completes (works even if component unmounted)
         onFinish: (event: any) => {
@@ -7461,7 +7684,7 @@ Make sure to preserve all functionality from both branches when resolving confli
             })
           }
 
-          pruneIfDetachedAndIdle(subChatId, chatId)
+          pruneIfDetachedAndIdle(subChatId)
 
           // Note: sidebar timestamp update is handled via optimistic update in handleSend
           // No need to refetch here as it would overwrite the optimistic update with stale data
@@ -7560,23 +7783,13 @@ Make sure to preserve all functionality from both branches when resolving confli
       // Optimistic update: add new sub-chat to React Query cache immediately
       // This is CRITICAL for workspace isolation - without this, the new sub-chat
       // won't be in validSubChatIds and will be filtered out by tabsToRender
-      utils.agents.getAgentChat.setData({ chatId }, (old) => {
+      utils.agents.getAgentChat.setData({ chatId }, (old: any) => {
         if (!old) return old
-        return {
-          ...old,
-          subChats: [
-            ...(old.subChats || []),
-            {
-              id: newId,
-              name: "New Chat",
-              mode: newSubChatMode,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-              messages: null,
-              stream_id: null,
-            },
-          ],
-        }
+        if (old.subChats?.some((sc: any) => sc.id === newId)) return old
+        // Seed from the row the server just returned, minus the transcript, so
+        // the optimistic entry matches the metadata query's column shape.
+        const { messages: _messages, ...subChatMetadata } = newSubChat as any
+        return { ...old, subChats: [...(old.subChats || []), subChatMetadata] }
       })
     }
 
@@ -7736,7 +7949,7 @@ Make sure to preserve all functionality from both branches when resolving confli
             subChatId: newId,
             parentChatName: agentChat?.name || undefined,
           })
-          pruneIfDetachedAndIdle(newId, chatId)
+          pruneIfDetachedAndIdle(newId)
         },
         // Clear loading when streaming completes
         onFinish: () => {
@@ -7801,7 +8014,7 @@ Make sure to preserve all functionality from both branches when resolving confli
           // Refresh diff stats after agent finishes making changes
           fetchDiffStatsRef.current()
 
-          pruneIfDetachedAndIdle(newId, chatId)
+          pruneIfDetachedAndIdle(newId)
 
           // Note: sidebar timestamp update is handled via optimistic update in handleSend
           // No need to refetch here as it would overwrite the optimistic update with stale data
@@ -7976,6 +8189,8 @@ Make sure to preserve all functionality from both branches when resolving confli
       // to avoid race condition with store initialization
       const firstSubChatId = getFirstSubChatId(agentSubChats)
       const isFirst = firstSubChatId === subChatId
+      const shouldAutoTag = isFirst && chatAutoTaggingEnabled
+      if (!chatTitleGenerationEnabled && !shouldAutoTag) return
 
       autoRenameAgentChat({
         subChatId,
@@ -7983,10 +8198,22 @@ Make sure to preserve all functionality from both branches when resolving confli
         userMessage,
         isFirstSubChat: isFirst,
         generateName: async (msg) => {
-          return generateSubChatNameMutation.mutateAsync({
+          const metadata = await generateSubChatNameMutation.mutateAsync({
             userMessage: msg,
+            chatId,
+            generateTitle: chatTitleGenerationEnabled,
+            titleStyle: chatTitleStyle,
+            autoTag: shouldAutoTag,
+            tagConfidencePercent: chatAutoTaggingConfidence,
             ollamaModel: selectedOllamaModel,
           })
+          if (metadata.appliedTags.length > 0) {
+            void Promise.all([
+              trpcUtils.chats.listTags.invalidate(),
+              trpcUtils.chats.listTagAssignments.invalidate(),
+            ])
+          }
+          return metadata
         },
         renameSubChat: async (input) => {
           await renameSubChatMutation.mutateAsync(input)
@@ -7998,11 +8225,13 @@ Make sure to preserve all functionality from both branches when resolving confli
           // Update local store
           subChatStore.getState().updateSubChatName(subChatIdToUpdate, name)
           // Also update query cache so init effect doesn't overwrite
-          utils.agents.getAgentChat.setData({ chatId }, (old) => {
+          utils.agents.getAgentChat.setData({ chatId }, (old: any) => {
             if (!old) return old
             const existsInCache = old.subChats.some((sc: any) => sc.id === subChatIdToUpdate)
             if (!existsInCache) {
-              // Sub-chat not in cache yet (DB save still in flight) - add it
+              // Sub-chat not in cache yet (DB save still in flight) - add it.
+              // Field names mirror chats.getMetadata's sub-chat projection.
+              const now = new Date()
               return {
                 ...old,
                 subChats: [
@@ -8010,12 +8239,17 @@ Make sure to preserve all functionality from both branches when resolving confli
                   {
                     id: subChatIdToUpdate,
                     name,
-                    created_at: new Date(),
-                    updated_at: new Date(),
-                    messages: "[]",
+                    chatId,
+                    sessionId: null,
+                    streamId: null,
                     mode: "write",
-                    stream_id: null,
-                    chat_id: chatId,
+                    harness: null,
+                    model: null,
+                    permissionMode: null,
+                    worktreePath: null,
+                    runStatus: null,
+                    createdAt: now,
+                    updatedAt: now,
                   },
                 ],
               }
@@ -8046,11 +8280,17 @@ Make sure to preserve all functionality from both branches when resolving confli
     [
       chatId,
       agentSubChats,
+      chatAutoTaggingConfidence,
+      chatAutoTaggingEnabled,
+      chatTitleGenerationEnabled,
+      chatTitleStyle,
       generateSubChatNameMutation,
       renameSubChatMutation,
       renameChatMutation,
       selectedTeamId,
       selectedOllamaModel,
+      trpcUtils.chats.listTagAssignments,
+      trpcUtils.chats.listTags,
       utils.agents.getAgentChats,
       utils.agents.getAgentChat,
     ],

@@ -310,6 +310,8 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
         ...safe("chatId", "idempotencyKey"),
         initialPrompt: textDigest("initialPrompt"),
       }
+    case "wait_for_chats":
+      return safe("targetChatIds", "idempotencyKey")
     case "orchestrate_task":
       return summarizeOrchestrationAuthority(value)
     case "list_automations":
@@ -1023,7 +1025,7 @@ function isRetrySafeClaim(claim: Pick<AuditRow, "tier" | "toolName" | "inputSumm
   }
   try {
     const input = JSON.parse(claim.inputSummary) as Record<string, unknown>
-    if (claim.toolName === "launch_run") {
+    if (claim.toolName === "launch_run" || claim.toolName === "wait_for_chats") {
       return Object.prototype.hasOwnProperty.call(input, "idempotencyKey")
     }
     return false

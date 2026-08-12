@@ -1534,6 +1534,8 @@ export const chatsRelations = relations(chats, ({ one, many }) => ({
   runs: many(agentRuns),
   attachments: many(attachments),
   tagAssignments: many(chatTagAssignments),
+  agentLabels: many(chatAgentLabels),
+  waits: many(chatWaits),
 }))
 
 // Reusable user-defined labels for top-level chats. Color is a semantic token,
@@ -1584,6 +1586,34 @@ export const chatTagsRelations = relations(chatTags, ({ many }) => ({
 export const chatTagAssignmentsRelations = relations(chatTagAssignments, ({ one }) => ({
   chat: one(chats, { fields: [chatTagAssignments.chatId], references: [chats.id] }),
   tag: one(chatTags, { fields: [chatTagAssignments.tagId], references: [chatTags.id] }),
+}))
+
+// Agent-inferred roles are system metadata, deliberately separate from the
+// user-owned tag vocabulary and tag editor.
+export const chatAgentLabels = sqliteTable(
+  "chat_agent_labels",
+  {
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    confidence: integer("confidence").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.chatId, table.key] }),
+    index("chat_agent_labels_key_idx").on(table.key, table.chatId),
+    check(
+      "chat_agent_labels_key_check",
+      sql`${table.key} in ('coordinator','reviewer','worker','researcher','planner','verifier')`,
+    ),
+    check("chat_agent_labels_confidence_check", sql`${table.confidence} between 0 and 100`),
+  ],
+)
+
+export const chatAgentLabelsRelations = relations(chatAgentLabels, ({ one }) => ({
+  chat: one(chats, { fields: [chatAgentLabels.chatId], references: [chats.id] }),
 }))
 
 // ============ SUB-CHATS ============
@@ -1663,6 +1693,42 @@ export const agentRuns = sqliteTable(
   },
   (table) => [index("agent_runs_chat_id_idx").on(table.chatId)],
 )
+
+// A wait is an agent-owned continuation intent. Its targets are stored as a
+// bounded JSON array because one wait can depend on several chats and is
+// reconciled as one atomic condition.
+export const chatWaits = sqliteTable(
+  "chat_waits",
+  {
+    id: text("id").primaryKey(),
+    waiterChatId: text("waiter_chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    waiterRunId: text("waiter_run_id").notNull(),
+    targetChatIds: text("target_chat_ids").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: text("status").notNull().default("waiting"),
+    settledAt: integer("settled_at", { mode: "timestamp" }),
+    resumedRunId: text("resumed_run_id"),
+    error: text("error"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+    completedAt: integer("completed_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    uniqueIndex("chat_waits_waiter_idempotency_idx").on(table.waiterChatId, table.idempotencyKey),
+    index("chat_waits_status_idx").on(table.status, table.updatedAt),
+    check("chat_waits_targets_json_check", sql`json_valid(${table.targetChatIds}) = 1`),
+    check(
+      "chat_waits_status_check",
+      sql`${table.status} in ('waiting','resuming','completed','cancelled','failed')`,
+    ),
+  ],
+)
+
+export const chatWaitsRelations = relations(chatWaits, ({ one }) => ({
+  waiter: one(chats, { fields: [chatWaits.waiterChatId], references: [chats.id] }),
+}))
 
 export const agentProfileChatBindings = sqliteTable(
   "agent_profile_chat_bindings",

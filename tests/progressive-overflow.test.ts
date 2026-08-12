@@ -26,6 +26,118 @@ afterEach(() => {
 })
 
 describe("progressive overflow", () => {
+  it("keeps pinned-start content directly beside overflow when every action is hidden", () => {
+    const container = document.createElement("div")
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    act(() => {
+      root!.render(
+        React.createElement(
+          ProgressiveOverflowRow,
+          {
+            usageRatio: 1,
+            menuLabel: "More actions",
+            className: "justify-end",
+            gap: 8,
+            forceOverflow: true,
+            pinnedStart: React.createElement("span", null, "Project tags"),
+          },
+          React.createElement("button", null, "Action"),
+        ),
+      )
+    })
+
+    const row = container.querySelector("[data-progressive-overflow-row]") as HTMLElement
+    const pinnedStart = row.querySelector("[data-progressive-overflow-pinned-start]")
+    const overflowTrigger = row.querySelector('button[aria-label="More actions"]')
+
+    expect(pinnedStart).not.toBeNull()
+    expect(pinnedStart?.nextElementSibling).toBe(overflowTrigger)
+    expect(row.className).toContain("justify-end")
+    expect(row.style.columnGap).toBe("8px")
+  })
+
+  it("uses the same spacing when an action leaves overflow", () => {
+    const container = document.createElement("div")
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    act(() => {
+      root!.render(
+        React.createElement(
+          ProgressiveOverflowRow,
+          {
+            usageRatio: 1,
+            menuLabel: "More actions",
+            className: "justify-end",
+            gap: 8,
+            pinnedStart: React.createElement("span", null, "Project tags"),
+          },
+          React.createElement("button", null, "Open in"),
+        ),
+      )
+    })
+
+    const row = container.querySelector("[data-progressive-overflow-row]") as HTMLElement
+    const pinnedStart = row.querySelector("[data-progressive-overflow-pinned-start]")
+    const visibleAction = row.querySelector("[data-progressive-overflow-item]")
+
+    expect(pinnedStart?.nextElementSibling).toBe(visibleAction)
+    expect(row.style.columnGap).toBe("8px")
+  })
+
+  it("observes pinned-start content added after the row mounts", () => {
+    const observedElements = new Set<Element>()
+    const originalResizeObserver = globalThis.ResizeObserver
+    class TestResizeObserver {
+      observe(element: Element) {
+        observedElements.add(element)
+      }
+      disconnect() {}
+    }
+    globalThis.ResizeObserver = TestResizeObserver as unknown as typeof ResizeObserver
+
+    try {
+      const container = document.createElement("div")
+      document.body.appendChild(container)
+      root = createRoot(container)
+      const action = React.createElement("button", null, "Action")
+
+      act(() => {
+        root!.render(
+          React.createElement(
+            ProgressiveOverflowRow,
+            { usageRatio: 1, menuLabel: "More actions", forceOverflow: true },
+            action,
+          ),
+        )
+      })
+      act(() => {
+        root!.render(
+          React.createElement(
+            ProgressiveOverflowRow,
+            {
+              usageRatio: 1,
+              menuLabel: "More actions",
+              forceOverflow: true,
+              pinnedStart: React.createElement("span", null, "Project tags"),
+            },
+            action,
+          ),
+        )
+      })
+
+      expect(
+        [...observedElements].some((element) =>
+          element.hasAttribute("data-progressive-overflow-pinned-start"),
+        ),
+      ).toBe(true)
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver
+    }
+  })
+
   it("removes controls from the right until the row stays within its usage budget", () => {
     expect(
       resolveProgressiveVisibleCount({

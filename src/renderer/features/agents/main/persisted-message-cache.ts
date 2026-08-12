@@ -27,5 +27,8 @@ export function createPersistedMessageCache<T>({
     delete(id: string) {
       entries.delete(id)
     },
+    clear() {
+      entries.clear()
+    },
   }
 }

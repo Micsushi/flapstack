@@ -32,8 +32,9 @@ describe("stage 6 migration snapshots", () => {
     const snapshot55 = readJson<Snapshot>("drizzle/meta/0055_snapshot.json")
     const snapshot56 = readJson<Snapshot>("drizzle/meta/0056_snapshot.json")
     const snapshot57 = readJson<Snapshot>("drizzle/meta/0057_snapshot.json")
+    const snapshot58 = readJson<Snapshot>("drizzle/meta/0058_snapshot.json")
 
-    expect(journal.entries.slice(-7).map(({ idx, tag }) => ({ idx, tag }))).toEqual([
+    expect(journal.entries.slice(-8).map(({ idx, tag }) => ({ idx, tag }))).toEqual([
       { idx: 51, tag: "0051_runtime_composition_attempts" },
       { idx: 52, tag: "0052_project-vault-custom-notes" },
       { idx: 53, tag: "0053_chat-tags" },
@@ -41,6 +42,7 @@ describe("stage 6 migration snapshots", () => {
       { idx: 55, tag: "0055_sidebar_query_indexes" },
       { idx: 56, tag: "0056_default_chat_tags" },
       { idx: 57, tag: "0057_chat_tag_icons" },
+      { idx: 58, tag: "0058_agent_chat_metadata_and_waits" },
     ])
     expect(snapshot51.prevId).toBe(snapshot50.id)
     expect(snapshot52.prevId).toBe(snapshot51.id)
@@ -49,6 +51,7 @@ describe("stage 6 migration snapshots", () => {
     expect(snapshot55.prevId).toBe(snapshot54.id)
     expect(snapshot56.prevId).toBe(snapshot55.id)
     expect(snapshot57.prevId).toBe(snapshot56.id)
+    expect(snapshot58.prevId).toBe(snapshot57.id)
     expect(
       new Set([
         snapshot50.id,
@@ -59,8 +62,9 @@ describe("stage 6 migration snapshots", () => {
         snapshot55.id,
         snapshot56.id,
         snapshot57.id,
+        snapshot58.id,
       ]).size,
-    ).toBe(8)
+    ).toBe(9)
 
     expect(snapshot50.tables).not.toHaveProperty("runtime_composition_attempts")
     expect(snapshot51.tables).toHaveProperty("runtime_composition_attempts")
@@ -78,5 +82,8 @@ describe("stage 6 migration snapshots", () => {
     expect(snapshot52.tables).toHaveProperty("project_vault_custom_notes")
     expect(snapshot53.tables).toHaveProperty("chat_tags")
     expect(snapshot53.tables).toHaveProperty("chat_tag_assignments")
+    expect(snapshot57.tables).not.toHaveProperty("chat_agent_labels")
+    expect(snapshot58.tables).toHaveProperty("chat_agent_labels")
+    expect(snapshot58.tables).toHaveProperty("chat_waits")
   })
 })

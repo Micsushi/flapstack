@@ -45,6 +45,9 @@ describe("future stage scaffolds", () => {
   it("registers scaffolded MCP tools with risk tiers", () => {
     expect(mcpControlTools.some((tool) => tool.name === "describe" && tool.tier === 0)).toBe(true)
     expect(mcpControlTools.some((tool) => tool.name === "launch_run" && tool.tier === 3)).toBe(true)
+    expect(mcpControlTools.some((tool) => tool.name === "wait_for_chats" && tool.tier === 3)).toBe(
+      true,
+    )
   })
 
   it("resolves offline STT when configured", () => {

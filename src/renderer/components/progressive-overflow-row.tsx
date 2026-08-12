@@ -25,6 +25,7 @@ type ProgressiveOverflowCalculation = {
   gap: number
   overflowWidth: number
   reservedWidth?: number
+  reservedItemCount?: number
   collapseOrder?: number[]
 }
 
@@ -35,6 +36,7 @@ export function resolveProgressiveVisibleIndexes({
   gap,
   overflowWidth,
   reservedWidth = 0,
+  reservedItemCount = reservedWidth > 0 ? 1 : 0,
   collapseOrder,
 }: ProgressiveOverflowCalculation): number[] {
   const softBudget = Math.max(0, containerWidth * usageRatio)
@@ -50,9 +52,11 @@ export function resolveProgressiveVisibleIndexes({
     const visibleGaps = Math.max(0, visibleIndexes.length - 1) * gap
     const originalControlsWidth = visibleWidth + visibleGaps
     const hasOverflow = visibleIndexes.length < itemWidths.length
-    const overflowSpace = hasOverflow ? overflowWidth + (visibleIndexes.length > 0 ? gap : 0) : 0
-    const reservedGap = reservedWidth > 0 && (visibleIndexes.length > 0 || hasOverflow) ? gap : 0
-    const hardBudget = Math.max(0, containerWidth - reservedWidth - reservedGap - overflowSpace)
+    const renderedItemCount = visibleIndexes.length + reservedItemCount + (hasOverflow ? 1 : 0)
+    const fixedGapCount =
+      Math.max(0, renderedItemCount - 1) - Math.max(0, visibleIndexes.length - 1)
+    const fixedWidth = reservedWidth + (hasOverflow ? overflowWidth : 0) + fixedGapCount * gap
+    const hardBudget = Math.max(0, containerWidth - fixedWidth)
     return originalControlsWidth <= Math.min(softBudget, hardBudget)
   }
 
@@ -78,6 +82,7 @@ type ProgressiveOverflowRowProps = {
   contentClassName?: string
   gap?: number
   overflowWidth?: number
+  pinnedStart?: ReactNode
   pinnedEnd?: ReactNode
   align?: "start" | "center" | "end"
   side?: "top" | "right" | "bottom" | "left"
@@ -98,6 +103,7 @@ export function ProgressiveOverflowRow({
   contentClassName,
   gap = 4,
   overflowWidth = 28,
+  pinnedStart,
   pinnedEnd,
   align = "end",
   side = "bottom",
@@ -116,6 +122,8 @@ export function ProgressiveOverflowRow({
       : String(index),
   )
   const itemSignature = itemKeys.join("|")
+  const hasPinnedStart = Boolean(pinnedStart)
+  const hasPinnedEnd = Boolean(pinnedEnd)
   const collapseOrderSignature = (collapseOrder ?? []).join(",")
   const stableCollapseOrder = useMemo(
     () =>
@@ -143,9 +151,13 @@ export function ProgressiveOverflowRow({
       if (Number.isInteger(index))
         itemWidthsRef.current[index] = element.getBoundingClientRect().width
     })
-    const pinnedWidth =
-      row.querySelector<HTMLElement>("[data-progressive-overflow-pinned]")?.getBoundingClientRect()
-        .width ?? 0
+    const pinnedItems = Array.from(
+      row.querySelectorAll<HTMLElement>("[data-progressive-overflow-pinned]"),
+    )
+    const pinnedWidth = pinnedItems.reduce(
+      (total, item) => total + item.getBoundingClientRect().width,
+      0,
+    )
     const widths = Array.from(
       { length: items.length },
       (_, index) => itemWidthsRef.current[index] ?? 0,
@@ -161,6 +173,7 @@ export function ProgressiveOverflowRow({
       gap,
       overflowWidth,
       reservedWidth: pinnedWidth,
+      reservedItemCount: pinnedItems.length,
       collapseOrder: stableCollapseOrder,
     })
     setVisibleIndexes((current) =>
@@ -200,14 +213,15 @@ export function ProgressiveOverflowRow({
     if (typeof ResizeObserver === "undefined") return
     const observer = new ResizeObserver(scheduleMeasure)
     observer.observe(row)
-    const pinned = row.querySelector("[data-progressive-overflow-pinned]")
-    if (pinned) observer.observe(pinned)
+    row
+      .querySelectorAll("[data-progressive-overflow-pinned]")
+      .forEach((pinned) => observer.observe(pinned))
     return () => {
       observer.disconnect()
       if (measureFrameRef.current !== null) cancelAnimationFrame(measureFrameRef.current)
       measureFrameRef.current = null
     }
-  }, [itemSignature, scheduleMeasure])
+  }, [hasPinnedEnd, hasPinnedStart, itemSignature, scheduleMeasure])
 
   const visibleIndexSet = new Set(visibleIndexes)
   const visibleItems = items
@@ -229,6 +243,15 @@ export function ProgressiveOverflowRow({
       style={{ ...style, columnGap: gap }}
       data-progressive-overflow-row
     >
+      {pinnedStart && (
+        <div
+          className="flex shrink-0 items-center"
+          data-progressive-overflow-pinned
+          data-progressive-overflow-pinned-start
+        >
+          {pinnedStart}
+        </div>
+      )}
       {visibleItems.map(({ item, index }) => (
         <div
           key={`inline-${itemKeys[index]}`}

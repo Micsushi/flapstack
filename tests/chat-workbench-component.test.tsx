@@ -425,6 +425,7 @@ describe("ChatWorkbench", () => {
     const activePane = container.querySelector<HTMLElement>('[data-active-group="true"]')
     const inactivePane = container.querySelector("[data-chat-group]:not([data-active-group])")
     expect(activePane?.querySelector("[data-active-pane-outline]")).not.toBeNull()
+    expect(activePane?.querySelector("[data-active-pane-outline]")?.className).toContain("border-2")
     expect(inactivePane?.querySelector("[data-active-pane-outline]")).toBeNull()
     expect(activePane?.className).not.toContain("ring-inset")
     expect(
@@ -432,6 +433,7 @@ describe("ChatWorkbench", () => {
         (tab) => tab.style.borderTopColor,
       ),
     ).toEqual(["rgb(34, 197, 94)", "rgb(249, 115, 22)"])
+    expect(container.querySelectorAll("[data-active-screen-indicator]")).toHaveLength(2)
   })
 
   it("reports cumulative separator positions for assistive technology", async () => {
@@ -512,6 +514,7 @@ describe("ChatWorkbench", () => {
       preset: "two-columns",
     }).layout
     const onLayoutChange = vi.fn()
+    const renderChat = vi.fn((chatId: string) => createElement("div", null, chatId))
     await act(async () =>
       root.render(
         createElement(ChatWorkbench, {
@@ -520,16 +523,25 @@ describe("ChatWorkbench", () => {
           viewport: { width: 900, height: 600 },
           onLayoutChange,
           onActiveChatChange: vi.fn(),
-          renderChat: (chatId: string) => createElement("div", null, chatId),
+          renderChat,
         }),
       ),
     )
 
     const separator = container.querySelector<HTMLElement>('[role="separator"]')!
+    const firstChild = separator.previousElementSibling as HTMLElement
     Object.defineProperty(separator.parentElement, "clientWidth", {
       configurable: true,
       value: 900,
     })
+    const initialRenderCalls = renderChat.mock.calls.length
+    const previewFrames: FrameRequestCallback[] = []
+    const requestFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        previewFrames.push(callback)
+        return previewFrames.length
+      })
     await act(async () => {
       separator.dispatchEvent(
         new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 450 }),
@@ -537,8 +549,17 @@ describe("ChatWorkbench", () => {
       window.dispatchEvent(new MouseEvent("pointermove", { clientX: 500 }))
       window.dispatchEvent(new MouseEvent("pointermove", { clientX: 520 }))
       window.dispatchEvent(new MouseEvent("pointermove", { clientX: 540 }))
+    })
+    expect(previewFrames).toHaveLength(1)
+    await act(async () => previewFrames.shift()!(16))
+
+    expect(firstChild.style.flexBasis).toBe("60%")
+    expect(renderChat).toHaveBeenCalledTimes(initialRenderCalls)
+
+    await act(async () => {
       window.dispatchEvent(new MouseEvent("pointerup", { clientX: 540 }))
     })
+    requestFrame.mockRestore()
 
     expect(onLayoutChange).toHaveBeenCalledOnce()
     expect(onLayoutChange.mock.calls[0]?.[1]).toEqual(

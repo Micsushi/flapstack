@@ -11,7 +11,7 @@ const agentsContentSource = readFileSync(
 describe("desktop notification navigation", () => {
   it("handles notification clicks at app scope and restores the chat project", () => {
     expect(appSource).toContain("onNotificationClicked")
-    expect(appSource).toMatch(/trpcUtils\.chats\.get\s*\.fetch\(\{ id: chatId \}\)/)
+    expect(appSource).toMatch(/trpcUtils\.chats\.getMetadata\s*\.fetch\(\{ id: chatId \}\)/)
     expect(appSource).toContain("setSelectedProject({")
     expect(appSource).toContain("setSelectedChatId(chatId)")
   })

@@ -1037,6 +1037,7 @@ export const compactingSubChatsAtom = atom<Set<string>>(new Set<string>())
 // Track IDs of chats/subchats created in this browser session (NOT persisted - resets on reload)
 // Used to determine whether to show placeholder + typewriter effect
 export const justCreatedIdsAtom = atom<Set<string>>(new Set<string>())
+export const pendingInitialGenerationIdsAtom = atom<Set<string>>(new Set<string>())
 
 // Pending user questions from AskUserQuestion tool
 // Set when an agent requests user input, cleared when answered or skipped
@@ -1237,6 +1238,8 @@ const DEFAULT_DIFF_CACHE: WorkspaceDiffCache = {
   diffContent: null,
 }
 
+const MAX_WORKSPACE_DIFF_CACHES = 4
+
 export const workspaceDiffCacheAtomFamily = atomFamily((chatId: string) =>
   atom(
     (get) => get(workspaceDiffCacheStorageAtom)[chatId] ?? DEFAULT_DIFF_CACHE,
@@ -1244,10 +1247,13 @@ export const workspaceDiffCacheAtomFamily = atomFamily((chatId: string) =>
       const current = get(workspaceDiffCacheStorageAtom)
       const prevCache = current[chatId] ?? DEFAULT_DIFF_CACHE
       const newCache = typeof update === "function" ? update(prevCache) : update
-      set(workspaceDiffCacheStorageAtom, {
-        ...current,
-        [chatId]: newCache,
-      })
+      const next = { ...current }
+      delete next[chatId]
+      next[chatId] = newCache
+      for (const cachedChatId of Object.keys(next).slice(0, -MAX_WORKSPACE_DIFF_CACHES)) {
+        delete next[cachedChatId]
+      }
+      set(workspaceDiffCacheStorageAtom, next)
     },
   ),
 )

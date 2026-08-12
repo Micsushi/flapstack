@@ -14,3 +14,14 @@ export function getReasoningStartedAt(messageKey: string, preferred?: number): n
   reasoningStartedAtByMessage.set(messageKey, startedAt)
   return startedAt
 }
+
+export function clearReasoningStartedAtByMessageIds(
+  subChatId: string,
+  messageIds: readonly string[],
+): void {
+  for (const messageId of messageIds) {
+    reasoningStartedAtByMessage.delete(`${subChatId}:${messageId}`)
+  }
+}
+
+import.meta.hot?.dispose(() => reasoningStartedAtByMessage.clear())

@@ -319,6 +319,14 @@ export const mcpControlTools: McpControlTool[] = [
     status: "implemented",
   },
   {
+    name: "wait_for_chats",
+    description:
+      "Pause this chat until selected chats finish queued and running work, then resume it once.",
+    tier: 3,
+    requiredCapabilities: ["subagents"],
+    status: "implemented",
+  },
+  {
     name: "list_automations",
     description: "List caller-visible local automations.",
     tier: 0,

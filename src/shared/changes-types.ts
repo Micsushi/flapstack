@@ -84,4 +84,6 @@ export interface ParsedDiffResponse {
   totalAdditions: number
   totalDeletions: number
   fileContents: Record<string, string>
+  /** Hash of the raw diff, so callers can skip re-applying an unchanged diff. */
+  diffHash: string
 }

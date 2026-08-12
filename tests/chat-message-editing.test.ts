@@ -17,6 +17,10 @@ const assistantMessageSource = readFileSync(
   "utf8",
 )
 const activeChatSource = readFileSync("src/renderer/features/agents/main/active-chat.tsx", "utf8")
+const queueProcessorSource = readFileSync(
+  "src/renderer/features/agents/components/queue-processor.tsx",
+  "utf8",
+)
 
 describe("stopped reasoning disclosure", () => {
   it("keeps the stop row visible and only exposes expansion when details exist", () => {
@@ -55,7 +59,12 @@ describe("latest message editing", () => {
 
 describe("queued message editing and ordering", () => {
   beforeEach(() => {
-    useMessageQueueStore.setState({ queues: {}, queueSentTriggers: {} })
+    useMessageQueueStore.setState({
+      queues: {},
+      heldQueues: {},
+      nextHoldId: 0,
+      queueSentTriggers: {},
+    })
   })
 
   it("exposes a left drag handle and an edit action", () => {
@@ -83,5 +92,59 @@ describe("queued message editing and ordering", () => {
 
     expect(useMessageQueueStore.getState().popItem("chat", item.id)).toEqual(item)
     expect(useMessageQueueStore.getState().getQueue("chat")).toEqual([])
+  })
+
+  it("holds queued follow-ups after a manual stop until an explicit send resumes them", () => {
+    const item = createQueueItem("follow-up", "Continue after steering")
+    useMessageQueueStore.getState().addToQueue("chat", item)
+
+    useMessageQueueStore.getState().holdQueue("chat")
+    const holdId = useMessageQueueStore.getState().getQueueHold("chat")
+
+    expect(holdId).toBeGreaterThan(0)
+    expect(useMessageQueueStore.getState().getQueue("chat")).toEqual([item])
+    expect(useMessageQueueStore.getState().canAutoProcessQueue("chat")).toBe(false)
+
+    useMessageQueueStore.getState().resumeQueue("chat", holdId)
+    expect(useMessageQueueStore.getState().heldQueues.chat).toBeUndefined()
+    expect(useMessageQueueStore.getState().canAutoProcessQueue("chat")).toBe(true)
+  })
+
+  it("wires manual stop and explicit sends into the global queue gate", () => {
+    expect(activeChatSource).toContain("holdQueue(subChatId)")
+    expect(activeChatSource).toContain("resumeQueue(subChatId, queueHold)")
+    expect(queueProcessorSource.match(/canAutoProcessQueue\(subChatId\)/g)?.length).toBeGreaterThan(
+      1,
+    )
+  })
+
+  it("does not let a completed steer release a newer manual pause", () => {
+    useMessageQueueStore.getState().addToQueue("chat", createQueueItem("follow-up", "Wait for me"))
+    useMessageQueueStore.getState().holdQueue("chat")
+    const steerHold = useMessageQueueStore.getState().getQueueHold("chat")
+    useMessageQueueStore.getState().holdQueue("chat")
+
+    useMessageQueueStore.getState().resumeQueue("chat", steerHold)
+
+    expect(useMessageQueueStore.getState().canAutoProcessQueue("chat")).toBe(false)
+  })
+
+  it("keeps a manual hold when the user removes the final queued message", () => {
+    const item = createQueueItem("remove-me", "Never mind")
+    useMessageQueueStore.getState().addToQueue("chat", item)
+    useMessageQueueStore.getState().holdQueue("chat")
+
+    useMessageQueueStore.getState().removeFromQueue("chat", item.id)
+
+    expect(useMessageQueueStore.getState().getQueueHold("chat")).toBeGreaterThan(0)
+  })
+
+  it("can hold an empty queue before a follow-up is added", () => {
+    useMessageQueueStore.getState().holdQueue("chat")
+    useMessageQueueStore
+      .getState()
+      .addToQueue("chat", createQueueItem("later", "Wait until I steer"))
+
+    expect(useMessageQueueStore.getState().canAutoProcessQueue("chat")).toBe(false)
   })
 })

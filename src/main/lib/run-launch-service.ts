@@ -20,6 +20,14 @@ import {
 } from "../../shared/agent-orchestration"
 import { parseCustomPermissionCapabilities } from "../../shared/permission-capabilities"
 import { normalizeChatMode, type ChatMode } from "../../shared/chat-mode"
+import { resolveChatModePermission } from "../../shared/chat-mode"
+import type { RunPermissionMode } from "../../shared/harness-types"
+import { getPermissionPreferences } from "./permissions"
+import {
+  constructRuntimeSnapshot,
+  runtimePermissionSnapshot,
+  runtimeSnapshotSqlValues,
+} from "./agent-runtime/snapshot"
 import {
   crossProviderTaskEnvelopeSchema,
   type CrossProviderTaskEnvelope,
@@ -62,6 +70,128 @@ export type InterruptedRuntimeRecoveryAuthority = {
 }
 
 type Row = Record<string, unknown>
+
+export type QueueChatRunResult =
+  | { ok: true; runId: string; created: boolean; status: string }
+  | { ok: false; code: "stale-target" | "invalid-input" | "permission-denied"; message: string }
+
+/** Queue one durable MCP-owned run without starting a provider process. */
+export function queueChatRun(
+  db: Database.Database,
+  input: {
+    chatId: string
+    initialPrompt: string
+    idempotencyKey: string
+    vaultContextSectionIds?: string[]
+  },
+): QueueChatRunResult {
+  const chat = db.prepare("SELECT * FROM chats WHERE id = ?").get(input.chatId) as Row | undefined
+  if (!chat || chat.archived_at) {
+    return { ok: false, code: "stale-target", message: "Chat is missing or archived." }
+  }
+  if (!AGENT_HARNESSES.includes(chat.harness as AgentHarness)) {
+    return { ok: false, code: "invalid-input", message: "Chat does not use a launchable harness." }
+  }
+  const harness = chat.harness as AgentHarness
+  const subChat = db
+    .prepare(
+      "SELECT id, messages, mode, permission_mode, worktree_path, model FROM sub_chats WHERE chat_id = ? ORDER BY created_at LIMIT 1",
+    )
+    .get(input.chatId) as Row | undefined
+  if (!subChat) {
+    return { ok: false, code: "stale-target", message: "Chat conversation is missing." }
+  }
+  const model = subChat.model ?? chat.model ?? null
+  if ((harness === "openrouter" || harness === "nanogpt" || harness === "local") && !model) {
+    return { ok: false, code: "invalid-input", message: `${harness} chats require a model.` }
+  }
+
+  const promptMessageId = `mcp-${input.idempotencyKey}`
+  const existing = db
+    .prepare("SELECT id, status FROM agent_runs WHERE chat_id = ? AND prompt_message_id = ?")
+    .get(input.chatId, promptMessageId) as Row | undefined
+  if (existing) {
+    return { ok: true, runId: String(existing.id), created: false, status: String(existing.status) }
+  }
+
+  const runId = stableMcpRunId(input.chatId, input.idempotencyKey)
+  const preferences = getPermissionPreferences()
+  const requestedPermissionMode = String(
+    subChat.permission_mode ?? chat.permission_mode ?? preferences.globalDefault,
+  ) as RunPermissionMode
+  const permissionMode = resolveChatModePermission(
+    normalizeChatMode(typeof subChat.mode === "string" ? subChat.mode : null),
+    requestedPermissionMode,
+  )
+  const customPermissions =
+    permissionMode === "custom" && typeof chat.custom_permissions === "string"
+      ? chat.custom_permissions
+      : null
+  if (permissionMode === "custom" && !customPermissions) {
+    return {
+      ok: false,
+      code: "permission-denied",
+      message: "Custom permission settings are missing for this conversation.",
+    }
+  }
+  const runtimeSnapshot = constructRuntimeSnapshot(db, {
+    chatId: input.chatId,
+    harness,
+    model: model as string | null,
+    permission: runtimePermissionSnapshot(permissionMode as RunPermissionMode, customPermissions),
+  })
+  const transaction = db.transaction(() => {
+    db.prepare("UPDATE sub_chats SET run_status = 'pending' WHERE id = ?").run(subChat.id)
+    db.prepare(
+      `INSERT INTO agent_runs (
+        id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
+        worktree_path, prompt_message_id, initial_prompt, vault_context_sections,
+        runtime_snapshot_version, runtime_preference, runtime_preference_source, resolved_runtime,
+        runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
+        runtime_control_snapshot, status, started_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+    ).run(
+      runId,
+      input.chatId,
+      subChat.id,
+      harness,
+      model,
+      permissionMode,
+      customPermissions,
+      subChat.worktree_path ?? chat.worktree_path ?? null,
+      promptMessageId,
+      input.initialPrompt,
+      input.vaultContextSectionIds === undefined
+        ? null
+        : JSON.stringify(input.vaultContextSectionIds),
+      ...runtimeSnapshotSqlValues(runtimeSnapshot),
+      nowEpochSeconds(),
+    )
+  })
+  try {
+    transaction.immediate()
+  } catch (error) {
+    const raced = db
+      .prepare("SELECT id, status FROM agent_runs WHERE id = ? AND chat_id = ?")
+      .get(runId, input.chatId) as Row | undefined
+    if (raced) {
+      return { ok: true, runId: String(raced.id), created: false, status: String(raced.status) }
+    }
+    throw error
+  }
+  return { ok: true, runId, created: true, status: "pending" }
+}
+
+function stableMcpRunId(chatId: string, idempotencyKey: string): string {
+  const value = createHash("sha256")
+    .update("flapstack-mcp-run\0")
+    .update(chatId)
+    .update("\0")
+    .update(idempotencyKey)
+    .digest("hex")
+    .slice(0, 32)
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-4${value.slice(13, 16)}-a${value.slice(17, 20)}-${value.slice(20)}`
+}
 
 /** Projects durable run truth without invoking a provider authority. */
 export function loadAgentRunReconciliationState(

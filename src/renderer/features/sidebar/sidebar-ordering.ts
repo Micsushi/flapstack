@@ -1,5 +1,58 @@
 export type DragInsertPosition = "before" | "after"
 export type SidebarDropPosition = DragInsertPosition | "inside"
+export type CustomSidebarProjectSection = {
+  id: string
+  name: string
+  projectIds: string[]
+}
+
+export function parseCustomSidebarProjectSections(
+  stored: string | null,
+): CustomSidebarProjectSection[] {
+  if (!stored) return []
+  try {
+    const parsed = JSON.parse(stored) as unknown
+    if (!Array.isArray(parsed)) return []
+    const seenSectionIds = new Set<string>()
+    const seenProjectIds = new Set<string>()
+    const sections: CustomSidebarProjectSection[] = []
+    for (const value of parsed) {
+      if (!value || typeof value !== "object") continue
+      const candidate = value as Record<string, unknown>
+      const id = typeof candidate.id === "string" ? candidate.id.trim() : ""
+      const name = typeof candidate.name === "string" ? candidate.name.trim() : ""
+      if (!id || !name || seenSectionIds.has(id)) continue
+      seenSectionIds.add(id)
+      const projectIds = Array.isArray(candidate.projectIds)
+        ? candidate.projectIds.filter((projectId): projectId is string => {
+            if (typeof projectId !== "string" || !projectId || seenProjectIds.has(projectId)) {
+              return false
+            }
+            seenProjectIds.add(projectId)
+            return true
+          })
+        : []
+      sections.push({ id, name: name.slice(0, 40), projectIds })
+    }
+    return sections
+  } catch {
+    return []
+  }
+}
+
+export function moveProjectToCustomSidebarSection(
+  sections: CustomSidebarProjectSection[],
+  projectId: string,
+  targetSectionId: string | null,
+): CustomSidebarProjectSection[] {
+  return sections.map((section) => ({
+    ...section,
+    projectIds: [
+      ...section.projectIds.filter((id) => id !== projectId),
+      ...(section.id === targetSectionId ? [projectId] : []),
+    ],
+  }))
+}
 
 export function setProjectQuickAccessMembership(
   current: ReadonlySet<string>,

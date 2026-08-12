@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest"
 
 import {
   buildOrderedIds,
+  moveProjectToCustomSidebarSection,
   moveIdInOrder,
   orderSidebarProjects,
+  parseCustomSidebarProjectSections,
   resolveBoundaryHighlightIds,
   resolveMoveIndicatorIds,
   resolveSidebarDragCursor,
@@ -14,6 +16,39 @@ import {
 } from "../src/renderer/features/sidebar/sidebar-ordering"
 
 describe("sidebar ordering", () => {
+  it("loads valid custom sections and keeps each project in only one section", () => {
+    expect(
+      parseCustomSidebarProjectSections(
+        JSON.stringify([
+          { id: "work", name: " Work ", projectIds: ["one", "two", "one"] },
+          { id: "later", name: "Later", projectIds: ["two", "three"] },
+          { id: "work", name: "Duplicate", projectIds: [] },
+          { id: "", name: "Invalid", projectIds: [] },
+        ]),
+      ),
+    ).toEqual([
+      { id: "work", name: "Work", projectIds: ["one", "two"] },
+      { id: "later", name: "Later", projectIds: ["three"] },
+    ])
+    expect(parseCustomSidebarProjectSections("not-json")).toEqual([])
+  })
+
+  it("moves a project between custom sections or back to Projects", () => {
+    const sections = [
+      { id: "work", name: "Work", projectIds: ["one", "two"] },
+      { id: "later", name: "Later", projectIds: ["three"] },
+    ]
+
+    expect(moveProjectToCustomSidebarSection(sections, "two", "later")).toEqual([
+      { id: "work", name: "Work", projectIds: ["one"] },
+      { id: "later", name: "Later", projectIds: ["three", "two"] },
+    ])
+    expect(moveProjectToCustomSidebarSection(sections, "one", null)).toEqual([
+      { id: "work", name: "Work", projectIds: ["two"] },
+      { id: "later", name: "Later", projectIds: ["three"] },
+    ])
+  })
+
   it("applies a project order that remains a manual drag order", () => {
     const projects = [
       { id: "b", name: "Beta", updatedAt: new Date("2026-01-01") },

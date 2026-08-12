@@ -4,6 +4,7 @@ import { z } from "zod"
 import { router, publicProcedure } from "../index"
 import { observable } from "@trpc/server/observable"
 import { terminalManager } from "../../terminal/manager"
+import { createTerminalOutputBatcher } from "../../terminal/output-batcher"
 import type { TerminalEvent } from "../../terminal/types"
 import { TRPCError } from "@trpc/server"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
@@ -207,11 +208,20 @@ export const terminalRouter = router({
 
   stream: publicProcedure.input(z.string().min(1)).subscription(({ input: paneId }) => {
     return observable<TerminalEvent>((emit) => {
-      const onData = (data: string) => {
+      const batcher = createTerminalOutputBatcher((data) => {
         emit.next({ type: "data", data })
+      })
+
+      const onData = (data: string) => {
+        batcher.push(data)
       }
 
+      let completed = false
+
       const onExit = (exitCode: number, signal?: number) => {
+        // Flush first so trailing output never lands after the exit event.
+        batcher.flush()
+        completed = true
         emit.next({ type: "exit", exitCode, signal })
         emit.complete()
       }
@@ -222,6 +232,11 @@ export const terminalRouter = router({
       return () => {
         terminalManager.off(`data:${paneId}`, onData)
         terminalManager.off(`exit:${paneId}`, onExit)
+        // Teardown can land mid-batch (up to TERMINAL_FLUSH_MS of output still
+        // buffered). Emit it before dropping the buffer so unsubscribing never
+        // loses terminal output; after completion nothing may be emitted.
+        if (!completed) batcher.flush()
+        batcher.dispose()
       }
     })
   }),

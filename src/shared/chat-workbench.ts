@@ -11,6 +11,8 @@ export const CHAT_WORKBENCH_MAX_WINDOWS = 4
 export const CHAT_WORKBENCH_DRAG_MIME = "application/x-flapstack-chat-workbench"
 export const CHAT_WORKBENCH_EXTERNAL_GROUP_ID = "sidebar"
 export const CHAT_WORKBENCH_DRAG_SESSION_KEY = "flapstack:chat-workbench-drag-session"
+export const CHAT_WORKBENCH_SIDEBAR_DRAG_START_EVENT = "flapstack:chat-workbench-sidebar-drag-start"
+export const CHAT_WORKBENCH_SIDEBAR_DRAG_END_EVENT = "flapstack:chat-workbench-sidebar-drag-end"
 export const CHAT_WORKBENCH_TERMINAL_PREFIX = "terminal:"
 
 export function createTerminalPresentationId(chatId: string): string {

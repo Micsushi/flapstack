@@ -230,6 +230,12 @@ export function invalidationForProductMcpMutation(
         chatIds: compactIds(chatId),
         runIds: compactIds(stringValue(result.runId)),
       })
+    case "wait_for_chats":
+      return event(["chats"], {
+        chatIds: compactIds(
+          ...(Array.isArray(request.targetChatIds) ? request.targetChatIds.map(stringValue) : []),
+        ),
+      })
     case "move_chat":
       return event(["chats"], { chatIds: compactIds(inputId, resultId) })
     case "rename_item":

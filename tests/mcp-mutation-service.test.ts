@@ -237,6 +237,53 @@ describe("MCP mutation service", () => {
     })
   })
 
+  it("registers an idempotent agent-only wait for the active caller run", async () => {
+    sqlite.prepare("UPDATE chats SET harness = 'codex' WHERE id = 'chat-1'").run()
+    sqlite
+      .prepare(
+        "INSERT INTO sub_chats (id, chat_id, harness, permission_mode, messages) VALUES ('sub-caller', 'chat-1', 'codex', 'full-access', '[]')",
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO agent_runs (
+          id, chat_id, sub_chat_id, harness, permission_mode, status,
+          runtime_snapshot_version, runtime_preference, runtime_preference_source,
+          resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+          runtime_capability_snapshot, runtime_control_snapshot
+        ) VALUES ('run-caller', 'chat-1', 'sub-caller', 'codex', 'full-access', 'running',
+          1, 'codex-enhanced', 'product', 'codex', 'test-adapter', 'test-protocol', '{}', '{}')`,
+      )
+      .run()
+    const service = createMcpMutationService(path)
+    const input = { targetChatIds: ["chat-2"], idempotencyKey: "wait-for-target" }
+
+    const first = await service.invoke(
+      "wait_for_chats",
+      { chatId: "chat-1", runId: "run-caller" },
+      input,
+    )
+    const second = await service.invoke(
+      "wait_for_chats",
+      { chatId: "chat-1", runId: "run-caller" },
+      input,
+    )
+
+    expect(first).toMatchObject({
+      ok: true,
+      data: { created: true, state: "waiting", targetChatIds: ["chat-2"] },
+    })
+    expect(second).toMatchObject({ ok: true, data: { created: false } })
+    expect(sqlite.prepare("SELECT count(*) count FROM chat_waits").get()).toEqual({ count: 1 })
+    expect(
+      await service.invoke(
+        "wait_for_chats",
+        { chatId: "chat-1", runId: "run-caller" },
+        { targetChatIds: ["chat-1"], idempotencyKey: "self-wait" },
+      ),
+    ).toMatchObject({ ok: false, error: { code: "invalid-input" } })
+  })
+
   it("queues launch_run for API-provider chats with their selected model", async () => {
     sqlite
       .prepare(

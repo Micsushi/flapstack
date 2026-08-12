@@ -48,9 +48,7 @@ export function QueueProcessor() {
         return
       }
 
-      // Get queue for this sub-chat
-      const queue = useMessageQueueStore.getState().queues[subChatId] || []
-      if (queue.length === 0) {
+      if (!useMessageQueueStore.getState().canAutoProcessQueue(subChatId)) {
         return
       }
 
@@ -88,11 +86,22 @@ export function QueueProcessor() {
       }
       checkoutBlockedRef.current.delete(subChatId)
 
+      // The checkout lookup is asynchronous. Re-read the queue gate and item so a
+      // manual pause or edit that happened while it was pending cannot leak a send.
+      const queueState = useMessageQueueStore.getState()
+      if (!queueState.canAutoProcessQueue(subChatId)) {
+        return
+      }
+      const nextItem = queueState.queues[subChatId]?.[0]
+      if (!nextItem) {
+        return
+      }
+
       // Mark as processing
       processingRef.current.add(subChatId)
 
       // Pop the first item from queue (atomic operation)
-      const item = useMessageQueueStore.getState().popItem(subChatId, queue[0].id)
+      const item = useMessageQueueStore.getState().popItem(subChatId, nextItem.id)
       if (!item) {
         processingRef.current.delete(subChatId)
         return
@@ -233,6 +242,7 @@ export function QueueProcessor() {
       for (const subChatId of Object.keys(queues)) {
         const queue = queues[subChatId]
         if (!queue || queue.length === 0) continue
+        if (!useMessageQueueStore.getState().canAutoProcessQueue(subChatId)) continue
 
         const status = useStreamingStatusStore.getState().getStatus(subChatId)
 
@@ -252,6 +262,10 @@ export function QueueProcessor() {
       (state) => state.queues,
       () => checkAllQueues(),
     )
+    const unsubscribeHeldQueues = useMessageQueueStore.subscribe(
+      (state) => state.heldQueues,
+      () => checkAllQueues(),
+    )
 
     // Subscribe to streaming status changes with selector
     const unsubscribeStatus = useStreamingStatusStore.subscribe(
@@ -265,6 +279,7 @@ export function QueueProcessor() {
     // Cleanup
     return () => {
       unsubscribeQueue()
+      unsubscribeHeldQueues()
       unsubscribeStatus()
 
       // Clear all timers

@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events"
 import type { DetectedPort } from "./types"
-import { getListeningPortsForPids, getProcessTree } from "./port-scanner"
+import { getListeningPortsForPids, getProcessTrees } from "./port-scanner"
 import type { TerminalSession } from "./types"
 
 // How often to poll for port changes (in ms)
@@ -21,16 +21,14 @@ class PortManager extends EventEmitter {
   private pendingHintScans = new Map<string, ReturnType<typeof setTimeout>>()
   private isScanning = false
 
-  constructor() {
-    super()
-    this.startPeriodicScan()
-  }
-
   /**
    * Register a terminal session for port scanning
    */
   registerSession(session: TerminalSession, workspaceId: string): void {
     this.sessions.set(session.paneId, { session, workspaceId })
+    // The scan loop spawns OS processes, so it only runs while a pane is live
+    // instead of from module import for the lifetime of the app.
+    this.startPeriodicScan()
   }
 
   /**
@@ -45,6 +43,10 @@ class PortManager extends EventEmitter {
     if (pendingTimeout) {
       clearTimeout(pendingTimeout)
       this.pendingHintScans.delete(paneId)
+    }
+
+    if (this.sessions.size === 0) {
+      this.stopPeriodicScan()
     }
   }
 
@@ -89,23 +91,46 @@ class PortManager extends EventEmitter {
     try {
       const panePortMap = new Map<string, { workspaceId: string; pids: number[] }>()
 
+      // One process-table enumeration per pass, not one per pane. Each pane's
+      // root pid is resolved to its descendants from that single snapshot.
+      const paneRoots: Array<{ paneId: string; workspaceId: string; rootPid: number }> = []
       for (const [paneId, { session, workspaceId }] of this.sessions) {
         if (!session.isAlive) continue
+        const rootPid = session.pty?.pid
+        if (typeof rootPid !== "number") continue
+        paneRoots.push({ paneId, workspaceId, rootPid })
+      }
 
-        try {
-          const pid = session.pty.pid
-          const pids = await getProcessTree(pid)
-          if (pids.length > 0) {
+      if (paneRoots.length > 0) {
+        const trees = await getProcessTrees(paneRoots.map((pane) => pane.rootPid))
+        for (const { paneId, workspaceId, rootPid } of paneRoots) {
+          const pids = trees.get(rootPid)
+          if (pids && pids.length > 0) {
             panePortMap.set(paneId, { workspaceId, pids })
           }
-        } catch {
-          // Session may have exited
         }
       }
 
-      for (const [paneId, { workspaceId, pids }] of panePortMap) {
-        const portInfos = await getListeningPortsForPids(pids)
-        this.updatePortsForPane(paneId, workspaceId, portInfos)
+      // One system-wide port lookup per pass, not one per pane. On Windows each
+      // call spawns `netstat -ano` and parses the whole TCP table, so N panes
+      // used to mean N full scans every 2.5s. Attribution stays correct because
+      // the scanner already validates output PIDs against the requested set.
+      if (panePortMap.size > 0) {
+        const allPids = new Set<number>()
+        for (const { pids } of panePortMap.values()) {
+          for (const pid of pids) allPids.add(pid)
+        }
+
+        const allPortInfos = await getListeningPortsForPids(Array.from(allPids))
+
+        for (const [paneId, { workspaceId, pids }] of panePortMap) {
+          const panePids = new Set(pids)
+          this.updatePortsForPane(
+            paneId,
+            workspaceId,
+            allPortInfos.filter((info) => panePids.has(info.pid)),
+          )
+        }
       }
 
       for (const [key, port] of this.ports) {

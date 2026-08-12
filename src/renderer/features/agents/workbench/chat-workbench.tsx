@@ -31,7 +31,7 @@ import {
 } from "../../../../shared/chat-workbench"
 import { cn } from "../../../lib/utils"
 import { incrementPerformanceCounter } from "../../../lib/performance-counters"
-import { configureChatDragFeedback } from "../lib/chat-drag-feedback"
+import { configureChatDragFeedback, shouldPopOutChatDrag } from "../lib/chat-drag-feedback"
 import { MoreHorizontal, SquareTerminal, X } from "lucide-react"
 import {
   DropdownMenu,
@@ -145,6 +145,7 @@ function ChatWorkbenchComponent({
   viewport?: { width: number; height: number }
 }) {
   const shellRef = useRef<HTMLElement>(null)
+  const resizePreviewElementsRef = useRef<HTMLElement[] | null>(null)
   const [announcement, setAnnouncement] = useState("")
   const [responsiveNoticeDismissed, setResponsiveNoticeDismissed] = useState(false)
   const [responsiveNoticeTop, setResponsiveNoticeTop] = useState(8)
@@ -154,7 +155,6 @@ function ChatWorkbenchComponent({
     height: number
   } | null>(null)
   const [dragPreview, setDragPreview] = useState<ChatDropPreview | null>(null)
-  const [resizePreviewLayout, setResizePreviewLayout] = useState<ChatWorkbenchLayout | null>(null)
   const setStableDragPreview = (preview: ChatDropPreview | null) =>
     setDragPreview((current) => (sameChatDropPreview(current, preview) ? current : preview))
   const dragSessionRef = useRef<{
@@ -181,7 +181,7 @@ function ChatWorkbenchComponent({
     () => new Set(chats.filter((chat) => chat.hasUnseenChanges).map((chat) => chat.id)),
     [chats],
   )
-  const renderedLayout = resizePreviewLayout ?? layout
+  const renderedLayout = layout
   const groups = useMemo(() => collectChatGroups(renderedLayout.root), [renderedLayout.root])
   const projected = useMemo(
     () =>
@@ -309,10 +309,16 @@ function ChatWorkbenchComponent({
       return
     }
     if (options?.previewResize && normalized.type === "resize-split") {
-      setResizePreviewLayout(result.layout)
+      if (shellRef.current) {
+        const elements =
+          resizePreviewElementsRef.current ??
+          Array.from(shellRef.current.querySelectorAll<HTMLElement>("[data-chat-split-child]"))
+        resizePreviewElementsRef.current = elements
+        applyResizePreviewStyles(elements, result.layout.root)
+      }
       return
     }
-    setResizePreviewLayout(null)
+    resizePreviewElementsRef.current = null
     onLayoutChange(result.layout, normalized)
     setAnnouncement(result.announcement ?? describeAction(normalized))
   }
@@ -443,18 +449,18 @@ function ChatWorkbenchComponent({
     }
     const session = dragSessionRef.current
     dragSessionRef.current = null
+    if (!session || !onDragOutside || getTerminalPresentationChatId(session.source.chatId)) {
+      return
+    }
     if (
-      !session ||
-      session.cancelled ||
-      event.dataTransfer.dropEffect !== "none" ||
-      !onDragOutside ||
-      getTerminalPresentationChatId(session.source.chatId)
+      !shouldPopOutChatDrag(session, {
+        dropEffect: event.dataTransfer.dropEffect,
+        screenX: event.screenX,
+        screenY: event.screenY,
+      })
     ) {
       return
     }
-    if (event.screenX === 0 && event.screenY === 0) return
-    const distance = Math.hypot(event.screenX - session.screenX, event.screenY - session.screenY)
-    if (distance < 12) return
     void onDragOutside(session.source, { screenX: event.screenX, screenY: event.screenY })
       .then(setAnnouncement)
       .catch((error: unknown) =>
@@ -576,7 +582,12 @@ function ChatWorkbenchComponent({
         renderChat={renderChat}
         openTerminal={openTerminal}
         dispatch={dispatch}
-        cancelResizePreview={() => setResizePreviewLayout(null)}
+        cancelResizePreview={() => {
+          if (resizePreviewElementsRef.current) {
+            applyResizePreviewStyles(resizePreviewElementsRef.current, layout.root)
+            resizePreviewElementsRef.current = null
+          }
+        }}
         onActiveChatChange={onActiveChatChange}
         onChatViewed={onChatViewed}
         dragPreview={dragPreview}
@@ -855,6 +866,8 @@ function SplitChild({
     <>
       <div
         ref={ref}
+        data-chat-split-child={split.id}
+        data-chat-split-child-index={index}
         className="min-h-0 min-w-0 overflow-hidden"
         style={{
           flexBasis: `${percentage}%`,
@@ -906,6 +919,25 @@ function SplitChild({
       )}
     </>
   )
+}
+
+function applyResizePreviewStyles(
+  childElements: readonly HTMLElement[],
+  root: ChatGroupNode,
+): void {
+  const visit = (node: ChatGroupNode) => {
+    if (node.type === "group") return
+    for (const element of childElements) {
+      if (element.dataset.chatSplitChild !== node.id) continue
+      const index = Number(element.dataset.chatSplitChildIndex)
+      const size = node.sizes[index]
+      if (size === undefined) continue
+      element.style.flexBasis = `${size * 100}%`
+      element.style.flexGrow = String(size)
+    }
+    node.children.forEach(visit)
+  }
+  visit(root)
 }
 
 function minimumNodeExtent(node: ChatGroupNode): { width: number; height: number } {
@@ -1163,7 +1195,7 @@ function ChatGroup({
         <span
           aria-hidden
           data-active-pane-outline
-          className="pointer-events-none absolute inset-0 z-50 border border-primary/80"
+          className="pointer-events-none absolute inset-0 z-50 border-2 border-primary"
         />
       )}
       {showPaneHeader && (
@@ -1318,6 +1350,14 @@ function ChatGroup({
                             )}
                           />
                         )}
+                        {chatId === activeChatId && (
+                          <span
+                            aria-hidden
+                            data-active-screen-indicator
+                            className="pointer-events-none absolute inset-x-1 bottom-0 h-1 rounded-t-full bg-primary"
+                            style={{ backgroundColor: chatAccents.get(chatId) ?? undefined }}
+                          />
+                        )}
                         <button
                           id={tabId(group.id, chatId)}
                           type="button"
@@ -1325,7 +1365,10 @@ function ChatGroup({
                           aria-selected={chatId === activeChatId}
                           aria-controls={panelId(group.id, chatId)}
                           tabIndex={chatId === activeChatId ? 0 : -1}
-                          className="flex min-w-0 flex-1 items-center gap-1.5 px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          className={cn(
+                            "flex min-w-0 flex-1 items-center gap-1.5 px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                            chatId === activeChatId && "font-semibold",
+                          )}
                           onClick={() => activate(chatId)}
                           onKeyDown={(event) => tabKeyDown(event, index)}
                         >

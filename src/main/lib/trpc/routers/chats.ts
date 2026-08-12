@@ -19,11 +19,14 @@ import {
   chatTags,
   getDatabase,
   getDatabasePath,
+  getSqliteDatabase,
   projects,
   subChats,
   tasks,
 } from "../../db"
-import { CHAT_TAG_COLORS, CHAT_TAG_ICONS } from "../../chat-tags"
+import { applyAutomaticChatTags, CHAT_TAG_COLORS, CHAT_TAG_ICONS } from "../../chat-tags"
+import { applyAutomaticAgentChatLabels, listAgentChatLabels } from "../../chat-agent-labels"
+import { listActiveAgentChatWaits } from "../../chat-waits"
 import { restoreCheckpoint } from "../../checkpoints"
 import {
   createWorktreeForChat,
@@ -74,6 +77,15 @@ import {
   agentProfileVersionRefSchema,
 } from "../../../../shared/agent-profiles"
 import { AgentProfileChatBindingService } from "../../agent-profiles/chat-binding"
+import {
+  buildChatMetadataPrompt,
+  CHAT_TITLE_STYLES,
+  fallbackChatMetadata,
+  inferHighConfidenceChatTags,
+  parseGeneratedChatMetadata,
+  type ChatTitleStyle,
+  type GeneratedChatMetadata,
+} from "../../../../shared/chat-metadata"
 
 const newChatPermissionModeSchema = z.enum([
   "read-only",
@@ -273,22 +285,16 @@ function sendWorktreeSetupFailure(
   }
 }
 
-// Preserve the complete fallback name. The renderer owns visual truncation.
-function getFallbackName(userMessage: string): string {
-  const trimmed = userMessage.trim()
-  return trimmed || "New Chat"
-}
-
 /**
- * Generate text using local Ollama model
- * Used for chat title generation in offline mode
- * @param userMessage - The user message to generate a title for
- * @param model - Optional model to use (if not provided, uses recommended model)
+ * Generate provider-neutral chat metadata with the local model when available.
+ * This never consumes the active chat provider's context or quota.
  */
-async function generateChatNameWithOllama(
-  userMessage: string,
-  model?: string | null,
-): Promise<string | null> {
+async function generateChatMetadataWithOllama(input: {
+  userMessage: string
+  titleStyle: ChatTitleStyle
+  includeTags: boolean
+  model?: string | null
+}): Promise<GeneratedChatMetadata | null> {
   try {
     const ollamaStatus = await checkOllamaStatus()
     if (!ollamaStatus.available) {
@@ -296,53 +302,38 @@ async function generateChatNameWithOllama(
     }
 
     // Use provided model, or recommended, or first available
-    const modelToUse = model || ollamaStatus.recommendedModel || ollamaStatus.models[0]
+    const modelToUse = input.model || ollamaStatus.recommendedModel || ollamaStatus.models[0]
     if (!modelToUse) {
       console.error("[Ollama] No model available")
       return null
     }
-
-    const prompt = `Generate a very short (2-5 words) title for a coding chat that starts with this message. The title MUST be in the same language as the user's message. Only output the title, nothing else. No quotes, no explanations.
-
-User message: "${userMessage.slice(0, 500)}"
-
-Title:`
 
     const response = await fetch("http://localhost:11434/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: modelToUse,
-        prompt,
+        prompt: buildChatMetadataPrompt(input),
+        format: "json",
         stream: false,
         options: {
-          temperature: 0.3,
-          num_predict: 50,
+          temperature: 0.2,
+          num_predict: 180,
         },
       }),
     })
 
     if (!response.ok) {
-      console.error("[Ollama] Generate chat name failed:", response.status)
+      console.error("[Ollama] Generate chat metadata failed:", response.status)
       return null
     }
 
     const data = await response.json()
-    const result = data.response?.trim()
-    if (result) {
-      // Clean up the result - remove quotes, trim, limit length
-      const cleaned = result
-        .replace(/^["']|["']$/g, "")
-        .replace(/^title:\s*/i, "")
-        .trim()
-        .slice(0, 50)
-      if (cleaned.length > 0) {
-        return cleaned
-      }
-    }
-    return null
+    return typeof data.response === "string"
+      ? parseGeneratedChatMetadata(data.response, input.titleStyle)
+      : null
   } catch (error) {
-    console.error("[Ollama] Generate chat name error:", error)
+    console.error("[Ollama] Generate chat metadata error:", error)
     return null
   }
 }
@@ -511,6 +502,14 @@ export const chatsRouter = router({
       .innerJoin(chatTags, eq(chatTagAssignments.tagId, chatTags.id))
       .orderBy(chatTags.normalizedName, chatTags.id)
       .all()
+  }),
+
+  listAgentMetadata: publicProcedure.query(() => {
+    const database = getSqliteDatabase()
+    return {
+      labels: listAgentChatLabels(database),
+      waits: listActiveAgentChatWaits(database),
+    }
   }),
 
   createTag: publicProcedure
@@ -2138,7 +2137,21 @@ export const chatsRouter = router({
    * Uses GitCache for instant responses when diff hasn't changed
    */
   getParsedDiff: publicProcedure
-    .input(z.object({ chatId: z.string() }))
+    .input(
+      z.object({
+        chatId: z.string(),
+        // Callers that only need the header badge (file count / +- totals) can
+        // opt out of the file-content prefetch, which is by far the largest part
+        // of this response and is otherwise read, serialized and shipped over
+        // IPC every couple of seconds during an agent run.
+        includeContents: z.boolean().default(true),
+        // Hash of the diff the caller already holds, together with whatever
+        // contents it needs. When it still matches, the response is a tiny
+        // "unchanged" marker instead of a re-read and re-serialization of every
+        // file body - this endpoint is re-polled on every filesystem event.
+        knownDiffHash: z.string().optional(),
+      }),
+    )
     .query(async ({ input }) => {
       const db = getDatabase()
       const chat = db.select().from(chats).where(eq(chats.id, input.chatId)).get()
@@ -2149,6 +2162,8 @@ export const chatsRouter = router({
           totalAdditions: 0,
           totalDeletions: 0,
           fileContents: {},
+          diffHash: "",
+          unchanged: false as const,
           error: "No worktree path",
         }
       }
@@ -2164,6 +2179,8 @@ export const chatsRouter = router({
           totalAdditions: 0,
           totalDeletions: 0,
           fileContents: {},
+          diffHash: "",
+          unchanged: false as const,
           error: result.error,
         }
       }
@@ -2175,10 +2192,41 @@ export const chatsRouter = router({
         totalAdditions: number
         totalDeletions: number
         fileContents: Record<string, string>
+        // Lets the renderer skip re-applying an identical diff. This endpoint is
+        // re-polled on every filesystem event, and the payload is deserialized
+        // fresh each time, so structural identity is otherwise unavailable.
+        diffHash: string
+        // Present so callers can discriminate against the "unchanged" marker.
+        unchanged?: false
       }
-      const cached = gitCache.getParsedDiff<ParsedDiffResponse>(chat.worktreePath, diffHash)
-      if (cached) {
-        return cached
+
+      // The caller already holds this exact diff (with the contents it needs),
+      // so skip the file reads and the payload entirely.
+      if (input.knownDiffHash && input.knownDiffHash === diffHash) {
+        return { unchanged: true as const, diffHash }
+      }
+
+      // Contents-free responses are cached under their own key so they can never
+      // be served to a caller that asked for contents.
+      const cacheKey = input.includeContents ? diffHash : `${diffHash}:no-contents`
+      const fullCached = gitCache.getParsedDiff<ParsedDiffResponse>(chat.worktreePath, diffHash)
+      if (input.includeContents) {
+        if (fullCached) return fullCached
+      } else {
+        const summaryCached = gitCache.getParsedDiff<ParsedDiffResponse>(
+          chat.worktreePath,
+          cacheKey,
+        )
+        if (summaryCached) return summaryCached
+
+        // Reuse the expensive parse/stat work from a full cache entry without
+        // leaking its multi-megabyte file-content payload back into a closed
+        // sidebar request.
+        if (fullCached) {
+          const summary = { ...fullCached, fileContents: {} }
+          gitCache.setParsedDiff(chat.worktreePath, cacheKey, summary)
+          return summary
+        }
       }
 
       // 3. Parse diff into files
@@ -2192,55 +2240,59 @@ export const chatsRouter = router({
       const MAX_PREFETCH = 20
       const MAX_FILE_SIZE = 2 * 1024 * 1024 // 2MB
 
-      const filesToFetch = files
-        .filter((f) => !f.isBinary && !f.isDeletedFile)
-        .slice(0, MAX_PREFETCH)
-        .map((f) => ({
-          key: f.key,
-          filePath: f.newPath !== "/dev/null" ? f.newPath : f.oldPath,
-        }))
-        .filter((f) => f.filePath && f.filePath !== "/dev/null")
-
       const fileContents: Record<string, string> = {}
 
-      // Read files in parallel
-      await Promise.all(
-        filesToFetch.map(async ({ key, filePath }) => {
-          try {
-            const fullPath = path.join(chat.worktreePath!, filePath)
+      if (input.includeContents) {
+        const filesToFetch = files
+          .filter((f) => !f.isBinary && !f.isDeletedFile)
+          .slice(0, MAX_PREFETCH)
+          .map((f) => ({
+            key: f.key,
+            filePath: f.newPath !== "/dev/null" ? f.newPath : f.oldPath,
+          }))
+          .filter((f) => f.filePath && f.filePath !== "/dev/null")
 
-            // Check file size first
-            const stats = await fs.stat(fullPath)
-            if (stats.size > MAX_FILE_SIZE) {
-              return // Skip large files
-            }
+        // Read files in parallel
+        await Promise.all(
+          filesToFetch.map(async ({ key, filePath }) => {
+            try {
+              const fullPath = path.join(chat.worktreePath!, filePath)
 
-            const content = await fs.readFile(fullPath, "utf-8")
-
-            // Quick binary check (NUL bytes in first 8KB)
-            const checkLength = Math.min(content.length, 8192)
-            for (let i = 0; i < checkLength; i++) {
-              if (content.charCodeAt(i) === 0) {
-                return // Skip binary files
+              // Check file size first
+              const stats = await fs.stat(fullPath)
+              if (stats.size > MAX_FILE_SIZE) {
+                return // Skip large files
               }
-            }
 
-            fileContents[key] = content
-          } catch {
-            // File might not exist or be unreadable - skip
-          }
-        }),
-      )
+              const content = await fs.readFile(fullPath, "utf-8")
+
+              // Quick binary check (NUL bytes in first 8KB)
+              const checkLength = Math.min(content.length, 8192)
+              for (let i = 0; i < checkLength; i++) {
+                if (content.charCodeAt(i) === 0) {
+                  return // Skip binary files
+                }
+              }
+
+              fileContents[key] = content
+            } catch {
+              // File might not exist or be unreadable - skip
+            }
+          }),
+        )
+      }
 
       const response: ParsedDiffResponse = {
         files,
         totalAdditions,
         totalDeletions,
         fileContents,
+        diffHash,
+        unchanged: false,
       }
 
       // 6. Store in cache
-      gitCache.setParsedDiff(chat.worktreePath, diffHash, response)
+      gitCache.setParsedDiff(chat.worktreePath, cacheKey, response)
       return response
     }),
 
@@ -2380,38 +2432,78 @@ export const chatsRouter = router({
       return { message }
     }),
 
-  /**
-   * Generate a name for a sub-chat using AI
-   * Uses Ollama when offline, otherwise calls web API
-   */
+  /** Generate a title and optional high-confidence tags from the first message. */
   generateSubChatName: publicProcedure
     .input(
       z.object({
-        userMessage: z.string(),
-        ollamaModel: z.string().nullish(), // Optional model for offline mode
+        userMessage: z.string().max(100_000),
+        chatId: z.string().optional(),
+        generateTitle: z.boolean().default(true),
+        titleStyle: z.enum(CHAT_TITLE_STYLES).default("concise"),
+        autoTag: z.boolean().default(false),
+        tagConfidencePercent: z.number().int().min(50).max(100).default(95),
+        ollamaModel: z.string().nullish(),
       }),
     )
     .mutation(async ({ input }) => {
+      const fallback = fallbackChatMetadata(input.userMessage, input.titleStyle)
       try {
-        // Check internet first - if offline, use Ollama
-        const hasInternet = await checkInternetConnection()
+        const generated =
+          input.generateTitle || input.autoTag
+            ? await generateChatMetadataWithOllama({
+                userMessage: input.userMessage,
+                titleStyle: input.titleStyle,
+                includeTags: input.autoTag,
+                model: input.ollamaModel,
+              })
+            : null
+        const inferredCandidates = input.autoTag
+          ? inferHighConfidenceChatTags(input.userMessage)
+          : []
+        // Model confidence can make a deterministic candidate less certain, never more certain.
+        const candidates = inferredCandidates.map((candidate) => {
+          const generatedCandidate = generated?.tags.find((tag) => tag.key === candidate.key)
+          return generatedCandidate
+            ? {
+                ...candidate,
+                confidence: Math.min(candidate.confidence, generatedCandidate.confidence),
+              }
+            : candidate
+        })
+        const appliedTags =
+          input.autoTag && input.chatId
+            ? applyAutomaticChatTags(getSqliteDatabase(), {
+                chatId: input.chatId,
+                candidates,
+                minimumConfidence: input.tagConfidencePercent / 100,
+              })
+            : []
+        const appliedAgentLabels =
+          input.autoTag && input.chatId
+            ? applyAutomaticAgentChatLabels(getSqliteDatabase(), {
+                chatId: input.chatId,
+                candidates,
+                minimumConfidence: input.tagConfidencePercent / 100,
+              })
+            : []
 
-        if (!hasInternet) {
-          console.log("[generateSubChatName] Offline - trying Ollama...")
-          const ollamaName = await generateChatNameWithOllama(input.userMessage, input.ollamaModel)
-          if (ollamaName) {
-            console.log("[generateSubChatName] Generated name via Ollama:", ollamaName)
-            return { name: ollamaName }
-          }
-          console.log("[generateSubChatName] Ollama failed, using fallback")
-          return { name: getFallbackName(input.userMessage) }
+        if (generated) {
+          console.log("[generateSubChatName] Generated chat metadata via Ollama")
+        } else if (input.generateTitle || input.autoTag) {
+          console.log("[generateSubChatName] Local model unavailable, using safe fallback")
         }
-
-        console.log("[generateSubChatName] Hosted API disabled, using local fallback")
-        return { name: getFallbackName(input.userMessage) }
+        return {
+          name: input.generateTitle ? (generated?.title ?? fallback.title) : null,
+          appliedTags: appliedTags.map((tag) => tag.name),
+          appliedAgentLabels: appliedAgentLabels.map((label) => label.key),
+        }
       } catch (error) {
         console.error("[generateSubChatName] Error:", error)
-        return { name: getFallbackName(input.userMessage) }
+        return {
+          name: input.generateTitle ? fallback.title : null,
+          appliedTags: [] as string[],
+          appliedAgentLabels: [] as string[],
+        }
       }
     }),
 

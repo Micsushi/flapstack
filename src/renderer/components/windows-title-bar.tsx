@@ -1,7 +1,14 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { ArrowLeft, ArrowRight } from "lucide-react"
+import { useEffect, useState, useSyncExternalStore } from "react"
+import { ChevronLeft, ChevronRight, Redo2, Undo2 } from "lucide-react"
+import { toast } from "sonner"
+import {
+  getAppActionHistorySnapshot,
+  redoAppAction,
+  subscribeAppActionHistory,
+  undoAppAction,
+} from "../lib/app-action-history"
 
 const APPLICATION_MENUS = ["File", "Edit", "View", "Help"] as const
 
@@ -11,8 +18,23 @@ const APPLICATION_MENUS = ["File", "Edit", "View", "Help"] as const
  *
  * Only shown on Windows when using frameless window (useNativeFrame = false)
  */
-export function WindowsTitleBar() {
+export function WindowsTitleBar({
+  canGoBack = false,
+  canGoForward = false,
+  onBack,
+  onForward,
+}: {
+  canGoBack?: boolean
+  canGoForward?: boolean
+  onBack?: () => void
+  onForward?: () => void
+}) {
   const [hasNativeFrame, setHasNativeFrame] = useState(false)
+  const actionHistory = useSyncExternalStore(
+    subscribeAppActionHistory,
+    getAppActionHistorySnapshot,
+    getAppActionHistorySnapshot,
+  )
 
   const isWindows = typeof window !== "undefined" && window.desktopApi?.platform === "win32"
 
@@ -31,6 +53,31 @@ export function WindowsTitleBar() {
 
     checkFrameState()
   }, [isWindows])
+
+  useEffect(() => {
+    const handleHistoryShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return
+      const target = event.target
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
+      ) {
+        return
+      }
+      const available = event.shiftKey ? actionHistory.canRedo : actionHistory.canUndo
+      if (!available) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      const operation = event.shiftKey ? redoAppAction() : undoAppAction()
+      void operation.catch((error) =>
+        toast.error(event.shiftKey ? "Redo failed" : "Undo failed", {
+          description: error instanceof Error ? error.message : String(error),
+        }),
+      )
+    }
+    window.addEventListener("keydown", handleHistoryShortcut, true)
+    return () => window.removeEventListener("keydown", handleHistoryShortcut, true)
+  }, [actionHistory.canRedo, actionHistory.canUndo])
 
   // Don't render on non-Windows or when using native frame
   if (!isWindows || hasNativeFrame) return null
@@ -52,23 +99,62 @@ export function WindowsTitleBar() {
       >
         <button
           type="button"
-          aria-label="Undo"
-          title="Undo (Ctrl+Z)"
-          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+          aria-label="Back"
+          title="Back"
+          disabled={!canGoBack}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
           onMouseDown={(event) => event.preventDefault()}
-          onClick={() => void window.desktopApi.undo()}
+          onClick={onBack}
         >
-          <ArrowLeft className="h-3.5 w-3.5" />
+          <ChevronLeft className="h-3.5 w-3.5" />
         </button>
         <button
           type="button"
-          aria-label="Redo"
-          title="Redo (Ctrl+Shift+Z)"
-          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+          aria-label="Forward"
+          title="Forward"
+          disabled={!canGoForward}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
           onMouseDown={(event) => event.preventDefault()}
-          onClick={() => void window.desktopApi.redo()}
+          onClick={onForward}
         >
-          <ArrowRight className="h-3.5 w-3.5" />
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+        <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
+        <button
+          type="button"
+          aria-label={actionHistory.undoLabel ? `Undo ${actionHistory.undoLabel}` : "Undo"}
+          title={actionHistory.undoLabel ? `Undo ${actionHistory.undoLabel} (Ctrl+Z)` : "Undo"}
+          disabled={!actionHistory.canUndo}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() =>
+            void undoAppAction().catch((error) =>
+              toast.error("Undo failed", {
+                description: error instanceof Error ? error.message : String(error),
+              }),
+            )
+          }
+        >
+          <Undo2 className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          aria-label={actionHistory.redoLabel ? `Redo ${actionHistory.redoLabel}` : "Redo"}
+          title={
+            actionHistory.redoLabel ? `Redo ${actionHistory.redoLabel} (Ctrl+Shift+Z)` : "Redo"
+          }
+          disabled={!actionHistory.canRedo}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() =>
+            void redoAppAction().catch((error) =>
+              toast.error("Redo failed", {
+                description: error instanceof Error ? error.message : String(error),
+              }),
+            )
+          }
+        >
+          <Redo2 className="h-3.5 w-3.5" />
         </button>
         {APPLICATION_MENUS.map((menu) => (
           <button

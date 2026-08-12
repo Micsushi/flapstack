@@ -6,7 +6,11 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
-import { createChatTagStore } from "../src/main/lib/chat-tags"
+import { applyAutomaticChatTags, createChatTagStore } from "../src/main/lib/chat-tags"
+import {
+  applyAutomaticAgentChatLabels,
+  listAgentChatLabels,
+} from "../src/main/lib/chat-agent-labels"
 
 let directory = ""
 let sqlite: Database.Database
@@ -65,5 +69,67 @@ describe("chat tags", () => {
     const store = createChatTagStore(sqlite)
     store.create({ name: "  Needs input  ", color: "amber" })
     expect(() => store.create({ name: "needs input", color: "blue" })).toThrow(/already exists/i)
+  })
+
+  it("creates and assigns only automatic tags above the confidence threshold", () => {
+    const applied = applyAutomaticChatTags(sqlite, {
+      chatId: "chat-a",
+      candidates: [
+        { key: "bug-fix", confidence: 0.96 },
+        { key: "coordinator", confidence: 0.94 },
+        { key: "manual-testing", confidence: 0.99 },
+      ],
+      minimumConfidence: 0.95,
+    })
+
+    expect(applied).toEqual([
+      expect.objectContaining({ name: "Bug", color: "rose", icon: "bug" }),
+      expect.objectContaining({ name: "Manual", color: "amber", icon: "hand" }),
+    ])
+    expect(createChatTagStore(sqlite).listForChats(["chat-a"]).get("chat-a")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "Bug" }),
+        expect.objectContaining({ name: "Manual" }),
+      ]),
+    )
+  })
+
+  it("stores inferred agent roles outside the user-owned tag vocabulary", () => {
+    const candidates = [
+      { key: "coordinator", confidence: 0.99 },
+      { key: "reviewer", confidence: 0.99 },
+      { key: "worker", confidence: 0.99 },
+      { key: "researcher", confidence: 0.99 },
+      { key: "planner", confidence: 0.99 },
+      { key: "verifier", confidence: 0.99 },
+    ] as const
+    expect(
+      applyAutomaticChatTags(sqlite, {
+        chatId: "chat-a",
+        candidates: [...candidates],
+        minimumConfidence: 0.95,
+      }),
+    ).toEqual([])
+
+    const applied = applyAutomaticAgentChatLabels(sqlite, {
+      chatId: "chat-a",
+      candidates: [...candidates],
+      minimumConfidence: 0.95,
+    })
+
+    expect(applied.map(({ key }) => key)).toEqual([
+      "coordinator",
+      "planner",
+      "researcher",
+      "reviewer",
+      "verifier",
+      "worker",
+    ])
+    expect(listAgentChatLabels(sqlite, "chat-a")).toEqual(applied)
+    expect(
+      createChatTagStore(sqlite)
+        .list()
+        .map(({ name }) => name),
+    ).not.toContain("Coordinator")
   })
 })

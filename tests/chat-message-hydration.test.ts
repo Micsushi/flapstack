@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { hydrateChatFromPersistedMessages } from "../src/renderer/features/agents/main/chat-message-hydration"
+import {
+  hydrateChatFromPersistedMessages,
+  shouldAutoGenerateInitialResponse,
+} from "../src/renderer/features/agents/main/chat-message-hydration"
 
 describe("chat message hydration", () => {
   it("hydrates a cached empty chat when persisted messages arrive", () => {
@@ -23,5 +26,36 @@ describe("chat message hydration", () => {
 
     expect(hydrateChatFromPersistedMessages(chat, [])).toBe(false)
     expect(chat.messages).toEqual([{ id: "existing" }])
+  })
+
+  it("never regenerates a stale one-message transcript for an existing Chat", () => {
+    expect(
+      shouldAutoGenerateInitialResponse({
+        messages: [{ id: "stale-seed", role: "user" }],
+        status: "ready",
+        streamId: null,
+        pendingInitialGeneration: false,
+      }),
+    ).toBe(false)
+  })
+
+  it("auto-generates exactly for an explicitly pending new-Chat launch", () => {
+    expect(
+      shouldAutoGenerateInitialResponse({
+        messages: [{ id: "new-seed", role: "user" }],
+        status: "ready",
+        streamId: null,
+        pendingInitialGeneration: true,
+      }),
+    ).toBe(true)
+
+    expect(
+      shouldAutoGenerateInitialResponse({
+        messages: [{ id: "new-seed", role: "user" }],
+        status: "streaming",
+        streamId: null,
+        pendingInitialGeneration: true,
+      }),
+    ).toBe(false)
   })
 })

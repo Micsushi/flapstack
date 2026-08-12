@@ -1397,9 +1397,11 @@ export const AgentDiffView = forwardRef<AgentDiffViewRef, AgentDiffViewProps>(
     const MAX_PREFETCH_FILES = 20
 
     useEffect(() => {
-      // Desktop: use worktreePath, Web: use sandboxId
+      // Desktop file bodies are owned by active-chat's getParsedDiff request.
+      // A second fetch here races the parent effect and reads the same files
+      // twice. Remote sandbox views still fetch their own bodies below.
       if (fileDiffs.length === 0 || isLoadingFileContents) return
-      if (!worktreePath && !sandboxId) return
+      if (worktreePath || !sandboxId) return
       // Skip if we already have enough contents
       const existingContentCount = Object.keys(fileContents).length
       if (existingContentCount >= Math.min(fileDiffs.length, MAX_PREFETCH_FILES)) return
@@ -1422,27 +1424,15 @@ export const AgentDiffView = forwardRef<AgentDiffViewRef, AgentDiffViewProps>(
               return { key: file.key, filePath }
             })
             .filter((f): f is { key: string; filePath: string } => f !== null)
+            // Never re-read a body the parent already prefetched.
+            .filter((f) => fileContents[f.key] === undefined)
 
           if (filesToFetch.length === 0) {
             setIsLoadingFileContents(false)
             return
           }
 
-          // Desktop: use batch tRPC call
-          if (worktreePath) {
-            const results = await trpcClient.changes.readMultipleWorkingFiles.query({
-              worktreePath,
-              files: filesToFetch,
-            })
-
-            const newContents: Record<string, string> = {}
-            for (const [key, result] of Object.entries(results)) {
-              if (result.ok) {
-                newContents[key] = result.content
-              }
-            }
-            setFileContents(newContents)
-          } else if (sandboxId) {
+          if (sandboxId) {
             // Sandbox: use remoteApi on desktop, relative fetch on web
             const results = await Promise.allSettled(
               filesToFetch.map(async ({ key, filePath }) => {
@@ -1473,7 +1463,7 @@ export const AgentDiffView = forwardRef<AgentDiffViewRef, AgentDiffViewProps>(
                 newContents[result.value.key] = result.value.content
               }
             }
-            setFileContents(newContents)
+            setFileContents((prev) => ({ ...prev, ...newContents }))
           }
         } catch (error) {
           console.error("Failed to prefetch file contents:", error)
@@ -1483,7 +1473,8 @@ export const AgentDiffView = forwardRef<AgentDiffViewRef, AgentDiffViewProps>(
       }
 
       fetchAllContents()
-    }, [fileDiffs, sandboxId, worktreePath]) // Note: fileContents intentionally not in deps
+      // fileContents is intentionally not in deps (it is read, not tracked).
+    }, [fileDiffs, sandboxId, worktreePath, prefetchedFileContents])
 
     const toggleFileCollapsed = useCallback((fileKey: string) => {
       setCollapsedByFileKey((prev) => ({

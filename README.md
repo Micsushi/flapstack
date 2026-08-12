@@ -56,6 +56,9 @@ harnesses, permissions, and worktrees.
 
 ### Terminology Invariant
 
+See the [Flapstack Product Glossary](docs/product-glossary.md) for canonical
+terms, accepted synonyms, and disambiguation rules.
+
 In the user interface, **Chat** is the canonical name for an independently
 addressable conversation. A provider thread, standalone agent, spawned agent,
 worker, or subagent with its own conversation is represented by a durable Chat

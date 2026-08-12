@@ -12,7 +12,10 @@ describe("chat tag icons and responsive metadata", () => {
       entries: Array<{ idx: number; tag: string }>
     }
 
-    expect(journal.entries.at(-1)).toMatchObject({ idx: 57, tag: "0057_chat_tag_icons" })
+    expect(journal.entries.find((entry) => entry.idx === 57)).toMatchObject({
+      idx: 57,
+      tag: "0057_chat_tag_icons",
+    })
     const migration = read("drizzle/0057_chat_tag_icons.sql")
     expect(migration).toContain("ADD `icon` text")
     expect(migration).toContain("'starter-important'")
@@ -33,6 +36,28 @@ describe("chat tag icons and responsive metadata", () => {
     expect(tagMenu).toContain("CHAT_TAG_ICONS")
     expect(tagMenu).toContain('aria-label="Tag icon"')
     expect(tagMenu).toContain("tag.icon")
+    for (const icon of [
+      "bug: Bug",
+      "hand: Hand",
+      "network: Network",
+      '"search-check": SearchCheck',
+      "hammer: Hammer",
+      "telescope: Telescope",
+      '"list-checks": ListChecks',
+      '"badge-check": BadgeCheck',
+      "code: Code2",
+      "terminal: Terminal",
+      '"git-branch": GitBranch',
+      '"file-text": FileText',
+      "wrench: Wrench",
+      "flask: FlaskConical",
+      "lightbulb: Lightbulb",
+      '"shield-check": ShieldCheck',
+      "bot: Bot",
+      "users: Users",
+    ]) {
+      expect(tagMenu).toContain(icon)
+    }
     expect(tagMenu).not.toContain("compactLabel")
 
     const sidebar = read("src/renderer/features/sidebar/agents-sidebar.tsx")
@@ -43,6 +68,20 @@ describe("chat tag icons and responsive metadata", () => {
     expect(sidebar).toContain("<ChatTagChip key={tag.id} tag={tag} compact />")
     expect(sidebar).not.toContain("compactLabel")
     expect(sidebar).not.toContain("@container/chat-row")
+
+    const agentBadges = read("src/renderer/features/sidebar/agent-chat-badge.tsx")
+    for (const role of [
+      "Network",
+      "SearchCheck",
+      "Hammer",
+      "Telescope",
+      "ListChecks",
+      "BadgeCheck",
+    ]) {
+      expect(agentBadges).toContain(role)
+    }
+    expect(agentBadges).toContain("Agent waiting for")
+    expect(agentBadges).toContain("border-dashed")
   })
 
   it("shows complete chat metadata and tags in Details for every local chat", () => {

@@ -20,16 +20,85 @@ const PORT_CACHE_TTL = 2000 // 2 seconds - ports don't change that fast
 const processNameCache = new Map<number, { name: string; timestamp: number }>()
 const PROCESS_NAME_CACHE_TTL = 10000 // 10 seconds
 
+// Both caches are keyed by transient values (PID sets and PIDs), so without a
+// bound they grow for the lifetime of the main process as panes and child
+// processes come and go. TTL alone only prevents stale reads, not growth.
+const MAX_CACHE_ENTRIES = 64
+
 /**
- * Get all child PIDs of a process (including the process itself)
+ * Insert into a TTL cache, dropping expired entries and then, if still over the
+ * cap, the oldest entries (Map preserves insertion order).
  */
-export async function getProcessTree(pid: number): Promise<number[]> {
-  try {
-    return await pidtree(pid, { root: true })
-  } catch {
-    // Process may have exited
-    return []
+function setCacheEntry<K, V extends { timestamp: number }>(
+  cache: Map<K, V>,
+  key: K,
+  value: V,
+  ttl: number,
+): void {
+  cache.set(key, value)
+  if (cache.size <= MAX_CACHE_ENTRIES) return
+
+  const now = Date.now()
+  for (const [existingKey, existing] of cache) {
+    if (now - existing.timestamp >= ttl) cache.delete(existingKey)
   }
+
+  for (const existingKey of cache.keys()) {
+    if (cache.size <= MAX_CACHE_ENTRIES) break
+    if (existingKey !== key) cache.delete(existingKey)
+  }
+}
+
+/**
+ * Resolve the descendant PIDs of several roots with ONE system enumeration.
+ *
+ * Resolving one root at a time (`pidtree(pid)`) enumerates the whole process
+ * table per call - on Windows that is a failed `wmic` spawn followed by a
+ * PowerShell runtime - so the cost of a scan pass scaled with the pane count.
+ * `pidtree(-1)` returns every `{pid, ppid}` pair in a single enumeration; the
+ * root-to-descendant attribution is then done in process.
+ *
+ * Returns a map keyed by the requested root PID. A root always maps to at least
+ * itself, so a pane that listens directly is still attributed correctly even if
+ * the enumeration fails.
+ */
+export async function getProcessTrees(rootPids: number[]): Promise<Map<number, number[]>> {
+  const trees = new Map<number, number[]>()
+  for (const rootPid of rootPids) trees.set(rootPid, [rootPid])
+  if (rootPids.length === 0) return trees
+
+  let processes: Array<{ pid: number; ppid: number }>
+  try {
+    processes = await pidtree(-1, { advanced: true })
+  } catch {
+    // Enumeration unavailable: fall back to the roots themselves.
+    return trees
+  }
+
+  const childrenByParent = new Map<number, number[]>()
+  for (const { pid, ppid } of processes) {
+    const siblings = childrenByParent.get(ppid)
+    if (siblings) siblings.push(pid)
+    else childrenByParent.set(ppid, [pid])
+  }
+
+  for (const rootPid of trees.keys()) {
+    const descendants = trees.get(rootPid)!
+    const visited = new Set<number>([rootPid])
+    for (let i = 0; i < descendants.length; i++) {
+      const children = childrenByParent.get(descendants[i]!)
+      if (!children) continue
+      for (const child of children) {
+        // A cycle is impossible in a real process table, but a stale/PID-reused
+        // snapshot must never turn this walk into an infinite loop.
+        if (visited.has(child)) continue
+        visited.add(child)
+        descendants.push(child)
+      }
+    }
+  }
+
+  return trees
 }
 
 /**
@@ -39,8 +108,8 @@ export async function getProcessTree(pid: number): Promise<number[]> {
 export async function getListeningPortsForPids(pids: number[]): Promise<PortInfo[]> {
   if (pids.length === 0) return []
 
-  // Check cache first
-  const cacheKey = pids.sort().join(",")
+  // Check cache first. Copy before sorting so the caller's array is not reordered.
+  const cacheKey = [...pids].sort((a, b) => a - b).join(",")
   const cached = portCache.get(cacheKey)
   if (cached && Date.now() - cached.timestamp < PORT_CACHE_TTL) {
     return cached.ports
@@ -56,7 +125,7 @@ export async function getListeningPortsForPids(pids: number[]): Promise<PortInfo
   }
 
   // Update cache
-  portCache.set(cacheKey, { ports, timestamp: Date.now() })
+  setCacheEntry(portCache, cacheKey, { ports, timestamp: Date.now() }, PORT_CACHE_TTL)
   return ports
 }
 
@@ -199,6 +268,52 @@ async function getListeningPortsWindows(pids: number[]): Promise<PortInfo[]> {
   }
 }
 
+// wmic is absent from current Windows builds. Without this latch every cache
+// miss spawns a doomed wmic process before falling back, and the old fallback
+// started a full PowerShell runtime per PID.
+let wmicUnavailable = false
+
+/** Test hook: the latch is process-wide, so suites must be able to reset it. */
+export function __resetWmicAvailabilityForTests(): void {
+  wmicUnavailable = false
+}
+
+async function getProcessNameWmic(pid: number): Promise<string | null> {
+  if (wmicUnavailable) return null
+  try {
+    const { stdout: output } = await execFileAsync(
+      "wmic",
+      ["process", "where", `processid=${pid}`, "get", "name"],
+      { timeout: 2000, windowsHide: true },
+    )
+    const lines = output.trim().split("\n")
+    if (lines.length < 2) return null
+    return lines[1].trim().replace(/\.exe$/i, "") || null
+  } catch {
+    // A missing binary, alias stub, policy failure, non-zero exit, or timeout is
+    // environment-wide. A missing PID is reported as a successful empty result,
+    // so any thrown failure should latch the complete tasklist fallback.
+    wmicUnavailable = true
+    return null
+  }
+}
+
+async function getProcessNameTasklist(pid: number): Promise<string | null> {
+  try {
+    const { stdout: output } = await execFileAsync(
+      "tasklist",
+      ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"],
+      { timeout: 2000, windowsHide: true },
+    )
+    // Rows look like: "node.exe","1234","Console","1","12,345 K"
+    const match = output.match(/^"([^"]+)"/m)
+    if (!match) return null
+    return match[1].replace(/\.exe$/i, "") || null
+  } catch {
+    return null
+  }
+}
+
 /**
  * Get process name for a PID on Windows (async with cache)
  */
@@ -209,34 +324,10 @@ async function getProcessNameWindowsAsync(pid: number): Promise<string> {
     return cached.name
   }
 
-  let name = "unknown"
-  try {
-    const { stdout: output } = await execFileAsync(
-      "wmic",
-      ["process", "where", `processid=${pid}`, "get", "name"],
-      { timeout: 2000, windowsHide: true },
-    )
-    const lines = output.trim().split("\n")
-    if (lines.length >= 2) {
-      const parsedName = lines[1].trim()
-      name = parsedName.replace(/\.exe$/i, "") || "unknown"
-    }
-  } catch {
-    // wmic is deprecated, try PowerShell as fallback
-    try {
-      const { stdout: output } = await execFileAsync(
-        "powershell",
-        ["-Command", `(Get-Process -Id ${pid}).ProcessName`],
-        { timeout: 2000, windowsHide: true },
-      )
-      name = output.trim() || "unknown"
-    } catch {
-      // Ignore
-    }
-  }
+  const name = (await getProcessNameWmic(pid)) ?? (await getProcessNameTasklist(pid)) ?? "unknown"
 
   // Update cache
-  processNameCache.set(pid, { name, timestamp: Date.now() })
+  setCacheEntry(processNameCache, pid, { name, timestamp: Date.now() }, PROCESS_NAME_CACHE_TTL)
   return name
 }
 
@@ -273,6 +364,6 @@ export async function getProcessName(pid: number): Promise<string> {
   }
 
   // Update cache
-  processNameCache.set(pid, { name, timestamp: Date.now() })
+  setCacheEntry(processNameCache, pid, { name, timestamp: Date.now() }, PROCESS_NAME_CACHE_TTL)
   return name
 }

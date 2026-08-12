@@ -23,3 +23,12 @@ export function configureChatDragFeedback(dataTransfer: DataTransfer, label: str
   dataTransfer.setDragImage(dragImage, 12, 12)
   setTimeout(() => dragImage.remove(), 0)
 }
+
+export function shouldPopOutChatDrag(
+  session: { screenX: number; screenY: number; cancelled: boolean },
+  end: { dropEffect: DataTransfer["dropEffect"]; screenX: number; screenY: number },
+): boolean {
+  if (session.cancelled || end.dropEffect !== "none") return false
+  if (end.screenX === 0 && end.screenY === 0) return false
+  return Math.hypot(end.screenX - session.screenX, end.screenY - session.screenY) >= 12
+}

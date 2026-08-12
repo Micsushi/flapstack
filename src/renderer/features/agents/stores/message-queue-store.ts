@@ -11,6 +11,10 @@ interface MessageQueueState {
   // Map: subChatId -> queue items
   queues: Record<string, AgentQueueItem[]>
 
+  // Queues held after a manual stop. They resume only after an explicit send.
+  heldQueues: Record<string, number>
+  nextHoldId: number
+
   // Map: subChatId -> counter incremented each time QueueProcessor auto-sends a message.
   // Used by active-chat to trigger scroll-to-bottom when a queued message is sent.
   queueSentTriggers: Record<string, number>
@@ -22,6 +26,10 @@ interface MessageQueueState {
   getQueue: (subChatId: string) => AgentQueueItem[]
   getNextItem: (subChatId: string) => AgentQueueItem | null
   clearQueue: (subChatId: string) => void
+  holdQueue: (subChatId: string) => void
+  getQueueHold: (subChatId: string) => number
+  resumeQueue: (subChatId: string, holdId: number) => void
+  canAutoProcessQueue: (subChatId: string) => boolean
   // Returns and removes the item from queue (atomic operation)
   popItem: (subChatId: string, itemId: string) => AgentQueueItem | null
   // Add item to front of queue (for error recovery)
@@ -33,6 +41,8 @@ interface MessageQueueState {
 export const useMessageQueueStore = create<MessageQueueState>()(
   subscribeWithSelector((set, get) => ({
     queues: {},
+    heldQueues: {},
+    nextHoldId: 0,
     queueSentTriggers: {},
 
     addToQueue: (subChatId, item) => {
@@ -47,10 +57,11 @@ export const useMessageQueueStore = create<MessageQueueState>()(
     removeFromQueue: (subChatId, itemId) => {
       set((state) => {
         const currentQueue = state.queues[subChatId] || []
+        const nextQueue = removeQueueItem(currentQueue, itemId)
         return {
           queues: {
             ...state.queues,
-            [subChatId]: removeQueueItem(currentQueue, itemId),
+            [subChatId]: nextQueue,
           },
         }
       })
@@ -82,12 +93,42 @@ export const useMessageQueueStore = create<MessageQueueState>()(
     },
 
     clearQueue: (subChatId) => {
-      set((state) => ({
-        queues: {
-          ...state.queues,
-          [subChatId]: [],
-        },
-      }))
+      set((state) => {
+        const heldQueues = { ...state.heldQueues }
+        delete heldQueues[subChatId]
+        return {
+          queues: { ...state.queues, [subChatId]: [] },
+          heldQueues,
+        }
+      })
+    },
+
+    holdQueue: (subChatId) => {
+      set((state) => {
+        const holdId = state.nextHoldId + 1
+        return {
+          heldQueues: { ...state.heldQueues, [subChatId]: holdId },
+          nextHoldId: holdId,
+        }
+      })
+    },
+
+    getQueueHold: (subChatId) => {
+      return get().heldQueues[subChatId] ?? 0
+    },
+
+    resumeQueue: (subChatId, holdId) => {
+      set((state) => {
+        if (state.heldQueues[subChatId] !== holdId) return state
+        const heldQueues = { ...state.heldQueues }
+        delete heldQueues[subChatId]
+        return { heldQueues }
+      })
+    },
+
+    canAutoProcessQueue: (subChatId) => {
+      const state = get()
+      return Boolean(state.queues[subChatId]?.length) && !state.heldQueues[subChatId]
     },
 
     // Atomic pop: find and remove in single set() call to prevent race conditions

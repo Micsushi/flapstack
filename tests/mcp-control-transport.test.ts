@@ -100,6 +100,7 @@ describe("Flapstack MCP stdio transport", () => {
       "read_visual_context",
       "write_attachment_to_worktree",
       "launch_run",
+      "wait_for_chats",
     ])
 
     const ping = await client.callTool({ name: "ping", arguments: {} })

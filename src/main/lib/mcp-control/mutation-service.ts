@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3"
 import { openAppDatabase } from "../db/access"
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { realpath } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { z } from "zod"
@@ -35,7 +35,8 @@ import {
   runtimePermissionSnapshot,
   runtimeSnapshotSqlValues,
 } from "../agent-runtime/snapshot"
-import { normalizeChatMode, resolveChatModePermission } from "../../../shared/chat-mode"
+import { queueChatRun } from "../run-launch-service"
+import { registerChatWait } from "../chat-waits"
 import { VisualArtifactStore } from "../visual-capture/artifact-store"
 import { canonicalMcpChatScope } from "./scope"
 
@@ -114,6 +115,12 @@ const schemas = {
       initialPrompt: z.string().trim().min(1).max(100_000),
       idempotencyKey: id,
       vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
+    })
+    .strict(),
+  wait_for_chats: z
+    .object({
+      targetChatIds: z.array(id).min(1).max(8),
+      idempotencyKey: id,
     })
     .strict(),
 } as const
@@ -202,6 +209,13 @@ export function createMcpMutationService(
             )
           case "launch_run":
             return launchRun(db, scope, input.data as z.infer<typeof schemas.launch_run>)
+          case "wait_for_chats":
+            return waitForChats(
+              db,
+              scope,
+              caller,
+              input.data as z.infer<typeof schemas.wait_for_chats>,
+            )
         }
         return fail("invalid-input", "Unsupported mutation operation.")
       } catch (error) {
@@ -360,109 +374,41 @@ function launchRun(
   scope: Scope,
   input: z.infer<typeof schemas.launch_run>,
 ): McpControlResponse {
-  const chat = target(db, scope, "chat", input.chatId)
-  if (chat.archived_at) return fail("stale-target", "Chat is archived.")
-  const harnessValue = chat.harness
-  if (typeof harnessValue !== "string" || !AGENT_HARNESSES.includes(harnessValue as AgentHarness))
-    return fail("invalid-input", "Chat does not use a launchable harness.")
-  const harness = harnessValue as AgentHarness
-  const subChat = db
-    .prepare(
-      "SELECT id, messages, mode, permission_mode, worktree_path, model FROM sub_chats WHERE chat_id = ? ORDER BY created_at LIMIT 1",
-    )
-    .get(input.chatId) as Row | undefined
-  if (!subChat) return fail("stale-target", "Chat conversation is missing.")
-  const model = subChat.model ?? chat.model ?? null
-  if ((harness === "openrouter" || harness === "nanogpt" || harness === "local") && !model) {
-    return fail("invalid-input", `${harness} chats require a model before launch.`)
+  target(db, scope, "chat", input.chatId)
+  const queued = queueChatRun(db, input)
+  if (!queued.ok) return fail(queued.code, queued.message)
+  return {
+    ok: true,
+    data: {
+      runId: queued.runId,
+      created: queued.created,
+      launch: { status: queued.status },
+    },
   }
-  const promptMessageId = `mcp-${input.idempotencyKey}`
-  const existing = db
-    .prepare("SELECT id, status FROM agent_runs WHERE chat_id = ? AND prompt_message_id = ?")
-    .get(input.chatId, promptMessageId) as Row | undefined
-  if (existing)
-    return {
-      ok: true,
-      data: { runId: existing.id, created: false, launch: { status: existing.status } },
-    }
-
-  const runId = stableRunId(input.chatId, input.idempotencyKey)
-  const requestedPermissionMode = String(
-    subChat.permission_mode ?? chat.permission_mode,
-  ) as RunPermissionMode
-  const permissionMode = resolveChatModePermission(
-    normalizeChatMode(typeof subChat.mode === "string" ? subChat.mode : null),
-    requestedPermissionMode,
-  )
-  const customPermissions =
-    permissionMode === "custom" && typeof chat.custom_permissions === "string"
-      ? chat.custom_permissions
-      : null
-  if (permissionMode === "custom" && !customPermissions) {
-    return fail(
-      "permission-denied",
-      "Custom permission settings are missing for this conversation.",
-    )
-  }
-  const runtimeSnapshot = constructRuntimeSnapshot(db, {
-    chatId: input.chatId,
-    harness,
-    model: (subChat.model ?? chat.model ?? null) as string | null,
-    permission: runtimePermissionSnapshot(permissionMode as RunPermissionMode, customPermissions),
-  })
-  const transaction = db.transaction(() => {
-    db.prepare("UPDATE sub_chats SET run_status = 'pending' WHERE id = ?").run(subChat.id)
-    db.prepare(
-      `INSERT INTO agent_runs (
-        id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
-        worktree_path, prompt_message_id, initial_prompt, vault_context_sections,
-        runtime_snapshot_version, runtime_preference, runtime_preference_source, resolved_runtime,
-        runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
-        runtime_control_snapshot, status, started_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
-    ).run(
-      runId,
-      input.chatId,
-      subChat.id,
-      harness,
-      model,
-      permissionMode,
-      customPermissions,
-      subChat.worktree_path ?? chat.worktree_path ?? null,
-      promptMessageId,
-      input.initialPrompt,
-      input.vaultContextSectionIds === undefined
-        ? null
-        : JSON.stringify(input.vaultContextSectionIds),
-      ...runtimeSnapshotSqlValues(runtimeSnapshot),
-      nowEpochSeconds(),
-    )
-  })
-  try {
-    transaction()
-  } catch (error) {
-    const raced = db
-      .prepare("SELECT id, status FROM agent_runs WHERE id = ? AND chat_id = ?")
-      .get(runId, input.chatId) as Row | undefined
-    if (raced)
-      return {
-        ok: true,
-        data: { runId: raced.id, created: false, launch: { status: raced.status } },
-      }
-    throw error
-  }
-  return { ok: true, data: { runId, created: true, launch: { status: "pending" } } }
 }
 
-function stableRunId(chatId: string, idempotencyKey: string): string {
-  const value = createHash("sha256")
-    .update("flapstack-mcp-run\0")
-    .update(chatId)
-    .update("\0")
-    .update(idempotencyKey)
-    .digest("hex")
-    .slice(0, 32)
-  return `${value.slice(0, 8)}-${value.slice(8, 12)}-4${value.slice(13, 16)}-a${value.slice(17, 20)}-${value.slice(20)}`
+function waitForChats(
+  db: Database.Database,
+  scope: Scope,
+  caller: McpCallerIdentity,
+  input: z.infer<typeof schemas.wait_for_chats>,
+): McpControlResponse {
+  for (const chatId of new Set(input.targetChatIds)) target(db, scope, "chat", chatId)
+  const registered = registerChatWait(db, {
+    waiterChatId: caller.chatId,
+    waiterRunId: caller.runId,
+    targetChatIds: input.targetChatIds,
+    idempotencyKey: input.idempotencyKey,
+  })
+  if (!registered.ok) return fail(registered.code, registered.message)
+  return {
+    ok: true,
+    data: {
+      ...registered,
+      instruction:
+        "Stop this turn now. Flapstack will independently resume this chat after every target has finished its queued and running work.",
+    },
+  }
 }
 
 type Scope = { chatId: string; projectId: string | null; taskId: string | null; kind: string }

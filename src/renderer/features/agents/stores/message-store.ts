@@ -76,7 +76,7 @@ const messageRolesAtom = atom<Map<string, "user" | "assistant" | "system">>(new 
 // Per-subChat atoms for split-pane rendering. Each pane reads only its own IDs/roles.
 export const messageIdsPerChatAtom = atomFamily((_subChatId: string) => atom<string[]>([]))
 
-const messageRolesPerChatAtom = atomFamily((_subChatId: string) =>
+export const messageRolesPerChatAtom = atomFamily((_subChatId: string) =>
   atom<Map<string, "user" | "assistant" | "system">>(new Map()),
 )
 
@@ -807,6 +807,13 @@ const previousMessageState = new Map<
     lastPartState: string | undefined
     lastPartInputJson: string | undefined
     metadataJson: string | undefined
+    // Object identities that produced the JSON strings above. The AI SDK and this
+    // store both REPLACE `metadata` and `part.input` instead of mutating them in
+    // place (see updateToolPart in the ai package, and the createdAt backfill
+    // below), so identical references guarantee identical serializations. Keeping
+    // them lets the streaming hot path skip two JSON.stringify calls per message.
+    lastPartInputRef: unknown
+    metadataRef: unknown
   }
 >()
 
@@ -815,15 +822,32 @@ function hasMessageChanged(subChatId: string, msgId: string, msg: Message): bool
   const prev = previousMessageState.get(cacheKey)
   const parts = msg.parts || []
   const lastPart = parts[parts.length - 1]
+  const lastPartInput = lastPart?.input
+  const metadata = msg.metadata
+
+  // Fast path: unchanged object identities mean unchanged JSON, so reuse the
+  // previously computed strings instead of re-serializing on every frame.
+  const canReuseJson =
+    prev !== undefined && prev.lastPartInputRef === lastPartInput && prev.metadataRef === metadata
 
   const current = {
     partsLength: parts.length,
     lastPartText: lastPart?.text,
     lastPartState: lastPart?.state,
-    lastPartInputJson: lastPart?.input ? JSON.stringify(lastPart.input) : undefined,
+    lastPartInputJson: canReuseJson
+      ? prev.lastPartInputJson
+      : lastPartInput
+        ? JSON.stringify(lastPartInput)
+        : undefined,
     // Include metadata in change detection to ensure token usage, costs, etc.
     // appear after stream completion (fixes race condition on fast streams)
-    metadataJson: msg.metadata ? JSON.stringify(msg.metadata) : undefined,
+    metadataJson: canReuseJson
+      ? prev.metadataJson
+      : metadata
+        ? JSON.stringify(metadata)
+        : undefined,
+    lastPartInputRef: lastPartInput,
+    metadataRef: metadata,
   }
 
   if (!prev) {
@@ -840,9 +864,37 @@ function hasMessageChanged(subChatId: string, msgId: string, msg: Message): bool
 
   if (changed) {
     previousMessageState.set(cacheKey, current)
+  } else if (!canReuseJson) {
+    // Same content behind new object identities: refresh the refs so the next
+    // frame can take the fast path again.
+    prev.lastPartInputRef = lastPartInput
+    prev.metadataRef = metadata
   }
 
   return changed
+}
+
+// Structural comparisons that read the incoming array in place. Rebuilding the
+// id array and role map on every stream frame allocated an N-element array plus
+// an N-entry Map purely to discover that nothing structural had changed.
+function messageIdsMatch(messages: Message[], ids: readonly string[]): boolean {
+  if (messages.length !== ids.length) return false
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].id !== ids[i]) return false
+  }
+  return true
+}
+
+// Only sound when the ids are already known to match: identical ids mean the map
+// was built from the same key set, so per-key equality implies equal size.
+function messageRolesMatch(
+  messages: Message[],
+  roles: Map<string, "user" | "assistant" | "system">,
+): boolean {
+  for (const msg of messages) {
+    if (roles.get(msg.id) !== msg.role) return false
+  }
+  return true
 }
 
 export const syncMessagesWithStatusAtom = atom(
@@ -889,12 +941,31 @@ export const syncMessagesWithStatusAtom = atom(
       }
     }
 
-    // Build new IDs list and roles map
-    const newIds = messages.map((m) => m.id)
-    const newRoles = new Map<string, "user" | "assistant" | "system">()
+    // Build the IDs list and roles map lazily: a streaming frame changes only the
+    // last message's content, so both are almost always reusable as-is.
+    let newIdsCache: string[] | null = null
+    const buildIds = () => (newIdsCache ??= messages.map((m) => m.id))
 
-    for (const msg of messages) {
-      newRoles.set(msg.id, msg.role)
+    let newRolesCache: Map<string, "user" | "assistant" | "system"> | null = null
+    const buildRoles = () => {
+      if (!newRolesCache) {
+        newRolesCache = new Map<string, "user" | "assistant" | "system">()
+        for (const msg of messages) {
+          newRolesCache.set(msg.id, msg.role)
+        }
+      }
+      return newRolesCache
+    }
+
+    // Mirrors the original size-then-entry comparison. The size check only
+    // matters when the id list changed, since an unchanged id list means the
+    // stored map was built from this exact key set.
+    const rolesDiffer = (
+      currentRoles: Map<string, "user" | "assistant" | "system">,
+      idsChanged: boolean,
+    ) => {
+      if (idsChanged && buildRoles().size !== currentRoles.size) return true
+      return !messageRolesMatch(messages, currentRoles)
     }
 
     if (updateGlobal) {
@@ -902,59 +973,45 @@ export const syncMessagesWithStatusAtom = atom(
       const currentRoles = get(messageRolesAtom)
 
       // Check if IDs changed (new message added or removed)
-      globalIdsChanged =
-        newIds.length !== currentIds.length || newIds.some((id, i) => id !== currentIds[i])
+      globalIdsChanged = !messageIdsMatch(messages, currentIds)
 
       if (globalIdsChanged) {
-        set(messageIdsAtom, newIds)
+        set(messageIdsAtom, buildIds())
       }
 
       // Check if roles changed
-      globalRolesChanged = newRoles.size !== currentRoles.size
-      if (!globalRolesChanged) {
-        for (const [id, role] of newRoles) {
-          if (currentRoles.get(id) !== role) {
-            globalRolesChanged = true
-            break
-          }
-        }
-      }
+      globalRolesChanged = rolesDiffer(currentRoles, globalIdsChanged)
 
       if (globalRolesChanged) {
-        set(messageRolesAtom, newRoles)
+        set(messageRolesAtom, buildRoles())
       }
     }
 
     // Always update per-subchat atoms so split panes can render independently.
     const perChatIds = get(messageIdsPerChatAtom(currentSubChatId))
-    const perChatIdsChanged =
-      newIds.length !== perChatIds.length || newIds.some((id, i) => id !== perChatIds[i])
+    const perChatIdsChanged = !messageIdsMatch(messages, perChatIds)
 
     if (perChatIdsChanged) {
-      set(messageIdsPerChatAtom(currentSubChatId), newIds)
+      set(messageIdsPerChatAtom(currentSubChatId), buildIds())
     }
 
     const perChatRoles = get(messageRolesPerChatAtom(currentSubChatId))
-    let perChatRolesChanged = newRoles.size !== perChatRoles.size
-    if (!perChatRolesChanged) {
-      for (const [id, role] of newRoles) {
-        if (perChatRoles.get(id) !== role) {
-          perChatRolesChanged = true
-          break
-        }
-      }
-    }
+    const perChatRolesChanged = rolesDiffer(perChatRoles, perChatIdsChanged)
 
     if (perChatRolesChanged) {
-      set(messageRolesPerChatAtom(currentSubChatId), newRoles)
+      set(messageRolesPerChatAtom(currentSubChatId), buildRoles())
     }
 
     // Hydrate one map so a large transcript produces one store commit. Mounted
     // per-message selectors still only update when their selected object changes.
     const currentMessages = get(messagesByChatAtom(currentSubChatId))
-    const nextMessages = new Map<string, Message>()
     let messagesChanged = currentMessages.size !== messages.length
-    const lastMessageId = newIds[newIds.length - 1] ?? null
+    // When the id list is unchanged the stored map already has exactly the right
+    // keys, so it can be cloned once on the first actual change instead of being
+    // rebuilt entry by entry on every stream frame.
+    const copyOnWrite = !perChatIdsChanged && !messagesChanged
+    let nextMessages: Map<string, Message> | null = copyOnWrite ? null : new Map<string, Message>()
+    const lastMessageId = messages[messages.length - 1]?.id ?? null
     for (const msg of messages) {
       const currentMessage = currentMessages.get(msg.id)
       const msgChanged = hasMessageChanged(currentSubChatId, msg.id, msg)
@@ -963,6 +1020,7 @@ export const syncMessagesWithStatusAtom = atom(
       // Always refresh the last message because AI SDK can mutate non-last parts
       // of the current streaming assistant message without changing the last part.
       if (msgChanged || !currentMessage || isLastMessage) {
+        nextMessages ??= new Map(currentMessages)
         nextMessages.set(msg.id, {
           ...msg,
           parts: msg.parts?.map((part: any) => ({
@@ -971,37 +1029,43 @@ export const syncMessagesWithStatusAtom = atom(
           })),
         })
         messagesChanged = true
-      } else {
+      } else if (nextMessages) {
         nextMessages.set(msg.id, currentMessage)
       }
     }
-    if (messagesChanged) set(messagesByChatAtom(currentSubChatId), nextMessages)
-
-    // Cleanup removed message atoms to prevent memory leaks
-    const newIdsSet = new Set(newIds)
-    const previousIds = activeMessageIdsByChat.get(currentSubChatId) ?? new Set()
-    for (const oldId of previousIds) {
-      if (!newIdsSet.has(oldId)) {
-        // Message was removed - cleanup its atom and caches
-        messageAtomFamily.remove(getPerChatMessageKey(currentSubChatId, oldId))
-        previousMessageState.delete(`${currentSubChatId}:${oldId}`)
-        assistantIdsCacheByChat.delete(`${currentSubChatId}:${oldId}`)
-        assistantIdsPerChatCache.delete(`${currentSubChatId}:${oldId}`)
-        isLastMessagePerChatAtomFamily.remove(`${currentSubChatId}:${oldId}`)
-        assistantIdsPerChatAtomFamily.remove(`${currentSubChatId}:${oldId}`)
-        isLastUserMessagePerChatAtomFamily.remove(`${currentSubChatId}:${oldId}`)
-        rollbackTargetPerChatAtomFamily.remove(`${currentSubChatId}:${oldId}`)
-      }
+    if (messagesChanged && nextMessages) {
+      set(messagesByChatAtom(currentSubChatId), nextMessages)
     }
 
-    // Update active IDs tracking
-    activeMessageIdsByChat.set(currentSubChatId, newIdsSet)
+    // Cleanup removed message atoms to prevent memory leaks. An unchanged id list
+    // can have nothing to remove, so the id Set is only rebuilt when ids moved.
+    const previousIds = activeMessageIdsByChat.get(currentSubChatId)
+    if (perChatIdsChanged || !previousIds) {
+      const newIdsSet = new Set(buildIds())
+      if (previousIds) {
+        for (const oldId of previousIds) {
+          if (!newIdsSet.has(oldId)) {
+            // Message was removed - cleanup its atom and caches
+            messageAtomFamily.remove(getPerChatMessageKey(currentSubChatId, oldId))
+            previousMessageState.delete(`${currentSubChatId}:${oldId}`)
+            assistantIdsCacheByChat.delete(`${currentSubChatId}:${oldId}`)
+            assistantIdsPerChatCache.delete(`${currentSubChatId}:${oldId}`)
+            isLastMessagePerChatAtomFamily.remove(`${currentSubChatId}:${oldId}`)
+            assistantIdsPerChatAtomFamily.remove(`${currentSubChatId}:${oldId}`)
+            isLastUserMessagePerChatAtomFamily.remove(`${currentSubChatId}:${oldId}`)
+            rollbackTargetPerChatAtomFamily.remove(`${currentSubChatId}:${oldId}`)
+          }
+        }
+      }
+
+      // Update active IDs tracking
+      activeMessageIdsByChat.set(currentSubChatId, newIdsSet)
+    }
 
     // Legacy global streaming state: update only for active pane.
     if (updateGlobal) {
       if (status === "streaming" || status === "submitted") {
-        const lastId = newIds[newIds.length - 1] ?? null
-        set(streamingMessageIdAtom, lastId)
+        set(streamingMessageIdAtom, lastMessageId)
       } else {
         set(streamingMessageIdAtom, null)
       }
@@ -1026,6 +1090,17 @@ export function clearSubChatCaches(subChatId: string): {
   const clearedMessageIds: string[] = []
   const clearedToolCallIds = new Set<string>()
 
+  // Families below are keyed by bare message id, which is not guaranteed unique
+  // across chats (see getPerChatMessageKey). Only drop keys this chat solely owns
+  // so a still-mounted chat never loses the atom identity it is subscribed to.
+  const isMessageIdOwnedOnlyByThisChat = (messageId: string) => {
+    for (const [otherSubChatId, ids] of activeMessageIdsByChat) {
+      if (otherSubChatId === subChatId) continue
+      if (ids.has(messageId)) return false
+    }
+    return true
+  }
+
   // Clear message atoms
   const activeIds = activeMessageIdsByChat.get(subChatId)
   if (activeIds) {
@@ -1049,6 +1124,15 @@ export function clearSubChatCaches(subChatId: string): {
       isLastUserMessagePerChatAtomFamily.remove(`${subChatId}:${id}`)
       rollbackTargetPerChatAtomFamily.remove(`${subChatId}:${id}`)
 
+      if (isMessageIdOwnedOnlyByThisChat(id)) {
+        isLastMessageAtomFamily.remove(id)
+        isMessageStreamingAtomFamily.remove(id)
+        assistantIdsForUserMsgAtomFamily.remove(id)
+        isLastUserMessageAtomFamily.remove(id)
+        isFirstUserMessageAtomFamily.remove(id)
+        rollbackTargetSdkUuidForUserMsgAtomFamily.remove(id)
+      }
+
       messageStructureCache.delete(messageKey)
       messageStructureAtomFamily.remove(messageKey)
 
@@ -1068,6 +1152,13 @@ export function clearSubChatCaches(subChatId: string): {
   }
   appStore.set(messagesByChatAtom(subChatId), new Map())
   messagesByChatAtom.remove(subChatId)
+
+  // Every remaining subChat-keyed family, or the ids/roles/groups for a closed
+  // chat stay resident for the lifetime of the window.
+  messageIdsPerChatAtom.remove(subChatId)
+  messageRolesPerChatAtom.remove(subChatId)
+  userMessageIdsPerChatAtom.remove(subChatId)
+  messageGroupsPerChatAtom.remove(subChatId)
 
   // Clear other caches
   userMessageIdsCacheByChat.delete(subChatId)

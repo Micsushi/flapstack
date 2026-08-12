@@ -3,6 +3,10 @@ import { useEffect, useMemo, useState } from "react"
 import {
   analyticsOptOutAtom,
   autoAdvanceTargetAtom,
+  chatAutoTaggingConfidenceAtom,
+  chatAutoTaggingEnabledAtom,
+  chatTitleGenerationEnabledAtom,
+  chatTitleStyleAtom,
   crossScopeMoveEnabledAtom,
   codexThreadVisibilityAtom,
   defaultAgentModeAtom,
@@ -17,6 +21,7 @@ import {
   type AutoAdvanceTarget,
   type GroupCloseBehavior,
 } from "../../../lib/atoms"
+import type { ChatTitleStyle } from "../../../../shared/chat-metadata"
 import type { CodexThreadVisibility } from "../../../../shared/codex-thread-visibility"
 import { CHAT_MODES, CHAT_MODE_META } from "../../../../shared/chat-mode"
 import { APP_META, type ExternalApp } from "../../../../shared/external-apps"
@@ -145,6 +150,14 @@ function useIsNarrowScreen(): boolean {
 export function AgentsPreferencesTab() {
   const trpcUtils = trpc.useUtils()
   const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(reasoningOutputEnabledAtom)
+  const [chatTitleGenerationEnabled, setChatTitleGenerationEnabled] = useAtom(
+    chatTitleGenerationEnabledAtom,
+  )
+  const [chatTitleStyle, setChatTitleStyle] = useAtom(chatTitleStyleAtom)
+  const [chatAutoTaggingEnabled, setChatAutoTaggingEnabled] = useAtom(chatAutoTaggingEnabledAtom)
+  const [chatAutoTaggingConfidence, setChatAutoTaggingConfidence] = useAtom(
+    chatAutoTaggingConfidenceAtom,
+  )
   const [soundEnabled, setSoundEnabled] = useAtom(soundNotificationsEnabledAtom)
   const [desktopNotificationsEnabled, setDesktopNotificationsEnabled] = useAtom(
     desktopNotificationsEnabledAtom,
@@ -273,6 +286,96 @@ export function AgentsPreferencesTab() {
             checked={newChatDraftReminderEnabled}
             onCheckedChange={setNewChatDraftReminderEnabled}
           />
+        </div>
+        <div
+          className="flex items-center justify-between border-t border-border p-4 outline-none"
+          data-settings-id="preferences-chat-titles"
+          tabIndex={-1}
+        >
+          <div className="flex flex-col space-y-1">
+            <span className="text-sm font-medium text-foreground">Automatic chat titles</span>
+            <span className="text-xs text-muted-foreground">
+              Summarize the first message instead of using it verbatim.
+            </span>
+          </div>
+          <Switch
+            checked={chatTitleGenerationEnabled}
+            onCheckedChange={setChatTitleGenerationEnabled}
+          />
+        </div>
+        <div
+          className="flex items-center justify-between border-t border-border p-4 outline-none"
+          data-settings-id="preferences-chat-title-detail"
+          tabIndex={-1}
+        >
+          <div className="flex flex-col space-y-1">
+            <span className="text-sm font-medium text-foreground">Chat title detail</span>
+            <span className="text-xs text-muted-foreground">
+              Choose how much context automatic titles include.
+            </span>
+          </div>
+          <Select
+            value={chatTitleStyle}
+            onValueChange={(value: ChatTitleStyle) => setChatTitleStyle(value)}
+            disabled={!chatTitleGenerationEnabled}
+          >
+            <SelectTrigger className="w-auto min-w-28 px-2">
+              <span className="text-xs">
+                {chatTitleStyle === "concise"
+                  ? "Concise"
+                  : chatTitleStyle === "balanced"
+                    ? "Balanced"
+                    : "Descriptive"}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="concise">Concise, up to 5 words</SelectItem>
+              <SelectItem value="balanced">Balanced, up to 8 words</SelectItem>
+              <SelectItem value="descriptive">Descriptive, up to 12 words</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div
+          className="flex items-center justify-between border-t border-border p-4 outline-none"
+          data-settings-id="preferences-chat-auto-tags"
+          tabIndex={-1}
+        >
+          <div className="flex flex-col space-y-1">
+            <span className="text-sm font-medium text-foreground">Automatic chat tags</span>
+            <span className="text-xs text-muted-foreground">
+              Add short user tags and separate agent-only role labels when the first message is
+              clear.
+            </span>
+          </div>
+          <Switch checked={chatAutoTaggingEnabled} onCheckedChange={setChatAutoTaggingEnabled} />
+        </div>
+        <div
+          className="flex items-center justify-between gap-6 border-t border-border p-4 outline-none"
+          data-settings-id="preferences-chat-tag-confidence"
+          tabIndex={-1}
+        >
+          <div className="flex min-w-0 flex-col space-y-1">
+            <span className="text-sm font-medium text-foreground">Automatic tag confidence</span>
+            <span className="text-xs text-muted-foreground">
+              Higher values create fewer, more certain tags and agent labels.
+            </span>
+          </div>
+          <div className="flex w-44 shrink-0 items-center gap-3">
+            <input
+              type="range"
+              min={50}
+              max={100}
+              step={1}
+              value={chatAutoTaggingConfidence}
+              onChange={(event) => setChatAutoTaggingConfidence(Number(event.target.value))}
+              disabled={!chatAutoTaggingEnabled}
+              aria-label="Automatic tag confidence"
+              className="min-w-0 flex-1 accent-primary disabled:opacity-50"
+            />
+            <span className="w-9 text-right text-xs tabular-nums text-foreground">
+              {chatAutoTaggingConfidence}%
+            </span>
+          </div>
         </div>
         <div
           className="flex items-center justify-between border-t border-border p-4 outline-none"

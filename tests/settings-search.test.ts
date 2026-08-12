@@ -41,6 +41,15 @@ describe("Settings search", () => {
     })
   })
 
+  it("finds automatic title and tag preferences", () => {
+    expect(searchSettings("automatic chat titles", { showDevelopment: false })[0]).toMatchObject({
+      targetId: "preferences-chat-titles",
+    })
+    expect(searchSettings("tag confidence", { showDevelopment: false })[0]).toMatchObject({
+      targetId: "preferences-chat-tag-confidence",
+    })
+  })
+
   it("requires every normalized query token to match", () => {
     expect(searchSettings("default permission", { showDevelopment: false })[0]?.id).toBe(
       "permissions-default",

@@ -38,6 +38,7 @@ describe("active chat header actions", () => {
     expect(titleEditorSource).toContain('<OpenInButton path={localFolderPath} label="Open in" />')
     expect(titleEditorSource).toContain("flattenOverflowChildren(headerActions)")
     expect(titleEditorSource).toContain('menuLabel="More chat actions"')
+    expect(titleEditorSource).toContain("pinnedStart={")
     expect(titleEditorSource).not.toContain("reserveRestoreSpace")
     expect(titleEditorSource).toContain('forceOverflow={tagLayout.mode === "compact"}')
     expect(titleEditorSource).not.toContain('Folder className="h-[18px] w-[18px]')

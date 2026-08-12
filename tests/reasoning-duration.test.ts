@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   buildReasoningTimerState,
+  clearReasoningStartedAtByMessageIds,
   formatReasoningDuration,
   formatReasoningStatus,
   getReasoningStartedAt,
@@ -34,6 +35,14 @@ describe("reasoning duration labels", () => {
   it("keeps a live start time stable across message remounts", () => {
     expect(getReasoningStartedAt("chat:message", 1_000)).toBe(1_000)
     expect(getReasoningStartedAt("chat:message", 9_000)).toBe(1_000)
+  })
+
+  it("releases cached start times with their removed messages", () => {
+    expect(getReasoningStartedAt("chat:old", 1_000)).toBe(1_000)
+
+    clearReasoningStartedAtByMessageIds("chat", ["old"])
+
+    expect(getReasoningStartedAt("chat:old", 9_000)).toBe(9_000)
   })
 
   it("derives a stable live timer from the persisted run start", () => {

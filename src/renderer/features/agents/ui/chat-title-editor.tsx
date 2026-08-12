@@ -21,6 +21,12 @@ import { OpenInButton } from "../../../components/open-in-button"
 import { ProgressiveOverflowRow } from "../../../components/progressive-overflow-row"
 import { ChatTagChip, type ChatTagView } from "../../sidebar/chat-tag-menu"
 import {
+  AgentChatLabelBadge,
+  AgentChatWaitBadge,
+  type AgentChatLabelView,
+  type AgentChatWaitView,
+} from "../../sidebar/agent-chat-badge"
+import {
   capProjectLabel,
   resolveChatHeaderTagLayout,
   type ChatHeaderTagLayout,
@@ -42,6 +48,8 @@ interface ChatTitleEditorProps {
   projectLabel?: string | null
   projectColor?: string | null
   chatTags?: ChatTagView[]
+  agentLabels?: AgentChatLabelView[]
+  agentWait?: AgentChatWaitView
   workspaceBranch?: string | null
   localFolderPath?: string
   headerActions?: ReactNode
@@ -74,6 +82,8 @@ function areTitlePropsEqual(prev: ChatTitleEditorProps, next: ChatTitleEditorPro
     prev.projectLabel === next.projectLabel &&
     prev.projectColor === next.projectColor &&
     prev.chatTags === next.chatTags &&
+    prev.agentLabels === next.agentLabels &&
+    prev.agentWait === next.agentWait &&
     prev.workspaceBranch === next.workspaceBranch &&
     prev.localFolderPath === next.localFolderPath &&
     prev.headerActions === next.headerActions
@@ -94,11 +104,18 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   projectLabel,
   projectColor,
   chatTags = [],
+  agentLabels = [],
+  agentWait,
   workspaceBranch,
   localFolderPath,
   headerActions,
 }: ChatTitleEditorProps) {
-  const auxiliaryTagCount = chatTags.length + (providerName ? 1 : 0) + (workspaceBranch ? 1 : 0)
+  const auxiliaryTagCount =
+    chatTags.length +
+    agentLabels.length +
+    (agentWait ? 1 : 0) +
+    (providerName ? 1 : 0) +
+    (workspaceBranch ? 1 : 0)
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(name)
   const [isSaving, setIsSaving] = useState(false)
@@ -203,6 +220,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
 
   // Fixed height to prevent layout shift when switching between view/edit modes
   const heightClass = isMobile ? "h-7" : "h-8"
+  const hasHeaderTags = Boolean(projectLabel) || auxiliaryTagCount > 0
   const headerActionItems = flattenOverflowChildren(headerActions)
   const headerControlItems = [
     localFolderPath
@@ -224,6 +242,8 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
     providerName,
     workspaceBranch,
     ...chatTags.map((tag) => `${tag.id}:${tag.name}:${tag.color}:${tag.icon ?? ""}`),
+    ...agentLabels.map((label) => `${label.key}:${label.confidence}`),
+    agentWait ? `${agentWait.id}:${agentWait.status}:${agentWait.targetNames.join(",")}` : "",
   ].join("|")
 
   useLayoutEffect(() => {
@@ -277,6 +297,20 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
     visibleAuxiliaryTagCount = auxiliaryTagCount,
   ) => {
     const auxiliaryTags = [
+      agentWait ? (
+        <span key="agent-wait" className="inline-flex shrink-0" data-chat-header-auxiliary-tag>
+          <AgentChatWaitBadge wait={agentWait} header compact={mode === "compact"} />
+        </span>
+      ) : null,
+      ...agentLabels.map((label) => (
+        <span
+          key={`agent-label-${label.key}`}
+          className="inline-flex shrink-0"
+          data-chat-header-auxiliary-tag
+        >
+          <AgentChatLabelBadge label={label} header compact={mode === "compact"} />
+        </span>
+      )),
       ...chatTags.map((tag) => (
         <span key={`tag-${tag.id}`} className="inline-flex shrink-0" data-chat-header-auxiliary-tag>
           <ChatTagChip tag={tag} header iconOnly={mode === "compact"} />
@@ -394,20 +428,21 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
           className="relative ml-auto flex h-full min-w-0 flex-1 items-center justify-end gap-2 leading-none"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-          <div className="flex shrink-0 items-center gap-2">
-            {renderHeaderTags(tagLayout.mode, tagLayout.visibleAuxiliaryTagCount)}
-          </div>
           <ProgressiveOverflowRow
             usageRatio={1}
             menuLabel="More chat actions"
-            className={cn(
-              "justify-end leading-none",
-              tagLayout.mode === "compact" ? "shrink-0" : "min-w-0 flex-1",
-            )}
+            className="min-w-0 flex-1 justify-end leading-none"
             contentClassName="justify-end"
             gap={8}
             collapseOrder={headerCollapseOrder}
             forceOverflow={tagLayout.mode === "compact"}
+            pinnedStart={
+              hasHeaderTags ? (
+                <div className="flex shrink-0 items-center gap-2">
+                  {renderHeaderTags(tagLayout.mode, tagLayout.visibleAuxiliaryTagCount)}
+                </div>
+              ) : null
+            }
           >
             {headerControlItems.map(({ key, node }) => (
               <Fragment key={key}>{node}</Fragment>

@@ -1,4 +1,9 @@
 import type Database from "better-sqlite3"
+import {
+  isAutomaticUserChatTagKey,
+  type AutomaticChatTagCandidate,
+  type AutomaticUserChatTagKey,
+} from "../../shared/chat-metadata"
 import { createId } from "./db/utils"
 
 export const CHAT_TAG_COLORS = [
@@ -14,13 +19,31 @@ export const CHAT_TAG_COLORS = [
 
 export const CHAT_TAG_ICONS = [
   "alert",
+  "bug",
   "ban",
   "reply",
   "eye",
+  "hand",
   "clock",
   "star",
   "flag",
   "bookmark",
+  "network",
+  "search-check",
+  "hammer",
+  "telescope",
+  "list-checks",
+  "badge-check",
+  "code",
+  "terminal",
+  "git-branch",
+  "file-text",
+  "wrench",
+  "flask",
+  "lightbulb",
+  "shield-check",
+  "bot",
+  "users",
 ] as const
 
 export type ChatTagColor = (typeof CHAT_TAG_COLORS)[number]
@@ -33,6 +56,14 @@ export type ChatTag = {
   icon: ChatTagIcon | null
   createdAt: number | null
   updatedAt: number | null
+}
+
+const AUTOMATIC_CHAT_TAGS: Record<
+  AutomaticUserChatTagKey,
+  { name: string; color: ChatTagColor; icon: ChatTagIcon }
+> = {
+  "bug-fix": { name: "Bug", color: "rose", icon: "bug" },
+  "manual-testing": { name: "Manual", color: "amber", icon: "hand" },
 }
 
 function normalizeName(name: string): { name: string; normalizedName: string } {
@@ -149,4 +180,40 @@ export function createChatTagStore(sqlite: Database.Database) {
       return result
     },
   }
+}
+
+export function applyAutomaticChatTags(
+  sqlite: Database.Database,
+  input: {
+    chatId: string
+    candidates: AutomaticChatTagCandidate[]
+    minimumConfidence: number
+  },
+): ChatTag[] {
+  const store = createChatTagStore(sqlite)
+  const applied: ChatTag[] = []
+
+  for (const candidate of input.candidates) {
+    if (candidate.confidence < input.minimumConfidence || !isAutomaticUserChatTagKey(candidate.key))
+      continue
+    const definition = AUTOMATIC_CHAT_TAGS[candidate.key]
+    let tag = store
+      .list()
+      .find((existing) => existing.normalizedName === definition.name.toLocaleLowerCase())
+    if (!tag) {
+      try {
+        tag = store.create(definition)
+      } catch (error) {
+        if (!(error instanceof Error) || !/already exists/i.test(error.message)) throw error
+        tag = store
+          .list()
+          .find((existing) => existing.normalizedName === definition.name.toLocaleLowerCase())
+      }
+    }
+    if (!tag) continue
+    store.assign({ chatId: input.chatId, tagId: tag.id })
+    applied.push(tag)
+  }
+
+  return applied
 }

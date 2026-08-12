@@ -6,7 +6,7 @@ interface AutoRenameParams {
   parentChatId: string
   userMessage: string
   isFirstSubChat: boolean
-  generateName: (userMessage: string) => Promise<{ name: string }>
+  generateName: (userMessage: string) => Promise<{ name: string | null }>
   renameSubChat: (input: { subChatId: string; name: string }) => Promise<void>
   renameChat: (input: { chatId: string; name: string }) => Promise<void>
   updateSubChatName: (subChatId: string, name: string) => void
@@ -42,7 +42,7 @@ export async function autoRenameAgentChat({
     const { name } = await generateName(userMessage)
     console.log("[auto-rename] Generated name:", name)
 
-    if (!name || name === "New Chat") {
+    if (!name || name.toLocaleLowerCase() === "new chat") {
       console.log("[auto-rename] Skipping - generic name")
       return // Don't rename if we got a generic name
     }

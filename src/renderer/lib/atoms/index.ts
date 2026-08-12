@@ -1,6 +1,7 @@
 import { atom } from "jotai"
 import { atomWithStorage } from "jotai/utils"
 import { desktopViewAtom as _desktopViewAtom } from "../../features/agents/atoms"
+import type { ChatTitleStyle } from "../../../shared/chat-metadata"
 import type { CodexThreadVisibility } from "../../../shared/codex-thread-visibility"
 
 // ============================================
@@ -350,6 +351,34 @@ export const reasoningOutputEnabledAtom = atomWithStorage<boolean>(
 export const codexThreadVisibilityAtom = atomWithStorage<CodexThreadVisibility>(
   "agents:codex-thread-visibility",
   "hidden",
+  undefined,
+  { getOnInit: true },
+)
+
+export const chatTitleGenerationEnabledAtom = atomWithStorage<boolean>(
+  "preferences:chat-title-generation-enabled",
+  true,
+  undefined,
+  { getOnInit: true },
+)
+
+export const chatTitleStyleAtom = atomWithStorage<ChatTitleStyle>(
+  "preferences:chat-title-style",
+  "concise",
+  undefined,
+  { getOnInit: true },
+)
+
+export const chatAutoTaggingEnabledAtom = atomWithStorage<boolean>(
+  "preferences:chat-auto-tagging-enabled",
+  true,
+  undefined,
+  { getOnInit: true },
+)
+
+export const chatAutoTaggingConfidenceAtom = atomWithStorage<number>(
+  "preferences:chat-auto-tagging-confidence",
+  95,
   undefined,
   { getOnInit: true },
 )

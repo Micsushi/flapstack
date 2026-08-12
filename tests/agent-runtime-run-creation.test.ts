@@ -173,6 +173,7 @@ describe("Agent Runtime run creation", () => {
       }
     }
     const rawInsertFiles = [
+      "src/main/lib/run-launch-service.ts",
       "src/main/lib/mcp-control/mutation-service.ts",
       "src/main/lib/agent-orchestration/service.ts",
       "src/main/lib/automation/execution.ts",
@@ -187,7 +188,6 @@ describe("Agent Runtime run creation", () => {
       }
     }
     expect(coveredInsertCount).toBe(12)
-    expect(read("src/main/lib/run-launch-service.ts")).not.toContain("INSERT INTO agent_runs")
     expect(read("src/main/lib/main-run-launcher.ts")).not.toContain("INSERT INTO agent_runs")
   })
 })

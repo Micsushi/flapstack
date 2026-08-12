@@ -42,6 +42,7 @@ import { AutomationScheduler } from "./lib/automation/scheduler"
 import { AutomationTriggerRuntime } from "./lib/automation/trigger-runtime"
 import { reconcileOperationWorkspaces } from "./lib/saved-workspaces/operations"
 import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
+import { advanceChatWaits } from "./lib/chat-waits"
 import { reconcileVoiceHistory } from "./lib/speech/history"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
 import { startDevMcpServer, type DevMcpServerHandle } from "./lib/mcp-test-control/server"
@@ -1228,7 +1229,8 @@ if (gotTheLock) {
                       )
                       if (handled) recordRunningRunUsageBudgetStop(usageDatabase, request)
                     }
-                    await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)
+                    advanceChatWaits(databasePath)
+                    await drainPendingMcpRuns(databasePath, pendingRunLauncher)
                   } catch (error) {
                     console.error("[App] Pending run launch failed:", error)
                   } finally {

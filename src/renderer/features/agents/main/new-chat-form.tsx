@@ -28,6 +28,7 @@ import {
   enabledOpencodeModelsAtom,
   enabledCursorModelsAtom,
   justCreatedIdsAtom,
+  pendingInitialGenerationIdsAtom,
   lastMessagedProjectIdAtom,
   lastSelectedAgentIdAtom,
   lastSelectedClaudeEffortAtom,
@@ -347,6 +348,7 @@ export function NewChatForm({
     setSettingsDialogOpen(true)
   }, [setSettingsActiveTab, setSettingsDialogOpen])
   const setJustCreatedIds = useSetAtom(justCreatedIdsAtom)
+  const setPendingInitialGenerationIds = useSetAtom(pendingInitialGenerationIdsAtom)
   const [repoSearchQuery, setRepoSearchQuery] = useState("")
   const [createBranchDialogOpen, setCreateBranchDialogOpen] = useState(false)
 
@@ -1229,21 +1231,22 @@ export function NewChatForm({
       fileContentsRef.current.clear()
       clearCurrentDraft()
       utils.chats.list.invalidate()
-      setSelectedChatId(data.id)
-      // New chats are always local
-      setSelectedChatIsRemote(false)
-      setChatSourceMode("local")
       // Track this chat and its first subchat as just created for typewriter effect
       const ids = [data.id]
       if (data.subChats?.[0]?.id) {
         const firstSubChatId = data.subChats[0].id
         ids.push(firstSubChatId)
+        setPendingInitialGenerationIds((prev) => new Set([...prev, firstSubChatId]))
         appStore.set(
           subChatReasoningEnabledAtomFamily(firstSubChatId),
           pendingReasoningEnabledRef.current,
         )
       }
       setJustCreatedIds((prev) => new Set([...prev, ...ids]))
+      setSelectedChatId(data.id)
+      // New chats are always local
+      setSelectedChatIsRemote(false)
+      setChatSourceMode("local")
     },
     onError: (error) => {
       toast.error(error.message)

@@ -21,6 +21,7 @@ import {
 } from "../../lib/atoms"
 import {
   selectedAgentChatIdAtom,
+  selectedChatIsRemoteAtom,
   selectedProjectAtom,
   selectedDraftIdAtom,
   showNewChatFormAtom,
@@ -54,6 +55,7 @@ import { ProductTour } from "../onboarding/product-tour"
 const SIDEBAR_MIN_WIDTH = 160
 const SIDEBAR_MAX_WIDTH = MAX_AGENTS_SIDEBAR_WIDTH
 const SIDEBAR_ANIMATION_DURATION = 0
+const NAVIGATION_HISTORY_LIMIT = 100
 const SIDEBAR_CLOSE_HOTKEY = "⌘\\"
 
 // ============================================================================
@@ -99,36 +101,18 @@ export function AgentsLayout() {
   const [sidebarWidth, setSidebarWidth] = useAtom(agentsSidebarWidthAtom)
   const [settingsActiveTab, setSettingsActiveTab] = useAtom(agentsSettingsDialogActiveTabAtom)
   const setSettingsDialogOpen = useSetAtom(agentsSettingsDialogOpenAtom)
-  const desktopView = useAtomValue(desktopViewAtom)
   const setFileSearchDialogOpen = useSetAtom(fileSearchDialogOpenAtom)
   const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom)
+  const [selectedChatIsRemote, setSelectedChatIsRemote] = useAtom(selectedChatIsRemoteAtom)
   const [selectedProject, setSelectedProject] = useAtom(selectedProjectAtom)
-  const setSelectedDraftId = useSetAtom(selectedDraftIdAtom)
-  const setShowNewChatForm = useSetAtom(showNewChatFormAtom)
-  const setDesktopView = useSetAtom(desktopViewAtom)
+  const [selectedDraftId, setSelectedDraftId] = useAtom(selectedDraftIdAtom)
+  const [showNewChatForm, setShowNewChatForm] = useAtom(showNewChatFormAtom)
+  const [desktopView, setDesktopView] = useAtom(desktopViewAtom)
   const setAnthropicOnboardingCompleted = useSetAtom(anthropicOnboardingCompletedAtom)
   const setApiKeyOnboardingCompleted = useSetAtom(apiKeyOnboardingCompletedAtom)
   const setCodexOnboardingCompleted = useSetAtom(codexOnboardingCompletedAtom)
   const setBillingMethod = useSetAtom(billingMethodAtom)
   const claudeLoginModalConfig = useAtomValue(claudeLoginModalConfigAtom)
-  const lastChatIdRef = useRef<string | null>(selectedChatId)
-
-  useEffect(() => {
-    if (selectedChatId) lastChatIdRef.current = selectedChatId
-  }, [selectedChatId])
-
-  useEffect(() => {
-    const handleMouseBack = (event: MouseEvent) => {
-      if (event.button !== 3 || desktopView === null) return
-      event.preventDefault()
-      setDesktopView(null)
-      setShowNewChatForm(false)
-      if (lastChatIdRef.current) setSelectedChatId(lastChatIdRef.current)
-    }
-    window.addEventListener("mouseup", handleMouseBack)
-    return () => window.removeEventListener("mouseup", handleMouseBack)
-  }, [desktopView, setDesktopView, setSelectedChatId, setShowNewChatForm])
-
   useEffect(() => {
     if (typeof window === "undefined") return
     const migrationApplied =
@@ -176,6 +160,121 @@ export function AgentsLayout() {
   }, [sidebarOpen, isDesktop, isFullscreen, isSettingsView])
 
   const setChatId = useAgentSubChatStore((state) => state.setChatId)
+
+  type NavigationSnapshot = {
+    selectedChatId: string | null
+    selectedChatIsRemote: boolean
+    selectedProject: typeof selectedProject
+    selectedDraftId: string | null
+    showNewChatForm: boolean
+    desktopView: typeof desktopView
+  }
+  const currentNavigationSnapshot = useMemo<NavigationSnapshot>(
+    () => ({
+      selectedChatId,
+      selectedChatIsRemote,
+      selectedProject,
+      selectedDraftId,
+      showNewChatForm,
+      desktopView,
+    }),
+    [
+      desktopView,
+      selectedChatId,
+      selectedChatIsRemote,
+      selectedDraftId,
+      selectedProject,
+      showNewChatForm,
+    ],
+  )
+  const navigationKey = JSON.stringify({
+    chatId: selectedChatId,
+    remote: selectedChatIsRemote,
+    projectId: selectedProject?.id ?? null,
+    draftId: selectedDraftId,
+    newChat: showNewChatForm,
+    view: desktopView,
+  })
+  const navigationHistoryRef = useRef({
+    entries: [currentNavigationSnapshot],
+    index: 0,
+    applyingKey: null as string | null,
+  })
+  const [navigationIndex, setNavigationIndex] = useState(0)
+  const [navigationLength, setNavigationLength] = useState(1)
+
+  useEffect(() => {
+    const history = navigationHistoryRef.current
+    if (history.applyingKey === navigationKey) {
+      history.applyingKey = null
+      return
+    }
+    const current = history.entries[history.index]
+    const currentKey = JSON.stringify({
+      chatId: current.selectedChatId,
+      remote: current.selectedChatIsRemote,
+      projectId: current.selectedProject?.id ?? null,
+      draftId: current.selectedDraftId,
+      newChat: current.showNewChatForm,
+      view: current.desktopView,
+    })
+    if (currentKey === navigationKey) {
+      history.entries[history.index] = currentNavigationSnapshot
+      return
+    }
+    history.entries = [
+      ...history.entries.slice(0, history.index + 1),
+      currentNavigationSnapshot,
+    ].slice(-NAVIGATION_HISTORY_LIMIT)
+    history.index = history.entries.length - 1
+    setNavigationIndex(history.index)
+    setNavigationLength(history.entries.length)
+  }, [currentNavigationSnapshot, navigationKey])
+
+  const moveInNavigationHistory = useCallback(
+    (direction: -1 | 1) => {
+      const history = navigationHistoryRef.current
+      const nextIndex = history.index + direction
+      const snapshot = history.entries[nextIndex]
+      if (!snapshot) return
+      history.index = nextIndex
+      history.applyingKey = JSON.stringify({
+        chatId: snapshot.selectedChatId,
+        remote: snapshot.selectedChatIsRemote,
+        projectId: snapshot.selectedProject?.id ?? null,
+        draftId: snapshot.selectedDraftId,
+        newChat: snapshot.showNewChatForm,
+        view: snapshot.desktopView,
+      })
+      setNavigationIndex(nextIndex)
+      setSelectedChatId(snapshot.selectedChatId)
+      setSelectedChatIsRemote(snapshot.selectedChatIsRemote)
+      setSelectedProject(snapshot.selectedProject)
+      setSelectedDraftId(snapshot.selectedDraftId)
+      setShowNewChatForm(snapshot.showNewChatForm)
+      setDesktopView(snapshot.desktopView)
+      setChatId(snapshot.selectedChatId)
+    },
+    [
+      setChatId,
+      setDesktopView,
+      setSelectedChatId,
+      setSelectedChatIsRemote,
+      setSelectedDraftId,
+      setSelectedProject,
+      setShowNewChatForm,
+    ],
+  )
+
+  useEffect(() => {
+    const handleMouseHistory = (event: MouseEvent) => {
+      if (event.button !== 3 && event.button !== 4) return
+      event.preventDefault()
+      moveInNavigationHistory(event.button === 3 ? -1 : 1)
+    }
+    window.addEventListener("mouseup", handleMouseHistory)
+    return () => window.removeEventListener("mouseup", handleMouseHistory)
+  }, [moveInNavigationHistory])
 
   // Desktop user state
   const [desktopUser, setDesktopUser] = useState<{
@@ -317,7 +416,12 @@ export function AgentsLayout() {
       <ProductTour />
       <div className="flex flex-col w-full h-full relative overflow-hidden bg-background select-none">
         {/* Windows Title Bar (only shown on Windows with frameless window) */}
-        <WindowsTitleBar />
+        <WindowsTitleBar
+          canGoBack={navigationIndex > 0}
+          canGoForward={navigationIndex < navigationLength - 1}
+          onBack={() => moveInNavigationHistory(-1)}
+          onForward={() => moveInNavigationHistory(1)}
+        />
         {isSettingsView && isDesktop && (
           <div
             className="h-8 flex-shrink-0 border-b border-border/50 bg-background"

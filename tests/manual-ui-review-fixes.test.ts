@@ -47,7 +47,7 @@ describe("manual UI review fixes", () => {
     expect(editor).toContain("navigator.clipboard")
     expect(editor).toContain("Paste")
     expect(layout).toContain("event.button !== 3")
-    expect(layout).toContain("lastChatIdRef.current")
+    expect(layout).toContain("moveInNavigationHistory")
   })
 
   it("keeps Quick access available without empty built-in categories", () => {
@@ -72,6 +72,7 @@ describe("manual UI review fixes", () => {
     expect(content).toContain("data-group-unseen-indicator")
     expect(workbench).not.toContain("groupPresentation.collapsed")
     expect(content).toContain("data-workbench-navigation-group")
+    expect(content).toContain("data-active-group-indicator")
     expect(content).toContain("Rename group…")
   })
 
@@ -85,6 +86,7 @@ describe("manual UI review fixes", () => {
     expect(content).toContain("text-foreground/90")
     expect(content).toContain("text-foreground/80")
     expect(workbench).toContain("borderTopColor: chatAccents.get(chatId)")
+    expect(workbench).toContain("data-active-screen-indicator")
   })
 
   it("opens an editable dialog when renaming a group", () => {
@@ -137,14 +139,17 @@ describe("manual UI review fixes", () => {
   it("offers durable group organization and shared workbench history", () => {
     const content = read("src/renderer/features/agents/ui/agents-content.tsx")
     const workbench = read("src/renderer/features/agents/workbench/chat-workbench.tsx")
+    const titleBar = read("src/renderer/components/windows-title-bar.tsx")
     expect(content).toContain("CHAT_WORKBENCH_GROUP_COLORS.map")
     expect(content).toContain("Group color")
     expect(content).toContain("Keep this one-Chat group?")
     expect(content).toContain("handleMoveChatToWorkbenchGroup")
     expect(content).toContain("handleCreateWorkbenchGroupFromChat")
-    expect(content).toContain("undoChatWorkbenchHistory")
-    expect(content).toContain("redoChatWorkbenchHistory")
-    expect(content).toContain("event.stopImmediatePropagation()")
+    expect(content).toContain("recordAppAction")
+    expect(content).toContain("restoreWorkbenchSnapshot")
+    expect(titleBar).toContain("undoAppAction")
+    expect(titleBar).toContain("redoAppAction")
+    expect(titleBar).toContain("event.stopImmediatePropagation()")
     expect(workbench).toContain("Add to new group")
     expect(workbench).toContain("Main bar")
   })

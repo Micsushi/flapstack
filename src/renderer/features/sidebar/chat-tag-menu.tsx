@@ -1,17 +1,35 @@
 import { useState } from "react"
 import {
+  BadgeCheck,
   Ban,
+  Bot,
   Bookmark,
+  Bug,
   Check,
   CircleAlert,
   Clock3,
+  Code2,
   Eye,
+  FileText,
   Flag,
+  FlaskConical,
+  GitBranch,
+  Hammer,
+  Hand,
+  Lightbulb,
+  ListChecks,
   Minus,
+  Network,
   Plus,
   Reply,
+  SearchCheck,
+  ShieldCheck,
   Star,
   Tag,
+  Telescope,
+  Terminal,
+  Users,
+  Wrench,
   type LucideIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -26,21 +44,69 @@ import {
 import { Input } from "../../components/ui/input"
 import { cn } from "../../lib/utils"
 import { trpc } from "../../lib/trpc"
+import { recordAppAction } from "../../lib/app-action-history"
 
 export type ChatTagView = { id: string; name: string; color: string; icon?: string | null }
 
 export const CHAT_TAG_ICONS = {
   alert: CircleAlert,
+  bug: Bug,
   ban: Ban,
   reply: Reply,
   eye: Eye,
+  hand: Hand,
   clock: Clock3,
   star: Star,
   flag: Flag,
   bookmark: Bookmark,
+  network: Network,
+  "search-check": SearchCheck,
+  hammer: Hammer,
+  telescope: Telescope,
+  "list-checks": ListChecks,
+  "badge-check": BadgeCheck,
+  code: Code2,
+  terminal: Terminal,
+  "git-branch": GitBranch,
+  "file-text": FileText,
+  wrench: Wrench,
+  flask: FlaskConical,
+  lightbulb: Lightbulb,
+  "shield-check": ShieldCheck,
+  bot: Bot,
+  users: Users,
 } satisfies Record<string, LucideIcon>
 
 type ChatTagIconName = keyof typeof CHAT_TAG_ICONS
+
+const CHAT_TAG_ICON_LABELS: Record<ChatTagIconName, string> = {
+  alert: "Alert",
+  bug: "Bug",
+  ban: "Blocked",
+  reply: "Reply",
+  eye: "View",
+  hand: "Manual",
+  clock: "Waiting",
+  star: "Important",
+  flag: "Flag",
+  bookmark: "Bookmark",
+  network: "Coordinator",
+  "search-check": "Reviewer",
+  hammer: "Worker",
+  telescope: "Researcher",
+  "list-checks": "Planner",
+  "badge-check": "Verifier",
+  code: "Code",
+  terminal: "Terminal",
+  "git-branch": "Git branch",
+  "file-text": "Document",
+  wrench: "Tool",
+  flask: "Experiment",
+  lightbulb: "Idea",
+  "shield-check": "Security",
+  bot: "Agent",
+  users: "Team",
+}
 
 const tagStyles: Record<string, string> = {
   slate: "border-slate-500/30 bg-slate-500/10 text-slate-300",
@@ -148,8 +214,24 @@ export function ChatTagSubmenu({
                 key={tag.id}
                 onSelect={(event) => {
                   event.preventDefault()
-                  if (checked) unassign.mutate({ chatId, tagId: tag.id })
-                  else assign.mutate({ chatId, tagId: tag.id })
+                  const apply = checked ? unassign.mutateAsync : assign.mutateAsync
+                  void apply({ chatId, tagId: tag.id })
+                    .then(() => {
+                      recordAppAction({
+                        label: `${checked ? "Remove" : "Add"} ${tag.name} tag`,
+                        undo: () =>
+                          (checked ? assign.mutateAsync : unassign.mutateAsync)({
+                            chatId,
+                            tagId: tag.id,
+                          }),
+                        redo: () =>
+                          (checked ? unassign.mutateAsync : assign.mutateAsync)({
+                            chatId,
+                            tagId: tag.id,
+                          }),
+                      })
+                    })
+                    .catch((error) => toast.error(error.message))
                 }}
                 className="gap-2"
               >
@@ -229,15 +311,16 @@ export function ChatTagSubmenu({
               <button
                 key={candidate}
                 type="button"
-                aria-label={`${candidate} tag icon`}
+                aria-label={`${CHAT_TAG_ICON_LABELS[candidate as ChatTagIconName]} tag icon`}
                 aria-pressed={candidate === icon}
+                title={CHAT_TAG_ICON_LABELS[candidate as ChatTagIconName]}
                 className={cn(
                   "flex h-6 w-6 items-center justify-center rounded-md border text-muted-foreground hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring",
                   candidate === icon && "border-foreground/50 bg-accent text-foreground",
                 )}
                 onClick={() => setIcon(candidate as ChatTagIconName)}
               >
-                <Icon className="h-3.5 w-3.5" />
+                <Icon className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
             ))}
           </div>

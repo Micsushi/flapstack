@@ -28,6 +28,19 @@ describe("persisted message cache", () => {
     expect(parse).toHaveBeenCalledTimes(2)
   })
 
+  it("releases every retained transcript on clear", () => {
+    const parse = vi.fn((raw: string) => JSON.parse(raw) as unknown[])
+    const cache = createPersistedMessageCache({ parse, normalize: (messages) => messages })
+
+    cache.read("first", '[{"id":"one"}]')
+    cache.read("second", '[{"id":"two"}]')
+    cache.clear()
+    cache.read("first", '[{"id":"one"}]')
+    cache.read("second", '[{"id":"two"}]')
+
+    expect(parse).toHaveBeenCalledTimes(4)
+  })
+
   it("normalizes legacy tool payloads at the transcript boundary", () => {
     const [message] = normalizePersistedMessages([
       {

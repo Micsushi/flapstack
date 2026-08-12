@@ -13,6 +13,16 @@ describe("new chat tab lifecycle", () => {
     expect(content).toContain("onDraftIdChange")
   })
 
+  it("returns to the first remaining workbench item when the active New Chat closes", () => {
+    const content = read("src/renderer/features/agents/ui/agents-content.tsx")
+
+    expect(content).toContain("const fallback = topNavigationItems[0]")
+    expect(content).toContain("activateTopNavigationDropTarget(fallback)")
+    expect(content).toMatch(
+      /const fallback = topNavigationItems\[0\]\s+if \(fallback\) \{\s+activateTopNavigationDropTarget\(fallback\)\s+return\s+\}\s+setShowNewChatForm\(false\)/,
+    )
+  })
+
   it("offers a persisted draft reminder preference", () => {
     const atoms = read("src/renderer/lib/atoms/index.ts")
     const settings = read(

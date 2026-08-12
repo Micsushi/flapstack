@@ -58,6 +58,22 @@ describe("agents sidebar polish", () => {
     expect(source).toContain('isGlobalSection || lifecycleTarget?.type === "project"')
   })
 
+  it("keeps fixed project groups above removable user sections", () => {
+    const quickAccessIndex = source.indexOf('title="Quick access"')
+    const projectsIndex = source.indexOf('title="Projects"')
+    const customSectionsIndex = source.indexOf("visibleCustomProjectSections.map")
+
+    expect(quickAccessIndex).toBeGreaterThan(-1)
+    expect(projectsIndex).toBeGreaterThan(quickAccessIndex)
+    expect(customSectionsIndex).toBeGreaterThan(projectsIndex)
+    expect(source).toContain('"flapstack-sidebar-custom-project-sections"')
+    expect(source).toContain("CUSTOM_PROJECT_DROP_KIND")
+    expect(source).toContain("New section")
+    expect(source).toContain("Rename section")
+    expect(source).toContain("Delete section")
+    expect(source).toContain("Its projects moved to Projects.")
+  })
+
   it("keeps project task creation available outside the Planning beta", () => {
     expect(source).toContain("onCreateProjectTask?.(lifecycleTarget.id)")
     expect(source).not.toContain("planningEnabled && (")

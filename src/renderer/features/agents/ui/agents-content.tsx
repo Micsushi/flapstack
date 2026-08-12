@@ -54,6 +54,7 @@ import { ChatView } from "../main/active-chat"
 import { api } from "../../../lib/mock-api"
 import { trpc } from "../../../lib/trpc"
 import { useIsMobile } from "../../../lib/hooks/use-mobile"
+import { useDocumentVisible } from "../../../hooks/use-document-visible"
 import { AgentsSidebar } from "../../sidebar/agents-sidebar"
 import { AgentsSubChatsSidebar } from "../../sidebar/agents-subchats-sidebar"
 import { terminalSidebarOpenAtomFamily } from "../../terminal/atoms"
@@ -94,7 +95,7 @@ import {
   AlertDialogTitle,
 } from "../../../components/ui/alert-dialog"
 import { resolveOpenChatTabUnderlineColor, resolveVisibleOpenChatTabs } from "../lib/open-chat-tabs"
-import { configureChatDragFeedback } from "../lib/chat-drag-feedback"
+import { configureChatDragFeedback, shouldPopOutChatDrag } from "../lib/chat-drag-feedback"
 import { markChatSeen } from "../lib/chat-unseen-state"
 import {
   resolveTopNavigationDropIntent,
@@ -134,12 +135,15 @@ import {
   CHAT_WORKBENCH_DRAG_MIME,
   CHAT_WORKBENCH_DRAG_SESSION_KEY,
   CHAT_WORKBENCH_EXTERNAL_GROUP_ID,
+  CHAT_WORKBENCH_SIDEBAR_DRAG_END_EVENT,
+  CHAT_WORKBENCH_SIDEBAR_DRAG_START_EVENT,
   collectChatGroups,
   createChatWorkbenchLayout,
   getTerminalPresentationChatId,
   isEmptyChatWorkbenchLayout,
   reduceChatWorkbench,
   type ChatWorkbenchAction,
+  type ChatWorkbenchLayout,
 } from "../../../../shared/chat-workbench"
 import { showChatTransferWindowLimitChoice } from "../../../lib/chat-transfer-window-limit"
 import { chatWorkbenchToSavedWorkspace } from "../../../../shared/workbench-saved-workspace-adapter"
@@ -168,18 +172,18 @@ import {
   type ChatWorkbenchNavigationItem,
   type ChatWorkbenchNavigation,
 } from "../../../../shared/chat-workbench-navigation"
-import {
-  createChatWorkbenchHistory,
-  recordChatWorkbenchHistory,
-  redoChatWorkbenchHistory,
-  undoChatWorkbenchHistory,
-  type ChatWorkbenchSnapshot,
-} from "../../../../shared/chat-workbench-history"
+import { recordAppAction } from "../../../lib/app-action-history"
 import { SelectRepoPage } from "../../onboarding"
 import {
   incrementPerformanceCounter,
   measurePerformanceNextFrame,
 } from "../../../lib/performance-counters"
+
+type ChatWorkbenchSnapshot = {
+  navigation: ChatWorkbenchNavigation
+  layout: ChatWorkbenchLayout
+  openChatIds: string[]
+}
 
 const SettingsContent = lazy(() =>
   import("../../settings/settings-content").then((module) => ({ default: module.SettingsContent })),
@@ -284,9 +288,17 @@ function AgentInputPoller() {
   const selectedChatId = useAtomValue(selectedAgentChatIdAtom)
   const { notifyAgentNeedsInput } = useDesktopNotifications()
   const notifiedBackgroundRequestIdsRef = useRef(new Set<string>())
-  const { data: liveAgentInputs = [] } = trpc.agentInput.listWithContext.useQuery(undefined, {
-    refetchInterval: import.meta.env.DEV ? 250 : 1_000,
-  })
+  // Mounted for the window's lifetime, so suspend the poll while hidden and
+  // catch up on the transition back to visible.
+  const isVisible = useDocumentVisible()
+  const { data: liveAgentInputs = [], refetch: refetchAgentInputs } =
+    trpc.agentInput.listWithContext.useQuery(undefined, {
+      refetchInterval: isVisible ? 1_000 : false,
+    })
+
+  useEffect(() => {
+    if (isVisible) void refetchAgentInputs()
+  }, [isVisible, refetchAgentInputs])
 
   useEffect(() => {
     const current = appStore.get(pendingUserQuestionsAtom)
@@ -316,6 +328,12 @@ function AgentsContentInner() {
   const topNavigationEnteredTargetRef = useRef<string | null>(null)
   const topNavigationPendingTargetRef = useRef<string | null>(null)
   const topNavigationEnterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const sidebarChatDragSessionRef = useRef<{
+    source: { chatId: string; groupId: string; sourceWindowId: string; projectId?: string }
+    screenX: number
+    screenY: number
+    cancelled: boolean
+  } | null>(null)
   const [topNavigationDropTarget, setTopNavigationDropTarget] = useState<{
     item: ChatWorkbenchNavigationItem
     intent: TopNavigationDropIntent
@@ -347,8 +365,6 @@ function AgentsContentInner() {
   const [rememberGroupCloseChoice, setRememberGroupCloseChoice] = useState(false)
   const chatWorkbenchNavigationRef = useRef(chatWorkbenchNavigation)
   const chatWorkbenchLayoutRef = useRef(chatWorkbenchLayout)
-  const chatWorkbenchHistoryRef = useRef(createChatWorkbenchHistory())
-  const lastResizeHistoryRef = useRef<{ splitId: string; at: number } | null>(null)
   const chatWorkbenchRevisionRef = useRef(0)
   const chatWorkbenchCompactRef = useRef(false)
   const [editableWorkbenchChatIds, setEditableWorkbenchChatIds] = useState<ReadonlySet<string>>(
@@ -636,28 +652,8 @@ function AgentsContentInner() {
     [],
   )
 
-  const recordWorkbenchMutation = useCallback(
-    (action?: ChatWorkbenchAction) => {
-      if (action?.type === "activate-tab") return
-      if (action?.type === "resize-split") {
-        const now = Date.now()
-        const previous = lastResizeHistoryRef.current
-        lastResizeHistoryRef.current = { splitId: action.splitId, at: now }
-        if (previous?.splitId === action.splitId && now - previous.at < 750) return
-      } else {
-        lastResizeHistoryRef.current = null
-      }
-      chatWorkbenchHistoryRef.current = recordChatWorkbenchHistory(
-        chatWorkbenchHistoryRef.current,
-        currentWorkbenchSnapshot(),
-      )
-    },
-    [currentWorkbenchSnapshot],
-  )
-
   const restoreWorkbenchSnapshot = useCallback(
     (snapshot: ChatWorkbenchSnapshot) => {
-      lastResizeHistoryRef.current = null
       persistWorkbenchNavigation(snapshot.navigation)
       chatWorkbenchRevisionRef.current += 1
       chatWorkbenchLayoutRef.current = snapshot.layout
@@ -696,29 +692,29 @@ function AgentsContentInner() {
     ],
   )
 
-  useEffect(() => {
-    const handleHistoryShortcut = (event: globalThis.KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return
-      const target = event.target
-      if (
-        target instanceof HTMLElement &&
-        (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
-      ) {
-        return
-      }
-      const current = currentWorkbenchSnapshot()
-      const result = event.shiftKey
-        ? redoChatWorkbenchHistory(chatWorkbenchHistoryRef.current, current)
-        : undoChatWorkbenchHistory(chatWorkbenchHistoryRef.current, current)
-      if (!result) return
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      chatWorkbenchHistoryRef.current = result.history
-      restoreWorkbenchSnapshot(result.snapshot)
-    }
-    window.addEventListener("keydown", handleHistoryShortcut, true)
-    return () => window.removeEventListener("keydown", handleHistoryShortcut, true)
-  }, [currentWorkbenchSnapshot, restoreWorkbenchSnapshot])
+  const recordWorkbenchMutation = useCallback(
+    (action?: ChatWorkbenchAction) => {
+      if (action?.type === "activate-tab") return
+      const before = currentWorkbenchSnapshot()
+      const label =
+        action?.type === "resize-split"
+          ? "Resize Chat panes"
+          : action?.type === "close-tab"
+            ? "Close Chat tab"
+            : action?.type === "move-group" || action?.type === "move-tab"
+              ? "Move Chat"
+              : "Change Chat group"
+      queueMicrotask(() => {
+        const after = currentWorkbenchSnapshot()
+        recordAppAction({
+          label,
+          undo: () => restoreWorkbenchSnapshot(before),
+          redo: () => restoreWorkbenchSnapshot(after),
+        })
+      })
+    },
+    [currentWorkbenchSnapshot, restoreWorkbenchSnapshot],
+  )
 
   const showSelectedChatLayout = useCallback(
     (chatId: string) => {
@@ -1139,9 +1135,15 @@ function AgentsContentInner() {
 
   const dropChatOutside = useCallback(
     async (
-      source: { chatId: string; groupId: string; sourceWindowId: string },
+      source: {
+        chatId: string
+        groupId: string
+        sourceWindowId: string
+        projectId?: string
+      },
       point: { screenX: number; screenY: number },
     ) => {
+      const projectId = source.projectId ?? selectedProject?.id
       const result = await window.desktopApi.dropChatTransferOutside({
         version: 1,
         chatId: source.chatId,
@@ -1152,7 +1154,7 @@ function AgentsContentInner() {
         zone: "tab",
         screenX: point.screenX,
         screenY: point.screenY,
-        ...(selectedProject?.id ? { projectId: selectedProject.id } : {}),
+        ...(projectId ? { projectId } : {}),
       })
       if (result.status === "offered") return "Moving Chat into a new floating window."
       if (result.status === "at-limit") {
@@ -1174,6 +1176,90 @@ function AgentsContentInner() {
     },
     [selectedProject?.id],
   )
+
+  useEffect(() => {
+    const startSidebarChatDrag = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          source?: {
+            chatId?: unknown
+            groupId?: unknown
+            sourceWindowId?: unknown
+            projectId?: unknown
+          }
+          screenX?: unknown
+          screenY?: unknown
+        }>
+      ).detail
+      if (
+        typeof detail?.source?.chatId !== "string" ||
+        detail.source.groupId !== CHAT_WORKBENCH_EXTERNAL_GROUP_ID ||
+        typeof detail.source.sourceWindowId !== "string" ||
+        typeof detail.screenX !== "number" ||
+        typeof detail.screenY !== "number"
+      ) {
+        return
+      }
+      sidebarChatDragSessionRef.current = {
+        source: {
+          chatId: detail.source.chatId,
+          groupId: detail.source.groupId,
+          sourceWindowId: detail.source.sourceWindowId,
+          ...(typeof detail.source.projectId === "string"
+            ? { projectId: detail.source.projectId }
+            : {}),
+        },
+        screenX: detail.screenX,
+        screenY: detail.screenY,
+        cancelled: false,
+      }
+    }
+    const cancelSidebarChatDrag = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && sidebarChatDragSessionRef.current) {
+        sidebarChatDragSessionRef.current.cancelled = true
+      }
+    }
+    const endSidebarChatDrag = (event: Event) => {
+      const session = sidebarChatDragSessionRef.current
+      sidebarChatDragSessionRef.current = null
+      if (!session) return
+      const detail = (
+        event as CustomEvent<{
+          dropEffect?: DataTransfer["dropEffect"]
+          screenX?: unknown
+          screenY?: unknown
+        }>
+      ).detail
+      if (
+        !detail ||
+        typeof detail.screenX !== "number" ||
+        typeof detail.screenY !== "number" ||
+        !detail.dropEffect ||
+        !shouldPopOutChatDrag(session, {
+          dropEffect: detail.dropEffect,
+          screenX: detail.screenX,
+          screenY: detail.screenY,
+        })
+      ) {
+        return
+      }
+      void dropChatOutside(session.source, {
+        screenX: detail.screenX,
+        screenY: detail.screenY,
+      }).catch((error: unknown) => {
+        console.error("Failed to open dragged Chat in a new window", error)
+      })
+    }
+
+    window.addEventListener(CHAT_WORKBENCH_SIDEBAR_DRAG_START_EVENT, startSidebarChatDrag)
+    window.addEventListener(CHAT_WORKBENCH_SIDEBAR_DRAG_END_EVENT, endSidebarChatDrag)
+    window.addEventListener("keydown", cancelSidebarChatDrag, true)
+    return () => {
+      window.removeEventListener(CHAT_WORKBENCH_SIDEBAR_DRAG_START_EVENT, startSidebarChatDrag)
+      window.removeEventListener(CHAT_WORKBENCH_SIDEBAR_DRAG_END_EVENT, endSidebarChatDrag)
+      window.removeEventListener("keydown", cancelSidebarChatDrag, true)
+    }
+  }, [dropChatOutside])
 
   const claimReadOnlyChat = useCallback(async (chatId: string) => {
     const desktop = window.desktopApi
@@ -1391,37 +1477,6 @@ function AgentsContentInner() {
       setDesktopView(null)
     },
     [setDesktopView, setSelectedChatId, setSelectedDraftId, setShowNewChatForm],
-  )
-
-  const handleCloseNewChatTab = useCallback(
-    (draftId: string | null) => {
-      if (draftId) closeNewChatDraft(draftId)
-      const isActive = !selectedChatId && (selectedDraftId === draftId || showNewChatForm)
-      if (!isActive) return
-
-      const fallbackDraft = openNewChatDrafts.find((draft) => draft.id !== draftId)
-      setActiveNewChatDraftId(null)
-      if (fallbackDraft) {
-        handleSelectOpenDraftTab(fallbackDraft.id)
-        return
-      }
-
-      setSelectedDraftId(null)
-      setShowNewChatForm(false)
-      const fallbackChat = openChatTabs[0]
-      if (fallbackChat) void handleSelectOpenChatTab(fallbackChat.id)
-    },
-    [
-      handleSelectOpenChatTab,
-      handleSelectOpenDraftTab,
-      openChatTabs,
-      openNewChatDrafts,
-      selectedChatId,
-      selectedDraftId,
-      setSelectedDraftId,
-      setShowNewChatForm,
-      showNewChatForm,
-    ],
   )
 
   const handleChatViewed = useCallback(
@@ -1923,6 +1978,40 @@ function AgentsContentInner() {
     [handleSelectMainChatTab, handleSelectStandaloneTerminal, handleSelectWorkbenchGroup],
   )
 
+  const handleCloseNewChatTab = useCallback(
+    (draftId: string | null) => {
+      if (draftId) closeNewChatDraft(draftId)
+      const isActive = !selectedChatId && (selectedDraftId === draftId || showNewChatForm)
+      if (!isActive) return
+
+      const fallbackDraft = openNewChatDrafts.find((draft) => draft.id !== draftId)
+      setActiveNewChatDraftId(null)
+      if (fallbackDraft) {
+        handleSelectOpenDraftTab(fallbackDraft.id)
+        return
+      }
+
+      setSelectedDraftId(null)
+      const fallback = topNavigationItems[0]
+      if (fallback) {
+        activateTopNavigationDropTarget(fallback)
+        return
+      }
+      setShowNewChatForm(false)
+    },
+    [
+      activateTopNavigationDropTarget,
+      handleSelectOpenDraftTab,
+      openNewChatDrafts,
+      selectedChatId,
+      selectedDraftId,
+      setSelectedDraftId,
+      setShowNewChatForm,
+      showNewChatForm,
+      topNavigationItems,
+    ],
+  )
+
   const scheduleTopNavigationEnter = useCallback(
     (target: ChatWorkbenchNavigationItem) => {
       const key = `${target.kind}:${target.id}`
@@ -2002,6 +2091,32 @@ function AgentsContentInner() {
     ],
   )
 
+  const openSidebarChatOnMainBar = useCallback(
+    (chatId: string, target?: ChatWorkbenchNavigationItem, position?: "before" | "after") => {
+      const visibleChatIds = [...new Set([...openChatIds, ...standaloneTerminalIds, chatId])]
+      const current = chatWorkbenchNavigationRef.current
+      const item = { kind: "chat" as const, id: chatId }
+      const navigation =
+        target && position
+          ? reorderChatWorkbenchNavigationItem(current, visibleChatIds, item, target, position)
+          : appendChatWorkbenchNavigationItem(current, visibleChatIds, item)
+      recordWorkbenchMutation()
+      persistWorkbenchNavigation(navigation)
+      setOpenChatIds((currentIds) =>
+        currentIds.includes(chatId) ? currentIds : [...currentIds, chatId],
+      )
+      handleSelectMainChatTab(chatId)
+    },
+    [
+      handleSelectMainChatTab,
+      openChatIds,
+      persistWorkbenchNavigation,
+      recordWorkbenchMutation,
+      setOpenChatIds,
+      standaloneTerminalIds,
+    ],
+  )
+
   const handleTopNavigationDragOver = useCallback(
     (event: React.DragEvent<HTMLElement>, target: ChatWorkbenchNavigationItem) => {
       const source = readTopNavigationDragSource(event.dataTransfer)
@@ -2010,13 +2125,17 @@ function AgentsContentInner() {
       event.stopPropagation()
       const bounds = event.currentTarget.getBoundingClientRect()
       const sourceIsGrouped = groupedChatIds.has(source.chatId)
+      const sourceIsSidebar =
+        source.groupId === CHAT_WORKBENCH_EXTERNAL_GROUP_ID &&
+        workbenchChatCatalog.some((chat) => chat.id === source.chatId)
       const intent =
-        sourceIsGrouped && target.kind === "chat"
+        (sourceIsGrouped || sourceIsSidebar) && target.kind === "chat"
           ? resolveTopNavigationReorderIntent(event.clientX, bounds.left, bounds.width)
           : resolveTopNavigationDropIntent(event.clientX, bounds.left, bounds.width)
       const sourceIsOrdinary = openChatTabs.some((chat) => chat.id === source.chatId)
       const sourceIsTerminal = standaloneTerminalIds.includes(source.chatId)
-      const sourceCanMoveToMainBar = sourceIsOrdinary || sourceIsGrouped || sourceIsTerminal
+      const sourceCanMoveToMainBar =
+        sourceIsOrdinary || sourceIsGrouped || sourceIsTerminal || sourceIsSidebar
       const accepted = intent === "inside" || sourceCanMoveToMainBar
       event.dataTransfer.dropEffect = accepted ? "move" : "none"
       setMainBarDropActive(false)
@@ -2044,6 +2163,7 @@ function AgentsContentInner() {
       readTopNavigationDragSource,
       scheduleTopNavigationEnter,
       standaloneTerminalIds,
+      workbenchChatCatalog,
     ],
   )
 
@@ -2054,8 +2174,11 @@ function AgentsContentInner() {
       event.preventDefault()
       event.stopPropagation()
       const bounds = event.currentTarget.getBoundingClientRect()
+      const sourceIsSidebar =
+        source.groupId === CHAT_WORKBENCH_EXTERNAL_GROUP_ID &&
+        workbenchChatCatalog.some((chat) => chat.id === source.chatId)
       const intent =
-        groupedChatIds.has(source.chatId) && target.kind === "chat"
+        (groupedChatIds.has(source.chatId) || sourceIsSidebar) && target.kind === "chat"
           ? resolveTopNavigationReorderIntent(event.clientX, bounds.left, bounds.width)
           : resolveTopNavigationDropIntent(event.clientX, bounds.left, bounds.width)
       if (intent === "inside") {
@@ -2065,6 +2188,11 @@ function AgentsContentInner() {
       }
       if (groupedChatIds.has(source.chatId)) {
         moveGroupedChatToMainBar(source.chatId, target, intent)
+        clearTopNavigationDropTarget()
+        return
+      }
+      if (sourceIsSidebar) {
+        openSidebarChatOnMainBar(source.chatId, target, intent)
         clearTopNavigationDropTarget()
         return
       }
@@ -2097,40 +2225,54 @@ function AgentsContentInner() {
       groupedChatIds,
       moveGroupedChatToMainBar,
       openChatTabs,
+      openSidebarChatOnMainBar,
       persistWorkbenchNavigation,
       readTopNavigationDragSource,
       recordWorkbenchMutation,
       reorderOpenChatTab,
       standaloneTerminalIds,
+      workbenchChatCatalog,
     ],
   )
 
   const handleMainBarDragOver = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
       const source = readTopNavigationDragSource(event.dataTransfer)
-      if (!source || !groupedChatIds.has(source.chatId)) return
+      const sourceIsSidebar =
+        source?.groupId === CHAT_WORKBENCH_EXTERNAL_GROUP_ID &&
+        workbenchChatCatalog.some((chat) => chat.id === source.chatId)
+      if (!source || (!groupedChatIds.has(source.chatId) && !sourceIsSidebar)) return
       event.preventDefault()
       event.dataTransfer.dropEffect = "move"
       cancelTopNavigationEnter()
       setTopNavigationDropTarget(null)
       setMainBarDropActive(true)
     },
-    [cancelTopNavigationEnter, groupedChatIds, readTopNavigationDragSource],
+    [cancelTopNavigationEnter, groupedChatIds, readTopNavigationDragSource, workbenchChatCatalog],
   )
 
   const handleMainBarDrop = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
       const source = readTopNavigationDragSource(event.dataTransfer)
-      if (!source || !groupedChatIds.has(source.chatId)) return
+      const sourceIsSidebar =
+        source?.groupId === CHAT_WORKBENCH_EXTERNAL_GROUP_ID &&
+        workbenchChatCatalog.some((chat) => chat.id === source.chatId)
+      if (!source || (!groupedChatIds.has(source.chatId) && !sourceIsSidebar)) return
       event.preventDefault()
-      moveGroupedChatToMainBar(source.chatId)
+      if (sourceIsSidebar && !groupedChatIds.has(source.chatId)) {
+        openSidebarChatOnMainBar(source.chatId)
+      } else {
+        moveGroupedChatToMainBar(source.chatId)
+      }
       clearTopNavigationDropTarget()
     },
     [
       clearTopNavigationDropTarget,
       groupedChatIds,
       moveGroupedChatToMainBar,
+      openSidebarChatOnMainBar,
       readTopNavigationDragSource,
+      workbenchChatCatalog,
     ],
   )
 
@@ -2971,7 +3113,7 @@ function AgentsContentInner() {
                                 className={[
                                   "group relative flex h-9 min-w-28 max-w-56 shrink-0 items-center gap-1.5 rounded-t-md border border-b-0 pl-2 pr-1 text-left text-xs transition-[background-color,border-color,color,box-shadow]",
                                   isActive
-                                    ? "border-foreground/20 bg-muted font-medium text-foreground shadow-sm"
+                                    ? "border-foreground/50 bg-muted font-semibold text-foreground shadow-sm ring-1 ring-inset ring-foreground/20"
                                     : "border-border/40 bg-muted/25 text-foreground/90 hover:border-border/70 hover:bg-muted/70 hover:text-foreground",
                                   topNavigationDropTarget?.item.kind === "group" &&
                                   topNavigationDropTarget.item.id === group.id &&
@@ -3005,9 +3147,22 @@ function AgentsContentInner() {
                                       ].join(" ")}
                                     />
                                   )}
+                                {isActive && (
+                                  <span
+                                    aria-hidden
+                                    data-active-group-indicator
+                                    className="pointer-events-none absolute inset-x-1 bottom-0 h-1 rounded-t-full bg-primary"
+                                    style={{
+                                      backgroundColor: group.color
+                                        ? GROUP_COLOR_SWATCHES[group.color]
+                                        : undefined,
+                                    }}
+                                  />
+                                )}
                                 <PanelsTopLeft className="h-3.5 w-3.5 shrink-0 text-foreground/80" />
                                 <button
                                   type="button"
+                                  aria-current={isActive ? "page" : undefined}
                                   className="min-w-0 flex-1 truncate text-left font-medium text-foreground"
                                   onClick={() => handleSelectWorkbenchGroup(group.id)}
                                 >

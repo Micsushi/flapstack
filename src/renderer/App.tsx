@@ -174,7 +174,9 @@ function AppContent() {
 
     return window.desktopApi.onNotificationClicked(({ chatId, subChatId }) => {
       if (!chatId) return
-      void trpcUtils.chats.get
+      // Only `chat.project` is read here, so use the metadata query rather than
+      // chats.get, which pulls every sub-chat transcript into the renderer.
+      void trpcUtils.chats.getMetadata
         .fetch({ id: chatId })
         .then((chat) => {
           if (!chat) return
@@ -210,7 +212,7 @@ function AppContent() {
     setSelectedDraftId,
     setSelectedProject,
     setShowNewChatForm,
-    trpcUtils.chats.get,
+    trpcUtils.chats.getMetadata,
   ])
 
   useEffect(

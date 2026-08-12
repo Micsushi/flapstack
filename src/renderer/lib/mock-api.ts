@@ -316,11 +316,16 @@ export const api = {
       useMutation: () => {
         const mutation = trpc.chats.generateSubChatName.useMutation()
         return {
-          mutateAsync: async (args: { userMessage: string; ollamaModel?: string | null }) => {
-            return mutation.mutateAsync({
-              userMessage: args.userMessage,
-              ollamaModel: args.ollamaModel,
-            })
+          mutateAsync: async (args: {
+            userMessage: string
+            chatId?: string
+            generateTitle?: boolean
+            titleStyle?: "concise" | "balanced" | "descriptive"
+            autoTag?: boolean
+            tagConfidencePercent?: number
+            ollamaModel?: string | null
+          }) => {
+            return mutation.mutateAsync(args)
           },
           isPending: mutation.isPending,
         }
@@ -417,20 +422,25 @@ export const api = {
           },
           invalidate: async () => utils.chats.listArchived.invalidate(),
         },
+        // Must target the same query `getAgentChat.useQuery` reads (getMetadata).
+        // Pointing these at `chats.get` made every optimistic update and
+        // invalidation a no-op against a cache entry nothing observes.
         getAgentChat: {
-          cancel: async () => {},
+          cancel: async (args?: { chatId: string }) => {
+            if (args?.chatId) await utils.chats.getMetadata.cancel({ id: args.chatId })
+          },
           getData: (args?: { chatId: string }) => {
             if (!args?.chatId) return null
-            return utils.chats.get.getData({ id: args.chatId })
+            return utils.chats.getMetadata.getData({ id: args.chatId })
           },
           setData: (args?: { chatId: string }, updater?: AnyFn) => {
             if (args?.chatId && updater) {
-              utils.chats.get.setData({ id: args.chatId }, updater)
+              utils.chats.getMetadata.setData({ id: args.chatId }, updater)
             }
           },
           invalidate: async (args?: { chatId: string }) => {
             if (args?.chatId) {
-              await utils.chats.get.invalidate({ id: args.chatId })
+              await utils.chats.getMetadata.invalidate({ id: args.chatId })
             }
           },
         },
