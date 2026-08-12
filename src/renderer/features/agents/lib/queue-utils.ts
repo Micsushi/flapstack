@@ -5,6 +5,8 @@
 
 import type { UploadedImage, UploadedFile } from "../hooks/use-agents-file-upload"
 import type { PastedTextFile } from "../hooks/use-pasted-text-files"
+import { MENTION_PREFIXES } from "../mentions/mention-prefixes"
+import { utf8ToBase64 } from "../utils/base64"
 
 export interface QueuedImage {
   id: string
@@ -74,7 +76,75 @@ export type AgentQueueItem = {
   diffTextContexts?: QueuedDiffTextContext[]
   pastedTexts?: QueuedPastedText[]
   timestamp: Date
-  status: "pending" | "processing"
+  status: "pending" | "processing" | "failed"
+  attempts?: number
+  nextRetryAt?: number
+  lastError?: string
+}
+
+export const MAX_QUEUE_SEND_ATTEMPTS = 3
+
+export function queueRetryDelay(attempt: number): number {
+  return Math.min(30_000, 1_000 * 2 ** Math.max(0, attempt - 1))
+}
+
+export function queueItemAfterFailure(item: AgentQueueItem, error: unknown): AgentQueueItem {
+  const attempts = (item.attempts ?? 0) + 1
+  const lastError = error instanceof Error ? error.message : String(error)
+  if (attempts >= MAX_QUEUE_SEND_ATTEMPTS) {
+    return { ...item, attempts, lastError, status: "failed", nextRetryAt: undefined }
+  }
+  return {
+    ...item,
+    attempts,
+    lastError,
+    status: "pending",
+    nextRetryAt: Date.now() + queueRetryDelay(attempts),
+  }
+}
+
+export function buildQueuedMessageParts(item: AgentQueueItem): any[] {
+  const parts: any[] = [
+    ...(item.images || []).map((image) => ({
+      type: "data-image" as const,
+      data: {
+        url: image.url,
+        mediaType: image.mediaType,
+        filename: image.filename,
+        base64Data: image.base64Data,
+      },
+    })),
+    ...(item.files || []).map((file) => ({
+      type: "data-file" as const,
+      data: {
+        url: file.url,
+        mediaType: file.mediaType,
+        filename: file.filename,
+        size: file.size,
+      },
+    })),
+  ]
+
+  const mentions = [
+    ...(item.textContexts || []).map((context) => {
+      const preview = context.text.slice(0, 50).replace(/[:\[\]]/g, "")
+      return `@[${MENTION_PREFIXES.QUOTE}${preview}:${utf8ToBase64(context.text)}]`
+    }),
+    ...(item.diffTextContexts || []).map((context) => {
+      const preview = context.text.slice(0, 50).replace(/[:\[\]]/g, "")
+      return `@[${MENTION_PREFIXES.DIFF}${context.filePath}:${context.lineNumber || 0}:${preview}:${utf8ToBase64(context.text)}]`
+    }),
+    ...(item.pastedTexts || []).map((text) => {
+      const preview = text.preview.replace(/[:\[\]|]/g, "")
+      const prefix =
+        text.kind === "chatHistory" ? MENTION_PREFIXES.CHAT_HISTORY : MENTION_PREFIXES.PASTED
+      return `@[${prefix}${text.size}:${preview}|${text.filePath}]`
+    }),
+  ]
+
+  const text = `${mentions.length > 0 ? `${mentions.join(" ")} ` : ""}${item.message || ""}`
+  if (text) parts.push({ type: "text", text })
+  return parts
 }
 
 export function generateQueueId(): string {

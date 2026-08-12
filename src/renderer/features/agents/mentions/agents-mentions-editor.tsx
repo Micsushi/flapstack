@@ -11,6 +11,7 @@ import {
   memo,
 } from "react"
 import { createFileIconElement } from "./agents-file-mention"
+import { MENTION_PREFIXES } from "./mention-prefixes"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -39,18 +40,7 @@ export interface FileMentionOption {
   mcpServer?: string // MCP server name for tools
 }
 
-// Mention ID prefixes
-export const MENTION_PREFIXES = {
-  FILE: "file:",
-  FOLDER: "folder:",
-  SKILL: "skill:",
-  AGENT: "agent:",
-  TOOL: "tool:", // MCP tools
-  QUOTE: "quote:", // Selected text from assistant messages
-  DIFF: "diff:", // Selected text from diff sidebar
-  PASTED: "pasted:", // Large pasted text saved as files
-  CHAT_HISTORY: "chatHistory:", // Chat history from another sub-chat/provider
-} as const
+export { MENTION_PREFIXES } from "./mention-prefixes"
 
 type TriggerPayload = {
   searchText: string

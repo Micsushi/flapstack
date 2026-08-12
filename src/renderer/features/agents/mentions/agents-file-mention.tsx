@@ -18,7 +18,7 @@ import { flushSync, createPortal } from "react-dom"
 import { createRoot } from "react-dom/client"
 import { useAtomValue } from "jotai"
 import type { FileMentionOption } from "./agents-mentions-editor"
-import { MENTION_PREFIXES } from "./agents-mentions-editor"
+import { MENTION_PREFIXES } from "./mention-prefixes"
 import { sessionInfoAtom } from "../../../lib/atoms"
 import {
   FilesIcon,

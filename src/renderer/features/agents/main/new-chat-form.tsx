@@ -142,6 +142,7 @@ import {
   type ClaudeEffortLevel,
   type CodexReasoningLevel,
 } from "../lib/models"
+import { upsertChatInSidebarOrder } from "../lib/chat-cache-order"
 import { getSelectableRunPermissionModes, RUN_PERMISSION_MODE_LABELS } from "../constants"
 import {
   NewChatAgentProfileSelector,
@@ -1230,7 +1231,6 @@ export function NewChatForm({
       clearPastedTexts()
       fileContentsRef.current.clear()
       clearCurrentDraft()
-      utils.chats.list.invalidate()
       // Track this chat and its first subchat as just created for typewriter effect
       const ids = [data.id]
       if (data.subChats?.[0]?.id) {
@@ -1241,12 +1241,32 @@ export function NewChatForm({
           subChatReasoningEnabledAtomFamily(firstSubChatId),
           pendingReasoningEnabledRef.current,
         )
+        utils.chats.getTranscript.setData(
+          { chatId: data.id, subChatId: firstSubChatId },
+          {
+            id: firstSubChatId,
+            chatId: data.id,
+            messages: data.subChats[0].messages,
+            updatedAt: data.subChats[0].updatedAt,
+          },
+        )
       }
+      // Prime both caches before selecting the Chat. Selecting first can render
+      // an empty workbench until navigating away forces the queries to refetch.
+      utils.chats.getMetadata.setData(
+        { id: data.id },
+        {
+          ...data,
+          subChats: data.subChats.map(({ messages: _messages, ...subChat }) => subChat),
+        },
+      )
+      utils.chats.list.setData({}, (current) => upsertChatInSidebarOrder(current, data))
       setJustCreatedIds((prev) => new Set([...prev, ...ids]))
       setSelectedChatId(data.id)
       // New chats are always local
       setSelectedChatIsRemote(false)
       setChatSourceMode("local")
+      void utils.chats.list.invalidate()
     },
     onError: (error) => {
       toast.error(error.message)

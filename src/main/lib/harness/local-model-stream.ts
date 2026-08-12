@@ -3,6 +3,7 @@ import { and, eq, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type { UIMessageChunk } from "../claude/types"
 import { agentRuns, chats, orchestrationAgents, subChats } from "../db/schema"
+import { cancelStaleRunningRuns } from "../agent-run-lifecycle"
 import { getDatabase } from "../db"
 import { captureCheckpoint, captureRunManifest } from "../checkpoints"
 import { McpApprovalLifecycle } from "../mcp-control/approval-lifecycle"
@@ -1021,6 +1022,7 @@ export function createDatabaseLocalModelRunPersistence(db: AppDatabase): LocalMo
           status: "running",
           completedAt: null,
         }
+        cancelStaleRunningRuns(tx, { runId: input.runId, subChatId: input.subChatId })
         if (existingRun) {
           tx.update(agentRuns).set(runValues).where(eq(agentRuns.id, input.runId)).run()
         } else {

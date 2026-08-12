@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs"
 import { beforeEach, describe, expect, it } from "vitest"
-import { createQueueItem } from "../src/renderer/features/agents/lib/queue-utils"
+import {
+  buildQueuedMessageParts,
+  createQueueItem,
+  queueItemAfterFailure,
+} from "../src/renderer/features/agents/lib/queue-utils"
 import { useMessageQueueStore } from "../src/renderer/features/agents/stores/message-queue-store"
 
 const messageGroupSource = readFileSync(
@@ -63,7 +67,7 @@ describe("queued message editing and ordering", () => {
       queues: {},
       heldQueues: {},
       nextHoldId: 0,
-      queueSentTriggers: {},
+      processingQueues: {},
     })
   })
 
@@ -146,5 +150,44 @@ describe("queued message editing and ordering", () => {
       .addToQueue("chat", createQueueItem("later", "Wait until I steer"))
 
     expect(useMessageQueueStore.getState().canAutoProcessQueue("chat")).toBe(false)
+  })
+
+  it("serializes queued chat history with its distinct mention prefix", () => {
+    const item = createQueueItem(
+      "history",
+      "Review this",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [
+        {
+          id: "history-1",
+          filePath: "C:/tmp/history.txt",
+          filename: "history.txt",
+          size: 42,
+          preview: "Earlier chat",
+          kind: "chatHistory",
+        },
+      ],
+    )
+    expect(buildQueuedMessageParts(item).at(-1)?.text).toContain("chatHistory:")
+  })
+
+  it("serializes send ownership across manual and background queue paths", () => {
+    const store = useMessageQueueStore.getState()
+    expect(store.tryAcquireProcessing("chat")).toBe(true)
+    expect(useMessageQueueStore.getState().tryAcquireProcessing("chat")).toBe(false)
+    useMessageQueueStore.getState().releaseProcessing("chat")
+    expect(useMessageQueueStore.getState().tryAcquireProcessing("chat")).toBe(true)
+  })
+
+  it("parks a permanently failing queued message after bounded retries", () => {
+    let item = createQueueItem("retry", "Try me")
+    item = queueItemAfterFailure(item, new Error("offline"))
+    item = queueItemAfterFailure(item, new Error("offline"))
+    item = queueItemAfterFailure(item, new Error("offline"))
+    expect(item).toMatchObject({ status: "failed", attempts: 3, lastError: "offline" })
+    expect(item.nextRetryAt).toBeUndefined()
   })
 })

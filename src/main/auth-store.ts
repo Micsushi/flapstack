@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "fs"
+import { chmodSync, readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "fs"
 import { join, dirname } from "path"
 import { safeStorage } from "electron"
 import { inspectSafeStorageBackend } from "./lib/safe-storage-backend"
@@ -53,7 +53,8 @@ export class AuthStore {
       if (this.isEncryptionAvailable()) {
         // Encrypt using OS keychain (macOS Keychain, Windows DPAPI, Linux Secret Service)
         const encrypted = safeStorage.encryptString(jsonData)
-        writeFileSync(this.filePath, encrypted)
+        writeFileSync(this.filePath, encrypted, { mode: 0o600 })
+        chmodSync(this.filePath, 0o600)
       } else {
         throw new Error("Secure OS encryption is unavailable; authentication data was not saved")
       }

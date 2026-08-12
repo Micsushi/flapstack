@@ -49,4 +49,26 @@ describe("chat metadata cache key", () => {
     )
     expect(activeChat).toContain("trpcUtils.chats.getTranscript.setData")
   })
+
+  it("keeps the chat loading gate closed until its first transcript arrives", () => {
+    const activeChat = readFileSync("src/renderer/features/agents/main/active-chat.tsx", "utf8")
+
+    expect(activeChat).toContain("isLoading: isTranscriptLoading")
+    expect(activeChat).toMatch(
+      /const isLocalChatLoading =[\s\S]*?isTranscriptLoading &&[\s\S]*?!agentChatStore\.has/,
+    )
+  })
+
+  it("primes a newly created chat before selecting it", () => {
+    const newChatForm = readFileSync("src/renderer/features/agents/main/new-chat-form.tsx", "utf8")
+    const metadataWrite = newChatForm.indexOf("utils.chats.getMetadata.setData")
+    const transcriptWrite = newChatForm.indexOf("utils.chats.getTranscript.setData")
+    const selection = newChatForm.indexOf("setSelectedChatId(data.id)")
+
+    expect(metadataWrite).toBeGreaterThan(-1)
+    expect(transcriptWrite).toBeGreaterThan(-1)
+    expect(metadataWrite).toBeLessThan(selection)
+    expect(transcriptWrite).toBeLessThan(selection)
+    expect(newChatForm).toContain("messages: _messages")
+  })
 })

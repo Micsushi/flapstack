@@ -4,7 +4,7 @@ import { createContext, useContext, useMemo } from "react"
 import { getFileIconByExtension } from "./agents-file-mention"
 import { SkillIcon, CustomAgentIcon, OriginalMCPIcon } from "../../../components/ui/icons"
 import { UnknownFileIcon } from "../../../icons/framework-icons"
-import { MENTION_PREFIXES } from "./agents-mentions-editor"
+import { MENTION_PREFIXES } from "./mention-prefixes"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "../../../components/ui/hover-card"
 
 /**

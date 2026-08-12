@@ -1,5 +1,5 @@
 import { observable } from "@trpc/server/observable"
-import { and, eq, ne } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { spawn, type ChildProcess } from "node:child_process"
 import { z } from "zod"
 import {
@@ -12,7 +12,8 @@ import {
   CHAT_MODES,
   resolveChatModePermission,
 } from "../../../../shared/chat-mode"
-import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
+import { captureCheckpoint } from "../../checkpoints"
+import { cancelStaleRunningRuns, completeAgentRun } from "../../agent-run-lifecycle"
 import { agentRuns, chats, getDatabase, getDatabasePath, subChats } from "../../db"
 import {
   buildCursorEnv,
@@ -192,17 +193,7 @@ async function createCursorRun(params: {
     permission: runtimePermissionSnapshot(params.permissionMode, params.customPermissions),
   })
 
-  // Cancel stale running rows for this sub-chat (Codex fix pattern).
-  db.update(agentRuns)
-    .set({ status: "cancelled", completedAt: new Date() })
-    .where(
-      and(
-        eq(agentRuns.subChatId, params.subChatId),
-        eq(agentRuns.status, "running"),
-        ne(agentRuns.id, params.runId),
-      ),
-    )
-    .run()
+  cancelStaleRunningRuns(db, params)
 
   const run = db
     .insert(agentRuns)
@@ -253,29 +244,7 @@ async function completeCursorRun(params: {
   subChatId: string
   status: CursorRunStatus
 }) {
-  const db = getDatabase()
-  const run = db.select().from(agentRuns).where(eq(agentRuns.id, params.runId)).get()
-  if (!run || run.completedAt) return run
-
-  const after = await captureCheckpoint(run.id, run.worktreePath, "after")
-  await captureNoChangeManifest(run.id)
-
-  const completedRun = db
-    .update(agentRuns)
-    .set({ status: params.status, completedAt: new Date(), afterCheckpointId: after.id })
-    .where(eq(agentRuns.id, params.runId))
-    .returning()
-    .get()
-
-  const active = activeStreams.get(params.subChatId)
-  if (active?.runId === params.runId) {
-    db.update(subChats)
-      .set({ runStatus: params.status, updatedAt: new Date() })
-      .where(eq(subChats.id, params.subChatId))
-      .run()
-  }
-
-  return completedRun
+  return completeAgentRun(getDatabase(), { ...params, logLabel: "cursor" })
 }
 
 export const cursorRouter = router({

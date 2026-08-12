@@ -2,7 +2,7 @@ import { createACPProvider, type ACPProvider } from "@mcpc-tech/acp-ai-provider"
 import type { RequestPermissionRequest, RequestPermissionResponse } from "@agentclientprotocol/sdk"
 import { observable } from "@trpc/server/observable"
 import { streamText } from "ai"
-import { and, eq, isNull, ne } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { app } from "electron"
 import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -26,7 +26,8 @@ import {
   CHAT_MODES,
   resolveChatModePermission,
 } from "../../../../shared/chat-mode"
-import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
+import { captureCheckpoint } from "../../checkpoints"
+import { cancelStaleRunningRuns, completeAgentRun } from "../../agent-run-lifecycle"
 import { getClaudeShellEnvironment } from "../../claude/env"
 import { resolveProjectPathFromWorktree } from "../../claude-config"
 import {
@@ -79,7 +80,6 @@ import {
   parsePermissionMode,
   type PermissionMode,
 } from "../../permissions"
-import { updateSubChatRunStatusIfAuthoritative } from "../../run-status-authority"
 import { publicProcedure, router } from "../index"
 import { getCredentialService } from "../../credential-service"
 import {
@@ -1219,19 +1219,7 @@ async function createCodexRun(params: {
   })
   assertFlapstackNativeProviderRouter({ harness: "codex", snapshot: runtimeSnapshot })
 
-  db.update(agentRuns)
-    .set({
-      status: "cancelled",
-      completedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(agentRuns.subChatId, params.subChatId),
-        eq(agentRuns.status, "running"),
-        ne(agentRuns.id, params.runId),
-      ),
-    )
-    .run()
+  cancelStaleRunningRuns(db, params)
 
   const run = db
     .insert(agentRuns)
@@ -1285,48 +1273,7 @@ async function completeCodexRun(params: {
   subChatId: string
   status: CodexRunStatus
 }) {
-  const db = getDatabase()
-  const run = db.select().from(agentRuns).where(eq(agentRuns.id, params.runId)).get()
-  if (!run || run.completedAt) return run
-
-  let afterCheckpointId: string | undefined
-  try {
-    const after = await captureCheckpoint(run.id, run.worktreePath, "after")
-    afterCheckpointId = after.id
-    await captureNoChangeManifest(run.id)
-  } catch (error) {
-    console.warn("[codex] Failed to capture after checkpoint/manifest:", error)
-  }
-
-  const completedRun = db
-    .update(agentRuns)
-    .set({
-      status: params.status,
-      completedAt: new Date(),
-      ...(afterCheckpointId && { afterCheckpointId }),
-    })
-    .where(
-      and(
-        eq(agentRuns.id, params.runId),
-        eq(agentRuns.status, "running"),
-        isNull(agentRuns.completedAt),
-      ),
-    )
-    .returning()
-    .get()
-
-  if (!completedRun) {
-    return db.select().from(agentRuns).where(eq(agentRuns.id, params.runId)).get()
-  }
-
-  updateSubChatRunStatusIfAuthoritative(db, {
-    runId: params.runId,
-    subChatId: params.subChatId,
-    status: params.status,
-    updatedAt: new Date(),
-  })
-
-  return completedRun
+  return completeAgentRun(getDatabase(), { ...params, logLabel: "codex" })
 }
 
 function extractPromptFromStoredMessage(message: any): string {

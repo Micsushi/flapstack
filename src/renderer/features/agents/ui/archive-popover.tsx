@@ -9,6 +9,7 @@ import {
   selectedAgentChatIdAtom,
   selectedChatIsRemoteAtom,
 } from "../atoms"
+import { upsertChatInSidebarOrder } from "../lib/chat-cache-order"
 import { showWorkspaceIconAtom, chatSourceModeAtom } from "../../../lib/atoms"
 import { useRemoteArchivedChats, useRestoreRemoteChat } from "../../../lib/hooks/use-remote-chats"
 import { Input } from "../../../components/ui/input"
@@ -296,10 +297,7 @@ export const ArchivePopover = memo(function ArchivePopover({ trigger }: ArchiveP
       // Optimistically add restored chat to the main list cache
       if (restoredChat) {
         utils.chats.list.setData({}, (oldData) => {
-          if (!oldData) return [restoredChat]
-          // Add to beginning if not already present
-          if (oldData.some((c) => c.id === restoredChat.id)) return oldData
-          return [restoredChat, ...oldData]
+          return upsertChatInSidebarOrder(oldData, restoredChat)
         })
       }
       // Invalidate both lists to refresh

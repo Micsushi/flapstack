@@ -132,7 +132,7 @@ const getMermaidConfig = (isDark: boolean): Record<string, unknown> => ({
         titleColor: "#18181b",
         edgeLabelBackground: "#fafafa",
       },
-  securityLevel: "loose" as const,
+  securityLevel: "strict" as const,
   fontFamily: "inherit",
 })
 

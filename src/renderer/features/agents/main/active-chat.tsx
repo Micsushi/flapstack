@@ -195,6 +195,7 @@ import { resolveCanonicalConversationId } from "../lib/canonical-conversation"
 import { markChatSeen, markChatUnseen } from "../lib/chat-unseen-state"
 import { resolveLocalFolder } from "../lib/resolve-local-folder"
 import {
+  buildQueuedMessageParts,
   createQueueItem,
   createTextPreview,
   generateQueueId,
@@ -206,6 +207,7 @@ import {
   type DiffTextContext,
   type SelectedTextContext,
 } from "../lib/queue-utils"
+import { upsertChatInSidebarOrder } from "../lib/chat-cache-order"
 import { RemoteChatTransport } from "../lib/remote-chat-transport"
 import { latestAssistantUsesDirectRuntime } from "../lib/runtime-text-chat-chunks"
 import { FileOpenProvider, MENTION_PREFIXES, type AgentsMentionsEditorHandle } from "../mentions"
@@ -372,12 +374,12 @@ import.meta.hot?.dispose(() => {
   idleSubChatLru.length = 0
 })
 
-function getDistanceFromScrollBottom(container: HTMLElement) {
-  return Math.max(0, container.scrollHeight - container.scrollTop - container.clientHeight)
-}
-
 function getScrollToLatestThreshold(container: HTMLElement) {
   return Math.max(50, container.clientHeight / 2)
+}
+
+function getDistanceFromScrollBottom(container: HTMLElement) {
+  return Math.max(0, container.scrollHeight - container.scrollTop - container.clientHeight)
 }
 
 const STREAMING_WORDS = ["Thinking", "Working", "Cooking"] as const
@@ -3170,15 +3172,24 @@ const ChatViewInner = memo(function ChatViewInner({
 
   const sendUserMessage = useCallback(
     async (text: string) => {
-      shouldAutoScrollRef.current = true
-      const sendPromise = sendMessageRef.current({
-        role: "user",
-        parts: [{ type: "text", text }],
-      })
-      rememberMessagedProject()
-      await sendPromise
+      const queueState = useMessageQueueStore.getState()
+      if (!queueState.tryAcquireProcessing(subChatId)) {
+        throw new Error("Another message is already being sent for this chat")
+      }
+      const queueHold = queueState.getQueueHold(subChatId)
+      try {
+        const sendPromise = sendMessageRef.current({
+          role: "user",
+          parts: [{ type: "text", text }],
+        })
+        rememberMessagedProject()
+        await sendPromise
+      } finally {
+        queueState.resumeQueue(subChatId, queueHold)
+        queueState.releaseProcessing(subChatId)
+      }
     },
-    [rememberMessagedProject],
+    [rememberMessagedProject, subChatId],
   )
 
   // Handle answering questions
@@ -3385,15 +3396,23 @@ const ChatViewInner = memo(function ChatViewInner({
     // Update atomFamily state (for UI) - this also syncs to store via effect
     setSubChatMode("write")
 
-    // Keep following the live response without yanking the transcript before the message renders.
-    shouldAutoScrollRef.current = true
-
-    // Send "Build plan" message (now in Write mode).
-    sendMessageRef.current({
-      role: "user",
-      parts: [{ type: "text", text: "Implement plan" }],
-    })
-    rememberMessagedProject()
+    const queueState = useMessageQueueStore.getState()
+    if (!queueState.tryAcquireProcessing(subChatId)) return
+    const queueHold = queueState.getQueueHold(subChatId)
+    void sendMessageRef
+      .current({
+        role: "user",
+        parts: [{ type: "text", text: "Implement plan" }],
+      })
+      .then(() => rememberMessagedProject())
+      .catch((error: unknown) => {
+        console.error("[handleApprovePlan] Failed to send plan approval:", error)
+        toast.error("Failed to implement the plan")
+      })
+      .finally(() => {
+        queueState.resumeQueue(subChatId, queueHold)
+        queueState.releaseProcessing(subChatId)
+      })
   }, [queueModePersistence, rememberMessagedProject, setSubChatMode, subChatId])
 
   // Handle pending "Build plan" from sidebar
@@ -3696,15 +3715,26 @@ const ChatViewInner = memo(function ChatViewInner({
           const replacementText = [contextPrefix, editedText].filter(Boolean).join(" ")
           if (replacementText) preservedParts.push({ type: "text", text: replacementText })
 
-          shouldAutoScrollRef.current = true
+          const queueState = useMessageQueueStore.getState()
+          if (!queueState.tryAcquireProcessing(subChatId)) {
+            editorRef.current?.setValue(editedText || "")
+            toast.error("Another message is already being sent for this chat")
+            return false
+          }
+          const queueHold = queueState.getQueueHold(subChatId)
           subChatStore.getState().updateSubChatTimestamp(subChatId)
           const sendPromise = sendMessageRef.current({ role: "user", parts: preservedParts })
           rememberMessagedProject()
-          void sendPromise.catch((error: unknown) => {
-            console.error("[handleEditLatestMessage] Error sending replacement:", error)
-            editorRef.current?.setValue(editedText || "")
-            toast.error("Failed to send edited message")
-          })
+          void sendPromise
+            .catch((error: unknown) => {
+              console.error("[handleEditLatestMessage] Error sending replacement:", error)
+              editorRef.current?.setValue(editedText || "")
+              toast.error("Failed to send edited message")
+            })
+            .finally(() => {
+              queueState.resumeQueue(subChatId, queueHold)
+              queueState.releaseProcessing(subChatId)
+            })
           return true
         }
 
@@ -3923,9 +3953,7 @@ const ChatViewInner = memo(function ChatViewInner({
         await handleQuestionsSkip()
       } else if (shouldStop) {
         e.preventDefault()
-        // Mark as manually aborted to prevent completion sound
-        agentChatStore.setManuallyAborted(subChatId, true)
-        await stop()
+        await handleStop()
       }
     }
 
@@ -3934,10 +3962,10 @@ const ChatViewInner = memo(function ChatViewInner({
   }, [
     acceptsGlobalShortcuts,
     displayQuestions,
+    handleStop,
     handleQuestionsSkip,
     isActive,
     isStreaming,
-    stop,
     subChatId,
   ])
 
@@ -4126,20 +4154,6 @@ const ChatViewInner = memo(function ChatViewInner({
     previousMessageStateRef.current = { count: messages.length, status }
   }, [isAtBottom, isVisiblePane, messages.length, status])
 
-  // Keep auto-follow enabled when QueueProcessor auto-sends a queued message.
-  // The content ResizeObserver handles bottom-follow after the message renders.
-  useEffect(() => {
-    const unsub = useMessageQueueStore.subscribe(
-      (state) => state.queueSentTriggers[subChatId] || 0,
-      (trigger) => {
-        if (trigger === 0) return
-        if (!isVisiblePaneRef.current) return
-        shouldAutoScrollRef.current = true
-      },
-    )
-    return unsub
-  }, [subChatId])
-
   // Auto-focus input when switching to this chat (any sub-chat change)
   // Skip on mobile to prevent keyboard from opening automatically
   useEffect(() => {
@@ -4208,6 +4222,7 @@ const ChatViewInner = memo(function ChatViewInner({
 
       if (!isStreamingNow) {
         if (sendInFlightRef.current) return
+        if (!useMessageQueueStore.getState().tryAcquireProcessing(subChatId)) return
         sendInFlightRef.current = true
       }
 
@@ -4427,17 +4442,18 @@ const ChatViewInner = memo(function ChatViewInner({
         // Optimistically update sub-chat timestamp to move it to top
         subChatStore.getState().updateSubChatTimestamp(subChatId)
 
-        // Keep following the live response without yanking the transcript before the message renders.
-        shouldAutoScrollRef.current = true
-
         const queueHold = useMessageQueueStore.getState().getQueueHold(subChatId)
         const sendPromise = sendMessageRef.current({ role: "user", parts })
         rememberMessagedProject()
-        await sendPromise
-        useMessageQueueStore.getState().resumeQueue(subChatId, queueHold)
+        try {
+          await sendPromise
+        } finally {
+          useMessageQueueStore.getState().resumeQueue(subChatId, queueHold)
+        }
       } finally {
         if (!isStreamingNow) {
           sendInFlightRef.current = false
+          useMessageQueueStore.getState().releaseProcessing(subChatId)
         }
       }
     },
@@ -4461,8 +4477,12 @@ const ChatViewInner = memo(function ChatViewInner({
   // Queue handlers for sending queued messages
   const handleSendFromQueue = useCallback(
     async (itemId: string) => {
+      if (!useMessageQueueStore.getState().tryAcquireProcessing(subChatId)) return
       const item = popItemFromQueue(subChatId, itemId)
-      if (!item) return
+      if (!item) {
+        useMessageQueueStore.getState().releaseProcessing(subChatId)
+        return
+      }
 
       try {
         // Stop current stream if streaming and wait for status to become ready.
@@ -4473,64 +4493,7 @@ const ChatViewInner = memo(function ChatViewInner({
           await waitForStreamingReady(subChatId)
         }
 
-        // Build message parts from queued item
-        const parts: any[] = [
-          ...(item.images || []).map((img) => ({
-            type: "data-image" as const,
-            data: {
-              url: img.url,
-              mediaType: img.mediaType,
-              filename: img.filename,
-              base64Data: img.base64Data,
-            },
-          })),
-          ...(item.files || []).map((f) => ({
-            type: "data-file" as const,
-            data: {
-              url: f.url,
-              mediaType: f.mediaType,
-              filename: f.filename,
-              size: f.size,
-            },
-          })),
-        ]
-
-        // Add text contexts as mention tokens
-        let mentionPrefix = ""
-        if (item.textContexts && item.textContexts.length > 0) {
-          const quoteMentions = item.textContexts.map((tc) => {
-            const preview = tc.text.slice(0, 50).replace(/[:\[\]]/g, "") // Create and sanitize preview
-            const encodedText = utf8ToBase64(tc.text) // Base64 encode full text
-            return `@[${MENTION_PREFIXES.QUOTE}${preview}:${encodedText}]`
-          })
-          mentionPrefix = quoteMentions.join(" ") + " "
-        }
-
-        // Add diff text contexts as mention tokens
-        if (item.diffTextContexts && item.diffTextContexts.length > 0) {
-          const diffMentions = item.diffTextContexts.map((dtc) => {
-            const preview = dtc.text.slice(0, 50).replace(/[:\[\]]/g, "") // Create and sanitize preview
-            const encodedText = utf8ToBase64(dtc.text) // Base64 encode full text
-            const lineNum = dtc.lineNumber || 0
-            return `@[${MENTION_PREFIXES.DIFF}${dtc.filePath}:${lineNum}:${preview}:${encodedText}]`
-          })
-          mentionPrefix += diffMentions.join(" ") + " "
-        }
-
-        // Add pasted text / chat history as mentions
-        if (item.pastedTexts && item.pastedTexts.length > 0) {
-          const pastedMentions = item.pastedTexts.map((pt) => {
-            const sanitizedPreview = pt.preview.replace(/[:\[\]|]/g, "")
-            const prefix =
-              pt.kind === "chatHistory" ? MENTION_PREFIXES.CHAT_HISTORY : MENTION_PREFIXES.PASTED
-            return `@[${prefix}${pt.size}:${sanitizedPreview}|${pt.filePath}]`
-          })
-          mentionPrefix += pastedMentions.join(" ") + " "
-        }
-
-        if (item.message || mentionPrefix) {
-          parts.push({ type: "text", text: mentionPrefix + (item.message || "") })
-        }
+        const parts = buildQueuedMessageParts(item)
 
         // Track message sent
         trackMessageSent({
@@ -4542,18 +4505,20 @@ const ChatViewInner = memo(function ChatViewInner({
         // Update timestamps
         subChatStore.getState().updateSubChatTimestamp(subChatId)
 
-        // Keep following the live response without yanking the transcript before the message renders.
-        shouldAutoScrollRef.current = true
-
         const queueHold = useMessageQueueStore.getState().getQueueHold(subChatId)
         const sendPromise = sendMessageRef.current({ role: "user", parts })
         rememberMessagedProject()
-        await sendPromise
-        useMessageQueueStore.getState().resumeQueue(subChatId, queueHold)
+        try {
+          await sendPromise
+        } finally {
+          useMessageQueueStore.getState().resumeQueue(subChatId, queueHold)
+        }
       } catch (error) {
         console.error("[handleSendFromQueue] Error sending queued message:", error)
         // Requeue the item at the front so it isn't lost
         useMessageQueueStore.getState().prependItem(subChatId, item)
+      } finally {
+        useMessageQueueStore.getState().releaseProcessing(subChatId)
       }
     },
     [subChatId, popItemFromQueue, handleStop, rememberMessagedProject],
@@ -4643,6 +4608,7 @@ const ChatViewInner = memo(function ChatViewInner({
     if (!hasText && !hasImages) return
 
     if (sendInFlightRef.current) return
+    if (!useMessageQueueStore.getState().tryAcquireProcessing(subChatId)) return
     sendInFlightRef.current = true
     let finalTextForRetry = inputValue.trim()
 
@@ -4736,20 +4702,21 @@ const ChatViewInner = memo(function ChatViewInner({
       // Update timestamps
       subChatStore.getState().updateSubChatTimestamp(subChatId)
 
-      // Keep following the live response without yanking the transcript before the message renders.
-      shouldAutoScrollRef.current = true
-
       const queueHold = useMessageQueueStore.getState().getQueueHold(subChatId)
       const sendPromise = sendMessageRef.current({ role: "user", parts })
       rememberMessagedProject()
-      await sendPromise
-      useMessageQueueStore.getState().resumeQueue(subChatId, queueHold)
+      try {
+        await sendPromise
+      } finally {
+        useMessageQueueStore.getState().resumeQueue(subChatId, queueHold)
+      }
     } catch (error) {
       console.error("[handleForceSend] Error sending message:", error)
       // Restore editor content so the user can retry
       editorRef.current?.setValue(finalTextForRetry)
     } finally {
       sendInFlightRef.current = false
+      useMessageQueueStore.getState().releaseProcessing(subChatId)
     }
   }, [
     sandboxSetupStatus,
@@ -6127,10 +6094,6 @@ function ChatViewScoped({
 
   const isLoading = chatSourceMode === "sandbox" ? isRemoteLoading : isLocalLoading
 
-  // Compute if we're waiting for local chat data (used as loading gate)
-  const isLocalChatLoading =
-    chatSourceMode === "local" && (isLocalLoading || (isLocalFetching && !localAgentChat))
-
   // Projects query for "Open Locally" functionality
   const { data: projects } = trpc.projects.list.useQuery()
 
@@ -6177,14 +6140,24 @@ function ChatViewScoped({
     () => resolveCanonicalConversationId(agentSubChatMetadata, activeSubChatId),
     [activeSubChatId, agentSubChatMetadata],
   )
-  const { data: visibleTranscript } = trpc.chats.getTranscript.useQuery(
-    { chatId, subChatId: canonicalConversationId ?? "" },
-    {
-      enabled: chatSourceMode === "local" && Boolean(chatId) && Boolean(canonicalConversationId),
-      staleTime: 30_000,
-      refetchOnMount: true,
-    },
-  )
+  const { data: visibleTranscript, isLoading: isTranscriptLoading } =
+    trpc.chats.getTranscript.useQuery(
+      { chatId, subChatId: canonicalConversationId ?? "" },
+      {
+        enabled: chatSourceMode === "local" && Boolean(chatId) && Boolean(canonicalConversationId),
+        staleTime: 30_000,
+        refetchOnMount: true,
+      },
+    )
+  // Metadata and transcripts load separately. Do not create an empty runtime
+  // Chat while the first transcript request is still pending.
+  const isLocalChatLoading =
+    chatSourceMode === "local" &&
+    (isLocalLoading ||
+      (isLocalFetching && !localAgentChat) ||
+      (Boolean(canonicalConversationId) &&
+        isTranscriptLoading &&
+        !agentChatStore.has(canonicalConversationId!)))
   const agentSubChats = useMemo(
     () =>
       agentSubChatMetadata.map((subChat) =>
@@ -6331,9 +6304,7 @@ function ChatViewScoped({
       if (restoredChat) {
         // Update the main chat list cache
         trpcUtils.chats.list.setData({}, (oldData) => {
-          if (!oldData) return [restoredChat]
-          if (oldData.some((c) => c.id === restoredChat.id)) return oldData
-          return [restoredChat, ...oldData]
+          return upsertChatInSidebarOrder(oldData, restoredChat)
         })
       }
       // Invalidate both lists to refresh

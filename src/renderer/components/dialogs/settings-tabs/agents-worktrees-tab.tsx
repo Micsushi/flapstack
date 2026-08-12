@@ -14,22 +14,7 @@ import {
   NewChatAgentProfileSelector,
   type NewChatAgentProfileSelectionState,
 } from "../../../features/agent-profiles/new-chat-agent-profile-selector"
-
-function useIsNarrowScreen(): boolean {
-  const [isNarrow, setIsNarrow] = useState(false)
-
-  useEffect(() => {
-    const checkWidth = () => {
-      setIsNarrow(window.innerWidth <= 768)
-    }
-
-    checkWidth()
-    window.addEventListener("resize", checkWidth)
-    return () => window.removeEventListener("resize", checkWidth)
-  }, [])
-
-  return isNarrow
-}
+import { useIsNarrowScreen } from "./use-is-narrow-screen"
 
 export function AgentsWorktreesTab() {
   const isNarrowScreen = useIsNarrowScreen()
@@ -58,8 +43,17 @@ export function AgentsWorktreesTab() {
   // For "Fill with AI" - create chat and close settings
   const setSettingsDialogOpen = useSetAtom(agentsSettingsDialogOpenAtom)
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
+  const utils = trpc.useUtils()
   const createChatMutation = trpc.chats.create.useMutation({
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
+      const firstSubChat = data.subChats[0]
+      await Promise.all([
+        utils.chats.list.invalidate(),
+        utils.chats.getMetadata.prefetch({ id: data.id }),
+        firstSubChat
+          ? utils.chats.getTranscript.prefetch({ chatId: data.id, subChatId: firstSubChat.id })
+          : Promise.resolve(),
+      ])
       setSettingsDialogOpen(false)
       setSelectedChatId(data.id)
     },

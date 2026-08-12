@@ -5,20 +5,7 @@ export type StoredCursorMessage = {
 }
 
 function promptText(message: StoredCursorMessage): string {
-  if (!Array.isArray(message.parts)) return ""
-  return message.parts
-    .flatMap((part) => {
-      if (!part || typeof part !== "object") return []
-      const value = part as Record<string, unknown>
-      if (value.type === "text" && typeof value.text === "string") return [value.text]
-      if (value.type === "file-content" && typeof value.content === "string") {
-        const filePath = typeof value.filePath === "string" ? value.filePath : "file"
-        const fileName = filePath.split("/").pop() || filePath
-        return [`\n--- ${fileName} ---\n${value.content}`]
-      }
-      return []
-    })
-    .join("\n")
+  return serializePromptParts(message.parts)
 }
 
 /** Reuse the existing logical user turn during auth recovery. */
@@ -35,3 +22,4 @@ export function findReusableCursorPromptMessage(
     return message.role === "user" && promptText(message) === prompt
   })
 }
+import { serializePromptParts } from "../../../shared/prompt-serialization"

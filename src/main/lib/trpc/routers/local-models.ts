@@ -6,7 +6,7 @@ import {
   resolveLocalModelSelection,
   type LocalModelCatalogSnapshot,
 } from "../../../../shared/local-model-contract"
-import { parseCustomPermissionCapabilities } from "../../../../shared/permission-capabilities"
+import { parseStoredCustomPermissionCapabilities } from "../../../../shared/permission-capabilities"
 import {
   applyChatModeInstruction,
   CHAT_MODES,
@@ -53,15 +53,6 @@ function getLocalModelChatService() {
     },
   })
   return chatService
-}
-
-function parseStoredCustomPermissions(value: string | null) {
-  if (!value) return null
-  try {
-    return parseCustomPermissionCapabilities(JSON.parse(value))
-  } catch {
-    return null
-  }
 }
 
 export async function refreshLocalModelCatalog(input: {
@@ -201,7 +192,7 @@ export const localModelsRouter = router({
               return
             }
 
-            const customPermissions = parseStoredCustomPermissions(row.customPermissions)
+            const customPermissions = parseStoredCustomPermissionCapabilities(row.customPermissions)
             const metadata = createLocalModelRunMetadata({
               catalog,
               model: selection.model,

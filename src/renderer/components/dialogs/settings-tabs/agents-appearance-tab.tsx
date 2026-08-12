@@ -35,23 +35,7 @@ import {
   SelectGroup,
 } from "../../../components/ui/select"
 import { Switch } from "../../../components/ui/switch"
-
-// Hook to detect narrow screen
-function useIsNarrowScreen(): boolean {
-  const [isNarrow, setIsNarrow] = useState(false)
-
-  useEffect(() => {
-    const checkWidth = () => {
-      setIsNarrow(window.innerWidth <= 768)
-    }
-
-    checkWidth()
-    window.addEventListener("resize", checkWidth)
-    return () => window.removeEventListener("resize", checkWidth)
-  }, [])
-
-  return isNarrow
-}
+import { useIsNarrowScreen } from "./use-is-narrow-screen"
 
 // Check if a hex color is visible (not too transparent)
 function isVisibleColor(hex: string | undefined): boolean {

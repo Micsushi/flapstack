@@ -8,7 +8,7 @@ import {
 } from "../../../shared/agent-runtime"
 import type { RunPermissionMode } from "../../../shared/harness-types"
 import {
-  parseCustomPermissionCapabilities,
+  parseStoredCustomPermissionCapabilities,
   type CustomPermissionCapabilities,
 } from "../../../shared/permission-capabilities"
 import {
@@ -701,7 +701,9 @@ function executionTarget(
   }
   const permissionMode = String(source.permission_mode) as RunPermissionMode
   const customPermissions =
-    permissionMode === "custom" ? parseStoredCustomPermissions(source.custom_permissions) : null
+    permissionMode === "custom"
+      ? parseStoredCustomPermissionCapabilities(source.custom_permissions)
+      : null
   return executionTargetSchema.parse({
     schemaVersion: 1,
     harness: input.targetHarness,
@@ -761,7 +763,9 @@ function authorityCeiling(
 ): DelegationAuthorityCeiling {
   const permissionMode = String(source.permission_mode) as RunPermissionMode
   const customPermissions =
-    permissionMode === "custom" ? parseStoredCustomPermissions(source.custom_permissions) : null
+    permissionMode === "custom"
+      ? parseStoredCustomPermissionCapabilities(source.custom_permissions)
+      : null
   const allowedToolTiers: DelegationAuthorityCeiling["allowedToolTiers"] =
     permissionMode === "read-only"
       ? ["read"]
@@ -873,15 +877,6 @@ function providerForHarness(harness: string): string {
   if (harness === "codex") return "openai"
   if (harness === "claude-code") return "anthropic"
   return harness
-}
-
-function parseStoredCustomPermissions(value: unknown): CustomPermissionCapabilities | null {
-  if (typeof value !== "string") return null
-  try {
-    return parseCustomPermissionCapabilities(JSON.parse(value) as unknown)
-  } catch {
-    return null
-  }
 }
 
 function runtimeLabel(preference: AgentRuntimePreference): string {

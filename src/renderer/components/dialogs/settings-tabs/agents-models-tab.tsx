@@ -24,23 +24,7 @@ import {
 } from "../../ui/dropdown-menu"
 import { Switch } from "../../ui/switch"
 import { RenameDialog } from "../../rename-dialog"
-
-// Hook to detect narrow screen
-function useIsNarrowScreen(): boolean {
-  const [isNarrow, setIsNarrow] = useState(false)
-
-  useEffect(() => {
-    const checkWidth = () => {
-      setIsNarrow(window.innerWidth <= 768)
-    }
-
-    checkWidth()
-    window.addEventListener("resize", checkWidth)
-    return () => window.removeEventListener("resize", checkWidth)
-  }, [])
-
-  return isNarrow
-}
+import { useIsNarrowScreen } from "./use-is-narrow-screen"
 
 // Account row component
 function AccountRow({

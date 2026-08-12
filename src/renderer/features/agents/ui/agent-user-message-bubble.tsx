@@ -1,9 +1,9 @@
 "use client"
 
 import { useState, useRef, useEffect, memo, useMemo } from "react"
+import { ChevronRight } from "lucide-react"
 import { cn } from "../../../lib/utils"
 import { useOverflowDetection } from "../../../hooks/use-overflow-detection"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../../components/ui/dialog"
 import { AgentImageItem } from "./agent-image-item"
 import {
   RenderFileMentions,
@@ -121,7 +121,22 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
   )
 
   // VS Code style overflow detection using ResizeObserver (no layout thrashing)
-  const showGradient = useOverflowDetection(contentRef, [textContent])
+  const hasOverflow = useOverflowDetection(contentRef, [textContent])
+  const [canExpand, setCanExpand] = useState(false)
+
+  useEffect(() => {
+    if (!isExpanded) setCanExpand(hasOverflow)
+  }, [hasOverflow, isExpanded])
+
+  useEffect(() => {
+    setIsExpanded(false)
+    setCanExpand(false)
+    const frame = requestAnimationFrame(() => {
+      const content = contentRef.current
+      if (content) setCanExpand(content.scrollHeight > content.clientHeight)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [messageId, textContent])
 
   // Search highlight support
   const highlights = useSearchHighlight(messageId, 0, "text")
@@ -222,24 +237,39 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
           )}
           {/* Text bubble with overflow detection */}
           {cleanedText ? (
-            <div
-              ref={contentRef}
-              onClick={() => showGradient && !hasCurrentSearchHighlight && setIsExpanded(true)}
-              className={cn(
-                "relative bg-input-background border px-3 py-2 rounded-xl whitespace-pre-wrap text-sm transition-all duration-200 max-h-[100px]",
-                // When searching in this message, allow scroll; otherwise hide overflow
-                hasCurrentSearchHighlight ? "overflow-y-auto" : "overflow-hidden",
-                // Cursor and hover only when can expand (not during search)
-                showGradient && !hasCurrentSearchHighlight && "cursor-pointer hover:brightness-110",
-              )}
-              data-message-id={messageId}
-              data-part-index={0}
-              data-part-type="text"
-            >
-              <RenderFileMentions text={cleanedText} />
-              {/* Show gradient only when collapsed and not searching in this message */}
-              {showGradient && !hasCurrentSearchHighlight && (
-                <div className="absolute bottom-0 left-0 right-0 h-10 pointer-events-none bg-gradient-to-t from-[hsl(var(--input-background))] to-transparent rounded-b-xl" />
+            <div className="rounded-xl border bg-input-background px-3 py-2 text-sm">
+              <div
+                id={`user-message-${messageId}`}
+                ref={contentRef}
+                className={cn(
+                  "whitespace-pre-wrap",
+                  isExpanded ? "max-h-none" : "max-h-[100px]",
+                  // When searching in this message, allow scroll; otherwise hide overflow
+                  hasCurrentSearchHighlight ? "overflow-y-auto" : "overflow-hidden",
+                )}
+                data-message-id={messageId}
+                data-part-index={0}
+                data-part-type="text"
+              >
+                <RenderFileMentions text={cleanedText} />
+              </div>
+              {canExpand && !hasCurrentSearchHighlight && (
+                <button
+                  type="button"
+                  className="ml-auto mt-1 flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={isExpanded ? "Collapse message" : "Expand message"}
+                  aria-controls={`user-message-${messageId}`}
+                  aria-expanded={isExpanded}
+                  onClick={() => setIsExpanded((expanded) => !expanded)}
+                >
+                  <ChevronRight
+                    className={cn(
+                      "h-4 w-4 transition-transform duration-150 ease-out",
+                      isExpanded && "rotate-90",
+                    )}
+                    aria-hidden
+                  />
+                </button>
               )}
             </div>
           ) : (imageParts.length > 0 || textMentions.length > 0) && !skipTextMentionBlocks ? (
@@ -274,23 +304,6 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
           ) : null}
         </div>
       </div>
-
-      {/* Full message dialog */}
-      <Dialog open={isExpanded} onOpenChange={setIsExpanded}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-sm font-medium text-muted-foreground">
-              Full message
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            {textMentions.length > 0 && <TextMentionBlocks mentions={textMentions} />}
-            <div className="whitespace-pre-wrap text-sm">
-              <RenderFileMentions text={cleanedText} />
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </>
   )
 })

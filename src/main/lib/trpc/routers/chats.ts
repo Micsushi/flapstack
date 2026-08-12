@@ -994,7 +994,7 @@ export const chatsRouter = router({
         })
         .returning()
         .get()
-      console.log("[chats.create] created chat:", chat)
+      console.log(`[chats.create] created chat ${chat.id}`)
 
       // Create initial sub-chat with user message (AI SDK format)
       // If initialMessageParts is provided, use it; otherwise fallback to text-only message
@@ -1038,7 +1038,7 @@ export const chatsRouter = router({
         })
         .returning()
         .get()
-      console.log("[chats.create] created subChat:", subChat)
+      console.log(`[chats.create] created sub-chat ${subChat.id}`)
       if (input.agentProfile) {
         try {
           const bound = new AgentProfileChatBindingService(db).bind({
@@ -1155,12 +1155,11 @@ export const chatsRouter = router({
         worktreeResult = { worktreePath: project.path }
       }
 
+      const persistedChat = db.select().from(chats).where(eq(chats.id, chat.id)).get() ?? chat
       const response = {
-        ...chat,
-        worktreePath: worktreeResult.worktreePath || project?.path || null,
-        branch: worktreeResult.branch,
-        baseBranch: worktreeResult.baseBranch,
+        ...persistedChat,
         subChats: [subChat],
+        project,
       }
 
       // Track workspace created
@@ -1170,7 +1169,7 @@ export const chatsRouter = router({
         useWorktree: input.useWorktree,
       })
 
-      console.log("[chats.create] returning:", response)
+      console.log(`[chats.create] returning chat ${chat.id}`)
       return response
     }),
 

@@ -63,7 +63,8 @@ import {
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
 import { FLAPSTACK_MCP_INSTRUCTIONS } from "../../mcp-control/guidance"
-import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
+import { captureCheckpoint } from "../../checkpoints"
+import { cancelStaleRunningRuns, completeAgentRun } from "../../agent-run-lifecycle"
 import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
 import { assertFlapstackNativeProviderRouter } from "../../agent-runtime/provider-router-guard"
 import { createRollbackStash } from "../../git/stash"
@@ -102,14 +103,13 @@ import {
   buildClaudePermissionApplication,
   getGlobalDefault,
   mapClaudeSdkPermissionMode,
-  parseCustomPermissionToggles,
   parsePermissionMode,
   resolveForRun,
   resolveClaudeRuntimeToolPermission,
   resolveClaudeRuntimeToolPermissionWithBridge,
   type PermissionMode,
 } from "../../permissions"
-import { updateSubChatRunStatusIfAuthoritative } from "../../run-status-authority"
+import { parseStoredCustomPermissionCapabilities } from "../../../../shared/permission-capabilities"
 import { normalizeClaudeRuntimeEffort } from "../../agent-runtime/claude-code/controls"
 import {
   findMissingClaudeSessionMessage,
@@ -136,15 +136,6 @@ import { AgentProfileChatBindingService } from "../../agent-profiles/chat-bindin
 
 type RunCompletionStatus = "success" | "failure" | "cancelled"
 const HARNESS = "claude-code" as const
-
-function parseStoredCustomPermissions(value: string | null | undefined) {
-  if (!value) return null
-  try {
-    return parseCustomPermissionToggles(JSON.parse(value))
-  } catch {
-    return null
-  }
-}
 
 /**
  * Parse @[agent:name], @[skill:name], and @[tool:servername] mentions from prompt text
@@ -282,6 +273,7 @@ async function createClaudeAgentRun(input: {
   serviceTier?: string | null
 }) {
   const db = getDatabase()
+  const requestedRunId = input.runId ?? crypto.randomUUID()
   const bindVisualContext = async (runId: string) => {
     try {
       await bindVisualCaptureImagesToRun({
@@ -317,11 +309,12 @@ async function createClaudeAgentRun(input: {
     },
   })
   assertFlapstackNativeProviderRouter({ harness: HARNESS, snapshot: runtimeSnapshot })
+  cancelStaleRunningRuns(db, { runId: requestedRunId, subChatId: input.subChatId })
   const run = db
     .insert(agentRuns)
     .values({
       ...runtimeSnapshot,
-      ...(input.runId ? { id: input.runId } : {}),
+      id: requestedRunId,
       chatId: input.chatId,
       subChatId: input.subChatId,
       harness: HARNESS,
@@ -375,34 +368,8 @@ async function completeClaudeAgentRun(
 ) {
   if (!runId) return
 
-  const db = getDatabase()
-  const run = db.select().from(agentRuns).where(eq(agentRuns.id, runId)).get()
-  if (!run || run.status !== "running") return
-
-  let afterCheckpointId: string | undefined
-  try {
-    const after = await captureCheckpoint(run.id, run.worktreePath, "after")
-    afterCheckpointId = after.id
-    await captureNoChangeManifest(run.id)
-  } catch (error) {
-    console.warn("[claude] Failed to capture after checkpoint/manifest:", error)
-  }
-
   const status = resolveStatus()
-  const completedRun = db
-    .update(agentRuns)
-    .set({
-      status,
-      completedAt: new Date(),
-      ...(afterCheckpointId && { afterCheckpointId }),
-    })
-    .where(and(eq(agentRuns.id, runId), eq(agentRuns.status, "running")))
-    .returning({ id: agentRuns.id })
-    .get()
-
-  if (!completedRun) return
-
-  updateSubChatRunStatusIfAuthoritative(db, { runId, subChatId, status })
+  await completeAgentRun(getDatabase(), { runId, subChatId, status, logLabel: "claude" })
 }
 
 /**
@@ -1936,7 +1903,7 @@ export const claudeRouter = router({
             const customPermissions =
               resolvedPermissionMode === "custom"
                 ? (chatProfile?.launch.customPermissions ??
-                  parseStoredCustomPermissions(
+                  parseStoredCustomPermissionCapabilities(
                     persistedRunSnapshot?.customPermissions ?? storedCustomPermissions,
                   ))
                 : null

@@ -1,7 +1,7 @@
 "use client"
 
 import { memo, useState, useCallback, useEffect } from "react"
-import { ChevronDown, ArrowUp, GripVertical, Pencil, X } from "lucide-react"
+import { AlertTriangle, ChevronDown, ArrowUp, GripVertical, Pencil, X } from "lucide-react"
 import { motion, AnimatePresence } from "motion/react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip"
 import { cn } from "../../../lib/utils"
@@ -146,6 +146,18 @@ const QueueItemRow = memo(function QueueItemRow({
         </span>
       )}
       <div className="flex items-center gap-1">
+        {item.status === "failed" && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex p-1 text-destructive" aria-label="Queued message failed">
+                <AlertTriangle className="h-3.5 w-3.5" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {item.lastError || "Automatic retries were exhausted"}
+            </TooltipContent>
+          </Tooltip>
+        )}
         {onEdit && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -166,11 +178,16 @@ const QueueItemRow = memo(function QueueItemRow({
               <button
                 onClick={handleSendNow}
                 className="flex-shrink-0 p-1 hover:bg-foreground/10 rounded text-muted-foreground hover:text-foreground transition-all"
+                aria-label={
+                  item.status === "failed" ? "Retry queued message" : "Send queued message now"
+                }
               >
                 <ArrowUp className="w-3.5 h-3.5" />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="top">Send now</TooltipContent>
+            <TooltipContent side="top">
+              {item.status === "failed" ? "Retry" : "Send now"}
+            </TooltipContent>
           </Tooltip>
         )}
         {onRemove && (

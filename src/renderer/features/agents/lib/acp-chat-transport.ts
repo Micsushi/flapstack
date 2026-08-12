@@ -30,6 +30,7 @@ import { handleAgentInputChunk } from "./agent-input-transport"
 import type { ChatMode } from "../../../../shared/chat-mode"
 import { createDirectRuntimeStream, splitCodexRuntimeModel } from "./direct-runtime-chat-transport"
 import { resolveAgentHotlineEnabled } from "../../../../shared/agent-hotline"
+import { serializePromptParts } from "../../../../shared/prompt-serialization"
 import {
   clearProjectVaultGraphSelection,
   readProjectVaultGraphSelection,
@@ -433,24 +434,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
   }
 
   private extractText(message: UIMessage | undefined): string {
-    if (!message) return ""
-
-    if (!message.parts) return ""
-
-    const textParts: string[] = []
-    const fileContents: string[] = []
-
-    for (const part of message.parts) {
-      if (part.type === "text" && (part as any).text) {
-        textParts.push((part as any).text)
-      } else if ((part as any).type === "file-content") {
-        const filePart = part as any
-        const fileName = filePart.filePath?.split("/").pop() || filePart.filePath || "file"
-        fileContents.push(`\n--- ${fileName} ---\n${filePart.content}`)
-      }
-    }
-
-    return textParts.join("\n") + fileContents.join("")
+    return serializePromptParts(message?.parts)
   }
 
   private extractImages(message: UIMessage | undefined): ImageAttachment[] {

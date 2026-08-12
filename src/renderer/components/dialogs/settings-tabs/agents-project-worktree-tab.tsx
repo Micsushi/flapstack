@@ -55,8 +55,17 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const setSettingsDialogOpen = useSetAtom(agentsSettingsDialogOpenAtom)
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   const setSelectedProject = useSetAtom(selectedProjectAtom)
+  const utils = trpc.useUtils()
   const createChatMutation = trpc.chats.create.useMutation({
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
+      const firstSubChat = data.subChats[0]
+      await Promise.all([
+        utils.chats.list.invalidate(),
+        utils.chats.getMetadata.prefetch({ id: data.id }),
+        firstSubChat
+          ? utils.chats.getTranscript.prefetch({ chatId: data.id, subChatId: firstSubChat.id })
+          : Promise.resolve(),
+      ])
       setSettingsDialogOpen(false)
       setSelectedChatId(data.id)
     },

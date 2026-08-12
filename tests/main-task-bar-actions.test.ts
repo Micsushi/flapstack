@@ -12,6 +12,8 @@ const preferences = readFileSync(
 describe("main task bar actions", () => {
   it("adds a trailing new-Chat button that uses the last messaged project", () => {
     expect(agentsContent).toContain("data-main-taskbar-new-chat")
+    expect(agentsContent).toContain("border-transparent bg-transparent")
+    expect(agentsContent).toContain("hover:border-border/60 hover:bg-accent hover:text-foreground")
     expect(agentsContent).toContain("lastMessagedProjectIdAtom")
     expect(agentsContent).toContain("Open a new Chat")
     expect(activeChat).toContain("lastMessagedProjectIdAtom")

@@ -86,6 +86,7 @@ include_tags: ${input.includeTags}
 title policy:
 - Summarize the actual task or question. Never copy the message verbatim.
 - Be direct and specific. Prefer an action plus its subject when the message asks for work.
+- Preserve clear intent phrases such as "familiarize yourself with the repo"; do not prefix them with generic verbs such as Discuss.
 - Omit conversational filler, provider names unless central, and generic words such as request or help.
 - Use the message's language. Use sentence case, no ending punctuation, quotes, emoji, or tag text.
 - A coordinator role may appear in the title only when coordinating other agents is the main job.
@@ -257,7 +258,8 @@ export function fallbackChatMetadata(
     .trim()
 
   const action = fallbackAction(normalized, tags)
-  const subject = fallbackSubject(normalized, chatTitleWordLimit(titleStyle) - 1)
+  const subjectWordBudget = Math.max(1, chatTitleWordLimit(titleStyle) - action.split(/\s+/).length)
+  const subject = fallbackSubject(normalized, subjectWordBudget)
   const title = sanitizeChatTitle(`${action} ${subject}`.trim(), titleStyle)
   return { title: title ?? "New chat", tags }
 }
@@ -278,6 +280,8 @@ function fallbackAction(message: string, tags: AutomaticChatTagCandidate[]): str
   if (tags.some((tag) => tag.key === "verifier")) return "Verify"
   if (tags.some((tag) => tag.key === "manual-testing")) return "Test"
   if (tags.some((tag) => tag.key === "bug-fix")) return "Fix"
+  if (/\b(?:familiari[sz](?:e|ed|ing|ation)|get familiar(?:ized)? with)\b/i.test(message))
+    return "Familiarize yourself with"
   if (
     /\b(?:broken|crash(?:es|ed|ing)?|error|fail(?:s|ed|ing)?|not working|got stopped)\b/i.test(
       message,
@@ -324,6 +328,7 @@ function fallbackSubject(message: string, limit: number): string {
     "really",
     "should",
     "some",
+    "start",
     "that",
     "the",
     "their",
@@ -336,11 +341,13 @@ function fallbackSubject(message: string, limit: number): string {
     "want",
     "when",
     "where",
+    "what",
     "which",
     "with",
     "would",
     "you",
     "your",
+    "yourself",
     "add",
     "build",
     "change",
@@ -350,6 +357,12 @@ function fallbackSubject(message: string, limit: number): string {
     "delete",
     "enable",
     "explain",
+    "familiarize",
+    "familiarized",
+    "familiarizing",
+    "familiarisation",
+    "familiarization",
+    "familiar",
     "fix",
     "implement",
     "improve",

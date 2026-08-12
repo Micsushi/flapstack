@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai"
+import { serializePromptParts } from "../../../../shared/prompt-serialization"
 import { handleAgentInputChunk } from "./agent-input-transport"
 
 type UIMessageChunk = any
@@ -59,17 +60,7 @@ export function bindAgentChatAbort(
 }
 
 export function extractChatMessageText(message: UIMessage | undefined): string {
-  if (!message) return ""
-  return message.parts
-    .flatMap((part: any) => {
-      if (part.type === "text") return [part.text || ""]
-      if (part.type === "file-content") {
-        const name = part.filePath?.split("/").pop() || part.filePath || "file"
-        return [`\n--- ${name} ---\n${part.content || ""}`]
-      }
-      return []
-    })
-    .join("\n")
+  return serializePromptParts(message?.parts)
 }
 
 function closeStream(controller: ReadableStreamDefaultController<UIMessageChunk>): void {

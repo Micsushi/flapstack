@@ -8,7 +8,7 @@
  */
 
 import { observable } from "@trpc/server/observable"
-import { and, eq, ne } from "drizzle-orm"
+import { and, eq, isNull } from "drizzle-orm"
 import { z } from "zod"
 import { publicProcedure, router } from "../index"
 import {
@@ -51,11 +51,11 @@ import { prependFlapstackMcpGuidance } from "../../mcp-control/guidance"
 import { buildMcpStdioRegistration } from "../../mcp-control/registration"
 import {
   getGlobalDefault,
-  parseCustomPermissionToggles,
   parsePermissionMode,
   permissionModes,
   type PermissionMode,
 } from "../../permissions"
+import { parseStoredCustomPermissionCapabilities } from "../../../../shared/permission-capabilities"
 import { OPENCODE_HARNESSES } from "../../../../shared/harness-types"
 import {
   applyChatModeInstruction,
@@ -65,17 +65,10 @@ import {
 import { sanitizeHarnessEnvelopeEcho } from "../../../../shared/harness-envelope-sanitizer"
 import { resolveReasoningControls } from "../../../../shared/reasoning-output"
 import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
+import { cancelStaleRunningRuns } from "../../agent-run-lifecycle"
 
 const providerSchema = z.enum(OPENCODE_HARNESSES)
 const permissionModeSchema = z.enum(permissionModes)
-
-function parseStoredCustomPermissions(value: string) {
-  try {
-    return parseCustomPermissionToggles(JSON.parse(value))
-  } catch {
-    return null
-  }
-}
 
 type PendingApproval = {
   provider: (typeof OPENCODE_HARNESSES)[number]
@@ -417,7 +410,7 @@ export const opencodeRouter = router({
             const customPermissions =
               permissionMode === "custom" &&
               (persistedRunSnapshot?.customPermissions || chat.customPermissions)
-                ? parseStoredCustomPermissions(
+                ? parseStoredCustomPermissionCapabilities(
                     persistedRunSnapshot?.customPermissions ?? chat.customPermissions!,
                   )
                 : null
@@ -448,16 +441,7 @@ export const opencodeRouter = router({
                 .run()
             }
 
-            db.update(agentRuns)
-              .set({ status: "cancelled", completedAt: new Date() })
-              .where(
-                and(
-                  eq(agentRuns.subChatId, input.subChatId),
-                  eq(agentRuns.status, "running"),
-                  ne(agentRuns.id, runId),
-                ),
-              )
-              .run()
+            cancelStaleRunningRuns(db, { runId, subChatId: input.subChatId })
             db.insert(agentRuns)
               .values({
                 ...runtimeSnapshot,
@@ -751,7 +735,13 @@ export const opencodeRouter = router({
                         completedAt: new Date(),
                         ...(afterCheckpointId ? { afterCheckpointId } : {}),
                       })
-                      .where(eq(agentRuns.id, runId))
+                      .where(
+                        and(
+                          eq(agentRuns.id, runId),
+                          eq(agentRuns.status, "running"),
+                          isNull(agentRuns.completedAt),
+                        ),
+                      )
                       .run()
                   },
                   updateSubChatStatus: () => {

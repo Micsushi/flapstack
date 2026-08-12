@@ -3,23 +3,7 @@ import { Input } from "../../ui/input"
 import { Label } from "../../ui/label"
 import { IconSpinner } from "../../../icons"
 import { toast } from "sonner"
-
-// Hook to detect narrow screen
-function useIsNarrowScreen(): boolean {
-  const [isNarrow, setIsNarrow] = useState(false)
-
-  useEffect(() => {
-    const checkWidth = () => {
-      setIsNarrow(window.innerWidth <= 768)
-    }
-
-    checkWidth()
-    window.addEventListener("resize", checkWidth)
-    return () => window.removeEventListener("resize", checkWidth)
-  }, [])
-
-  return isNarrow
-}
+import { useIsNarrowScreen } from "./use-is-narrow-screen"
 
 interface DesktopUser {
   id: string

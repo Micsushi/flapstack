@@ -9,9 +9,11 @@ import { agentChatStore } from "../stores/agent-chat-store"
 import { trackMessageSent } from "../../../lib/analytics"
 import { appStore } from "../../../lib/jotai-store"
 import { loadingSubChatsAtom, setLoading, clearLoading } from "../atoms"
-import { MENTION_PREFIXES } from "../mentions/agents-mentions-editor"
-import { utf8ToBase64 } from "../utils/base64"
-import type { AgentQueueItem } from "../lib/queue-utils"
+import {
+  buildQueuedMessageParts,
+  MAX_QUEUE_SEND_ATTEMPTS,
+  queueItemAfterFailure,
+} from "../lib/queue-utils"
 import { trpcClient } from "../../../lib/trpc"
 
 // Delay between processing queue items (ms)
@@ -28,8 +30,6 @@ const QUEUE_PROCESS_DELAY = 1000
  * ALL queues and streaming statuses globally.
  */
 export function QueueProcessor() {
-  // Track which sub-chats are currently being processed to avoid double-sends
-  const processingRef = useRef<Set<string>>(new Set())
   // Track timers for cleanup
   const timersRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
   const checkoutBlockedRef = useRef<Set<string>>(new Set())
@@ -37,11 +37,6 @@ export function QueueProcessor() {
   useEffect(() => {
     // Function to process queue for a specific sub-chat
     const processQueue = async (subChatId: string) => {
-      // Check if already processing this sub-chat
-      if (processingRef.current.has(subChatId)) {
-        return
-      }
-
       // Check streaming status
       const status = useStreamingStatusStore.getState().getStatus(subChatId)
       if (status !== "ready") {
@@ -92,77 +87,30 @@ export function QueueProcessor() {
       if (!queueState.canAutoProcessQueue(subChatId)) {
         return
       }
-      const nextItem = queueState.queues[subChatId]?.[0]
+      const nextItem = queueState.getNextItem(subChatId)
       if (!nextItem) {
+        const nextRetryAt = queueState.queues[subChatId]
+          ?.filter((item) => item.status === "pending" && item.nextRetryAt)
+          .reduce<number | undefined>(
+            (earliest, item) =>
+              earliest === undefined ? item.nextRetryAt : Math.min(earliest, item.nextRetryAt!),
+            undefined,
+          )
+        if (nextRetryAt) scheduleProcessing(subChatId, Math.max(0, nextRetryAt - Date.now()))
         return
       }
 
-      // Mark as processing
-      processingRef.current.add(subChatId)
+      if (!queueState.tryAcquireProcessing(subChatId)) return
 
       // Pop the first item from queue (atomic operation)
       const item = useMessageQueueStore.getState().popItem(subChatId, nextItem.id)
       if (!item) {
-        processingRef.current.delete(subChatId)
+        useMessageQueueStore.getState().releaseProcessing(subChatId)
         return
       }
 
       try {
-        // Build message parts from queued item
-        const parts: any[] = [
-          ...(item.images || []).map((img) => ({
-            type: "data-image" as const,
-            data: {
-              url: img.url,
-              mediaType: img.mediaType,
-              filename: img.filename,
-              base64Data: img.base64Data,
-            },
-          })),
-          ...(item.files || []).map((f) => ({
-            type: "data-file" as const,
-            data: {
-              url: f.url,
-              mediaType: f.mediaType,
-              filename: f.filename,
-              size: f.size,
-            },
-          })),
-        ]
-
-        // Expand text contexts, diff text contexts, and pasted texts as mention tokens
-        let mentionPrefix = ""
-
-        if (item.textContexts && item.textContexts.length > 0) {
-          const quoteMentions = item.textContexts.map((tc) => {
-            const preview = tc.text.slice(0, 50).replace(/[:\[\]]/g, "")
-            const encodedText = utf8ToBase64(tc.text)
-            return `@[${MENTION_PREFIXES.QUOTE}${preview}:${encodedText}]`
-          })
-          mentionPrefix += quoteMentions.join(" ") + " "
-        }
-
-        if (item.diffTextContexts && item.diffTextContexts.length > 0) {
-          const diffMentions = item.diffTextContexts.map((dtc) => {
-            const preview = dtc.text.slice(0, 50).replace(/[:\[\]]/g, "")
-            const encodedText = utf8ToBase64(dtc.text)
-            const lineNum = dtc.lineNumber || 0
-            return `@[${MENTION_PREFIXES.DIFF}${dtc.filePath}:${lineNum}:${preview}:${encodedText}]`
-          })
-          mentionPrefix += diffMentions.join(" ") + " "
-        }
-
-        if (item.pastedTexts && item.pastedTexts.length > 0) {
-          const pastedMentions = item.pastedTexts.map((pt) => {
-            const sanitizedPreview = pt.preview.replace(/[:\[\]|]/g, "")
-            return `@[${MENTION_PREFIXES.PASTED}${pt.size}:${sanitizedPreview}|${pt.filePath}]`
-          })
-          mentionPrefix += pastedMentions.join(" ") + " "
-        }
-
-        if (item.message || mentionPrefix) {
-          parts.push({ type: "text", text: mentionPrefix + (item.message || "") })
-        }
+        const parts = buildQueuedMessageParts(item)
 
         // Get mode from sub-chat store for analytics
         const subChatStore = getAgentSubChatStore(parentChatId)
@@ -186,22 +134,13 @@ export function QueueProcessor() {
           parentChatId,
         )
 
-        // Signal active-chat to scroll to bottom BEFORE sending so that
-        // shouldAutoScrollRef is true for the entire streaming duration.
-        // (sendMessage awaits the full stream, so placing this after would
-        // only scroll after the response is complete.)
-        useMessageQueueStore.getState().triggerQueueSent(subChatId)
-
         // Send message using Chat's sendMessage method
         await chat.sendMessage({ role: "user", parts })
       } catch (error) {
         console.error(`[QueueProcessor] Error processing queue:`, error)
 
-        // Requeue the item at the front so it can be retried
-        useMessageQueueStore.getState().prependItem(subChatId, item)
-
-        // Set error status (will be cleared on next successful send or manual retry)
-        useStreamingStatusStore.getState().setStatus(subChatId, "error")
+        const failedItem = queueItemAfterFailure(item, error)
+        useMessageQueueStore.getState().prependItem(subChatId, failedItem)
 
         // Clear loading state since send failed
         clearLoading(
@@ -209,17 +148,33 @@ export function QueueProcessor() {
           subChatId,
         )
 
-        // Notify user
-        toast.error("Failed to send queued message. It will be retried.")
+        if (failedItem.status === "failed") {
+          useMessageQueueStore.getState().holdQueue(subChatId)
+          useStreamingStatusStore.getState().setStatus(subChatId, "ready")
+          toast.error("Queued message paused after repeated failures", {
+            description: failedItem.lastError,
+          })
+        } else {
+          // The retry timer restores readiness immediately before trying again.
+          useStreamingStatusStore.getState().setStatus(subChatId, "error")
+          toast.error(
+            `Failed to send queued message. Retrying (${failedItem.attempts}/${MAX_QUEUE_SEND_ATTEMPTS}).`,
+          )
+          scheduleProcessing(
+            subChatId,
+            Math.max(0, (failedItem.nextRetryAt ?? Date.now()) - Date.now()),
+          )
+        }
       } finally {
-        processingRef.current.delete(subChatId)
-        // Re-kick after releasing lock to avoid lost wakeups
-        setTimeout(checkAllQueues, 0)
+        useMessageQueueStore.getState().releaseProcessing(subChatId)
+        if (useStreamingStatusStore.getState().getStatus(subChatId) !== "error") {
+          setTimeout(checkAllQueues, 0)
+        }
       }
     }
 
     // Schedule processing for a sub-chat with delay
-    const scheduleProcessing = (subChatId: string) => {
+    const scheduleProcessing = (subChatId: string, delay = QUEUE_PROCESS_DELAY) => {
       // Clear any existing timer for this sub-chat
       const existingTimer = timersRef.current.get(subChatId)
       if (existingTimer) {
@@ -229,8 +184,11 @@ export function QueueProcessor() {
       // Schedule new processing
       const timer = setTimeout(() => {
         timersRef.current.delete(subChatId)
-        processQueue(subChatId)
-      }, QUEUE_PROCESS_DELAY)
+        if (useStreamingStatusStore.getState().getStatus(subChatId) === "error") {
+          useStreamingStatusStore.getState().setStatus(subChatId, "ready")
+        }
+        void processQueue(subChatId)
+      }, delay)
 
       timersRef.current.set(subChatId, timer)
     }
@@ -246,12 +204,7 @@ export function QueueProcessor() {
 
         const status = useStreamingStatusStore.getState().getStatus(subChatId)
 
-        // Process when ready, or retry on error status
-        if ((status === "ready" || status === "error") && !processingRef.current.has(subChatId)) {
-          // If error status, clear it before retrying
-          if (status === "error") {
-            useStreamingStatusStore.getState().setStatus(subChatId, "ready")
-          }
+        if (status === "ready") {
           scheduleProcessing(subChatId)
         }
       }

@@ -535,5 +535,3 @@ export async function captureRunManifest(runId: string) {
       .get(),
   )
 }
-
-export const captureNoChangeManifest = captureRunManifest

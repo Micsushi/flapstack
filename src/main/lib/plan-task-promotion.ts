@@ -14,6 +14,7 @@ import {
   parsePermissionMode,
   type CustomPermissionToggles,
 } from "./permissions"
+import { parseStoredCustomPermissionCapabilities } from "../../shared/permission-capabilities"
 import * as schema from "./db/schema"
 import { agentRuns, chats, projects, subChats, tasks } from "./db/schema"
 
@@ -32,15 +33,6 @@ export class PlanTaskPromotionError extends Error {
 function stableId(prefix: string, ...parts: string[]): string {
   const digest = createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 32)
   return `${prefix}-${digest}`
-}
-
-function parseStoredCustomPermissions(value: string | null): CustomPermissionToggles | null {
-  if (!value) return null
-  try {
-    return parseCustomPermissionToggles(JSON.parse(value))
-  } catch {
-    return null
-  }
 }
 
 function resolveCandidate(snapshot: ProjectPlanSnapshot, reference: PlanCandidateReference) {
@@ -121,7 +113,9 @@ export function buildPlanTaskPromotionPreview(
   const { source, candidate } = resolveCandidate(snapshot, input.reference)
   const project = getProject(database, input.targetProjectId ?? input.reference.sourceProjectId)
   const permissionMode = parsePermissionMode(project.defaultPermissionMode)
-  const customPermissions = parseStoredCustomPermissions(project.defaultCustomPermissions)
+  const customPermissions = parseStoredCustomPermissionCapabilities(
+    project.defaultCustomPermissions,
+  )
   if (!permissionMode || (permissionMode === "custom" && !customPermissions)) {
     throw new PlanTaskPromotionError(
       "inconsistent-state",

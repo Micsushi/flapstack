@@ -9,7 +9,6 @@ import {
   buildCursorPermissionApplication,
   buildLocalModelPermissionApplication,
   mapClaudeSdkPermissionMode,
-  parseCustomPermissionToggles,
   parsePermissionMode,
   permissionChangeBehaviors,
   permissionModes,
@@ -21,7 +20,10 @@ import {
   type PermissionMode,
   type CustomPermissionToggles,
 } from "../../permissions"
-import { customPermissionCapabilitiesSchema } from "../../../../shared/permission-capabilities"
+import {
+  customPermissionCapabilitiesSchema,
+  parseStoredCustomPermissionCapabilities,
+} from "../../../../shared/permission-capabilities"
 import { buildOpencodePermissionApplication } from "../../harness/opencode-sidecar"
 import { publicProcedure, router } from "../index"
 import { CHAT_MODES, resolveChatModePermission } from "../../../../shared/chat-mode"
@@ -123,10 +125,7 @@ export const permissionsRouter = router({
       .map((chat) => ({
         ...chat,
         permissionMode: parsePermissionMode(chat.permissionMode) ?? getGlobalDefault(),
-        customPermissions:
-          typeof chat.customPermissions === "string"
-            ? parseStoredCustomPermissions(chat.customPermissions)
-            : null,
+        customPermissions: parseStoredCustomPermissionCapabilities(chat.customPermissions),
       }))
   }),
 
@@ -319,20 +318,7 @@ function readCustomPermissionsForChat(chatId: string): CustomPermissionToggles |
     "SELECT custom_permissions AS customPermissions FROM chats WHERE id = ?",
     [chatId],
   )
-  if (!row || typeof row.customPermissions !== "string") return null
-  try {
-    return parseCustomPermissionToggles(JSON.parse(row.customPermissions))
-  } catch {
-    return null
-  }
-}
-
-function parseStoredCustomPermissions(value: string): CustomPermissionToggles | null {
-  try {
-    return parseCustomPermissionToggles(JSON.parse(value))
-  } catch {
-    return null
-  }
+  return parseStoredCustomPermissionCapabilities(row?.customPermissions)
 }
 
 function readPermissionValuesForChat(chatId: string): {

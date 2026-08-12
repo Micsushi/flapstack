@@ -135,6 +135,17 @@ export function parseCustomPermissionCapabilities(
   return null
 }
 
+export function parseStoredCustomPermissionCapabilities(
+  value: unknown,
+): CustomPermissionCapabilities | null {
+  if (typeof value !== "string" || !value) return null
+  try {
+    return parseCustomPermissionCapabilities(JSON.parse(value))
+  } catch {
+    return null
+  }
+}
+
 export type PermissionEligibility = {
   selectable: boolean
   enforcement: "exact" | "conservative" | "best-effort" | "unavailable"

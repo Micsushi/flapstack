@@ -3589,7 +3589,7 @@ function AgentsContentInner() {
                           ? `New Chat in ${projectsMap.get(lastMessagedProjectId)?.name}`
                           : "New Global Chat"
                       }
-                      className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/60 bg-background/60 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary/70"
+                      className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground/70 transition-colors hover:border-border/60 hover:bg-accent hover:text-foreground focus-visible:border-border/60 focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary/70"
                       style={
                         { WebkitAppRegion: "no-drag", order: 2_147_483_647 } as React.CSSProperties
                       }

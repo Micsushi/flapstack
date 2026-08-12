@@ -41,6 +41,17 @@ describe("manual UI review fixes", () => {
     expect(activeChat).not.toContain('refetchOnMount: "always"')
   })
 
+  it("expands long user messages inline instead of opening a dialog", () => {
+    const userMessage = read("src/renderer/features/agents/ui/agent-user-message-bubble.tsx")
+
+    expect(userMessage).toContain('aria-label={isExpanded ? "Collapse message" : "Expand message"}')
+    expect(userMessage).toContain("aria-expanded={isExpanded}")
+    expect(userMessage).toContain('isExpanded ? "max-h-none" : "max-h-[100px]"')
+    expect(userMessage).toContain('isExpanded && "rotate-90"')
+    expect(userMessage).not.toContain("Full message")
+    expect(userMessage).not.toContain("bg-gradient-to-t")
+  })
+
   it("provides native-feeling paste and mouse-back navigation", () => {
     const editor = read("src/renderer/features/agents/mentions/agents-mentions-editor.tsx")
     const layout = read("src/renderer/features/layout/agents-layout.tsx")

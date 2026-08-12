@@ -6,23 +6,7 @@ import { trpc } from "../../../lib/trpc"
 import { toast } from "sonner"
 import { Copy, FolderOpen, RefreshCw, Terminal, Check, WifiOff, FileJson } from "lucide-react"
 import { showMessageJsonAtom } from "../../../features/agents/atoms"
-
-// Hook to detect narrow screen
-function useIsNarrowScreen(): boolean {
-  const [isNarrow, setIsNarrow] = useState(false)
-
-  useEffect(() => {
-    const checkWidth = () => {
-      setIsNarrow(window.innerWidth <= 768)
-    }
-
-    checkWidth()
-    window.addEventListener("resize", checkWidth)
-    return () => window.removeEventListener("resize", checkWidth)
-  }, [])
-
-  return isNarrow
-}
+import { useIsNarrowScreen } from "./use-is-narrow-screen"
 
 export function AgentsDebugTab() {
   const [copiedPath, setCopiedPath] = useState(false)

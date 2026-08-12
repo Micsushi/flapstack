@@ -14,7 +14,7 @@ import { sleep } from "../../shared/sleep"
 import { join } from "path"
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from "fs"
 import { createIPCHandler } from "trpc-electron/main"
-import { openExternalSafe } from "../lib/open-external"
+import { isTrustedRendererNavigation, openExternalSafe } from "../lib/open-external"
 import { broadcastAnalyticsConsent } from "../lib/analytics-consent-broadcast"
 import { createAppRouter } from "../lib/trpc/routers"
 import { registerGitWatcherIPC } from "../lib/git/watcher"
@@ -1441,6 +1441,16 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
       void openExternalSafe(url)
       return { action: "deny" }
     })
+    const rendererFilePath = join(__dirname, "../renderer/index.html")
+    const guardRendererNavigation = (event: Electron.Event, url: string) => {
+      if (isTrustedRendererNavigation(url, process.env.ELECTRON_RENDERER_URL, rendererFilePath)) {
+        return
+      }
+      event.preventDefault()
+      void openExternalSafe(url)
+    }
+    createdWindow.webContents.on("will-navigate", guardRendererNavigation)
+    createdWindow.webContents.on("will-redirect", guardRendererNavigation)
 
     // Prevent window close if there are active streaming sessions
     createdWindow.on("close", (event) => {
@@ -1521,7 +1531,7 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
     } else {
       const hashParams = new URLSearchParams()
       buildParams(hashParams)
-      createdWindow.loadFile(join(__dirname, "../renderer/index.html"), {
+      createdWindow.loadFile(rendererFilePath, {
         hash: hashParams.toString(),
       })
     }

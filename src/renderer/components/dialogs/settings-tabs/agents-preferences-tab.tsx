@@ -129,23 +129,7 @@ import { ChevronDown } from "lucide-react"
 import { Switch } from "../../ui/switch"
 import { trpc } from "../../../lib/trpc"
 import { startProductTour } from "../../../features/onboarding/product-tour"
-
-// Hook to detect narrow screen
-function useIsNarrowScreen(): boolean {
-  const [isNarrow, setIsNarrow] = useState(false)
-
-  useEffect(() => {
-    const checkWidth = () => {
-      setIsNarrow(window.innerWidth <= 768)
-    }
-
-    checkWidth()
-    window.addEventListener("resize", checkWidth)
-    return () => window.removeEventListener("resize", checkWidth)
-  }, [])
-
-  return isNarrow
-}
+import { useIsNarrowScreen } from "./use-is-narrow-screen"
 
 export function AgentsPreferencesTab() {
   const trpcUtils = trpc.useUtils()
