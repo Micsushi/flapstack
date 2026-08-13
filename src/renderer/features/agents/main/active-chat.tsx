@@ -5302,7 +5302,7 @@ const ChatViewInner = memo(function ChatViewInner({
             observer.observe(element)
             bottomDockObserverRef.current = observer
           }}
-          className="absolute bottom-0 left-0 right-1 z-20"
+          className="absolute bottom-0 left-0 right-3 z-20"
           data-chat-bottom-dock
         >
           {/* Shared question dialog. Background chats never open it automatically. */}
@@ -7672,6 +7672,7 @@ Make sure to preserve all functionality from both branches when resolving confli
     },
     [
       agentChat,
+      agentSubChats,
       chatWorkingDir,
       worktreePath,
       chatId,

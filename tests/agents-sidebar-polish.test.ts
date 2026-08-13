@@ -105,6 +105,13 @@ describe("agents sidebar polish", () => {
     expect(source).not.toContain("text-left py-1 cursor-pointer group relative")
   })
 
+  it("derives the selected Chat border from its project color", () => {
+    expect(source).toContain("const selectedBorderColor = normalizedTint ?? DEFAULT_PROJECT_COLOR")
+    expect(source).toContain("borderColor: selectedBorderColor")
+    expect(source).toContain("rgbaFromHex(selectedBorderColor, 0.28)")
+    expect(source).not.toContain("ACTIVE_CHAT_BORDER_COLOR")
+  })
+
   it("marks Chats that belong to a saved group", () => {
     expect(source).toContain("isInWorkbenchGroup")
     expect(source).toContain('aria-label="In Chat group"')

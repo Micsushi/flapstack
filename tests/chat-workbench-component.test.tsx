@@ -136,6 +136,8 @@ describe("ChatWorkbench", () => {
 
     expect(container.querySelector("[data-chat-pane-scrollbar]")).not.toBeNull()
     expect(container.querySelector('[role="tablist"]')?.className).toContain("scrollbar-hide")
+    expect(container.querySelector('[role="tablist"]')?.className).not.toContain("gap-1")
+    expect(container.querySelector("[data-chat-tab]")?.className).not.toContain("rounded")
   })
 
   it("offers move and new-group actions when a pane tab is right-clicked", async () => {
@@ -244,7 +246,10 @@ describe("ChatWorkbench", () => {
     await act(async () =>
       root.render(
         createElement(ChatWorkbench, {
-          chats: ["a", "b"].map((id) => ({ id, name: id })),
+          chats: [
+            { id: "a", name: "a", accentColor: "#22c55e" },
+            { id: "b", name: "b", accentColor: "#f97316" },
+          ],
           layout: createChatWorkbenchLayout(["a", "b"], "a"),
           onLayoutChange: vi.fn(),
           onActiveChatChange: vi.fn(),
@@ -259,6 +264,20 @@ describe("ChatWorkbench", () => {
       "a",
       true,
       expect.objectContaining({ openTerminal: expect.any(Function) }),
+    )
+    const inactiveTab = container.querySelector<HTMLElement>('[data-chat-tab="b"]')
+    expect(inactiveTab?.className).toContain("border-border/60")
+    expect(inactiveTab?.className).toContain("bg-background/60")
+    expect(container.querySelector<HTMLElement>('[data-chat-tab="a"]')?.style.borderTopColor).toBe(
+      "rgb(34, 197, 94)",
+    )
+    expect(container.querySelector('[data-chat-tab="a"] [data-chat-tab-accent]')).toBeNull()
+    expect(inactiveTab?.style.borderTopColor).toBe("transparent")
+    expect(
+      inactiveTab?.querySelector<HTMLElement>("[data-chat-tab-accent]")?.style.backgroundColor,
+    ).toBe("rgb(249, 115, 22)")
+    expect(inactiveTab?.querySelector("[data-chat-tab-accent]")?.className).toContain(
+      "inset-x-1 -top-px",
     )
   })
 
@@ -316,6 +335,7 @@ describe("ChatWorkbench", () => {
       container.querySelector("[data-chat-workbench]")?.getAttribute("data-collapsed-groups"),
     ).toBe("3")
     expect(container.textContent).toContain("3 Chat panes are shown as tabs")
+    expect(container.querySelector("[data-active-pane-outline]")).toBeNull()
     expect(onLayoutChange).not.toHaveBeenCalled()
 
     const dismiss = container.querySelector<HTMLButtonElement>(
@@ -425,15 +445,45 @@ describe("ChatWorkbench", () => {
     const activePane = container.querySelector<HTMLElement>('[data-active-group="true"]')
     const inactivePane = container.querySelector("[data-chat-group]:not([data-active-group])")
     expect(activePane?.querySelector("[data-active-pane-outline]")).not.toBeNull()
-    expect(activePane?.querySelector("[data-active-pane-outline]")?.className).toContain("border-2")
+    expect(activePane?.querySelector("[data-active-pane-outline]")?.className).toContain("top-10")
+    expect(activePane?.querySelector("[data-active-pane-outline]")?.className).toContain("border")
+    expect(activePane?.querySelector("[data-active-pane-outline]")?.className).not.toContain(
+      "border-2",
+    )
     expect(inactivePane?.querySelector("[data-active-pane-outline]")).toBeNull()
     expect(activePane?.className).not.toContain("ring-inset")
     expect(
       [...container.querySelectorAll<HTMLElement>("[data-chat-tab]")].map(
-        (tab) => tab.style.borderTopColor,
+        (tab) => tab.style.borderColor,
       ),
     ).toEqual(["rgb(34, 197, 94)", "rgb(249, 115, 22)"])
-    expect(container.querySelectorAll("[data-active-screen-indicator]")).toHaveLength(2)
+    expect(container.querySelectorAll("[data-chat-tab-accent]")).toHaveLength(0)
+    expect(
+      activePane?.querySelector<HTMLElement>("[data-active-pane-outline]")?.style.borderColor,
+    ).toBe("rgb(34, 197, 94)")
+    expect(activePane?.querySelector<HTMLElement>("[data-chat-tab]")?.style.borderRightColor).toBe(
+      "rgb(34, 197, 94)",
+    )
+    expect(
+      inactivePane?.querySelector<HTMLElement>("[data-chat-tab]")?.style.borderRightColor,
+    ).toBe("rgb(249, 115, 22)")
+    expect(container.querySelector("[data-active-screen-indicator]")).toBeNull()
+  })
+
+  it("does not draw an active pane outline for a single visible pane", async () => {
+    await act(async () =>
+      root.render(
+        createElement(ChatWorkbench, {
+          chats: [{ id: "a", name: "Chat a" }],
+          layout: createChatWorkbenchLayout(["a"]),
+          onLayoutChange: vi.fn(),
+          onActiveChatChange: vi.fn(),
+          renderChat: (chatId: string) => createElement("div", null, chatId),
+        }),
+      ),
+    )
+
+    expect(container.querySelector("[data-active-pane-outline]")).toBeNull()
   })
 
   it("reports cumulative separator positions for assistive technology", async () => {

@@ -162,6 +162,7 @@ import {
   getGroupedChatIds,
   moveChatToWorkbenchGroup,
   parseChatWorkbenchNavigation,
+  parseStoredProjectColors,
   reconcileChatWorkbenchNavigation,
   removeChatWorkbenchGroup,
   renameChatWorkbenchGroup,
@@ -247,6 +248,7 @@ const WorkbenchTerminalPane = lazy(() =>
 // Desktop mock
 const useIsAdmin = () => false
 const TOP_NAVIGATION_ENTER_DELAY_MS = 180
+const PROJECT_COLORS_STORAGE_KEY = "flapstack-sidebar-project-colors"
 const GROUP_COLOR_SWATCHES: Record<ChatWorkbenchGroupColor, string> = {
   blue: "#3B82F6",
   cyan: "#06B6D4",
@@ -260,28 +262,26 @@ const GROUP_COLOR_SWATCHES: Record<ChatWorkbenchGroupColor, string> = {
   violet: "#8B5CF6",
 }
 
-function resolveGroupTabBackground(
-  color: ChatWorkbenchGroupColor | undefined,
-  isActive: boolean,
-): string | undefined {
-  if (!color) return undefined
-  return `color-mix(in srgb, ${GROUP_COLOR_SWATCHES[color]} ${isActive ? 42 : 26}%, hsl(var(--background)))`
-}
-
 function resolveGroupTabBorder(
   color: ChatWorkbenchGroupColor | undefined,
   isActive: boolean,
 ): string | undefined {
-  if (!color) return undefined
-  return `color-mix(in srgb, ${GROUP_COLOR_SWATCHES[color]} ${isActive ? 72 : 48}%, hsl(var(--border)))`
+  if (!color || !isActive) return undefined
+  return `color-mix(in srgb, ${GROUP_COLOR_SWATCHES[color]} 72%, hsl(var(--border)))`
 }
 
-function parseStoredProjectColors(value: string): Record<string, string> {
-  try {
-    return JSON.parse(value) as Record<string, string>
-  } catch {
-    return {}
-  }
+function readStoredProjectColorValues(): string[] {
+  if (typeof window === "undefined") return []
+  return Object.values(
+    parseStoredProjectColors(window.localStorage.getItem(PROJECT_COLORS_STORAGE_KEY) ?? "{}"),
+  )
+}
+
+function resolveNewChatTabBorderColor(
+  projectId: string | undefined,
+  projectColorsById: Record<string, string>,
+): string {
+  return (projectId ? projectColorsById[projectId] : undefined) ?? "hsl(var(--muted-foreground))"
 }
 
 function AgentInputPoller() {
@@ -747,6 +747,8 @@ function AgentsContentInner() {
       chatWorkbenchNavigationRef.current,
       createChatWorkbenchLayout(chatIds, chatIds[0]),
       chatWorkbenchLayoutRef.current,
+      Math.random,
+      readStoredProjectColorValues(),
     )
     persistWorkbenchNavigation(navigation)
   }, [persistWorkbenchNavigation])
@@ -875,7 +877,13 @@ function AgentsContentInner() {
       const previousLayout = chatWorkbenchLayoutRef.current
       const previousNavigation = chatWorkbenchNavigationRef.current
       recordWorkbenchMutation(action)
-      let navigation = reconcileChatWorkbenchNavigation(previousNavigation, previousLayout, layout)
+      let navigation = reconcileChatWorkbenchNavigation(
+        previousNavigation,
+        previousLayout,
+        layout,
+        Math.random,
+        readStoredProjectColorValues(),
+      )
       if (navigation.activeGroupId) {
         const groupedTerminalIds = new Set(
           collectChatGroups(layout.root)
@@ -1365,7 +1373,7 @@ function AgentsContentInner() {
   const openChatProjectColorsStorageValue =
     typeof window === "undefined"
       ? "{}"
-      : (window.localStorage.getItem("flapstack-sidebar-project-colors") ?? "{}")
+      : (window.localStorage.getItem(PROJECT_COLORS_STORAGE_KEY) ?? "{}")
   const openChatProjectColors = useMemo(
     () => parseStoredProjectColors(openChatProjectColorsStorageValue),
     [openChatProjectColorsStorageValue],
@@ -1708,6 +1716,8 @@ function AgentsContentInner() {
         previous,
         openChatTabs.map((chat) => chat.id),
         chatId,
+        Math.random,
+        readStoredProjectColorValues(),
       )
       recordWorkbenchMutation()
       const transition = findLoneChatGroupTransition(previous, navigation)
@@ -3111,10 +3121,10 @@ function AgentsContentInner() {
                                   }
                                 }}
                                 className={[
-                                  "group relative flex h-9 min-w-28 max-w-56 shrink-0 items-center gap-1.5 rounded-t-md border border-b-0 pl-2 pr-1 text-left text-xs transition-[background-color,border-color,color,box-shadow]",
+                                  "group relative flex h-[34px] w-40 shrink-0 items-center gap-1.5 pl-2 pr-1 text-left text-xs transition-[background-color,border-color,color,box-shadow]",
                                   isActive
-                                    ? "border-foreground/50 bg-muted font-semibold text-foreground shadow-sm ring-1 ring-inset ring-foreground/20"
-                                    : "border-border/40 bg-muted/25 text-foreground/90 hover:border-border/70 hover:bg-muted/70 hover:text-foreground",
+                                    ? "border-2 border-foreground/50 bg-muted/80 font-semibold text-foreground shadow-sm"
+                                    : "border border-transparent bg-transparent text-foreground/90 hover:bg-muted/70 hover:text-foreground",
                                   topNavigationDropTarget?.item.kind === "group" &&
                                   topNavigationDropTarget.item.id === group.id &&
                                   topNavigationDropTarget.intent === "inside"
@@ -3125,10 +3135,6 @@ function AgentsContentInner() {
                                   {
                                     WebkitAppRegion: "no-drag",
                                     order: topNavigationOrder.get(`group:${group.id}`),
-                                    backgroundColor: resolveGroupTabBackground(
-                                      group.color,
-                                      isActive,
-                                    ),
                                     borderColor: resolveGroupTabBorder(group.color, isActive),
                                   } as React.CSSProperties
                                 }
@@ -3147,19 +3153,15 @@ function AgentsContentInner() {
                                       ].join(" ")}
                                     />
                                   )}
-                                {isActive && (
-                                  <span
-                                    aria-hidden
-                                    data-active-group-indicator
-                                    className="pointer-events-none absolute inset-x-1 bottom-0 h-1 rounded-t-full bg-primary"
-                                    style={{
-                                      backgroundColor: group.color
-                                        ? GROUP_COLOR_SWATCHES[group.color]
-                                        : undefined,
-                                    }}
-                                  />
-                                )}
-                                <PanelsTopLeft className="h-3.5 w-3.5 shrink-0 text-foreground/80" />
+                                <PanelsTopLeft
+                                  data-group-color-icon
+                                  className="h-3.5 w-3.5 shrink-0 text-foreground/80"
+                                  style={{
+                                    color: group.color
+                                      ? GROUP_COLOR_SWATCHES[group.color]
+                                      : undefined,
+                                  }}
+                                />
                                 <button
                                   type="button"
                                   aria-current={isActive ? "page" : undefined}
@@ -3277,7 +3279,7 @@ function AgentsContentInner() {
                                 })
                               }
                               className={[
-                                "group relative flex h-9 min-w-28 max-w-56 items-center gap-1.5 rounded-t-md border border-b-0 pl-3 pr-1 text-left text-xs",
+                                "group relative flex h-[34px] w-40 shrink-0 items-center gap-1.5 border border-b-0 pl-3 pr-1 text-left text-xs",
                                 isActive
                                   ? "border-foreground/20 bg-muted font-medium text-foreground shadow-sm"
                                   : "border-border/40 bg-muted/25 text-muted-foreground hover:bg-muted/70 hover:text-foreground",
@@ -3389,10 +3391,10 @@ function AgentsContentInner() {
                                 }
                               }}
                               className={[
-                                "group relative flex h-9 max-w-56 min-w-28 items-center gap-1.5 rounded-t-md border border-b-0 pl-3 pr-1 text-left text-xs transition-[background-color,border-color,color,box-shadow]",
+                                "group relative flex h-[34px] w-40 shrink-0 items-center gap-1.5 border pl-3 pr-1 text-left text-xs transition-[background-color,border-color,color,box-shadow]",
                                 isActive
-                                  ? "border-foreground/20 bg-muted font-medium text-foreground shadow-sm"
-                                  : "border-border/40 bg-muted/25 text-muted-foreground hover:border-border/70 hover:bg-muted/70 hover:text-foreground",
+                                  ? "border-foreground/20 bg-muted/80 font-medium text-foreground shadow-sm"
+                                  : "border-border/60 bg-background/60 text-muted-foreground hover:bg-accent hover:text-foreground",
                                 topNavigationDropTarget?.item.kind === "chat" &&
                                 topNavigationDropTarget.item.id === chat.id &&
                                 topNavigationDropTarget.intent === "inside"
@@ -3403,7 +3405,10 @@ function AgentsContentInner() {
                                 {
                                   WebkitAppRegion: "no-drag",
                                   order: topNavigationOrder.get(`chat:${chat.id}`),
-                                } as React.CSSProperties
+                                  ...(isActive
+                                    ? { borderColor: underlineColor }
+                                    : { borderTopColor: "transparent" }),
+                                } as React.CSSProperties & { WebkitAppRegion: string }
                               }
                             >
                               <button
@@ -3452,11 +3457,14 @@ function AgentsContentInner() {
                                   ].join(" ")}
                                 />
                               </button>
-                              <span
-                                aria-hidden
-                                className="pointer-events-none absolute inset-x-0 top-0 h-0.5 opacity-[0.55]"
-                                style={{ backgroundColor: underlineColor }}
-                              />
+                              {!isActive && (
+                                <span
+                                  aria-hidden
+                                  data-chat-tab-accent
+                                  className="pointer-events-none absolute inset-x-1 -top-px h-px"
+                                  style={{ backgroundColor: underlineColor }}
+                                />
+                              )}
                               {topNavigationDropTarget?.item.kind === "chat" &&
                                 topNavigationDropTarget.item.id === chat.id &&
                                 topNavigationDropTarget.intent !== "inside" && (
@@ -3526,17 +3534,26 @@ function AgentsContentInner() {
                       const isActive =
                         !selectedChatId &&
                         (selectedDraftId === draft.id || activeNewChatDraftId === draft.id)
+                      const borderColor = resolveNewChatTabBorderColor(
+                        draft.project?.id,
+                        openChatProjectColors,
+                      )
                       return (
                         <div
                           key={draft.id}
                           data-open-draft-tab-id={draft.id}
                           className={[
-                            "group relative flex h-9 min-w-28 max-w-56 items-center gap-1.5 rounded-t-md border border-b-0 pl-3 pr-1 text-left text-xs",
+                            "group relative flex h-[34px] w-40 shrink-0 items-center gap-1.5 border pl-3 pr-1 text-left text-xs",
                             isActive
-                              ? "border-foreground/20 bg-muted font-medium text-foreground shadow-sm"
-                              : "border-border/40 bg-muted/25 text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                              ? "bg-muted font-medium text-foreground shadow-sm"
+                              : "border-b-0 border-border/40 bg-muted/25 text-muted-foreground hover:bg-muted/70 hover:text-foreground",
                           ].join(" ")}
-                          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                          style={
+                            {
+                              WebkitAppRegion: "no-drag",
+                              ...(isActive ? { borderColor } : {}),
+                            } as React.CSSProperties
+                          }
                         >
                           <button
                             type="button"
@@ -3566,8 +3583,16 @@ function AgentsContentInner() {
                       ) && (
                         <div
                           data-new-chat-tab="true"
-                          className="group relative flex h-9 min-w-28 max-w-56 items-center gap-1.5 rounded-t-md border border-b-0 border-foreground/20 bg-muted pl-3 pr-1 text-left text-xs font-medium text-foreground shadow-sm"
-                          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                          className="group relative flex h-[34px] w-40 shrink-0 items-center gap-1.5 border bg-muted pl-3 pr-1 text-left text-xs font-medium text-foreground shadow-sm"
+                          style={
+                            {
+                              WebkitAppRegion: "no-drag",
+                              borderColor: resolveNewChatTabBorderColor(
+                                selectedProject?.id,
+                                openChatProjectColors,
+                              ),
+                            } as React.CSSProperties
+                          }
                         >
                           <span className="min-w-0 flex-1 truncate text-left">New Chat</span>
                           <button

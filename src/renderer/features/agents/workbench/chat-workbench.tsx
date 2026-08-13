@@ -600,6 +600,7 @@ function ChatWorkbenchComponent({
         savingWorkspace={savingWorkspace}
         logicalGroupForChat={logicalGroupForChat}
         showPaneHeaders={showPaneHeaders}
+        showActivePaneOutline={visibleGroups.length > 1 && !visibleLayout.maximizedGroupId}
         moveMenu={{
           savedGroups,
           activeSavedGroupId,
@@ -646,6 +647,7 @@ function WorkbenchNode({
   savingWorkspace,
   logicalGroupForChat,
   showPaneHeaders,
+  showActivePaneOutline,
   moveMenu,
 }: {
   node: ChatGroupNode
@@ -680,6 +682,7 @@ function WorkbenchNode({
   savingWorkspace: boolean
   logicalGroupForChat: (chatId: string) => Extract<ChatGroupNode, { type: "group" }> | undefined
   showPaneHeaders: boolean
+  showActivePaneOutline: boolean
   moveMenu: ChatMoveMenu
 }) {
   if (node.type === "group") {
@@ -707,6 +710,7 @@ function WorkbenchNode({
         savingWorkspace={savingWorkspace}
         logicalGroupForChat={logicalGroupForChat}
         showPaneHeader={showPaneHeaders}
+        showActivePaneOutline={showActivePaneOutline}
         moveMenu={moveMenu}
       />
     )
@@ -752,6 +756,7 @@ function WorkbenchNode({
             savingWorkspace={savingWorkspace}
             logicalGroupForChat={logicalGroupForChat}
             showPaneHeaders={showPaneHeaders}
+            showActivePaneOutline={showActivePaneOutline}
             moveMenu={moveMenu}
           />
         </SplitChild>
@@ -985,6 +990,7 @@ function ChatGroup({
   savingWorkspace,
   logicalGroupForChat,
   showPaneHeader,
+  showActivePaneOutline,
   moveMenu,
 }: {
   group: Extract<ChatGroupNode, { type: "group" }>
@@ -1018,6 +1024,7 @@ function ChatGroup({
   savingWorkspace: boolean
   logicalGroupForChat: (chatId: string) => Extract<ChatGroupNode, { type: "group" }> | undefined
   showPaneHeader: boolean
+  showActivePaneOutline: boolean
   moveMenu: ChatMoveMenu
 }) {
   const activeChatId = group.chatIds.includes(group.activeChatId)
@@ -1191,11 +1198,15 @@ function ChatGroup({
         }
       }}
     >
-      {layout.activeGroupId === group.id && (
+      {showActivePaneOutline && layout.activeGroupId === group.id && (
         <span
           aria-hidden
           data-active-pane-outline
-          className="pointer-events-none absolute inset-0 z-50 border-2 border-primary"
+          className={cn(
+            "pointer-events-none absolute inset-x-0.5 bottom-0.5 z-50 border border-primary",
+            showPaneHeader ? "top-10" : "top-0.5",
+          )}
+          style={{ borderColor: chatAccents.get(activeChatId) ?? undefined }}
         />
       )}
       {showPaneHeader && (
@@ -1209,7 +1220,7 @@ function ChatGroup({
               ref={tabsRef}
               role="tablist"
               aria-label={CHAT_WORKBENCH_A11Y.tabs}
-              className="scrollbar-hide flex min-w-0 items-center gap-1 overflow-x-auto"
+              className="scrollbar-hide flex min-w-0 items-center overflow-x-auto"
               draggable
               data-chat-group-drag-handle={group.id}
               onScroll={updateScrollbar}
@@ -1263,12 +1274,16 @@ function ChatGroup({
                       <div
                         draggable={!readOnlyChatIds.has(chatId)}
                         className={cn(
-                          "group/tab relative flex h-8 w-44 shrink-0 items-center rounded-md border border-transparent",
+                          "group/tab relative flex h-[34px] w-40 shrink-0 items-center border",
                           chatId === activeChatId
                             ? "border-foreground/20 bg-muted/80 text-foreground shadow-sm"
-                            : "text-muted-foreground hover:bg-accent",
+                            : "border-border/60 bg-background/60 text-muted-foreground hover:bg-accent",
                         )}
-                        style={{ borderTopColor: chatAccents.get(chatId) ?? undefined }}
+                        style={{
+                          ...(chatId === activeChatId
+                            ? { borderColor: chatAccents.get(chatId) ?? undefined }
+                            : { borderTopColor: "transparent" }),
+                        }}
                         data-chat-tab={chatId}
                         data-chat-tab-drop-side={
                           tabDropTarget?.chatId === chatId ? tabDropTarget.side : undefined
@@ -1340,6 +1355,14 @@ function ChatGroup({
                           commitDrop(event, { groupId: group.id, zone: "tab" })
                         }}
                       >
+                        {chatId !== activeChatId && (
+                          <span
+                            aria-hidden
+                            data-chat-tab-accent
+                            className="pointer-events-none absolute inset-x-1 -top-px h-px bg-border"
+                            style={{ backgroundColor: chatAccents.get(chatId) ?? undefined }}
+                          />
+                        )}
                         {tabDropTarget?.chatId === chatId && tabDropTarget.side !== "inside" && (
                           <span
                             aria-hidden
@@ -1348,14 +1371,6 @@ function ChatGroup({
                               "pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-primary",
                               tabDropTarget.side === "left" ? "left-0" : "right-0",
                             )}
-                          />
-                        )}
-                        {chatId === activeChatId && (
-                          <span
-                            aria-hidden
-                            data-active-screen-indicator
-                            className="pointer-events-none absolute inset-x-1 bottom-0 h-1 rounded-t-full bg-primary"
-                            style={{ backgroundColor: chatAccents.get(chatId) ?? undefined }}
                           />
                         )}
                         <button

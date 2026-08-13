@@ -46,7 +46,7 @@ describe("pane-local responsive behavior", () => {
 
   it("reserves the scrollbar gutter beside the chat bottom dock", () => {
     expect(source("src/renderer/features/agents/main/active-chat.tsx")).toContain(
-      'className="absolute bottom-0 left-0 right-1 z-20"',
+      'className="absolute bottom-0 left-0 right-3 z-20"',
     )
   })
 

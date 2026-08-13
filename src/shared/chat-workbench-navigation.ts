@@ -23,6 +23,18 @@ export const CHAT_WORKBENCH_GROUP_COLORS = [
   "violet",
 ] as const
 export type ChatWorkbenchGroupColor = (typeof CHAT_WORKBENCH_GROUP_COLORS)[number]
+const CHAT_WORKBENCH_GROUP_HUES: Record<ChatWorkbenchGroupColor, number> = {
+  blue: 217,
+  cyan: 189,
+  teal: 173,
+  green: 142,
+  lime: 84,
+  amber: 38,
+  orange: 25,
+  red: 0,
+  pink: 330,
+  violet: 258,
+}
 
 export type ChatWorkbenchSavedGroup = {
   id: string
@@ -68,6 +80,23 @@ const navigationSchema = z.object({
   ),
   order: z.array(z.object({ kind: z.enum(["group", "chat"]), id: z.string().min(1) })).optional(),
 })
+
+export function parseStoredProjectColors(value: string | null): Record<string, string> {
+  if (!value) return {}
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([projectId, color]) => {
+        if (typeof color !== "string") return []
+        const normalized = color.trim()
+        return /^#[0-9a-f]{6}$/i.test(normalized) ? [[projectId, normalized]] : []
+      }),
+    )
+  } catch {
+    return {}
+  }
+}
 
 function navigationItemKey(item: ChatWorkbenchNavigationItem): string {
   return `${item.kind}:${item.id}`
@@ -161,10 +190,46 @@ export function setChatWorkbenchGroupColor(
 function randomUnusedGroupColor(
   groups: readonly ChatWorkbenchSavedGroup[],
   random: () => number,
+  projectColors: readonly string[] = [],
 ): ChatWorkbenchGroupColor {
   const usedColors = new Set(groups.map((group) => group.color))
   const unusedColors = CHAT_WORKBENCH_GROUP_COLORS.filter((color) => !usedColors.has(color))
-  const availableColors = unusedColors.length > 0 ? unusedColors : CHAT_WORKBENCH_GROUP_COLORS
+  let availableColors: readonly ChatWorkbenchGroupColor[] =
+    unusedColors.length > 0 ? unusedColors : CHAT_WORKBENCH_GROUP_COLORS
+  const projectHues = projectColors.flatMap((color) => {
+    const match = /^#([0-9a-f]{6})$/i.exec(color.trim())
+    if (!match) return []
+    const value = Number.parseInt(match[1]!, 16)
+    const red = ((value >> 16) & 255) / 255
+    const green = ((value >> 8) & 255) / 255
+    const blue = (value & 255) / 255
+    const maximum = Math.max(red, green, blue)
+    const minimum = Math.min(red, green, blue)
+    const delta = maximum - minimum
+    if (delta === 0) return []
+    const hue =
+      maximum === red
+        ? ((green - blue) / delta) % 6
+        : maximum === green
+          ? (blue - red) / delta + 2
+          : (red - green) / delta + 4
+    return [(((hue * 60) % 360) + 360) % 360]
+  })
+  if (projectHues.length > 0) {
+    const scored = availableColors.map((color) => ({
+      color,
+      distance: Math.min(
+        ...projectHues.map((hue) => {
+          const difference = Math.abs(CHAT_WORKBENCH_GROUP_HUES[color] - hue)
+          return Math.min(difference, 360 - difference)
+        }),
+      ),
+    }))
+    const greatestDistance = Math.max(...scored.map(({ distance }) => distance))
+    availableColors = scored
+      .filter(({ distance }) => Math.abs(distance - greatestDistance) < 0.001)
+      .map(({ color }) => color)
+  }
   const index = Math.min(
     availableColors.length - 1,
     Math.max(0, Math.floor(random() * availableColors.length)),
@@ -177,6 +242,7 @@ export function reconcileChatWorkbenchNavigation(
   previousLayout: ChatWorkbenchLayout,
   nextLayout: ChatWorkbenchLayout,
   random: () => number = Math.random,
+  projectColors: readonly string[] = [],
 ): ChatWorkbenchNavigation {
   const wasMultiPane = collectChatGroups(previousLayout.root).length > 1
   const isMultiPane = collectChatGroups(nextLayout.root).length > 1
@@ -207,7 +273,7 @@ export function reconcileChatWorkbenchNavigation(
       {
         id,
         name: `Group ${navigation.groups.length + 1}`,
-        color: randomUnusedGroupColor(navigation.groups, random),
+        color: randomUnusedGroupColor(navigation.groups, random, projectColors),
         layout: nextLayout,
       },
     ],
@@ -340,6 +406,7 @@ export function createChatWorkbenchGroup(
   visibleChatIds: readonly string[],
   chatId: string,
   random: () => number = Math.random,
+  projectColors: readonly string[] = [],
 ): ChatWorkbenchNavigation {
   const items = resolveChatWorkbenchNavigationItems(navigation, visibleChatIds)
   const withoutChat = removeChatFromSavedGroups(navigation, chatId)
@@ -347,7 +414,7 @@ export function createChatWorkbenchGroup(
   const group: ChatWorkbenchSavedGroup = {
     id,
     name: `Group ${withoutChat.groups.length + 1}`,
-    color: randomUnusedGroupColor(withoutChat.groups, random),
+    color: randomUnusedGroupColor(withoutChat.groups, random, projectColors),
     layout: createChatWorkbenchLayout([chatId], chatId),
   }
   const liveGroupIds = new Set([...withoutChat.groups.map((candidate) => candidate.id), id])

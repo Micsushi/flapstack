@@ -297,7 +297,6 @@ const SidebarChip = React.memo(function SidebarChip({
 })
 
 const GLOBAL_SECTION_COLOR = "#64748b"
-const ACTIVE_CHAT_BORDER_COLOR = "#a78bfa"
 const SCOPED_SECTION_BACKGROUND_OPACITY = 0.25
 const TASK_SECTION_BACKGROUND_OPACITY = 0.34
 const SCOPED_CHAT_BACKGROUND_OPACITY = 0.09
@@ -1122,6 +1121,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
     },
   })
   const normalizedTint = tintColor ? normalizeHexColor(tintColor) : null
+  const selectedBorderColor = normalizedTint ?? DEFAULT_PROJECT_COLOR
   const tintStyle: React.CSSProperties | undefined = normalizedTint
     ? ({
         "--sidebar-chat-bg": rgbaFromHex(normalizedTint, SCOPED_CHAT_BACKGROUND_OPACITY),
@@ -1143,8 +1143,8 @@ const AgentChatItem = React.memo(function AgentChatItem({
           ...tintStyle,
           ...(isSelected
             ? {
-                borderColor: ACTIVE_CHAT_BORDER_COLOR,
-                boxShadow: `0 0 0 1px ${rgbaFromHex(ACTIVE_CHAT_BORDER_COLOR, 0.28)}`,
+                borderColor: selectedBorderColor,
+                boxShadow: `0 0 0 1px ${rgbaFromHex(selectedBorderColor, 0.28)}`,
               }
             : null),
         }
@@ -7395,9 +7395,11 @@ export function AgentsSidebar({
       )}
 
       {!isMobileFullscreen && (
-        <div className="flex h-8 flex-shrink-0 items-center gap-2 px-2 pt-1">
-          <img src={flapstackLogo} className="h-4 w-4 shrink-0" alt="" />
-          <span className="min-w-0 truncate text-xs font-medium text-foreground/80">Flapstack</span>
+        <div className="flex h-10 flex-shrink-0 items-center gap-2.5 px-2 pt-1">
+          <img src={flapstackLogo} className="h-6 w-6 shrink-0" alt="" />
+          <span className="min-w-0 truncate text-base font-semibold text-foreground/90">
+            Flapstack
+          </span>
           <ButtonCustom
             variant="ghost"
             size="icon"

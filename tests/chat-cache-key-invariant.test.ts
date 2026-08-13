@@ -59,6 +59,17 @@ describe("chat metadata cache key", () => {
     )
   })
 
+  it("recreates the runtime-chat factory when a delayed transcript arrives", () => {
+    const activeChat = readFileSync("src/renderer/features/agents/main/active-chat.tsx", "utf8")
+    const factoryStart = activeChat.indexOf("const getOrCreateChat = useCallback(")
+    const factoryEnd = activeChat.indexOf("const handleProviderChange", factoryStart)
+    const factory = activeChat.slice(factoryStart, factoryEnd)
+
+    expect(factoryStart).toBeGreaterThan(-1)
+    expect(factoryEnd).toBeGreaterThan(factoryStart)
+    expect(factory).toMatch(/\[\s*[\s\S]*?agentChat,\s*agentSubChats,/)
+  })
+
   it("primes a newly created chat before selecting it", () => {
     const newChatForm = readFileSync("src/renderer/features/agents/main/new-chat-form.tsx", "utf8")
     const metadataWrite = newChatForm.indexOf("utils.chats.getMetadata.setData")

@@ -16,6 +16,7 @@ import {
   getGroupedChatIds,
   moveChatToWorkbenchGroup,
   parseChatWorkbenchNavigation,
+  parseStoredProjectColors,
   removeChatWorkbenchGroup,
   renameChatWorkbenchGroup,
   reconcileChatWorkbenchNavigation,
@@ -25,6 +26,20 @@ import {
 } from "../src/shared/chat-workbench-navigation"
 
 describe("chat workbench top-level navigation", () => {
+  it("filters malformed persisted project colors", () => {
+    expect(
+      parseStoredProjectColors(
+        JSON.stringify({
+          valid: "#22c55e",
+          short: "#0f0",
+          null: null,
+          number: 42,
+          object: { color: "#f97316" },
+        }),
+      ),
+    ).toEqual({ valid: "#22c55e" })
+  })
+
   it("reports every Chat owned by a saved group", () => {
     const split = reduceChatWorkbench(createChatWorkbenchLayout(["a", "b"], "a"), {
       type: "split",
@@ -320,6 +335,18 @@ describe("chat workbench top-level navigation", () => {
     )
 
     expect(created.groups.at(-1)?.color).toBe("cyan")
+  })
+
+  it("prefers a group hue that is distinct from project colors", () => {
+    const created = createChatWorkbenchGroup(
+      { activeGroupId: null, groups: [] },
+      ["a"],
+      "a",
+      () => 0,
+      ["#22c55e"],
+    )
+
+    expect(created.groups[0]?.color).toBe("pink")
   })
 
   it("appends a detached Chat to the empty tail of the main bar", () => {

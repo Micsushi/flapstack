@@ -11,6 +11,10 @@ describe("new chat tab lifecycle", () => {
     expect(content).toContain("data-open-draft-tab-id")
     expect(content).toContain('data-new-chat-tab="true"')
     expect(content).toContain("onDraftIdChange")
+    expect(content).toContain("resolveNewChatTabBorderColor")
+    expect(content).toContain('?? "hsl(var(--muted-foreground))"')
+    expect(content).toContain("...(isActive ? { borderColor } : {})")
+    expect(content).toContain("borderColor: resolveNewChatTabBorderColor")
   })
 
   it("returns to the first remaining workbench item when the active New Chat closes", () => {
