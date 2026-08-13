@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest"
+import { resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 import {
   isExecutableExternalPath,
   isSafeExternalUrl,
@@ -31,16 +33,16 @@ describe("external navigation safety", () => {
   })
 
   it("allows only the packaged renderer file", () => {
-    const rendererFile = "C:/app/renderer/index.html"
+    const rendererFile = resolve("app", "renderer", "index.html")
+    const rendererUrl = pathToFileURL(rendererFile)
+    rendererUrl.hash = "chat"
+    expect(isTrustedRendererNavigation(rendererUrl.href, undefined, rendererFile)).toBe(true)
     expect(
       isTrustedRendererNavigation(
-        "file:///C:/app/renderer/index.html#chat",
+        pathToFileURL(resolve("app", "renderer", "other.html")).href,
         undefined,
         rendererFile,
       ),
-    ).toBe(true)
-    expect(
-      isTrustedRendererNavigation("file:///C:/app/renderer/other.html", undefined, rendererFile),
     ).toBe(false)
   })
 

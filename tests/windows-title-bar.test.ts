@@ -33,7 +33,7 @@ describe("Windows title bar", () => {
   })
 
   it("moves the Flapstack identity beside the sidebar control above search", () => {
-    const brandIndex = sidebarSource.indexOf("Flapstack\n          </span>")
+    const brandIndex = sidebarSource.search(/Flapstack\r?\n\s*<\/span>/)
     const searchIndex = sidebarSource.indexOf('aria-label="Search projects and chats"')
 
     expect(brandIndex).toBeGreaterThan(-1)
