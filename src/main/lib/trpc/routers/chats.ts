@@ -26,7 +26,7 @@ import {
 } from "../../db"
 import { applyAutomaticChatTags, CHAT_TAG_COLORS, CHAT_TAG_ICONS } from "../../chat-tags"
 import { applyAutomaticAgentChatLabels, listAgentChatLabels } from "../../chat-agent-labels"
-import { listActiveAgentChatWaits } from "../../chat-waits"
+import { dismissFailedChatWait, listAgentChatWaits } from "../../chat-waits"
 import { restoreCheckpoint } from "../../checkpoints"
 import {
   createWorktreeForChat,
@@ -508,9 +508,16 @@ export const chatsRouter = router({
     const database = getSqliteDatabase()
     return {
       labels: listAgentChatLabels(database),
-      waits: listActiveAgentChatWaits(database),
+      waits: listAgentChatWaits(database),
     }
   }),
+
+  /** Acknowledge a failed wait so its badge stops being surfaced. */
+  dismissAgentWait: publicProcedure
+    .input(z.object({ waitId: z.string().min(1) }))
+    .mutation(({ input }) => {
+      return { dismissed: dismissFailedChatWait(getSqliteDatabase(), input.waitId) }
+    }),
 
   createTag: publicProcedure
     .input(
@@ -1927,6 +1934,9 @@ export const chatsRouter = router({
         .orderBy(desc(agentRuns.startedAt))
         .get()
 
+      // Older runs predate pre-run checkpoints. The rewind still happens, but the
+      // caller must be told that files were left as the previous turn wrote them.
+      const filesRestored = Boolean(run?.beforeCheckpointId)
       if (run?.beforeCheckpointId) {
         await restoreCheckpoint(run.beforeCheckpointId)
       }
@@ -1963,7 +1973,12 @@ export const chatsRouter = router({
         .where(eq(subChats.id, input.subChatId))
         .run()
 
-      return { success: true as const, messages: truncatedMessages }
+      return {
+        success: true as const,
+        messages: truncatedMessages,
+        filesRestored,
+        restoration: filesRestored ? ("checkpoint" as const) : ("conversation-only" as const),
+      }
     }),
 
   /**

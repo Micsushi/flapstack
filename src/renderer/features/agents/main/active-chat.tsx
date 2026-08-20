@@ -2184,6 +2184,13 @@ const ChatViewInner = memo(function ChatViewInner({
     () => (agentMetadata?.waits ?? []).find((wait) => wait.chatId === parentChatId),
     [agentMetadata?.waits, parentChatId],
   )
+  const agentMetadataUtils = trpc.useUtils().chats.listAgentMetadata
+  const dismissAgentWait = trpc.chats.dismissAgentWait.useMutation({
+    onSuccess: () => void agentMetadataUtils.invalidate(),
+  })
+  const handleDismissAgentWait = useCallback(() => {
+    if (chatAgentWait?.status === "failed") dismissAgentWait.mutate({ waitId: chatAgentWait.id })
+  }, [chatAgentWait?.id, chatAgentWait?.status, dismissAgentWait])
   const providerMeta = getHarnessChipMeta(provider)
   const isAgentsSidebarOpen = useAtomValue(agentsSidebarOpenAtom)
 
@@ -3710,6 +3717,12 @@ const ChatViewInner = memo(function ChatViewInner({
         refreshDiff?.()
 
         if (intent === "edit") {
+          if ("restoration" in result && result.restoration === "conversation-only") {
+            toast.warning("Rewound the conversation only", {
+              description:
+                "This turn ran before file checkpoints, so earlier file changes were kept on disk.",
+            })
+          }
           const preservedParts = (userMsg.parts || []).filter((part: any) => part.type !== "text")
           const contextPrefix = mentionsToRemove.join(" ")
           const replacementText = [contextPrefix, editedText].filter(Boolean).join(" ")
@@ -5166,6 +5179,7 @@ const ChatViewInner = memo(function ChatViewInner({
               chatTags={chatTags}
               agentLabels={chatAgentLabels}
               agentWait={chatAgentWait}
+              onDismissAgentWait={handleDismissAgentWait}
               workspaceBranch={workspaceBranch}
               localFolderPath={localFolderPath}
               headerActions={isActive ? headerActions : undefined}

@@ -138,6 +138,7 @@ export function ProgressiveOverflowRow({
   const [visibleIndexes, setVisibleIndexes] = useState(() =>
     forceOverflow ? [] : items.map((_, index) => index),
   )
+  const visibleSignature = visibleIndexes.join(",")
 
   const measure = useCallback(() => {
     const row = rowRef.current
@@ -213,15 +214,19 @@ export function ProgressiveOverflowRow({
     if (typeof ResizeObserver === "undefined") return
     const observer = new ResizeObserver(scheduleMeasure)
     observer.observe(row)
+    // Inline items must be observed individually: a label whose text changes
+    // without any container resize still changes how much room the row needs.
+    // Measurement stays batched into one animation frame, so re-observing the
+    // items after a visibility change settles instead of looping.
     row
-      .querySelectorAll("[data-progressive-overflow-pinned]")
-      .forEach((pinned) => observer.observe(pinned))
+      .querySelectorAll("[data-progressive-overflow-item],[data-progressive-overflow-pinned]")
+      .forEach((element) => observer.observe(element))
     return () => {
       observer.disconnect()
       if (measureFrameRef.current !== null) cancelAnimationFrame(measureFrameRef.current)
       measureFrameRef.current = null
     }
-  }, [hasPinnedEnd, hasPinnedStart, itemSignature, scheduleMeasure])
+  }, [hasPinnedEnd, hasPinnedStart, itemSignature, scheduleMeasure, visibleSignature])
 
   const visibleIndexSet = new Set(visibleIndexes)
   const visibleItems = items

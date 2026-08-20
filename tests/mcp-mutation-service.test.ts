@@ -284,6 +284,53 @@ describe("MCP mutation service", () => {
     ).toMatchObject({ ok: false, error: { code: "invalid-input" } })
   })
 
+  it("never tells the agent to stop when replaying an already settled wait", async () => {
+    sqlite.prepare("UPDATE chats SET harness = 'codex' WHERE id = 'chat-1'").run()
+    sqlite
+      .prepare(
+        "INSERT INTO sub_chats (id, chat_id, harness, permission_mode, messages) VALUES ('sub-caller', 'chat-1', 'codex', 'full-access', '[]')",
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO agent_runs (
+          id, chat_id, sub_chat_id, harness, permission_mode, status,
+          runtime_snapshot_version, runtime_preference, runtime_preference_source,
+          resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+          runtime_capability_snapshot, runtime_control_snapshot
+        ) VALUES ('run-caller', 'chat-1', 'sub-caller', 'codex', 'full-access', 'running',
+          1, 'codex-enhanced', 'product', 'codex', 'test-adapter', 'test-protocol', '{}', '{}')`,
+      )
+      .run()
+    const service = createMcpMutationService(path)
+    const input = { targetChatIds: ["chat-2"], idempotencyKey: "settled-replay" }
+
+    const first = await service.invoke(
+      "wait_for_chats",
+      { chatId: "chat-1", runId: "run-caller" },
+      input,
+    )
+    expect(first).toMatchObject({ ok: true, data: { state: "waiting", active: true } })
+    if (!first.ok) throw new Error("Expected the first wait registration to succeed")
+    expect(String(first.data.instruction)).toContain("Stop this turn now")
+
+    sqlite.prepare("UPDATE chat_waits SET status = 'failed', error = 'target vanished'").run()
+    const replay = await service.invoke(
+      "wait_for_chats",
+      { chatId: "chat-1", runId: "run-caller" },
+      input,
+    )
+
+    expect(replay).toMatchObject({
+      ok: true,
+      data: { created: false, state: "failed", active: false },
+    })
+    if (!replay.ok) throw new Error("Expected the replay to succeed")
+    expect(String(replay.data.instruction)).not.toContain("Stop this turn now")
+    expect(String(replay.data.instruction)).toContain("Continue this turn")
+    expect(sqlite.prepare("SELECT count(*) count FROM chat_waits").get()).toEqual({ count: 1 })
+  })
+
   it("queues launch_run for API-provider chats with their selected model", async () => {
     sqlite
       .prepare(

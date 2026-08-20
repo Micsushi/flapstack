@@ -45,6 +45,41 @@ describe("chat tags", () => {
     ])
   })
 
+  it("writes tag timestamps in the Unix seconds the timestamp columns declare", () => {
+    const store = createChatTagStore(sqlite)
+    const before = Math.floor(Date.now() / 1_000)
+    const tag = store.create({ name: "Seconds", color: "blue", icon: "eye" })
+    store.update({ id: tag.id, name: "Seconds renamed", color: "green" })
+    store.assign({ chatId: "chat-a", tagId: tag.id })
+    const after = Math.ceil(Date.now() / 1_000)
+
+    const raw = sqlite
+      .prepare("SELECT created_at, updated_at FROM chat_tags WHERE id = ?")
+      .get(tag.id) as { created_at: number; updated_at: number }
+    const assignment = sqlite
+      .prepare("SELECT created_at FROM chat_tag_assignments WHERE tag_id = ?")
+      .get(tag.id) as { created_at: number }
+
+    for (const value of [raw.created_at, raw.updated_at, assignment.created_at]) {
+      expect(Number.isInteger(value)).toBe(true)
+      expect(value).toBeGreaterThanOrEqual(before)
+      expect(value).toBeLessThanOrEqual(after)
+    }
+
+    // Drizzle reads the same columns as timestamp-mode seconds; a millisecond
+    // write would decode as a date tens of thousands of years in the future.
+    const database = drizzle(sqlite, { schema })
+    const decoded = database.select().from(schema.chatTags).all()
+    const decodedTag = decoded.find((row) => row.id === tag.id)
+    expect(decodedTag?.createdAt?.getTime()).toBe(raw.created_at * 1_000)
+    expect(Math.abs((decodedTag?.updatedAt?.getTime() ?? 0) - Date.now())).toBeLessThan(5_000)
+
+    const decodedAssignment = database.select().from(schema.chatTagAssignments).all()
+    expect(Math.abs((decodedAssignment[0]?.createdAt?.getTime() ?? 0) - Date.now())).toBeLessThan(
+      5_000,
+    )
+  })
+
   it("creates reusable labels and persists assignments", () => {
     const store = createChatTagStore(sqlite)
     const tag = store.create({ name: "Needs review", color: "violet", icon: "eye" })

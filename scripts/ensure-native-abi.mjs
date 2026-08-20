@@ -76,19 +76,63 @@ const packageVersion = (name) => {
   }
 }
 
-export function desiredNativeAbiMarker(target) {
+/**
+ * Node 24.19.0 added per-instance environment cleanup hooks to the public
+ * `node_object_wrap.h`. Every `node::ObjectWrap` destructor then calls
+ * `node::RemoveEnvironmentCleanupHook(Isolate::GetCurrent(), ...)`, which
+ * asserts `env != nullptr`. better-sqlite3 wraps Database/Statement with that
+ * base class, so a binary compiled against those headers aborts (exit 134,
+ * "src\\api\\hooks.cc:142 Assertion failed: (env) != nullptr") whenever a
+ * wrapper is destroyed during isolate teardown, with no JS context entered.
+ *
+ * NODE_MODULE_VERSION is stable inside a major, so building against the last
+ * unaffected release of the running major keeps the binary loadable while
+ * removing the aborting call entirely. Returns null when no pin is needed.
+ */
+export function nodeHeaderTarget(nodeVersion = process.versions.node) {
+  const [major, minor] = nodeVersion.split(".").map(Number)
+  if (major !== 24) return null
+  return minor >= 19 ? "24.18.0" : null
+}
+
+export function desiredNativeAbiMarker(target, options = {}) {
+  const nodeVersion = options.nodeVersion ?? process.versions.node
   return nativeAbiMarker({
     target,
     nodeAbi: process.versions.modules,
     electronVersion: packageVersion("electron"),
+    nodeHeaderTarget: nodeHeaderTarget(nodeVersion) ?? nodeVersion,
     nativeModuleVersions: Object.fromEntries(
       NATIVE_MODULES.map((name) => [name, packageVersion(name)]),
     ),
   })
 }
 
-export function nativeAbiAction({ current, desired, probeOk }) {
-  if (!probeOk) return "rebuild"
+export function betterSqlite3NodeBinaryPath(projectRoot = root) {
+  return join(
+    projectRoot,
+    "node_modules",
+    "better-sqlite3",
+    "build",
+    "Release",
+    "better_sqlite3.node",
+  )
+}
+
+/**
+ * A regressed binary still loads and still passes the runtime probe; it only
+ * aborts later, at isolate teardown. Detect it directly from the imported
+ * symbol so a stale build can never be waved through as "verified".
+ * Both Windows (`?RemoveEnvironmentCleanupHook@node@@...`) and Itanium
+ * (`_ZN4node28RemoveEnvironmentCleanupHook...`) manglings contain this name.
+ */
+export function nativeTeardownSafe(binaryPath = betterSqlite3NodeBinaryPath()) {
+  if (!existsSync(binaryPath)) return true
+  return !readFileSync(binaryPath, "latin1").includes("RemoveEnvironmentCleanupHook")
+}
+
+export function nativeAbiAction({ current, desired, probeOk, teardownSafe = true }) {
+  if (!probeOk || !teardownSafe) return "rebuild"
   return current === desired ? "verified" : "repair-marker"
 }
 
@@ -144,11 +188,13 @@ export function nativeRebuildSteps(target, options = {}) {
     ]
   }
   if (target !== "node") throw new Error(`Unsupported native rebuild target: ${target}`)
+  const headerTarget = nodeHeaderTarget(options.nodeVersion ?? process.versions.node)
+  const headerArgs = headerTarget ? [`--target=${headerTarget}`] : []
   const nodeGyp = packageBinStep(
     "build better-sqlite3 for Node",
     "node-gyp",
     "node-gyp",
-    ["rebuild", "--release"],
+    ["rebuild", "--release", ...headerArgs],
     { root: projectRoot },
   )
   return [
@@ -159,7 +205,7 @@ export function nativeRebuildSteps(target, options = {}) {
     {
       ...nodeGyp,
       label: "build node-pty for Node",
-      args: [nodeGyp.args[0], "rebuild"],
+      args: [nodeGyp.args[0], "rebuild", ...headerArgs],
       cwd: join(projectRoot, "node_modules", "node-pty"),
     },
   ]
@@ -232,7 +278,15 @@ export function ensureNativeAbi(target) {
     ? readFileSync(nativeAbiMarkerPath, "utf8").trim()
     : ""
   const initialProbe = probeNativeModules(target)
-  const action = nativeAbiAction({ current, desired, probeOk: initialProbe.ok })
+  // Only the Node target is rebuilt from source here, so only it can be repaired
+  // when the teardown-unsafe ObjectWrap import is present.
+  const teardownSafe = target !== "node" || nativeTeardownSafe()
+  if (!teardownSafe) {
+    console.log(
+      "[native-abi] better-sqlite3 imports node::RemoveEnvironmentCleanupHook and would abort at teardown; rebuilding against pinned headers",
+    )
+  }
+  const action = nativeAbiAction({ current, desired, probeOk: initialProbe.ok, teardownSafe })
   if (action === "verified") {
     console.log(
       `[native-abi] verified actual ${target} load ABI ${initialProbe.abi} (${desired}) - skipping rebuild`,
@@ -254,7 +308,11 @@ export function ensureNativeAbi(target) {
   }
   rmSync(nativeAbiMarkerPath, { force: true })
   console.log(
-    `[native-abi] rebuilding ${NATIVE_MODULES.join(", ")} for ${target}; actual load failed (${probeErrorSummary(initialProbe)})`,
+    `[native-abi] rebuilding ${NATIVE_MODULES.join(", ")} for ${target}; ${
+      teardownSafe
+        ? `actual load failed (${probeErrorSummary(initialProbe)})`
+        : "binary is teardown-unsafe"
+    }`,
   )
   try {
     rebuildNativeModules(target, toolEnv)
@@ -268,6 +326,12 @@ export function ensureNativeAbi(target) {
     rmSync(nativeAbiMarkerPath, { force: true })
     throw new Error(
       `[native-abi] rebuilt ${target} modules still fail their real load probe: ${probeErrorSummary(finalProbe)}`,
+    )
+  }
+  if (target === "node" && !nativeTeardownSafe()) {
+    rmSync(nativeAbiMarkerPath, { force: true })
+    throw new Error(
+      "[native-abi] rebuilt better-sqlite3 still imports node::RemoveEnvironmentCleanupHook; it would abort at isolate teardown.",
     )
   }
   writeFileSync(nativeAbiMarkerPath, desired)

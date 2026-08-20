@@ -5,9 +5,12 @@ import { describe, expect, it } from "vitest"
 // @ts-expect-error JavaScript build-script helper intentionally has no declaration file.
 import { nativeAbiMarker } from "../scripts/native-abi-key.mjs"
 import {
+  betterSqlite3NodeBinaryPath,
   nativeAbiAction,
   nativeElectronRecoverySteps,
   nativeRebuildSteps,
+  nativeTeardownSafe,
+  nodeHeaderTarget,
   probeNativeModules,
   windowsPython311Environment,
 } from "../scripts/ensure-native-abi.mjs"
@@ -69,6 +72,50 @@ describe("native ABI marker", () => {
       cwd: join(process.cwd(), "node_modules", "node-pty"),
     })
     expect(recoverySteps[0].args[0]).toMatch(/[\\/]node-gyp[\\/]bin[\\/]node-gyp\.js$/)
+  })
+
+  it("pins Node 24.19+ builds to headers without the ObjectWrap cleanup-hook regression", () => {
+    // Node 24.19.0 made every node::ObjectWrap destructor call
+    // node::RemoveEnvironmentCleanupHook, which asserts env != nullptr and
+    // aborts (exit 134) during isolate teardown.
+    expect(nodeHeaderTarget("24.19.0")).toBe("24.18.0")
+    expect(nodeHeaderTarget("24.18.0")).toBeNull()
+    expect(nodeHeaderTarget("24.15.0")).toBeNull()
+    expect(nodeHeaderTarget("22.23.1")).toBeNull()
+
+    const pinned = nativeRebuildSteps("node", { root: process.cwd(), nodeVersion: "24.19.0" })
+    for (const step of pinned) expect(step.args).toContain("--target=24.18.0")
+
+    const unpinned = nativeRebuildSteps("node", { root: process.cwd(), nodeVersion: "22.23.1" })
+    for (const step of unpinned) {
+      expect(step.args.some((arg: string) => arg.startsWith("--target="))).toBe(false)
+    }
+  })
+
+  it("rebuilds instead of trusting a binary that would abort at isolate teardown", () => {
+    const directory = mkdtempSync(join(tmpdir(), "flapstack-abi-teardown-"))
+    const unsafe = join(directory, "unsafe.node")
+    const safe = join(directory, "safe.node")
+    writeFileSync(unsafe, "?RemoveEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@")
+    writeFileSync(safe, "sqlite3_finalize")
+
+    expect(nativeTeardownSafe(unsafe)).toBe(false)
+    expect(nativeTeardownSafe(safe)).toBe(true)
+    expect(nativeTeardownSafe(join(directory, "absent.node"))).toBe(true)
+
+    // A regressed binary still loads, so only this check can force the repair.
+    expect(
+      nativeAbiAction({ current: "m", desired: "m", probeOk: true, teardownSafe: false }),
+    ).toBe("rebuild")
+    expect(nativeAbiAction({ current: "m", desired: "m", probeOk: true, teardownSafe: true })).toBe(
+      "verified",
+    )
+  })
+
+  it("keeps the installed better-sqlite3 binary free of the aborting teardown hook", () => {
+    const binaryPath = betterSqlite3NodeBinaryPath(process.cwd())
+    expect(existsSync(binaryPath)).toBe(true)
+    expect(nativeTeardownSafe(binaryPath)).toBe(true)
   })
 
   it("probes real PTY launches instead of treating a lazy node-pty import as healthy", () => {

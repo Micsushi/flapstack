@@ -90,6 +90,7 @@ const safeAuditKeys = new Set([
   "stopConditions",
   "subagents",
   "summary",
+  "targetChatIds",
   "targetCompletedAgents",
   "targetProgressPercent",
   "taskId",
@@ -311,7 +312,12 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
         initialPrompt: textDigest("initialPrompt"),
       }
     case "wait_for_chats":
-      return safe("targetChatIds", "idempotencyKey")
+      return {
+        ...safe("idempotencyKey"),
+        targetChatIds: Array.isArray(input.targetChatIds)
+          ? input.targetChatIds.map(summarizeText)
+          : [],
+      }
     case "orchestrate_task":
       return summarizeOrchestrationAuthority(value)
     case "list_automations":

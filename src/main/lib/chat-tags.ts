@@ -4,6 +4,7 @@ import {
   type AutomaticChatTagCandidate,
   type AutomaticUserChatTagKey,
 } from "../../shared/chat-metadata"
+import { nowEpochSeconds } from "./db/timestamps"
 import { createId } from "./db/utils"
 
 export const CHAT_TAG_COLORS = [
@@ -93,7 +94,7 @@ export function createChatTagStore(sqlite: Database.Database) {
     },
     create(input: { name: string; color: ChatTagColor; icon?: ChatTagIcon | null }): ChatTag {
       const names = normalizeName(input.name)
-      const now = Date.now()
+      const now = nowEpochSeconds()
       const id = createId()
       try {
         sqlite
@@ -125,7 +126,7 @@ export function createChatTagStore(sqlite: Database.Database) {
                 .prepare(
                   "UPDATE chat_tags SET name = ?, normalized_name = ?, color = ?, updated_at = ? WHERE id = ?",
                 )
-                .run(names.name, names.normalizedName, input.color, Date.now(), input.id)
+                .run(names.name, names.normalizedName, input.color, nowEpochSeconds(), input.id)
             : sqlite
                 .prepare(
                   "UPDATE chat_tags SET name = ?, normalized_name = ?, color = ?, icon = ?, updated_at = ? WHERE id = ?",
@@ -135,7 +136,7 @@ export function createChatTagStore(sqlite: Database.Database) {
                   names.normalizedName,
                   input.color,
                   input.icon,
-                  Date.now(),
+                  nowEpochSeconds(),
                   input.id,
                 )
         if (result.changes === 0) throw new Error("Tag not found")
@@ -160,7 +161,7 @@ export function createChatTagStore(sqlite: Database.Database) {
         .prepare(
           "INSERT OR IGNORE INTO chat_tag_assignments (chat_id, tag_id, created_at) VALUES (?, ?, ?)",
         )
-        .run(input.chatId, input.tagId, Date.now())
+        .run(input.chatId, input.tagId, nowEpochSeconds())
     },
     unassign(input: { chatId: string; tagId: string }): void {
       sqlite

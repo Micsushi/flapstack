@@ -138,6 +138,91 @@ describe("progressive overflow", () => {
     }
   })
 
+  it("observes each inline item so content-only width changes re-measure the row", () => {
+    const observedElements = new Set<Element>()
+    const originalResizeObserver = globalThis.ResizeObserver
+    class TestResizeObserver {
+      observe(element: Element) {
+        observedElements.add(element)
+      }
+      disconnect() {
+        observedElements.clear()
+      }
+    }
+    globalThis.ResizeObserver = TestResizeObserver as unknown as typeof ResizeObserver
+
+    try {
+      const container = document.createElement("div")
+      document.body.appendChild(container)
+      root = createRoot(container)
+
+      act(() => {
+        root!.render(
+          React.createElement(
+            ProgressiveOverflowRow,
+            { usageRatio: 1, menuLabel: "More actions" },
+            React.createElement("button", { key: "first" }, "Short label"),
+            React.createElement("button", { key: "second" }, "Another"),
+          ),
+        )
+      })
+
+      const items = [
+        ...container.querySelectorAll("[data-progressive-overflow-item]"),
+      ] as HTMLElement[]
+      expect(items).toHaveLength(2)
+      for (const item of items) expect(observedElements.has(item)).toBe(true)
+      expect(
+        observedElements.has(
+          container.querySelector("[data-progressive-overflow-row]") as HTMLElement,
+        ),
+      ).toBe(true)
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver
+    }
+  })
+
+  it("observes items that return from overflow instead of leaving them unwatched", () => {
+    const observedElements = new Set<Element>()
+    const originalResizeObserver = globalThis.ResizeObserver
+    class TestResizeObserver {
+      observe(element: Element) {
+        observedElements.add(element)
+      }
+      disconnect() {
+        observedElements.clear()
+      }
+    }
+    globalThis.ResizeObserver = TestResizeObserver as unknown as typeof ResizeObserver
+
+    try {
+      const container = document.createElement("div")
+      document.body.appendChild(container)
+      root = createRoot(container)
+      const action = React.createElement("button", { key: "only" }, "Action")
+      const render = (forceOverflow: boolean) =>
+        act(() => {
+          root!.render(
+            React.createElement(
+              ProgressiveOverflowRow,
+              { usageRatio: 1, menuLabel: "More actions", forceOverflow },
+              action,
+            ),
+          )
+        })
+
+      render(true)
+      expect(container.querySelector("[data-progressive-overflow-item]")).toBeNull()
+
+      render(false)
+      const item = container.querySelector("[data-progressive-overflow-item]") as HTMLElement
+      expect(item).not.toBeNull()
+      expect(observedElements.has(item)).toBe(true)
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver
+    }
+  })
+
   it("removes controls from the right until the row stays within its usage budget", () => {
     expect(
       resolveProgressiveVisibleCount({

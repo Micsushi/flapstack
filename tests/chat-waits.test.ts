@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
 import {
   advanceChatWaits,
-  listActiveAgentChatWaits,
+  dismissFailedChatWait,
+  listAgentChatWaits,
   registerChatWait,
 } from "../src/main/lib/chat-waits"
 import { createChatTagStore } from "../src/main/lib/chat-tags"
@@ -75,7 +76,7 @@ describe("agent chat waits", () => {
       idempotencyKey: "wait-on-worker",
     })
     expect(registered).toMatchObject({ ok: true, created: true, state: "waiting" })
-    expect(listActiveAgentChatWaits(sqlite)).toEqual([
+    expect(listAgentChatWaits(sqlite)).toEqual([
       expect.objectContaining({
         chatId: "waiter",
         targetChatIds: ["target"],
@@ -92,7 +93,7 @@ describe("agent chat waits", () => {
     expect(advanceChatWaits(databasePath, 0)).toBe(0)
     expect(advanceChatWaits(databasePath, 0)).toBe(1)
 
-    expect(listActiveAgentChatWaits(sqlite)).toEqual([])
+    expect(listAgentChatWaits(sqlite)).toEqual([])
     expect(
       sqlite
         .prepare(
@@ -108,6 +109,99 @@ describe("agent chat waits", () => {
       expect.objectContaining({ name: "Waiting" }),
     ])
     expect(createChatTagStore(sqlite).listForChats(["waiter"]).get("waiter")).toEqual([])
+  })
+
+  it("replays a completed wait as settled instead of telling the agent to keep waiting", () => {
+    const input = {
+      waiterChatId: "waiter",
+      waiterRunId: "run-waiter",
+      targetChatIds: ["target"],
+      idempotencyKey: "wait-replay",
+    }
+    expect(registerChatWait(sqlite, input)).toMatchObject({
+      ok: true,
+      created: true,
+      state: "waiting",
+      active: true,
+    })
+
+    sqlite
+      .prepare(
+        "UPDATE agent_runs SET status = 'success', completed_at = unixepoch() WHERE id IN ('run-waiter','run-target')",
+      )
+      .run()
+    expect(advanceChatWaits(databasePath, 0)).toBe(0)
+    expect(advanceChatWaits(databasePath, 0)).toBe(1)
+    expect(sqlite.prepare("SELECT status FROM chat_waits").get()).toEqual({ status: "completed" })
+
+    // The caller run must be active again for a replay to reach the lookup.
+    sqlite
+      .prepare(
+        "UPDATE agent_runs SET status = 'running', completed_at = NULL WHERE id = 'run-waiter'",
+      )
+      .run()
+    const replay = registerChatWait(sqlite, input)
+
+    expect(replay).toMatchObject({
+      ok: true,
+      created: false,
+      state: "completed",
+      active: false,
+      targetChatIds: ["target"],
+    })
+    // Idempotency is preserved: no second durable wait row is created.
+    expect(sqlite.prepare("SELECT count(*) count FROM chat_waits").get()).toEqual({ count: 1 })
+  })
+
+  it("replays a failed wait as failed and surfaces it until dismissed", () => {
+    const input = {
+      waiterChatId: "waiter",
+      waiterRunId: "run-waiter",
+      targetChatIds: ["target"],
+      idempotencyKey: "wait-that-fails",
+    }
+    expect(registerChatWait(sqlite, input)).toMatchObject({ ok: true, created: true })
+
+    sqlite.prepare("UPDATE chats SET archived_at = unixepoch() WHERE id = 'target'").run()
+    expect(advanceChatWaits(databasePath, 0)).toBe(0)
+    expect(sqlite.prepare("SELECT status FROM chat_waits").get()).toEqual({ status: "failed" })
+
+    const surfaced = listAgentChatWaits(sqlite)
+    expect(surfaced).toEqual([
+      expect.objectContaining({
+        chatId: "waiter",
+        status: "failed",
+        error: "A waiting chat or target was archived or removed.",
+      }),
+    ])
+
+    const replay = registerChatWait(sqlite, input)
+    expect(replay).toMatchObject({ ok: true, created: false, state: "failed", active: false })
+    expect(sqlite.prepare("SELECT count(*) count FROM chat_waits").get()).toEqual({ count: 1 })
+
+    expect(dismissFailedChatWait(sqlite, surfaced[0].id)).toBe(true)
+    expect(listAgentChatWaits(sqlite)).toEqual([])
+    // Dismissal is idempotent and keeps the row durable for audit.
+    expect(dismissFailedChatWait(sqlite, surfaced[0].id)).toBe(false)
+    expect(sqlite.prepare("SELECT status FROM chat_waits").get()).toEqual({ status: "cancelled" })
+  })
+
+  it("bounds the surfaced failure text and never carries prompt content", () => {
+    registerChatWait(sqlite, {
+      waiterChatId: "waiter",
+      waiterRunId: "run-waiter",
+      targetChatIds: ["target"],
+      idempotencyKey: "bounded-error",
+    })
+    sqlite
+      .prepare("UPDATE chat_waits SET status = 'failed', error = ? WHERE waiter_chat_id = 'waiter'")
+      .run(`SECRET-PROMPT-${"x".repeat(900)}`)
+
+    const [surfaced] = listAgentChatWaits(sqlite)
+    expect(surfaced.status).toBe("failed")
+    expect(surfaced.error).toHaveLength(200)
+    expect(surfaced).not.toHaveProperty("prompt")
+    expect(JSON.stringify(surfaced)).not.toContain("x".repeat(201))
   })
 
   it("rejects circular wait dependencies", () => {

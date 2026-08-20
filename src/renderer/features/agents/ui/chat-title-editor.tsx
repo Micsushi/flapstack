@@ -50,6 +50,7 @@ interface ChatTitleEditorProps {
   chatTags?: ChatTagView[]
   agentLabels?: AgentChatLabelView[]
   agentWait?: AgentChatWaitView
+  onDismissAgentWait?: () => void
   workspaceBranch?: string | null
   localFolderPath?: string
   headerActions?: ReactNode
@@ -84,6 +85,7 @@ function areTitlePropsEqual(prev: ChatTitleEditorProps, next: ChatTitleEditorPro
     prev.chatTags === next.chatTags &&
     prev.agentLabels === next.agentLabels &&
     prev.agentWait === next.agentWait &&
+    prev.onDismissAgentWait === next.onDismissAgentWait &&
     prev.workspaceBranch === next.workspaceBranch &&
     prev.localFolderPath === next.localFolderPath &&
     prev.headerActions === next.headerActions
@@ -106,6 +108,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   chatTags = [],
   agentLabels = [],
   agentWait,
+  onDismissAgentWait,
   workspaceBranch,
   localFolderPath,
   headerActions,
@@ -299,7 +302,12 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
     const auxiliaryTags = [
       agentWait ? (
         <span key="agent-wait" className="inline-flex shrink-0" data-chat-header-auxiliary-tag>
-          <AgentChatWaitBadge wait={agentWait} header compact={mode === "compact"} />
+          <AgentChatWaitBadge
+            wait={agentWait}
+            header
+            compact={mode === "compact"}
+            onDismiss={onDismissAgentWait}
+          />
         </span>
       ) : null,
       ...agentLabels.map((label) => (

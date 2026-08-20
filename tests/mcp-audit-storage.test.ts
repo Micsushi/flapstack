@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
   appendMcpAuditRecord,
   redactMcpAuditSummary,
+  summarizeMcpAuditInput,
 } from "../src/main/lib/mcp-control/audit-storage"
 import * as schema from "../src/main/lib/db/schema"
 
@@ -62,6 +63,29 @@ describe("MCP audit storage", () => {
     expect(
       sqlite.prepare("SELECT id FROM mcp_audit_records ORDER BY created_at DESC").all(),
     ).toEqual([{ id: "audit-1" }])
+  })
+
+  it("keeps every waited-on chat identity in the wait_for_chats audit summary", () => {
+    const targetChatIds = ["chat-alpha", "chat-beta", "chat-gamma"]
+    const summary = summarizeMcpAuditInput("wait_for_chats", {
+      targetChatIds,
+      idempotencyKey: "wait-key",
+    }) as { targetChatIds: Array<{ byteLength: number; sha256: string }>; idempotencyKey: unknown }
+
+    expect(summary.idempotencyKey).toMatchObject({ byteLength: "wait-key".length })
+    expect(summary.targetChatIds).toHaveLength(3)
+    expect(summary.targetChatIds.map((entry) => entry.byteLength)).toEqual(
+      targetChatIds.map((id) => id.length),
+    )
+    // Distinct chats must stay distinguishable, and the raw ids must not persist.
+    expect(new Set(summary.targetChatIds.map((entry) => entry.sha256)).size).toBe(3)
+    const stored = redactMcpAuditSummary(summary)
+    for (const id of targetChatIds) expect(stored).not.toContain(id)
+    expect(JSON.parse(stored).targetChatIds).toHaveLength(3)
+
+    expect(summarizeMcpAuditInput("wait_for_chats", { idempotencyKey: "k" })).toMatchObject({
+      targetChatIds: [],
+    })
   })
 
   it("upgrades an actual Stage 2 migration state with safe exposure and audit defaults", () => {

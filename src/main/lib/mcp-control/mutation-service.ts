@@ -405,8 +405,11 @@ function waitForChats(
     ok: true,
     data: {
       ...registered,
-      instruction:
-        "Stop this turn now. Flapstack will independently resume this chat after every target has finished its queued and running work.",
+      // A replayed key can name an already settled wait. Telling the agent to
+      // stop then would strand the chat: nothing is left to resume it.
+      instruction: registered.active
+        ? "Stop this turn now. Flapstack will independently resume this chat after every target has finished its queued and running work."
+        : `This wait already finished with state '${registered.state}' and will not resume this chat again. Continue this turn instead of stopping.`,
     },
   }
 }

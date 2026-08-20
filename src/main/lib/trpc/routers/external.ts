@@ -70,28 +70,30 @@ function resolveRegisteredExternalTarget(targetPath: string): string {
   throw new PathValidationError("Path is outside registered project roots", "INVALID_TARGET")
 }
 
-function assertSafeExternalTarget(targetPath: string): string {
-  const resolved = resolveRegisteredExternalTarget(targetPath)
-  if (isExecutableExternalPath(resolved)) {
+/**
+ * Handing a path to the OS default handler runs whatever that handler decides,
+ * so scripts and binaries stay blocked there. Revealing a file in Explorer or
+ * loading it into an editor never executes it, so tracked .cmd/.ps1/.bat source
+ * files remain openable through those paths.
+ */
+export async function openWithDefaultHandler(targetPath: string): Promise<void> {
+  if (isExecutableExternalPath(targetPath)) {
     throw new PathValidationError(
-      "Executable files cannot be opened through this action",
+      "Executable files cannot be opened with the system default application",
       "INVALID_TARGET",
     )
   }
-  return resolved
+  assertOpenPathSucceeded(await shell.openPath(targetPath), targetPath)
 }
 
 function openPathInApp(app: ExternalApp, targetPath: string): Promise<void> {
-  const expandedPath = assertSafeExternalTarget(targetPath)
+  const expandedPath = resolveRegisteredExternalTarget(targetPath)
   const launch = resolveExternalAppLaunch(process.platform, app, expandedPath)
   if (launch.kind === "reveal") shell.showItemInFolder(launch.path)
-  else if (launch.kind === "default")
-    return shell
-      .openPath(launch.path)
-      .then((result) => assertOpenPathSucceeded(result, launch.path))
+  else if (launch.kind === "default") return openWithDefaultHandler(launch.path)
   else {
     return spawnExternalCommand(process.platform, launch.command, launch.args).catch(() =>
-      shell.openPath(expandedPath).then((result) => assertOpenPathSucceeded(result, expandedPath)),
+      openWithDefaultHandler(expandedPath),
     )
   }
   return Promise.resolve()
@@ -156,7 +158,7 @@ export const externalRouter = router({
       }),
     )
     .mutation(async ({ input }) => {
-      const filePath = assertSafeExternalTarget(input.path)
+      const filePath = resolveRegisteredExternalTarget(input.path)
       const safeCwd = input.cwd ? resolveRegisteredExternalTarget(input.cwd) : undefined
 
       // Try common code editors in order of preference
@@ -181,7 +183,7 @@ export const externalRouter = router({
       }
 
       // Fallback: use shell.openPath which opens with default app
-      assertOpenPathSucceeded(await shell.openPath(filePath), filePath)
+      await openWithDefaultHandler(filePath)
       return { success: true, editor: "default" }
     }),
 
