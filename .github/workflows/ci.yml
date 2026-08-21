@@ -93,6 +93,8 @@ jobs:
         run: npm run check
 
       - name: Build Windows Preview
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: npm run package:preview:win
 
       - name: Inspect Windows Preview
