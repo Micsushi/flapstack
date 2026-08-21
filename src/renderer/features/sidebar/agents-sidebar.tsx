@@ -977,6 +977,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   onMouseEnter,
   onMouseLeave,
   onArchive,
+  onDismissAgentWait,
   onTogglePin,
   onToggleStar,
   onRenameClick,
@@ -1055,6 +1056,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   ) => void
   onMouseLeave: () => void
   onArchive: (chatId: string) => void
+  onDismissAgentWait: (waitId: string) => void
   onTogglePin: (chatId: string) => void
   onToggleStar: (chatId: string) => void
   onRenameClick: (chat: { id: string; name: string | null; isRemote?: boolean }) => void
@@ -1647,7 +1649,16 @@ const AgentChatItem = React.memo(function AgentChatItem({
                     )}
                   </div>
                 )}
-                {chatAgentWait && <AgentChatWaitBadge wait={chatAgentWait} />}
+                {chatAgentWait && (
+                  <AgentChatWaitBadge
+                    wait={chatAgentWait}
+                    onDismiss={
+                      chatAgentWait.status === "failed"
+                        ? () => onDismissAgentWait(chatAgentWait.id)
+                        : undefined
+                    }
+                  />
+                )}
                 {chatAgentLabels.slice(0, 1).map((label) => (
                   <AgentChatLabelBadge key={label.key} label={label} />
                 ))}
@@ -2038,6 +2049,7 @@ interface ChatListSectionProps {
   ) => void
   onMouseLeave: () => void
   onArchive: (chatId: string) => void
+  onDismissAgentWait: (waitId: string) => void
   onTogglePin: (chatId: string) => void
   onToggleStar: (chatId: string) => void
   onRenameClick: (chat: { id: string; name: string | null; isRemote?: boolean }) => void
@@ -2127,6 +2139,7 @@ const ChatListSection = React.memo(function ChatListSection({
   onMouseEnter,
   onMouseLeave,
   onArchive,
+  onDismissAgentWait,
   onTogglePin,
   onToggleStar,
   onRenameClick,
@@ -2973,6 +2986,7 @@ const ChatListSection = React.memo(function ChatListSection({
                       onMouseEnter={onMouseEnter}
                       onMouseLeave={onMouseLeave}
                       onArchive={onArchive}
+                      onDismissAgentWait={onDismissAgentWait}
                       onTogglePin={onTogglePin}
                       onToggleStar={onToggleStar}
                       onRenameClick={onRenameClick}
@@ -3694,6 +3708,14 @@ export function AgentsSidebar({
   const { data: archivedChats } = trpc.chats.listArchived.useQuery({}, { enabled: isArchiveOpen })
   // Get utils outside of callbacks - hooks must be called at top level
   const utils = trpc.useUtils()
+  const dismissAgentWaitMutation = trpc.chats.dismissAgentWait.useMutation({
+    onSuccess: () => utils.chats.listAgentMetadata.invalidate(),
+    onError: () => toast.error("Failed to dismiss agent wait"),
+  })
+  const handleDismissAgentWait = useCallback(
+    (waitId: string) => dismissAgentWaitMutation.mutate({ waitId }),
+    [dismissAgentWaitMutation],
+  )
 
   // Unified undo stack for workspaces and sub-chats (Jotai atom)
   const [undoStack, setUndoStack] = useAtom(undoStackAtom)
@@ -3730,15 +3752,21 @@ export function AgentsSidebar({
   })
 
   const deleteArchivedChatsMutation = trpc.chats.deleteArchived.useMutation({
-    onSuccess: ({ deletedCount }) => {
+    onSuccess: ({ deletedCount, failedChatIds }) => {
       utils.chats.list.invalidate()
       utils.chats.listArchived.invalidate()
       utils.chats.getFileStats.invalidate()
       setSelectedArchivedChatIds(new Set())
       setIsArchiveSelectMode(false)
-      toast.success(
-        deletedCount === 1 ? "Deleted 1 archived chat" : `Deleted ${deletedCount} archived chats`,
-      )
+      if (failedChatIds.length > 0) {
+        toast.warning(
+          `Deleted ${deletedCount} archived ${deletedCount === 1 ? "chat" : "chats"}; ${failedChatIds.length} could not be cleaned up and remain available to retry.`,
+        )
+      } else {
+        toast.success(
+          deletedCount === 1 ? "Deleted 1 archived chat" : `Deleted ${deletedCount} archived chats`,
+        )
+      }
     },
     onError: () => toast.error("Failed to delete archived chats"),
   })
@@ -7175,6 +7203,7 @@ export function AgentsSidebar({
     onMouseEnter: handleAgentMouseEnter,
     onMouseLeave: handleAgentMouseLeave,
     onArchive: handleArchiveSingle,
+    onDismissAgentWait: handleDismissAgentWait,
     onTogglePin: handleTogglePin,
     onToggleStar: handleToggleStar,
     onRenameClick: handleRenameClick,

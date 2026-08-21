@@ -91,6 +91,7 @@ import { cleanupGitWatchers } from "./lib/git/watcher"
 import { recoverInterruptedImports } from "./lib/portability/importer"
 import { beginExclusivePortabilityOperation } from "./lib/portability/operations"
 import { cancelAllPendingOAuth, handleMcpOAuthCallback } from "./lib/mcp-auth"
+import { migrateClaudeMcpSecretFiles } from "./lib/mcp-secrets"
 import {
   getAllMcpConfigHandler,
   hasActiveClaudeSessions,
@@ -680,6 +681,23 @@ if (gotTheLock) {
       app.setName(APP_DISPLAY_NAME)
     }
 
+    try {
+      const migration = await migrateClaudeMcpSecretFiles()
+      if (migration.migrated > 0) {
+        console.info(`[MCP] Protected ${migration.migrated} plaintext credential bundle(s).`)
+      }
+      if (migration.deferred > 0) {
+        console.warn(
+          `[MCP] Deferred ${migration.deferred} credential migration(s) because secure persistence is unavailable.`,
+        )
+      }
+    } catch (error) {
+      console.error(
+        "[MCP] Credential migration stopped; unprocessed config sources are unchanged:",
+        error,
+      )
+    }
+
     // Register protocol handler (must be after app is ready)
     initialRegistration = registerProtocol()
 
@@ -1229,7 +1247,7 @@ if (gotTheLock) {
                       )
                       if (handled) recordRunningRunUsageBudgetStop(usageDatabase, request)
                     }
-                    advanceChatWaits(databasePath)
+                    advanceChatWaits(getSqliteDatabase())
                     await drainPendingMcpRuns(databasePath, pendingRunLauncher)
                   } catch (error) {
                     console.error("[App] Pending run launch failed:", error)

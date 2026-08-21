@@ -43,7 +43,7 @@ describe("renderer production content security policy", () => {
       .map((entry) => entry.trim())
       .find((entry) => entry.startsWith("connect-src "))
 
-    expect(connectDirective).toBe("connect-src 'self' ws://localhost:* http://localhost:*")
+    expect(connectDirective).toBe("connect-src 'self'")
     expect(connectDirective).not.toContain("posthog")
   })
 })

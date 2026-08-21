@@ -1,6 +1,5 @@
 import type Database from "better-sqlite3"
 import { randomUUID } from "node:crypto"
-import { openAppDatabase } from "./db/access"
 import { nowEpochSeconds } from "./db/timestamps"
 import { queueChatRun } from "./run-launch-service"
 
@@ -161,86 +160,79 @@ function toChatWaitState(status: string): ChatWaitState {
  * target has stayed free of pending/running work for a short quiet period.
  */
 export function advanceChatWaits(
-  databasePath: string,
+  database: Database.Database,
   quietPeriodSeconds = DEFAULT_QUIET_PERIOD_SECONDS,
 ): number {
-  const database = openAppDatabase(databasePath)
-  database.pragma("foreign_keys = ON")
-  database.pragma("busy_timeout = 5000")
-  try {
-    const waits = database
-      .prepare(
-        `SELECT id, waiter_chat_id, waiter_run_id, target_chat_ids, idempotency_key,
+  const waits = database
+    .prepare(
+      `SELECT id, waiter_chat_id, waiter_run_id, target_chat_ids, idempotency_key,
                 status, settled_at
          FROM chat_waits WHERE status IN ('waiting','resuming') ORDER BY created_at, id`,
-      )
-      .all() as WaitRow[]
-    let resumed = 0
-    for (const wait of waits) {
-      const now = nowEpochSeconds()
-      const targetChatIds = parseTargetIds(wait.target_chat_ids)
-      if (targetChatIds.length === 0) {
-        failWait(database, wait.id, "Wait targets are invalid.", now)
-        continue
-      }
-      if (!allChatsActive(database, [wait.waiter_chat_id, ...targetChatIds])) {
-        failWait(database, wait.id, "A waiting chat or target was archived or removed.", now)
-        continue
-      }
-      if (hasActiveRun(database, targetChatIds)) {
-        if (wait.settled_at !== null) {
-          database
-            .prepare("UPDATE chat_waits SET settled_at = NULL, updated_at = ? WHERE id = ?")
-            .run(now, wait.id)
-        }
-        continue
-      }
-      if (wait.status === "waiting" && wait.settled_at === null) {
+    )
+    .all() as WaitRow[]
+  let resumed = 0
+  for (const wait of waits) {
+    const now = nowEpochSeconds()
+    const targetChatIds = parseTargetIds(wait.target_chat_ids)
+    if (targetChatIds.length === 0) {
+      failWait(database, wait.id, "Wait targets are invalid.", now)
+      continue
+    }
+    if (!allChatsActive(database, [wait.waiter_chat_id, ...targetChatIds])) {
+      failWait(database, wait.id, "A waiting chat or target was archived or removed.", now)
+      continue
+    }
+    if (hasActiveRun(database, targetChatIds)) {
+      if (wait.settled_at !== null) {
         database
-          .prepare("UPDATE chat_waits SET settled_at = ?, updated_at = ? WHERE id = ?")
-          .run(now, now, wait.id)
-        continue
-      }
-      if (
-        wait.status === "waiting" &&
-        now - Number(wait.settled_at) < Math.max(0, quietPeriodSeconds)
-      ) {
-        continue
-      }
-      if (hasActiveRun(database, [wait.waiter_chat_id])) continue
-
-      if (wait.status === "waiting") {
-        const claimed = database
-          .prepare(
-            "UPDATE chat_waits SET status = 'resuming', updated_at = ? WHERE id = ? AND status = 'waiting'",
-          )
+          .prepare("UPDATE chat_waits SET settled_at = NULL, updated_at = ? WHERE id = ?")
           .run(now, wait.id)
-        if (claimed.changes === 0) continue
       }
-
-      const targetNames = chatNames(database, targetChatIds)
-      const queued = queueChatRun(database, {
-        chatId: wait.waiter_chat_id,
-        idempotencyKey: `wait-resume-${wait.id}`,
-        initialPrompt: buildWaitResumePrompt(targetNames),
-      })
-      if (!queued.ok) {
-        failWait(database, wait.id, queued.message, now)
-        continue
-      }
+      continue
+    }
+    if (wait.status === "waiting" && wait.settled_at === null) {
       database
+        .prepare("UPDATE chat_waits SET settled_at = ?, updated_at = ? WHERE id = ?")
+        .run(now, now, wait.id)
+      continue
+    }
+    if (
+      wait.status === "waiting" &&
+      now - Number(wait.settled_at) < Math.max(0, quietPeriodSeconds)
+    ) {
+      continue
+    }
+    if (hasActiveRun(database, [wait.waiter_chat_id])) continue
+
+    if (wait.status === "waiting") {
+      const claimed = database
         .prepare(
-          `UPDATE chat_waits
+          "UPDATE chat_waits SET status = 'resuming', updated_at = ? WHERE id = ? AND status = 'waiting'",
+        )
+        .run(now, wait.id)
+      if (claimed.changes === 0) continue
+    }
+
+    const targetNames = chatNames(database, targetChatIds)
+    const queued = queueChatRun(database, {
+      chatId: wait.waiter_chat_id,
+      idempotencyKey: `wait-resume-${wait.id}`,
+      initialPrompt: buildWaitResumePrompt(targetNames),
+    })
+    if (!queued.ok) {
+      failWait(database, wait.id, queued.message, now)
+      continue
+    }
+    database
+      .prepare(
+        `UPDATE chat_waits
            SET status = 'completed', resumed_run_id = ?, completed_at = ?, updated_at = ?, error = NULL
            WHERE id = ?`,
-        )
-        .run(queued.runId, now, now, wait.id)
-      resumed += queued.created ? 1 : 0
-    }
-    return resumed
-  } finally {
-    database.close()
+      )
+      .run(queued.runId, now, now, wait.id)
+    resumed += queued.created ? 1 : 0
   }
+  return resumed
 }
 
 /**
@@ -260,14 +252,18 @@ export function listAgentChatWaits(database: Database.Database): AgentChatWait[]
   const rows = [
     ...(database
       .prepare(
-        `SELECT id, waiter_chat_id, target_chat_ids, status, error, created_at
-         FROM chat_waits WHERE status IN ('waiting','resuming') ORDER BY created_at, id`,
+        `SELECT w.id, w.waiter_chat_id, w.target_chat_ids, w.status, w.error, w.created_at
+         FROM chat_waits w
+         INNER JOIN chats c ON c.id = w.waiter_chat_id AND c.archived_at IS NULL
+         WHERE w.status IN ('waiting','resuming') ORDER BY w.created_at, w.id`,
       )
       .all() as SurfacedRow[]),
     ...(database
       .prepare(
-        `SELECT id, waiter_chat_id, target_chat_ids, status, error, created_at
-         FROM chat_waits WHERE status = 'failed' ORDER BY updated_at DESC, id LIMIT ?`,
+        `SELECT w.id, w.waiter_chat_id, w.target_chat_ids, w.status, w.error, w.created_at
+         FROM chat_waits w
+         INNER JOIN chats c ON c.id = w.waiter_chat_id AND c.archived_at IS NULL
+         WHERE w.status = 'failed' ORDER BY w.updated_at DESC, w.id LIMIT ?`,
       )
       .all(MAX_SURFACED_FAILED_WAITS) as SurfacedRow[]),
   ]

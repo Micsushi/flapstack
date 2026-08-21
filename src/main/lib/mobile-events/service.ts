@@ -59,6 +59,7 @@ type ActiveConnection = {
   snapshotPending: boolean
   closed: boolean
   expiryTimer: ReturnType<typeof setTimeout> | null
+  commandQueue: Promise<void>
   cleanup: () => void
 }
 
@@ -305,7 +306,12 @@ export class MobileEventService {
         const value = parseJson(bytes)
         const command = mobileCommandEnvelopeSchema.safeParse(value)
         if (command.success) {
-          void this.handleCommand(connection, command.data)
+          connection.commandQueue = connection.commandQueue
+            .then(() => this.handleCommand(connection!, command.data))
+            .catch((error) => {
+              console.error("[mobile-events] Command queue failed:", error)
+              this.closeConnection(connection!, 1008, "command-failed")
+            })
           return
         }
         const request = mobileSnapshotPageRequestSchema.parse(value)
@@ -322,8 +328,7 @@ export class MobileEventService {
         this.send(connection, snapshot)
         if (!connection.snapshotPending) this.pump(connection)
       } catch {
-        transport.close(1008, "invalid-snapshot-page")
-        connection.cleanup()
+        this.closeConnection(connection, 1008, "invalid-snapshot-page")
       }
     })
     transport.onClose(() => {
@@ -337,8 +342,7 @@ export class MobileEventService {
     command: MobileCommandEnvelope,
   ): Promise<void> {
     if (connection.closed || connection.snapshotPending || !this.options.actions) {
-      connection.transport.close(1008, "command-unavailable")
-      connection.cleanup()
+      this.closeConnection(connection, 1008, "command-unavailable")
       return
     }
     try {
@@ -358,8 +362,21 @@ export class MobileEventService {
       })
       this.sendActionResult(connection, command, result)
     } catch {
-      connection.transport.close(1008, "command-failed")
-      connection.cleanup()
+      this.closeConnection(connection, 1008, "command-failed")
+    }
+  }
+
+  private closeConnection(connection: ActiveConnection, code: number, reason: string): void {
+    try {
+      connection.transport.close(code, reason)
+    } catch (error) {
+      console.error(`[mobile-events] Transport close failed (${reason}):`, error)
+    } finally {
+      try {
+        connection.cleanup()
+      } catch (error) {
+        console.error(`[mobile-events] Connection cleanup failed (${reason}):`, error)
+      }
     }
   }
 
@@ -612,6 +629,7 @@ export class MobileEventService {
       snapshotPending: input.snapshotPending,
       closed: false,
       expiryTimer: null,
+      commandQueue: Promise.resolve(),
       cleanup: () => {
         if (connection.closed) return
         connection.closed = true

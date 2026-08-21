@@ -48,6 +48,9 @@ describe("external navigation safety", () => {
 
   it("blocks executable file types regardless of case", () => {
     expect(isExecutableExternalPath("C:/project/setup.PS1")).toBe(true)
+    for (const extension of ["js", "jse", "vbs", "vbe", "wsf", "wsh", "hta"]) {
+      expect(isExecutableExternalPath(`C:/project/payload.${extension}`)).toBe(true)
+    }
     expect(isExecutableExternalPath("C:/project/readme.md")).toBe(false)
   })
 })

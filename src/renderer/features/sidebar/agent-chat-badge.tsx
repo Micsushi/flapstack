@@ -98,7 +98,15 @@ export function AgentChatWaitBadge({
           ? "border-rose-500/45 bg-rose-500/10 text-rose-700 dark:text-rose-300"
           : "border-amber-500/45 bg-amber-500/10 text-amber-700 dark:text-amber-300",
         header ? "h-7 text-[13px]" : "h-4 text-[10px]",
-        compact ? (header ? "w-7 p-0" : "w-4 p-0") : header ? "gap-1.5 px-2.5" : "gap-1 px-1.5",
+        compact
+          ? failed && onDismiss
+            ? "w-auto gap-0.5 px-1"
+            : header
+              ? "w-7 p-0"
+              : "w-4 p-0"
+          : header
+            ? "gap-1.5 px-2.5"
+            : "gap-1 px-1.5",
       )}
     >
       <Bot className={iconSize} aria-hidden="true" />
@@ -110,7 +118,7 @@ export function AgentChatWaitBadge({
       {!compact && (
         <span>{failed ? "Wait failed" : wait.status === "resuming" ? "Resuming" : "Waiting"}</span>
       )}
-      {failed && !compact && onDismiss && (
+      {failed && onDismiss && (
         <button
           type="button"
           aria-label="Dismiss failed wait"

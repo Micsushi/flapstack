@@ -6,6 +6,7 @@ import { agentRuns, chats, orchestrationAgents, subChats } from "../db/schema"
 import { cancelStaleRunningRuns } from "../agent-run-lifecycle"
 import { getDatabase } from "../db"
 import { captureCheckpoint, captureRunManifest } from "../checkpoints"
+import { assertSubChatNotRewinding } from "../sub-chat-rewind-guard"
 import { McpApprovalLifecycle } from "../mcp-control/approval-lifecycle"
 import { createSqliteMcpApprovalCoordinator } from "../mcp-control/approval-coordinator"
 import { publishProductMcpInvalidation } from "../mcp-control/invalidation-bridge"
@@ -1009,6 +1010,7 @@ export function createDatabaseLocalModelRunPersistence(db: AppDatabase): LocalMo
           })
         }
 
+        assertSubChatNotRewinding(input.subChatId)
         const runValues = {
           chatId: input.chatId,
           subChatId: input.subChatId,

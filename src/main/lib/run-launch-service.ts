@@ -36,6 +36,7 @@ import { resolveAgentHotlineEnabled } from "../../shared/agent-hotline"
 import { readDurableAgentProfileRuntimeAuthority } from "./agent-profiles/runtime-authority"
 import { canonicalJson } from "./agent-profiles/values"
 import { parseDurableOrchestrationAgentDefinition } from "./agent-orchestration/durable-definition"
+import { isSubChatRewinding } from "./sub-chat-rewind-guard"
 
 export type QueuedAgentRun = {
   runId: string
@@ -100,6 +101,13 @@ export function queueChatRun(
     .get(input.chatId) as Row | undefined
   if (!subChat) {
     return { ok: false, code: "stale-target", message: "Chat conversation is missing." }
+  }
+  if (isSubChatRewinding(String(subChat.id))) {
+    return {
+      ok: false,
+      code: "permission-denied",
+      message: "Message history is being rewound; retry after it finishes.",
+    }
   }
   const model = subChat.model ?? chat.model ?? null
   if ((harness === "openrouter" || harness === "nanogpt" || harness === "local") && !model) {

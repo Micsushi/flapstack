@@ -50,6 +50,8 @@ export function McpStatusDot({ status, disabled }: { status: string; disabled?: 
       return <span className="w-2 h-2 rounded-full bg-yellow-500 shrink-0" />
     case "pending":
       return <LoadingDot isLoading={true} className="w-3 h-3 text-muted-foreground shrink-0" />
+    case "pending-approval":
+      return <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
     default:
       return <span className="w-2 h-2 rounded-full bg-muted-foreground/50 shrink-0" />
   }
@@ -101,6 +103,7 @@ function McpServerDetail({
   onLogout,
   onDelete,
   onToggleEnabled,
+  onApproveProjectConfig,
   isEditable,
   isToggleable,
   isToggling,
@@ -111,6 +114,7 @@ function McpServerDetail({
   onLogout?: () => void
   onDelete?: () => void
   onToggleEnabled?: (enabled: boolean) => void
+  onApproveProjectConfig?: () => void
   isEditable?: boolean
   isToggleable?: boolean
   isToggling?: boolean
@@ -145,6 +149,16 @@ function McpServerDetail({
           {needsAuth && onAuth && (
             <Button variant="secondary" size="sm" className="h-7 px-3 text-xs" onClick={onAuth}>
               {isConnected ? "Reconnect" : "Authenticate"}
+            </Button>
+          )}
+          {server.status === "pending-approval" && onApproveProjectConfig && (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="h-7 px-3 text-xs"
+              onClick={onApproveProjectConfig}
+            >
+              Approve project config
             </Button>
           )}
           {onLogout && (
@@ -528,6 +542,7 @@ export function AgentsMcpTab() {
   const updateMutation = trpc.claude.updateMcpServer.useMutation()
   const removeClaudeMcpMutation = trpc.claude.removeMcpServer.useMutation()
   const removeCodexMcpMutation = trpc.codex.removeMcpServer.useMutation()
+  const approveProjectMcpMutation = trpc.claudeSettings.approveProjectMcpConfig.useMutation()
 
   const sortedGroupsByProvider = useMemo(() => {
     const statusOrder: Record<string, number> = {
@@ -716,6 +731,17 @@ export function AgentsMcpTab() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to toggle server"
       toast.error(message)
+    }
+  }
+
+  const handleApproveProjectConfig = async (item: ListedServer) => {
+    if (!item.projectPath) return
+    try {
+      await approveProjectMcpMutation.mutateAsync({ projectPath: item.projectPath })
+      toast.success("Project MCP configuration approved for its current contents")
+      await handleRefresh(true, "claude-code")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to approve project MCP config")
     }
   }
 
@@ -965,6 +991,12 @@ export function AgentsMcpTab() {
             onToggleEnabled={
               isToggleableServer(selectedServer)
                 ? (enabled) => handleToggleEnabled(selectedServer, enabled)
+                : undefined
+            }
+            onApproveProjectConfig={
+              selectedServer.provider === "claude-code" &&
+              selectedServer.server.status === "pending-approval"
+                ? () => handleApproveProjectConfig(selectedServer)
                 : undefined
             }
             isEditable={isEditableServer(selectedServer)}

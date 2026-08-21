@@ -305,7 +305,7 @@ export function validateRelativePath(filePath: string, options: ValidatePathOpti
   const { allowRoot = false } = options
 
   // Reject absolute paths
-  if (isAbsolute(filePath)) {
+  if (isAbsolute(filePath) || /^[a-zA-Z]:/.test(filePath)) {
     throw new PathValidationError("Absolute paths are not allowed", "ABSOLUTE_PATH")
   }
 

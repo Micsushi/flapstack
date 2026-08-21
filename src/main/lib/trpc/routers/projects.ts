@@ -2,7 +2,7 @@ import { z } from "zod"
 import { router, publicProcedure } from "../index"
 import { getDatabase, projects } from "../../db"
 import { eq, desc, isNull, isNotNull } from "drizzle-orm"
-import { dialog, BrowserWindow, app } from "electron"
+import { dialog, app } from "electron"
 import { basename, join } from "path"
 import { exec } from "node:child_process"
 import { promisify } from "node:util"
@@ -135,7 +135,7 @@ export const projectsRouter = router({
    * Open folder picker and create project
    */
   openFolder: publicProcedure.mutation(async ({ ctx }) => {
-    const window = ctx.getWindow?.() ?? BrowserWindow.getFocusedWindow()
+    const window = ctx.getWindow?.()
 
     if (!window) {
       console.error("[Projects] No window available for folder dialog")
@@ -416,7 +416,7 @@ export const projectsRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      const window = ctx.getWindow?.() ?? BrowserWindow.getFocusedWindow()
+      const window = ctx.getWindow?.()
 
       if (!window) {
         return { success: false as const, reason: "no-window" as const }
@@ -499,7 +499,7 @@ export const projectsRouter = router({
   pickCloneDestination: publicProcedure
     .input(z.object({ suggestedName: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      const window = ctx.getWindow?.() ?? BrowserWindow.getFocusedWindow()
+      const window = ctx.getWindow?.()
 
       if (!window) {
         return { success: false as const, reason: "no-window" as const }
@@ -537,7 +537,7 @@ export const projectsRouter = router({
   uploadIcon: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      const window = ctx.getWindow?.() ?? BrowserWindow.getFocusedWindow()
+      const window = ctx.getWindow?.()
       if (!window) return null
 
       if (!window.isFocused()) {

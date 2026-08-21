@@ -1342,8 +1342,8 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
       ipcHandler = createIPCHandler({
         router: createAppRouter(getWindow),
         windows: [createdWindow],
-        createContext: async () => ({
-          getWindow,
+        createContext: async ({ event }) => ({
+          getWindow: () => BrowserWindow.fromWebContents(event.sender),
         }),
       })
     }

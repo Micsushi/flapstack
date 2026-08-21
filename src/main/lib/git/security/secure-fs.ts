@@ -381,7 +381,10 @@ export const secureFs = {
   async lstat(worktreePath: string, filePath: string): Promise<Stats> {
     assertRegisteredWorktree(worktreePath)
     const fullPath = resolvePathInWorktree(worktreePath, filePath)
-    return lstat(fullPath)
+    await assertParentInWorktree(worktreePath, fullPath)
+    const stats = await lstat(fullPath)
+    await assertParentInWorktree(worktreePath, fullPath)
+    return stats
   },
 
   /**

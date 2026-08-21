@@ -81,15 +81,16 @@ describe("external app launch", () => {
       const env = { ...process.env }
       delete env.Path
       env.PATH = `${shimDirectory};${process.env.PATH ?? process.env.Path ?? ""}`
+      env.FLAPSTACK_ARG_SECRET = "expanded-secret"
       await spawnExternalCommand(
         "win32",
         "fixture-command",
-        [outputPath, "launched successfully"],
+        [outputPath, "%FLAPSTACK_ARG_SECRET%"],
         { env },
       )
 
       await vi.waitFor(
-        () => expect(readFileSync(outputPath, "utf8").trim()).toBe("launched successfully"),
+        () => expect(readFileSync(outputPath, "utf8").trim()).toBe("%FLAPSTACK_ARG_SECRET%"),
         { timeout: 5_000, interval: 25 },
       )
     },

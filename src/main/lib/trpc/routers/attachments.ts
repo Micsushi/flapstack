@@ -101,7 +101,12 @@ export const attachmentsRouter = router({
         taskId: z.string().optional().nullable(),
         kind: textAttachmentKindSchema.default("pasted-text"),
         name: z.string().min(1),
-        contentText: z.string(),
+        contentText: z
+          .string()
+          .refine(
+            (value) => Buffer.byteLength(value, "utf8") <= MAX_ATTACHMENT_BYTES,
+            `Attachment exceeds the ${MAX_ATTACHMENT_BYTES}-byte size limit`,
+          ),
       }),
     )
     .mutation(({ input }) => {

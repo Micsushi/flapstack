@@ -55,8 +55,15 @@ vi.mock("../src/main/lib/external/app-launch", async (importOriginal) => {
 
 import { closeDatabase } from "../src/main/lib/db"
 import * as schema from "../src/main/lib/db/schema"
-import { bindRegisteredFilesystemRoot } from "../src/main/lib/git/security/path-validation"
-import { externalRouter, openWithDefaultHandler } from "../src/main/lib/trpc/routers/external"
+import {
+  bindRegisteredFilesystemRoot,
+  PathValidationError,
+} from "../src/main/lib/git/security/path-validation"
+import {
+  externalRouter,
+  openWithDefaultHandler,
+  resolveRegisteredExternalTarget,
+} from "../src/main/lib/trpc/routers/external"
 
 let container = ""
 let worktreePath = ""
@@ -165,5 +172,16 @@ describe("external executable guard", () => {
     )
     expect(state.revealed).toEqual([])
     expect(state.spawned).toEqual([])
+  })
+
+  it("normalizes a missing parent into a path validation error", () => {
+    expect(() =>
+      resolveRegisteredExternalTarget(join(worktreePath, "missing-parent", "file.txt")),
+    ).toThrowError(PathValidationError)
+    try {
+      resolveRegisteredExternalTarget(join(worktreePath, "missing-parent", "file.txt"))
+    } catch (error) {
+      expect(error).toMatchObject({ code: "INVALID_TARGET" })
+    }
   })
 })

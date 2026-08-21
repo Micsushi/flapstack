@@ -130,7 +130,23 @@ const READ_GIT_COMMANDS = new Set(["status", "diff", "log", "show", "rev-parse"]
 const WRITE_GIT_COMMANDS = new Set(["restore"])
 const SECRET_ENV_KEY =
   /(?:api[-_]?key|authorization|credential|cookie|pass(?:word)?|secret|token|private[-_]?key|session(?:[-_]?id)?|access[-_]?token|refresh[-_]?token)/i
-const SAFE_ENV_KEYS = new Set(["HOME", "LANG", "LC_ALL", "PATH", "SHELL", "TMPDIR"])
+const SAFE_ENV_KEYS = new Set([
+  "COMSPEC",
+  "HOME",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "LANG",
+  "LC_ALL",
+  "PATH",
+  "PATHEXT",
+  "SHELL",
+  "SYSTEMROOT",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "USERPROFILE",
+  "WINDIR",
+])
 
 class ExecArgumentsError extends Error {}
 class RootBindingError extends Error {}
@@ -812,7 +828,7 @@ function filterEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     ...Object.fromEntries(
       Object.entries(environment).filter(
         ([key, value]) =>
-          SAFE_ENV_KEYS.has(key) && !SECRET_ENV_KEY.test(key) && value !== undefined,
+          SAFE_ENV_KEYS.has(key.toUpperCase()) && !SECRET_ENV_KEY.test(key) && value !== undefined,
       ),
     ),
     GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",

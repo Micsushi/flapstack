@@ -10,10 +10,17 @@ const EXECUTABLE_EXTENSIONS = new Set([
   ".cmd",
   ".com",
   ".exe",
+  ".hta",
+  ".js",
+  ".jse",
   ".lnk",
   ".msi",
   ".ps1",
   ".scr",
+  ".vbe",
+  ".vbs",
+  ".wsf",
+  ".wsh",
 ])
 
 export function isSafeExternalUrl(url: string): boolean {

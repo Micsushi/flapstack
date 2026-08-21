@@ -28,6 +28,7 @@ import { applyAutomaticChatTags, CHAT_TAG_COLORS, CHAT_TAG_ICONS } from "../../c
 import { applyAutomaticAgentChatLabels, listAgentChatLabels } from "../../chat-agent-labels"
 import { dismissFailedChatWait, listAgentChatWaits } from "../../chat-waits"
 import { restoreCheckpoint } from "../../checkpoints"
+import { withSubChatRewindGuard } from "../../sub-chat-rewind-guard"
 import {
   createWorktreeForChat,
   fetchGitHubPRStatus,
@@ -413,6 +414,16 @@ Commit message:`
   }
 }
 
+async function filesystemEntryExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.lstat(filePath)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+    throw error
+  }
+}
+
 export const chatsRouter = router({
   /**
    * List all non-archived chats (optionally filter by project)
@@ -737,7 +748,7 @@ export const chatsRouter = router({
   chooseReplacementCheckout: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      const window = ctx.getWindow?.() ?? BrowserWindow.getFocusedWindow()
+      const window = ctx.getWindow?.()
       if (!window) throw new Error("No window available for checkout selection")
       const selection = await dialog.showOpenDialog(window, {
         properties: ["openDirectory"],
@@ -758,7 +769,7 @@ export const chatsRouter = router({
   chooseCheckout: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      const window = ctx.getWindow?.() ?? BrowserWindow.getFocusedWindow()
+      const window = ctx.getWindow?.()
       if (!window) throw new Error("No window available for checkout selection")
       const selection = await dialog.showOpenDialog(window, {
         properties: ["openDirectory"],
@@ -777,7 +788,7 @@ export const chatsRouter = router({
     }),
 
   chooseWorktreeParentDirectory: publicProcedure.mutation(async ({ ctx }) => {
-    const window = ctx.getWindow?.() ?? BrowserWindow.getFocusedWindow()
+    const window = ctx.getWindow?.()
     if (!window) throw new Error("No window available for folder selection")
     const selection = await dialog.showOpenDialog(window, {
       properties: ["openDirectory", "createDirectory"],
@@ -1443,10 +1454,20 @@ export const chatsRouter = router({
       const project = chat.projectId
         ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
         : null
-      if (project) {
+      if (!project) {
+        if (await filesystemEntryExists(chat.worktreePath)) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Worktree cleanup requires the registered project; chat was not deleted",
+          })
+        }
+      } else {
         const result = await removeWorktree(project.path, chat.worktreePath)
         if (!result.success) {
-          console.warn(`[Worktree] Cleanup failed: ${result.error}`)
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: `Worktree cleanup failed; chat was not deleted: ${result.error}`,
+          })
         }
       }
     }
@@ -1482,25 +1503,36 @@ export const chatsRouter = router({
     .mutation(async ({ input }) => {
       const db = getDatabase()
       const requestedIds = input?.ids ? [...new Set(input.ids)] : null
-      if (requestedIds?.length === 0) return { deletedCount: 0 }
+      if (requestedIds?.length === 0) return { deletedCount: 0, failedChatIds: [] }
 
       const archivedCondition = requestedIds
         ? and(isNotNull(chats.archivedAt), inArray(chats.id, requestedIds))
         : isNotNull(chats.archivedAt)
       const archivedChats = db.select().from(chats).where(archivedCondition).all()
 
+      const deletableChats = []
+      const failedChatIds: string[] = []
       for (const chat of archivedChats) {
         if (chat.worktreePath && chat.branch) {
           const project = chat.projectId
             ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
             : null
-          if (project) {
+          if (!project) {
+            if (await filesystemEntryExists(chat.worktreePath)) {
+              failedChatIds.push(chat.id)
+              continue
+            }
+          } else {
             const result = await removeWorktree(project.path, chat.worktreePath)
             if (!result.success) {
               console.warn(`[Worktree] Cleanup failed: ${result.error}`)
+              failedChatIds.push(chat.id)
+              continue
             }
           }
         }
+
+        deletableChats.push(chat)
 
         if (chat.branch) {
           terminalManager.killByWorkspaceId(chat.id).catch((error) => {
@@ -1517,18 +1549,18 @@ export const chatsRouter = router({
         }
       }
 
-      if (archivedChats.length > 0) {
+      if (deletableChats.length > 0) {
         db.delete(chats)
           .where(
             inArray(
               chats.id,
-              archivedChats.map((chat) => chat.id),
+              deletableChats.map((chat) => chat.id),
             ),
           )
           .run()
       }
 
-      return { deletedCount: archivedChats.length }
+      return { deletedCount: deletableChats.length, failedChatIds }
     }),
 
   // ============ Sub-chat procedures ============
@@ -1886,99 +1918,101 @@ export const chatsRouter = router({
   editLatestUserMessage: publicProcedure
     .input(z.object({ subChatId: z.string(), userMessageId: z.string() }))
     .mutation(async ({ input }) => {
-      const db = getDatabase()
-      const subChat = db.select().from(subChats).where(eq(subChats.id, input.subChatId)).get()
-      if (!subChat) throw new TRPCError({ code: "NOT_FOUND", message: "Chat not found" })
+      return withSubChatRewindGuard(input.subChatId, async () => {
+        const db = getDatabase()
+        const subChat = db.select().from(subChats).where(eq(subChats.id, input.subChatId)).get()
+        if (!subChat) throw new TRPCError({ code: "NOT_FOUND", message: "Chat not found" })
 
-      const activeRun = db
-        .select({ id: agentRuns.id })
-        .from(agentRuns)
-        .where(
-          and(
-            eq(agentRuns.subChatId, input.subChatId),
-            inArray(agentRuns.status, ["pending", "running"]),
-          ),
-        )
-        .get()
-      if (activeRun) {
-        throw new TRPCError({ code: "CONFLICT", message: "Stop the current response first" })
-      }
-
-      const messages = JSON.parse(subChat.messages || "[]") as any[]
-      const userIndex = messages.findIndex(
-        (message) => message.id === input.userMessageId && message.role === "user",
-      )
-      let latestUserIndex = -1
-      for (let index = messages.length - 1; index >= 0; index -= 1) {
-        if (messages[index]?.role === "user") {
-          latestUserIndex = index
-          break
+        const activeRun = db
+          .select({ id: agentRuns.id })
+          .from(agentRuns)
+          .where(
+            and(
+              eq(agentRuns.subChatId, input.subChatId),
+              inArray(agentRuns.status, ["pending", "running"]),
+            ),
+          )
+          .get()
+        if (activeRun) {
+          throw new TRPCError({ code: "CONFLICT", message: "Stop the current response first" })
         }
-      }
-      if (userIndex === -1 || userIndex !== latestUserIndex) {
-        throw new TRPCError({
-          code: "CONFLICT",
-          message: "Only the latest sent message can be edited",
-        })
-      }
 
-      const run = db
-        .select({ beforeCheckpointId: agentRuns.beforeCheckpointId })
-        .from(agentRuns)
-        .where(
-          and(
-            eq(agentRuns.subChatId, input.subChatId),
-            eq(agentRuns.promptMessageId, input.userMessageId),
-          ),
+        const messages = JSON.parse(subChat.messages || "[]") as any[]
+        const userIndex = messages.findIndex(
+          (message) => message.id === input.userMessageId && message.role === "user",
         )
-        .orderBy(desc(agentRuns.startedAt))
-        .get()
+        let latestUserIndex = -1
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+          if (messages[index]?.role === "user") {
+            latestUserIndex = index
+            break
+          }
+        }
+        if (userIndex === -1 || userIndex !== latestUserIndex) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Only the latest sent message can be edited",
+          })
+        }
 
-      // Older runs predate pre-run checkpoints. The rewind still happens, but the
-      // caller must be told that files were left as the previous turn wrote them.
-      const filesRestored = Boolean(run?.beforeCheckpointId)
-      if (run?.beforeCheckpointId) {
-        await restoreCheckpoint(run.beforeCheckpointId)
-      }
+        const run = db
+          .select({ beforeCheckpointId: agentRuns.beforeCheckpointId })
+          .from(agentRuns)
+          .where(
+            and(
+              eq(agentRuns.subChatId, input.subChatId),
+              eq(agentRuns.promptMessageId, input.userMessageId),
+            ),
+          )
+          .orderBy(desc(agentRuns.startedAt))
+          .get()
 
-      let truncatedMessages = messages.slice(0, userIndex).map((message) => {
-        const { shouldResume, shouldForkResume, ...metadata } = message.metadata || {}
-        return { ...message, metadata }
+        // Older runs predate pre-run checkpoints. The rewind still happens, but the
+        // caller must be told that files were left as the previous turn wrote them.
+        let filesRestored = false
+        if (run?.beforeCheckpointId) {
+          filesRestored = await restoreCheckpoint(run.beforeCheckpointId)
+        }
+
+        let truncatedMessages = messages.slice(0, userIndex).map((message) => {
+          const { shouldResume, shouldForkResume, ...metadata } = message.metadata || {}
+          return { ...message, metadata }
+        })
+        let previousAssistantIndex = -1
+        for (let index = truncatedMessages.length - 1; index >= 0; index -= 1) {
+          if (truncatedMessages[index]?.role === "assistant") {
+            previousAssistantIndex = index
+            break
+          }
+        }
+        if (previousAssistantIndex >= 0) {
+          const previousAssistant = truncatedMessages[previousAssistantIndex]
+          truncatedMessages[previousAssistantIndex] = {
+            ...previousAssistant,
+            metadata: { ...previousAssistant.metadata, shouldResume: true },
+          }
+        }
+
+        db.update(subChats)
+          .set({
+            messages: JSON.stringify(truncatedMessages),
+            sessionId:
+              previousAssistantIndex >= 0
+                ? (truncatedMessages[previousAssistantIndex]?.metadata?.sessionId ?? null)
+                : null,
+            streamId: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(subChats.id, input.subChatId))
+          .run()
+
+        return {
+          success: true as const,
+          messages: truncatedMessages,
+          filesRestored,
+          restoration: filesRestored ? ("checkpoint" as const) : ("conversation-only" as const),
+        }
       })
-      let previousAssistantIndex = -1
-      for (let index = truncatedMessages.length - 1; index >= 0; index -= 1) {
-        if (truncatedMessages[index]?.role === "assistant") {
-          previousAssistantIndex = index
-          break
-        }
-      }
-      if (previousAssistantIndex >= 0) {
-        const previousAssistant = truncatedMessages[previousAssistantIndex]
-        truncatedMessages[previousAssistantIndex] = {
-          ...previousAssistant,
-          metadata: { ...previousAssistant.metadata, shouldResume: true },
-        }
-      }
-
-      db.update(subChats)
-        .set({
-          messages: JSON.stringify(truncatedMessages),
-          sessionId:
-            previousAssistantIndex >= 0
-              ? (truncatedMessages[previousAssistantIndex]?.metadata?.sessionId ?? null)
-              : null,
-          streamId: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(subChats.id, input.subChatId))
-        .run()
-
-      return {
-        success: true as const,
-        messages: truncatedMessages,
-        filesRestored,
-        restoration: filesRestored ? ("checkpoint" as const) : ("conversation-only" as const),
-      }
     }),
 
   /**
@@ -1997,69 +2031,71 @@ export const chatsRouter = router({
       async ({
         input,
       }): Promise<{ success: false; error: string } | { success: true; messages: any[] }> => {
-        const db = getDatabase()
+        return withSubChatRewindGuard(input.subChatId, async () => {
+          const db = getDatabase()
 
-        // 1. Get the sub-chat and its messages
-        const subChat = db.select().from(subChats).where(eq(subChats.id, input.subChatId)).get()
-        if (!subChat) {
-          return { success: false, error: "Sub-chat not found" }
-        }
-
-        // 2. Parse messages and find the target message by sdkMessageUuid
-        const messages = JSON.parse(subChat.messages || "[]")
-        const targetIndex = messages.findIndex(
-          (m: any) => m.metadata?.sdkMessageUuid === input.sdkMessageUuid,
-        )
-
-        if (targetIndex === -1) {
-          return { success: false, error: "Message not found" }
-        }
-
-        // 3. Get the parent chat for worktreePath
-        const chat = db.select().from(chats).where(eq(chats.id, subChat.chatId)).get()
-
-        // 4. Rollback git state first - if this fails, abort the whole operation
-        if (chat?.worktreePath) {
-          const res = await applyRollbackStash(chat.worktreePath, input.sdkMessageUuid)
-          if (!res.success) {
-            return { success: false, error: `Git rollback failed: ${res.error}` }
+          // 1. Get the sub-chat and its messages
+          const subChat = db.select().from(subChats).where(eq(subChats.id, input.subChatId)).get()
+          if (!subChat) {
+            return { success: false, error: "Sub-chat not found" }
           }
-          // If checkpoint wasn't found, we still fail because we can't safely rollback
-          // without reverting the git state to match the message history
-          if (!res.checkpointFound) {
-            return { success: false, error: "Checkpoint not found - cannot rollback git state" }
+
+          // 2. Parse messages and find the target message by sdkMessageUuid
+          const messages = JSON.parse(subChat.messages || "[]")
+          const targetIndex = messages.findIndex(
+            (m: any) => m.metadata?.sdkMessageUuid === input.sdkMessageUuid,
+          )
+
+          if (targetIndex === -1) {
+            return { success: false, error: "Message not found" }
           }
-        }
 
-        // 5. Truncate messages to include up to and including the target message
-        let truncatedMessages = messages.slice(0, targetIndex + 1)
+          // 3. Get the parent chat for worktreePath
+          const chat = db.select().from(chats).where(eq(chats.id, subChat.chatId)).get()
 
-        // 5.5. Clear any old shouldResume flags, then set on the target message
-        truncatedMessages = truncatedMessages.map((m: any, i: number) => {
-          const { shouldResume, ...restMeta } = m.metadata || {}
+          // 4. Rollback git state first - if this fails, abort the whole operation
+          if (chat?.worktreePath) {
+            const res = await applyRollbackStash(chat.worktreePath, input.sdkMessageUuid)
+            if (!res.success) {
+              return { success: false, error: `Git rollback failed: ${res.error}` }
+            }
+            // If checkpoint wasn't found, we still fail because we can't safely rollback
+            // without reverting the git state to match the message history
+            if (!res.checkpointFound) {
+              return { success: false, error: "Checkpoint not found - cannot rollback git state" }
+            }
+          }
+
+          // 5. Truncate messages to include up to and including the target message
+          let truncatedMessages = messages.slice(0, targetIndex + 1)
+
+          // 5.5. Clear any old shouldResume flags, then set on the target message
+          truncatedMessages = truncatedMessages.map((m: any, i: number) => {
+            const { shouldResume, ...restMeta } = m.metadata || {}
+            return {
+              ...m,
+              metadata: {
+                ...restMeta,
+                ...(i === truncatedMessages.length - 1 && { shouldResume: true }),
+              },
+            }
+          })
+
+          // 6. Update the sub-chat with truncated messages
+          db.update(subChats)
+            .set({
+              messages: JSON.stringify(truncatedMessages),
+              updatedAt: new Date(),
+            })
+            .where(eq(subChats.id, input.subChatId))
+            .returning()
+            .get()
+
           return {
-            ...m,
-            metadata: {
-              ...restMeta,
-              ...(i === truncatedMessages.length - 1 && { shouldResume: true }),
-            },
+            success: true,
+            messages: truncatedMessages,
           }
         })
-
-        // 6. Update the sub-chat with truncated messages
-        db.update(subChats)
-          .set({
-            messages: JSON.stringify(truncatedMessages),
-            updatedAt: new Date(),
-          })
-          .where(eq(subChats.id, input.subChatId))
-          .returning()
-          .get()
-
-        return {
-          success: true,
-          messages: truncatedMessages,
-        }
       },
     ),
 

@@ -33,6 +33,7 @@ vi.mock("../src/main/lib/checkpoints", async (importOriginal) => {
     ...actual,
     restoreCheckpoint: vi.fn(async (checkpointId: string) => {
       state.restored.push(checkpointId)
+      return true
     }),
   }
 })

@@ -504,6 +504,66 @@ describe("mobile-events", () => {
     ).toEqual(["allowed", "denied"])
   })
 
+  it("executes WebSocket commands strictly in arrival order", async () => {
+    let releaseFirst!: () => void
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const completed: string[] = []
+    const execute = vi.fn(
+      async ({ command }: { command: ReturnType<typeof orchestrationCommand> }) => {
+        if (command.commandId === "rate-command-1") await firstBlocked
+        completed.push(command.commandId)
+        return {
+          commandId: command.commandId,
+          status: "completed",
+          action: command.action.type,
+          summary: command.commandId,
+        }
+      },
+    )
+    events.stop()
+    events = createEvents(undefined, { execute } as unknown as MobileActionService)
+    const socket = new FakeTransport("ordered-commands")
+    events.handleWebSocket(socket)
+    socket.receive(subscribeProof())
+
+    socket.receive(orchestrationCommand(credential.session, 1, 1))
+    socket.receive(orchestrationCommand(credential.session, 1, 2))
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1))
+    expect(completed).toEqual([])
+
+    releaseFirst()
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(completed).toEqual(["rate-command-1", "rate-command-2"]))
+  })
+
+  it("contains transport close failures without rejecting the command queue", async () => {
+    const execute = vi.fn(
+      async ({ command }: { command: ReturnType<typeof orchestrationCommand> }) => {
+        if (command.commandId === "rate-command-1") throw new Error("command failed")
+        return {
+          commandId: command.commandId,
+          status: "completed" as const,
+          action: command.action.type,
+          summary: "done",
+        }
+      },
+    )
+    events.stop()
+    events = createEvents(undefined, { execute } as unknown as MobileActionService)
+    const socket = new ThrowingCloseTransport("throwing-close")
+    events.handleWebSocket(socket)
+    socket.receive(subscribeProof())
+    socket.throwOnClose = true
+
+    socket.receive(orchestrationCommand(credential.session, 1, 1))
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1))
+    socket.receive(orchestrationCommand(credential.session, 1, 2))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
+
   it("bounds mobile action audit admission once the append-only ledger is full", async () => {
     const existing = sqlite
       .prepare("SELECT count(*) count FROM mobile_device_audit_records")
@@ -730,7 +790,7 @@ describe("mobile-events", () => {
   })
 })
 
-function createEvents(eventBacklog?: number): MobileEventService {
+function createEvents(eventBacklog?: number, actions?: MobileActionService): MobileEventService {
   return new MobileEventService({
     database,
     pairing,
@@ -740,6 +800,7 @@ function createEvents(eventBacklog?: number): MobileEventService {
     randomId: () => `event-${++eventId}`,
     cursorKey: Buffer.alloc(32, 7),
     listAgentInputs: () => pendingAgentInputs,
+    ...(actions ? { actions } : {}),
     ...(eventBacklog ? { eventBacklog } : {}),
   })
 }
@@ -892,6 +953,15 @@ class FakeTransport implements MobileBridgeTransportSession {
   receive(value: unknown): void {
     const bytes = new TextEncoder().encode(JSON.stringify(value))
     for (const listener of [...this.messages]) listener(bytes)
+  }
+}
+
+class ThrowingCloseTransport extends FakeTransport {
+  throwOnClose = false
+
+  override close(code = 1001, reason = "closed"): void {
+    if (this.throwOnClose) throw new Error("transport close failed")
+    super.close(code, reason)
   }
 }
 

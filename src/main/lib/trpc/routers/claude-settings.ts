@@ -1,8 +1,12 @@
 import * as fs from "fs/promises"
 import * as path from "path"
 import * as os from "os"
+import { createHash } from "node:crypto"
+import { Mutex } from "async-mutex"
 import { z } from "zod"
 import { router, publicProcedure } from "../index"
+import { readProjectMcpJson, type McpServerConfig } from "../../claude-config"
+import { writeJsonRecoveryAtomic } from "../../portability/io"
 
 const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), ".claude", "settings.json")
 
@@ -12,7 +16,9 @@ const ENABLED_PLUGINS_CACHE_TTL_MS = 5000 // 5 seconds
 
 // Cache for approved plugin MCP servers
 let approvedMcpCache: { servers: string[]; timestamp: number } | null = null
+let approvedProjectMcpCache: { configs: string[]; timestamp: number } | null = null
 const APPROVED_MCP_CACHE_TTL_MS = 5000 // 5 seconds
+const settingsMutex = new Mutex()
 
 /**
  * Invalidate the enabled plugins cache
@@ -28,6 +34,55 @@ export function invalidateEnabledPluginsCache(): void {
  */
 export function invalidateApprovedMcpCache(): void {
   approvedMcpCache = null
+  approvedProjectMcpCache = null
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(",")}}`
+  }
+  return JSON.stringify(value)
+}
+
+export function getProjectMcpConfigApprovalId(
+  projectPath: string,
+  servers: Record<string, McpServerConfig>,
+): string {
+  return createHash("sha256")
+    .update(`${path.resolve(projectPath)}\0${canonicalJson(servers)}`)
+    .digest("hex")
+}
+
+export function isProjectMcpConfigApproved(
+  projectPath: string,
+  servers: Record<string, McpServerConfig>,
+  approvedIds: ReadonlySet<string>,
+): boolean {
+  return (
+    Object.keys(servers).length === 0 ||
+    approvedIds.has(getProjectMcpConfigApprovalId(projectPath, servers))
+  )
+}
+
+export async function getApprovedProjectMcpConfigs(): Promise<string[]> {
+  if (
+    approvedProjectMcpCache &&
+    Date.now() - approvedProjectMcpCache.timestamp < APPROVED_MCP_CACHE_TTL_MS
+  ) {
+    return approvedProjectMcpCache.configs
+  }
+  const settings = await readClaudeSettings()
+  const configs = Array.isArray(settings.approvedProjectMcpConfigs)
+    ? (settings.approvedProjectMcpConfigs as string[]).filter((value) =>
+        /^[a-f0-9]{64}$/.test(value),
+      )
+    : []
+  approvedProjectMcpCache = { configs, timestamp: Date.now() }
+  return configs
 }
 
 /**
@@ -106,12 +161,38 @@ export async function isPluginMcpApproved(
  * Creates the .claude directory if it doesn't exist
  */
 async function writeClaudeSettings(settings: Record<string, unknown>): Promise<void> {
-  const dir = path.dirname(CLAUDE_SETTINGS_PATH)
-  await fs.mkdir(dir, { recursive: true })
-  await fs.writeFile(CLAUDE_SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf-8")
+  await writeJsonRecoveryAtomic(CLAUDE_SETTINGS_PATH, settings)
+}
+
+async function updateClaudeSettings(
+  updater: (settings: Record<string, unknown>) => void,
+): Promise<void> {
+  await settingsMutex.runExclusive(async () => {
+    const settings = await readClaudeSettings()
+    updater(settings)
+    await writeClaudeSettings(settings)
+  })
 }
 
 export const claudeSettingsRouter = router({
+  getApprovedProjectMcpConfigs: publicProcedure.query(getApprovedProjectMcpConfigs),
+
+  approveProjectMcpConfig: publicProcedure
+    .input(z.object({ projectPath: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const servers = await readProjectMcpJson(input.projectPath)
+      if (Object.keys(servers).length === 0) throw new Error("Project .mcp.json is empty")
+      const approvalId = getProjectMcpConfigApprovalId(input.projectPath, servers)
+      await updateClaudeSettings((settings) => {
+        const approved = Array.isArray(settings.approvedProjectMcpConfigs)
+          ? (settings.approvedProjectMcpConfigs as string[])
+          : []
+        settings.approvedProjectMcpConfigs = [...new Set([...approved, approvalId])]
+      })
+      invalidateApprovedMcpCache()
+      return { success: true, approvalId }
+    }),
+
   /**
    * Get the includeCoAuthoredBy setting
    * Returns true only when setting is explicitly enabled.

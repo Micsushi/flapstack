@@ -21,7 +21,10 @@ vi.mock("../src/main/lib/git/security/path-validation", async (importOriginal) =
 }))
 
 import { secureFs } from "../src/main/lib/git/security/secure-fs"
-import { PathValidationError } from "../src/main/lib/git/security/path-validation"
+import {
+  PathValidationError,
+  validateRelativePath,
+} from "../src/main/lib/git/security/path-validation"
 
 const roots: string[] = []
 
@@ -31,6 +34,26 @@ afterEach(() => {
 })
 
 describe("secureFs rooted writer", () => {
+  it("rejects Windows drive-relative paths on every host", () => {
+    expect(() => validateRelativePath("C:outside.txt")).toThrowError(
+      expect.objectContaining({ code: "ABSOLUTE_PATH" }),
+    )
+  })
+
+  it.skipIf(!fileSymlinksSupported)(
+    "validates lstat parent containment without following the leaf",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "flapstack-secure-fs-lstat-root-"))
+      const outside = mkdtempSync(join(tmpdir(), "flapstack-secure-fs-lstat-outside-"))
+      roots.push(root, outside)
+      writeFileSync(join(outside, "victim.txt"), "outside")
+      symlinkSync(outside, join(root, "escaped"), "junction")
+
+      await expect(secureFs.lstat(root, "escaped/victim.txt")).rejects.toMatchObject({
+        code: "SYMLINK_ESCAPE",
+      })
+    },
+  )
   it.skipIf(!fileSymlinksSupported)(
     "preserves lexical PathValidationError codes and blocks symlink targets",
     async () => {

@@ -844,6 +844,17 @@ describe("attachment durable path contracts", () => {
     await expect(caller.get({ id: attachment.id })).resolves.toBeUndefined()
   })
 
+  it("rejects oversized inline text by UTF-8 byte length", async () => {
+    await expect(
+      caller.createText({
+        chatId: "chat-1",
+        name: "oversized.txt",
+        contentText: "\u{1f600}".repeat(MAX_ATTACHMENT_BYTES / 4 + 1),
+      }),
+    ).rejects.toThrow(`Attachment exceeds the ${MAX_ATTACHMENT_BYTES}-byte size limit`)
+    expect(attachmentRowCount()).toBe(0)
+  })
+
   it.each(["file", "image"] as const)(
     "rejects new %s rows without durable provenance",
     async (kind) => {

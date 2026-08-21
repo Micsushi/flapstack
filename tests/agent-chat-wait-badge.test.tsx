@@ -99,4 +99,14 @@ describe("agent chat wait badge", () => {
     const container = render({ wait: baseWait, onDismiss: vi.fn() })
     expect(container.querySelector('button[aria-label="Dismiss failed wait"]')).toBeNull()
   })
+
+  it("keeps failed-wait dismissal accessible in compact headers", () => {
+    const container = render({
+      wait: { ...baseWait, status: "failed", error: "resume failed" },
+      compact: true,
+      header: true,
+      onDismiss: vi.fn(),
+    })
+    expect(container.querySelector('button[aria-label="Dismiss failed wait"]')).not.toBeNull()
+  })
 })

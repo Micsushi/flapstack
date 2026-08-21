@@ -1,6 +1,7 @@
 import { desc, eq } from "drizzle-orm"
 import { z } from "zod"
 import { captureCheckpoint, captureRunManifest } from "../../checkpoints"
+import { assertSubChatNotRewinding } from "../../sub-chat-rewind-guard"
 import {
   agentRuns,
   chats,
@@ -88,6 +89,7 @@ export const runsRouter = router({
         }
         checkpointRoot = assertRegisteredWorktree(input.worktreePath).canonicalPath
       }
+      if (input.subChatId) assertSubChatNotRewinding(input.subChatId)
       const run = db
         .insert(agentRuns)
         .values({

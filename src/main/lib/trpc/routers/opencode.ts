@@ -66,6 +66,7 @@ import { sanitizeHarnessEnvelopeEcho } from "../../../../shared/harness-envelope
 import { resolveReasoningControls } from "../../../../shared/reasoning-output"
 import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
 import { cancelStaleRunningRuns } from "../../agent-run-lifecycle"
+import { assertSubChatNotRewinding } from "../../sub-chat-rewind-guard"
 
 const providerSchema = z.enum(OPENCODE_HARNESSES)
 const permissionModeSchema = z.enum(permissionModes)
@@ -414,6 +415,7 @@ export const opencodeRouter = router({
                     persistedRunSnapshot?.customPermissions ?? chat.customPermissions!,
                   )
                 : null
+            assertSubChatNotRewinding(input.subChatId)
             const runtimeSnapshot = constructRuntimeSnapshot(db, {
               chatId: input.chatId,
               harness: input.provider,

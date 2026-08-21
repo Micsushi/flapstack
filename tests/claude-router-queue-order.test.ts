@@ -51,7 +51,7 @@ vi.mock("../src/main/lib/checkpoints", () => ({
   captureCheckpoint: vi.fn(async (runId: string, _cwd: string | null, phase: string) => ({
     id: `${runId}-${phase}`,
   })),
-  captureNoChangeManifest: vi.fn(async () => undefined),
+  captureRunManifest: vi.fn(async () => undefined),
 }))
 
 vi.mock("../src/main/lib/credential-service", () => ({

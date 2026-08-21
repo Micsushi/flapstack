@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process"
 import { randomBytes } from "node:crypto"
-import { mkdir, readFile, realpath, stat, unlink } from "node:fs/promises"
+import { lstat, mkdir, readFile, realpath, stat, unlink } from "node:fs/promises"
 import { devNull, homedir, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
@@ -290,6 +290,34 @@ export async function removeWorktree(
 
     return { success: true }
   } catch (error) {
+    try {
+      await lstat(worktreePath)
+    } catch (pathError) {
+      if ((pathError as NodeJS.ErrnoException).code === "ENOENT") {
+        try {
+          await stat(mainRepoPath)
+        } catch (repoError) {
+          if ((repoError as NodeJS.ErrnoException).code === "ENOENT") return { success: true }
+          throw repoError
+        }
+        try {
+          const env = await getGitEnv()
+          await execFileAsync("git", ["-C", mainRepoPath, "worktree", "prune"], {
+            env,
+            timeout: 60_000,
+            windowsHide: true,
+          })
+          return { success: true }
+        } catch (pruneError) {
+          const pruneMessage = pruneError instanceof Error ? pruneError.message : String(pruneError)
+          console.error(`Failed to prune missing worktree metadata: ${pruneMessage}`)
+          return { success: false, error: pruneMessage }
+        }
+      }
+      const pathMessage = pathError instanceof Error ? pathError.message : String(pathError)
+      console.error(`Failed to inspect worktree after cleanup error: ${pathMessage}`)
+      return { success: false, error: pathMessage }
+    }
     const errorMessage = error instanceof Error ? error.message : String(error)
     console.error(`Failed to remove worktree: ${errorMessage}`)
     return { success: false, error: errorMessage }

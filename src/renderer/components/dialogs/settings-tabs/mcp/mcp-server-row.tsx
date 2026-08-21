@@ -15,6 +15,8 @@ function StatusDot({ status }: { status: string }) {
       return <span className="w-2 h-2 rounded-full bg-yellow-500 shrink-0" />
     case "pending":
       return <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" />
+    case "pending-approval":
+      return <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
     case "disabled":
       return <span className="w-2 h-2 rounded-full bg-muted-foreground/30 shrink-0" />
     default:
@@ -32,6 +34,8 @@ function getStatusText(status: string): string {
       return "Needs auth"
     case "pending":
       return "Connecting..."
+    case "pending-approval":
+      return "Approval required"
     case "disabled":
       return "Disabled"
     default:

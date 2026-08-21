@@ -113,6 +113,11 @@ export async function spawnExternalCommand(
   const spawnProcess = options.spawn ?? spawn
   if (platform === "win32") {
     const argumentLine = args.map(quoteWindowsArgument).join(" ")
+    const shimArguments = args.map((value, index) => ({
+      name: `FLAPSTACK_LAUNCH_ARG_${index}`,
+      value: quoteWindowsArgument(value),
+    }))
+    const shimArgumentLine = shimArguments.map(({ name }) => `%${name}%`).join(" ")
     const script = [
       "$ErrorActionPreference = 'Stop'",
       `$requested = ${quotePowerShellLiteral(command)}`,
@@ -124,13 +129,19 @@ export async function spawnExternalCommand(
       "$extension = [System.IO.Path]::GetExtension($resolved)",
       "if ($extension -in @('.cmd', '.bat')) {",
       "  $commandLine = '\"' + $resolved + '\"'",
-      ...(argumentLine ? [`  $commandLine += ' ' + ${quotePowerShellLiteral(argumentLine)}`] : []),
+      ...(shimArgumentLine
+        ? [`  $commandLine += ' ' + ${quotePowerShellLiteral(shimArgumentLine)}`]
+        : []),
       "  $startInfo = New-Object System.Diagnostics.ProcessStartInfo",
       "  $startInfo.FileName = $env:ComSpec",
       "  $startInfo.Arguments = '/d /s /c \"' + $commandLine + '\"'",
       "  $startInfo.UseShellExecute = $false",
       "  $startInfo.CreateNoWindow = $true",
       "  $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden",
+      ...shimArguments.map(
+        ({ name, value }) =>
+          `  $startInfo.EnvironmentVariables[${quotePowerShellLiteral(name)}] = ${quotePowerShellLiteral(value)}`,
+      ),
       "  $process = [System.Diagnostics.Process]::Start($startInfo)",
       "  $process.WaitForExit()",
       '  if ($process.ExitCode -ne 0) { throw "Command shim exited with code $($process.ExitCode)" }',

@@ -4,19 +4,10 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-const posthog = vi.hoisted(() => ({
-  moduleLoads: vi.fn(),
-}))
-
 const consent = vi.hoisted(() => ({
   capture: vi.fn(async () => {}),
   get: vi.fn(async () => false),
 }))
-
-vi.mock("posthog-js", () => {
-  posthog.moduleLoads()
-  return { default: {} }
-})
 
 describe("renderer analytics consent", () => {
   beforeEach(() => {
@@ -40,7 +31,9 @@ describe("renderer analytics consent", () => {
     await analytics.initAnalytics()
     await analytics.capture("consented_event", { mode: "agent" })
 
-    expect(posthog.moduleLoads).not.toHaveBeenCalled()
+    expect(
+      readFileSync(resolve(process.cwd(), "src/renderer/lib/analytics.ts"), "utf8"),
+    ).not.toContain("posthog-js")
     expect(consent.capture).toHaveBeenCalledWith("consented_event", { mode: "agent" })
   })
 

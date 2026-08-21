@@ -7,12 +7,6 @@
       "copyright": "Copyright 2023 Vercel, Inc.",
       "source": "https://github.com/vercel/ai/blob/main/LICENSE"
     },
-    "@apm-js-collab/code-transformer-bundler-plugins@0.5.0": {
-      "declaredLicense": "MIT",
-      "template": "MIT",
-      "copyright": "Copyright (c) APM JS Collaboration contributors",
-      "source": "https://github.com/apm-js-collab/code-transformer-bundler-plugins"
-    },
     "@openai/codex@0.144.1": {
       "declaredLicense": "Apache-2.0",
       "template": "Apache-2.0",
@@ -66,12 +60,6 @@
       "template": "MIT",
       "copyright": "Copyright (c) PostHog, Inc.",
       "source": "https://registry.npmjs.org/@posthog/core/1.39.6"
-    },
-    "@sentry/server-utils@10.62.0": {
-      "declaredLicense": "MIT",
-      "template": "MIT",
-      "copyright": "Copyright (c) 2012 Functional Software, Inc. dba Sentry",
-      "source": "https://github.com/getsentry/sentry-javascript/blob/10.62.0/LICENSE"
     },
     "@img/sharp-libvips-darwin-arm64@1.3.2": {
       "declaredLicense": "LGPL-3.0-or-later",
@@ -168,12 +156,6 @@
       "template": "ISC",
       "copyright": "Copyright (c) Nicolas Senac",
       "source": "https://github.com/NicolasDeveloper/guid-typescript"
-    },
-    "lazy-val@1.0.5": {
-      "declaredLicense": "MIT",
-      "template": "MIT",
-      "copyright": "Copyright (c) Vladimir Krivosheev",
-      "source": "https://github.com/develar/lazy-val"
     },
     "lru_map@0.4.1": {
       "declaredLicense": "MIT",

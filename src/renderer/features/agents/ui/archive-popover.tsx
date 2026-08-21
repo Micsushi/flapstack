@@ -310,15 +310,21 @@ export const ArchivePopover = memo(function ArchivePopover({ trigger }: ArchiveP
   const remoteRestoreMutation = useRestoreRemoteChat()
 
   const deleteArchivedMutation = trpc.chats.deleteArchived.useMutation({
-    onSuccess: ({ deletedCount }) => {
+    onSuccess: ({ deletedCount, failedChatIds }) => {
       utils.chats.list.invalidate()
       utils.chats.listArchived.invalidate()
       utils.chats.getFileStats.invalidate()
-      toast.success(
-        deletedCount === 1
-          ? "Deleted 1 archived local chat"
-          : `Deleted ${deletedCount} archived local chats`,
-      )
+      if (failedChatIds.length > 0) {
+        toast.warning(
+          `Deleted ${deletedCount} archived local ${deletedCount === 1 ? "chat" : "chats"}; ${failedChatIds.length} could not be cleaned up and remain available to retry.`,
+        )
+      } else {
+        toast.success(
+          deletedCount === 1
+            ? "Deleted 1 archived local chat"
+            : `Deleted ${deletedCount} archived local chats`,
+        )
+      }
     },
     onError: () => {
       toast.error("Failed to delete archived chats")

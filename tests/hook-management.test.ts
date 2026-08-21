@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -559,4 +560,46 @@ describe("hook lifecycle", () => {
       ),
     ).resolves.toEqual({ cwd: realpathSync(directory) })
   })
+
+  it.runIf(process.platform === "win32")(
+    "kills the full managed-hook process tree on cancellation",
+    async () => {
+      const directory = mkdtempSync(join(tmpdir(), "flapstack-hook-tree-"))
+      directories.push(directory)
+      const script = join(directory, "spawn-child.mjs")
+      const pidFile = join(directory, "child.pid")
+      writeFileSync(
+        script,
+        `import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));
+setInterval(() => {}, 1000);`,
+      )
+      const store = new MemoryHookStateStore()
+      const service = new HookLifecycleService(store, successfulRunner(), {
+        request: async () => "approved",
+      })
+      const imported = await service.import(draft({ command: `node ${script}` }))
+      await service.validate(imported.id)
+      await service.dryRun(imported.id)
+      const enabled = (await service.setEnabled(imported.id, true)).record
+      const abort = new AbortController()
+      const execution = new NodeManagedHookRuntimeExecutor().execute(
+        enabled,
+        {},
+        abort.signal,
+        directory,
+      )
+      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true))
+      const childPid = Number(readFileSync(pidFile, "utf8"))
+      abort.abort()
+
+      await expect(execution).rejects.toThrow(/cancelled/i)
+      await vi.waitFor(() => expect(() => process.kill(childPid, 0)).toThrow(), {
+        timeout: 5_000,
+        interval: 50,
+      })
+    },
+  )
 })

@@ -21,6 +21,7 @@ import {
 import { discoverPluginMcpServers } from "./plugins"
 import { bringToFront } from "./window"
 import { sanitizeMcpAmbientEnvironment } from "./mcp-environment"
+import { hydrateMcpServerSecrets, protectMcpServerSecrets } from "./mcp-secrets"
 
 export { sanitizeMcpAmbientEnvironment } from "./mcp-environment"
 
@@ -192,6 +193,7 @@ export async function startMcpOAuth(
   // 1. Read server config from ~/.claude.json
   const config = await readClaudeConfig()
   let serverConfig = getMcpServerConfig(config, projectPath, serverName)
+  if (serverConfig) serverConfig = hydrateMcpServerSecrets(serverConfig)
 
   // Fallback: check plugin MCP servers if not found in ~/.claude.json
   if (!serverConfig?.url) {
@@ -340,11 +342,15 @@ export async function refreshMcpToken(
   try {
     const config = await readClaudeConfig()
     let serverConfig = getMcpServerConfig(config, projectPath, serverName)
+    if (serverConfig) serverConfig = hydrateMcpServerSecrets(serverConfig)
     let resolvedProjectPath = projectPath
 
     // Fallback to global MCP servers if not found or missing URL in project scope.
     if (!serverConfig?.url) {
-      const globalConfig = getMcpServerConfig(config, GLOBAL_MCP_PATH, serverName)
+      const storedGlobalConfig = getMcpServerConfig(config, GLOBAL_MCP_PATH, serverName)
+      const globalConfig = storedGlobalConfig
+        ? hydrateMcpServerSecrets(storedGlobalConfig)
+        : undefined
       if (globalConfig?.url) {
         serverConfig = globalConfig
         resolvedProjectPath = GLOBAL_MCP_PATH
@@ -401,9 +407,11 @@ export async function ensureMcpTokensFresh(
   mcpServers: Record<string, any>,
   projectPath: string,
 ): Promise<Record<string, any>> {
-  const updatedServers = { ...mcpServers }
+  const updatedServers = Object.fromEntries(
+    Object.entries(mcpServers).map(([name, config]) => [name, hydrateMcpServerSecrets(config)]),
+  )
 
-  for (const [serverName, serverConfig] of Object.entries(mcpServers)) {
+  for (const [serverName, serverConfig] of Object.entries(updatedServers)) {
     const oauth = serverConfig._oauth as
       | {
           accessToken?: string
@@ -454,7 +462,9 @@ async function saveTokensToClaudeJson(
 ): Promise<void> {
   await updateClaudeConfigAtomic((config) => {
     // Get existing server config to preserve existing headers and determine type
-    const existingConfig = getMcpServerConfig(config, projectPath, serverName) || {}
+    const existingConfig = hydrateMcpServerSecrets(
+      getMcpServerConfig(config, projectPath, serverName) || {},
+    )
     const serverUrl = existingConfig.url as string | undefined
 
     // Determine transport type from URL (SDK expects explicit type for HTTP servers)
@@ -467,7 +477,7 @@ async function saveTokensToClaudeJson(
       Authorization: `Bearer ${tokens.accessToken}`,
     }
 
-    return updateMcpServerConfig(config, projectPath, serverName, {
+    const updated = {
       // SDK-required fields
       type: serverType,
       headers,
@@ -478,7 +488,13 @@ async function saveTokensToClaudeJson(
         clientId,
         expiresAt: tokens.expiresAt,
       },
-    })
+    }
+    return updateMcpServerConfig(
+      config,
+      projectPath,
+      serverName,
+      protectMcpServerSecrets(projectPath, serverName, { ...existingConfig, ...updated }),
+    )
   })
 }
 
@@ -523,7 +539,8 @@ export async function getMcpAuthStatus(
 ): Promise<{ hasTokens: boolean; isExpired?: boolean }> {
   try {
     const config = await readClaudeConfig()
-    const oauth = getMcpServerConfig(config, projectPath, serverName)?._oauth
+    const stored = getMcpServerConfig(config, projectPath, serverName)
+    const oauth = stored ? hydrateMcpServerSecrets(stored)._oauth : undefined
 
     if (!oauth?.accessToken) return { hasTokens: false }
 

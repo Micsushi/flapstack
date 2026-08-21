@@ -28,6 +28,7 @@ import {
 } from "../../../../shared/chat-mode"
 import { captureCheckpoint } from "../../checkpoints"
 import { cancelStaleRunningRuns, completeAgentRun } from "../../agent-run-lifecycle"
+import { assertSubChatNotRewinding } from "../../sub-chat-rewind-guard"
 import { getClaudeShellEnvironment } from "../../claude/env"
 import { resolveProjectPathFromWorktree } from "../../claude-config"
 import {
@@ -180,6 +181,8 @@ type CodexMcpServerForSettings = {
   serverInfo?: { name: string; version: string; icons?: Array<{ src: string }> }
   error?: string
 }
+
+const codexMcpServerIdentities = new WeakMap<CodexMcpServerForSettings, string>()
 
 type CodexMcpSnapshot = {
   mcpServersForSession: CodexMcpServerForSession[]
@@ -961,7 +964,9 @@ async function resolveCodexMcpSnapshot(params: {
 
         settingsConfig.command = command
         settingsConfig.args = args
-        settingsConfig.env = entry.transport.env || undefined
+        settingsConfig.env = entry.transport.env
+          ? Object.fromEntries(Object.keys(entry.transport.env).map((key) => [key, "[configured]"]))
+          : undefined
         settingsConfig.envVars = entry.transport.env_vars || undefined
         settingsConfig.cwd = launch.cwd
       } else if (
@@ -981,7 +986,11 @@ async function resolveCodexMcpSnapshot(params: {
         }
 
         settingsConfig.url = url
-        settingsConfig.headers = entry.transport.http_headers || undefined
+        settingsConfig.headers = entry.transport.http_headers
+          ? Object.fromEntries(
+              Object.keys(entry.transport.http_headers).map((key) => [key, "[configured]"]),
+            )
+          : undefined
         settingsConfig.envHttpHeaders = entry.transport.env_http_headers || undefined
         settingsConfig.bearerTokenEnvVar = entry.transport.bearer_token_env_var || undefined
       }
@@ -1000,15 +1009,30 @@ async function resolveCodexMcpSnapshot(params: {
         status = "failed"
       }
 
+      const settingsServer = {
+        name: entry.name,
+        status,
+        tools,
+        needsAuth: authState.needsAuth,
+        config: settingsConfig,
+      } satisfies CodexMcpServerForSettings
+      codexMcpServerIdentities.set(
+        settingsServer,
+        createHash("sha256")
+          .update(
+            JSON.stringify({
+              enabled: entry.enabled,
+              disabledReason: entry.disabled_reason ?? null,
+              authStatus: entry.auth_status ?? null,
+              transport: entry.transport,
+            }),
+          )
+          .digest("hex"),
+      )
+
       return {
         sessionServer,
-        settingsServer: {
-          name: entry.name,
-          status,
-          tools,
-          needsAuth: authState.needsAuth,
-          config: settingsConfig,
-        } satisfies CodexMcpServerForSettings,
+        settingsServer,
       }
     }),
   )
@@ -1043,6 +1067,9 @@ function clearCodexMcpCache(): void {
 }
 
 function getCodexServerIdentity(server: CodexMcpServerForSettings): string {
+  const internalIdentity = codexMcpServerIdentities.get(server)
+  if (internalIdentity) return internalIdentity
+
   const config = server.config as Record<string, unknown>
   return JSON.stringify({
     enabled: config.enabled ?? null,
@@ -1182,6 +1209,7 @@ async function createCodexRun(params: {
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"
   serviceTier?: "fast" | null
 }) {
+  assertSubChatNotRewinding(params.subChatId)
   const db = getDatabase()
   const bindVisualContext = async (runId: string) => {
     try {

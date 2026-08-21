@@ -42,7 +42,7 @@ import {
   resolveDefaultWorktree,
 } from "../src/main/lib/worktree-resolver"
 import { createWorktree, getCurrentBranch } from "../src/main/lib/git/worktree"
-import { createWorktreeForChat } from "../src/main/lib/git"
+import { createWorktreeForChat, removeWorktree } from "../src/main/lib/git"
 import {
   assertRegisteredWorktree,
   bindRegisteredFilesystemRoot,
@@ -363,6 +363,87 @@ function insertTask(
 function insertChat(values: Partial<typeof chats.$inferInsert>) {
   return getDatabase().insert(chats).values(values).returning().get()
 }
+
+describe("permanent chat deletion", () => {
+  it("preserves metadata when worktree cleanup fails so deletion can be retried", async () => {
+    const project = insertProject("delete-retry-project")
+    const chat = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "Retry deletion",
+      worktreePath: join(homeDir, "delete-retry-worktree"),
+      branch: "flapstack/retry",
+    })
+    vi.mocked(removeWorktree).mockResolvedValue({ success: false, error: "worktree busy" })
+
+    await expect(chatsRouter.createCaller(ctx).delete({ id: chat.id })).rejects.toThrow(
+      /chat was not deleted/i,
+    )
+    expect(getDatabase().select().from(chats).where(eq(chats.id, chat.id)).get()).toBeDefined()
+  })
+
+  it("deletes successful archived cleanups but retains each failed retry handle", async () => {
+    const project = insertProject("delete-archived-project")
+    const failed = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "Failed archived deletion",
+      worktreePath: join(homeDir, "failed-archived-worktree"),
+      branch: "flapstack/failed",
+      archivedAt: new Date(),
+    })
+    const successful = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "Successful archived deletion",
+      worktreePath: join(homeDir, "successful-archived-worktree"),
+      branch: "flapstack/successful",
+      archivedAt: new Date(),
+    })
+    vi.mocked(removeWorktree)
+      .mockResolvedValueOnce({ success: false, error: "worktree busy" })
+      .mockResolvedValueOnce({ success: true })
+
+    await expect(
+      chatsRouter.createCaller(ctx).deleteArchived({ ids: [failed.id, successful.id] }),
+    ).resolves.toEqual({ deletedCount: 1, failedChatIds: [failed.id] })
+    expect(getDatabase().select().from(chats).where(eq(chats.id, failed.id)).get()).toBeDefined()
+    expect(
+      getDatabase().select().from(chats).where(eq(chats.id, successful.id)).get(),
+    ).toBeUndefined()
+  })
+
+  it("deletes a detached chat when its worktree and project are already absent", async () => {
+    const missingWorktree = join(homeDir, "already-removed-worktree")
+    const chat = insertChat({
+      scope: "global",
+      name: "Detached cleanup",
+      worktreePath: missingWorktree,
+      branch: "flapstack/detached",
+    })
+
+    await expect(chatsRouter.createCaller(ctx).delete({ id: chat.id })).resolves.toMatchObject({
+      id: chat.id,
+    })
+    expect(removeWorktree).not.toHaveBeenCalled()
+  })
+
+  it("keeps the retry handle when an orphaned worktree directory still exists", async () => {
+    const orphanedWorktree = join(homeDir, "orphaned-worktree")
+    mkdirSync(orphanedWorktree)
+    const chat = insertChat({
+      scope: "global",
+      name: "Orphaned cleanup",
+      worktreePath: orphanedWorktree,
+      branch: "flapstack/orphaned",
+    })
+
+    await expect(chatsRouter.createCaller(ctx).delete({ id: chat.id })).rejects.toThrow(
+      /registered project/i,
+    )
+    expect(getDatabase().select().from(chats).where(eq(chats.id, chat.id)).get()).toBeDefined()
+  })
+})
 
 describe("top-level chat forks", () => {
   it("creates one new sidebar chat instead of a second internal conversation", async () => {
@@ -1500,6 +1581,30 @@ describe("Stage 1 E1 checkpoint capture", () => {
     expect(
       execFileSync("git", ["show", ":tracked.txt"], { cwd: worktreePath, encoding: "utf8" }),
     ).toBe("staged\n")
+
+    const brokenCheckpoint = await captureCheckpoint(run.id, worktreePath, "after")
+    execFileSync(
+      "git",
+      ["update-ref", "-d", `refs/flapstack/checkpoint-indexes/${brokenCheckpoint.id}`],
+      { cwd: worktreePath },
+    )
+    writeFileSync(join(worktreePath, "tracked.txt"), "live state\n")
+    execFileSync("git", ["add", "tracked.txt"], { cwd: worktreePath })
+    writeFileSync(join(worktreePath, "live-untracked.txt"), "live\n")
+    const statusBeforeFailedRestore = execFileSync("git", ["status", "--porcelain=v1"], {
+      cwd: worktreePath,
+      encoding: "utf8",
+    })
+
+    await expect(restoreCheckpoint(brokenCheckpoint.id)).rejects.toThrow()
+    expect(
+      execFileSync("git", ["status", "--porcelain=v1"], {
+        cwd: worktreePath,
+        encoding: "utf8",
+      }),
+    ).toBe(statusBeforeFailedRestore)
+    expect(readFileSync(join(worktreePath, "tracked.txt"), "utf8")).toBe("live state\n")
+    expect(readFileSync(join(worktreePath, "live-untracked.txt"), "utf8")).toBe("live\n")
   })
 
   it("stores unavailable non-git checkpoints and creates an explicit no-change manifest", async () => {

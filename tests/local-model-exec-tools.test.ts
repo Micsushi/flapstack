@@ -52,7 +52,9 @@ describe("bounded local-model shell, git, and network tools", () => {
     const executor = createExecutor({
       rootPath: root,
       environment: {
-        PATH: "/usr/bin:/bin",
+        Path: "C:\\Windows\\System32",
+        SystemRoot: "C:\\Windows",
+        ComSpec: "C:\\Windows\\System32\\cmd.exe",
         HOME: "/safe/home",
         API_TOKEN: "secret-value",
         RANDOM_VALUE: "drop-me",
@@ -70,7 +72,9 @@ describe("bounded local-model shell, git, and network tools", () => {
     const result = await execute(executor, "shell_exec", { command: "pwd", args: [] })
     expect(request).toMatchObject({ command: "pwd", args: [], cwd: realpathSync(root) })
     expect(request?.env).toMatchObject({
-      PATH: "/usr/bin:/bin",
+      Path: "C:\\Windows\\System32",
+      SystemRoot: "C:\\Windows",
+      ComSpec: "C:\\Windows\\System32\\cmd.exe",
       HOME: "/safe/home",
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_EXTERNAL_DIFF: "",

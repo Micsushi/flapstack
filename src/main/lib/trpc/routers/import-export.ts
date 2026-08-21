@@ -1,5 +1,5 @@
 import { openAppDatabase } from "../../db/access"
-import { app, BrowserWindow, dialog } from "electron"
+import { app, dialog } from "electron"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -58,7 +58,7 @@ export const importExportRouter = router({
 
   listProjects: publicProcedure.query(() => listProjects()),
 
-  chooseExportPath: publicProcedure.mutation(async () => {
+  chooseExportPath: publicProcedure.mutation(async ({ ctx }) => {
     const options = {
       title: "Choose portable export directory",
       defaultPath: "flapstack-backup.flapstack-export",
@@ -67,7 +67,7 @@ export const importExportRouter = router({
         "createDirectory" | "showOverwriteConfirmation"
       >,
     }
-    const window = BrowserWindow.getFocusedWindow()
+    const window = ctx.getWindow?.()
     const result = window
       ? await dialog.showSaveDialog(window, options)
       : await dialog.showSaveDialog(options)
@@ -76,14 +76,14 @@ export const importExportRouter = router({
 
   chooseDirectory: publicProcedure
     .input(z.object({ title: z.string().min(1).max(100) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const options = {
         title: input.title,
         properties: ["openDirectory", "createDirectory"] as Array<
           "openDirectory" | "createDirectory"
         >,
       }
-      const window = BrowserWindow.getFocusedWindow()
+      const window = ctx.getWindow?.()
       const result = window
         ? await dialog.showOpenDialog(window, options)
         : await dialog.showOpenDialog(options)

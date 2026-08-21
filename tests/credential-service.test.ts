@@ -258,6 +258,29 @@ describe("main-process credential service", () => {
     expect(restarted.status("codex.api-key").configured).toBe(false)
   })
 
+  it("retires an old opaque secret before accepting a session-only replacement", () => {
+    const dir = tempDir()
+    const id = `mcp.${"a".repeat(64)}`
+    const persisted = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
+    persisted.setOpaque(id, "old-durable-secret")
+
+    const unavailable: CredentialEncryption = {
+      inspect: () => ({ available: false, backend: "unavailable" }),
+      encrypt: () => {
+        throw new Error("must not encrypt")
+      },
+      decrypt: encryptedBackend.decrypt,
+    }
+    const session = new CredentialService({ storageDir: dir, encryption: unavailable })
+    expect(session.setOpaque(id, "new-session-secret")).toEqual({ persistence: "session" })
+    expect(session.resolveOpaque(id)).toBe("new-session-secret")
+
+    const restarted = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
+    expect(restarted.resolveOpaque(id)).toBeNull()
+    expect(readFileSync(restarted.storePath, "utf8")).not.toContain("old-durable-secret")
+    expect(readFileSync(restarted.storePath, "utf8")).not.toContain("new-session-secret")
+  })
+
   it.each([
     ["codex.api-key", "onboarding:codex-api-key"],
     ["openai.voice-api-key", "agents:openai-api-key"],

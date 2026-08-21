@@ -3,12 +3,13 @@
  */
 import { Mutex } from "async-mutex"
 import { eq } from "drizzle-orm"
-import { existsSync, readFileSync, writeFileSync } from "fs"
+import { existsSync, readFileSync } from "fs"
 import * as fs from "fs/promises"
 import * as os from "os"
 import * as path from "path"
 import { getDatabase } from "./db"
 import { chats, projects } from "./db/schema"
+import { writeJsonRecoveryAtomic } from "./portability/io"
 
 /**
  * Mutex for protecting read-modify-write operations on ~/.claude.json
@@ -76,14 +77,7 @@ export function readClaudeConfigSync(): ClaudeConfig {
  * Write ~/.claude.json asynchronously
  */
 export async function writeClaudeConfig(config: ClaudeConfig): Promise<void> {
-  await fs.writeFile(CLAUDE_CONFIG_PATH, JSON.stringify(config, null, 2), "utf-8")
-}
-
-/**
- * Write ~/.claude.json synchronously
- */
-export function writeClaudeConfigSync(config: ClaudeConfig): void {
-  writeFileSync(CLAUDE_CONFIG_PATH, JSON.stringify(config, null, 2), "utf-8")
+  await writeJsonRecoveryAtomic(CLAUDE_CONFIG_PATH, config)
 }
 
 /**

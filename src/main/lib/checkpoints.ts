@@ -459,11 +459,11 @@ export async function captureCheckpoint(
 }
 
 /** Restore the exact worktree and index captured before a run. */
-export async function restoreCheckpoint(checkpointId: string): Promise<void> {
+export async function restoreCheckpoint(checkpointId: string): Promise<boolean> {
   const db = getDatabase()
   const checkpoint = db.select().from(checkpoints).where(eq(checkpoints.id, checkpointId)).get()
   if (!checkpoint) throw new Error("Checkpoint not found")
-  if (!checkpoint.worktreePath) return
+  if (!checkpoint.worktreePath) return false
 
   const snapshot = parseCheckpointSnapshot(checkpoint.gitStatusJson)
   if (!snapshot.available || !snapshot.treeCommit || !snapshot.indexTree) {
@@ -473,10 +473,15 @@ export async function restoreCheckpoint(checkpointId: string): Promise<void> {
   const git = simpleGit(checkpoint.worktreePath)
   const retainedRef = `refs/flapstack/checkpoints/${checkpoint.id}`
   const retainedIndexRef = `refs/flapstack/checkpoint-indexes/${checkpoint.id}`
-  await git.raw(["read-tree", `${retainedRef}^{tree}`])
+  const retainedTree = (await git.raw(["rev-parse", "--verify", `${retainedRef}^{tree}`])).trim()
+  const retainedIndexTree = (
+    await git.raw(["rev-parse", "--verify", `${retainedIndexRef}^{tree}`])
+  ).trim()
+  await git.raw(["read-tree", retainedTree])
   await git.raw(["checkout-index", "-a", "-f"])
   await git.raw(["clean", "-fd"])
-  await git.raw(["read-tree", retainedIndexRef])
+  await git.raw(["read-tree", retainedIndexTree])
+  return true
 }
 
 export async function captureRunManifest(runId: string) {

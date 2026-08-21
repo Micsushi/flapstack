@@ -33,11 +33,16 @@ function expandTilde(filePath: string): string {
   return filePath
 }
 
-function resolveRegisteredExternalTarget(targetPath: string): string {
+export function resolveRegisteredExternalTarget(targetPath: string): string {
   const resolved = path.resolve(expandTilde(targetPath))
-  const canonicalTarget = existsSync(resolved)
-    ? realpathSync(resolved)
-    : path.join(realpathSync(path.dirname(resolved)), path.basename(resolved))
+  let canonicalTarget: string
+  try {
+    canonicalTarget = existsSync(resolved)
+      ? realpathSync(resolved)
+      : path.join(realpathSync(path.dirname(resolved)), path.basename(resolved))
+  } catch {
+    throw new PathValidationError("External target does not exist", "INVALID_TARGET")
+  }
   const db = getDatabase()
   const roots = new Set([
     ...db

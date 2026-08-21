@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process"
+import { execFile, spawn, type ChildProcess } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import {
   chmodSync,
@@ -27,6 +27,30 @@ export const MAX_HOOK_DRY_RUN_MS = 10_000
 export const MAX_HOOK_OUTPUT_BYTES = 64 * 1024
 const MAX_MANAGED_HOOKS = 1_000
 const MAX_HOOK_STATE_BYTES = 10 * 1024 * 1024
+
+function killChildProcessTree(child: ChildProcess): void {
+  if (child.killed) return
+  if (process.platform === "win32" && child.pid) {
+    execFile(
+      "taskkill.exe",
+      ["/pid", String(child.pid), "/t", "/f"],
+      { windowsHide: true, timeout: 5_000 },
+      () => {
+        if (!child.killed) child.kill("SIGKILL")
+      },
+    )
+    return
+  }
+  if (child.pid) {
+    try {
+      process.kill(-child.pid, "SIGKILL")
+      return
+    } catch {
+      // Fall back to the direct child if the process group already exited.
+    }
+  }
+  child.kill("SIGKILL")
+}
 
 const CLAUDE_HOOK_EVENTS = new Set([
   "PreToolUse",
@@ -351,18 +375,7 @@ export class NodeHookDryRunRunner implements HookDryRunRunner {
         env: hookEnvironment("FLAPSTACK_HOOK_DRY_RUN"),
       })
 
-      const stop = (): void => {
-        if (child.killed) return
-        if (process.platform !== "win32" && child.pid) {
-          try {
-            process.kill(-child.pid, "SIGKILL")
-            return
-          } catch {
-            // Fall back to the direct child if the process group already exited.
-          }
-        }
-        child.kill("SIGKILL")
-      }
+      const stop = (): void => killChildProcessTree(child)
       const append = (current: Buffer, chunk: Buffer): Buffer => {
         const remaining = outputBudget - capturedBytes
         if (remaining <= 0) {
@@ -433,6 +446,7 @@ export class NodeManagedHookRuntimeExecutor implements ManagedHookRuntimeExecuto
       let settled = false
       let timedOut = false
       let outputLimitExceeded = false
+      let cancellationRequested = false
       const child = spawn(preview.executable, preview.args, {
         cwd: record.definition.cwd ?? cwd,
         shell: false,
@@ -441,18 +455,7 @@ export class NodeManagedHookRuntimeExecutor implements ManagedHookRuntimeExecuto
         stdio: ["pipe", "pipe", "pipe"],
         env: hookEnvironment("FLAPSTACK_MANAGED_HOOK"),
       })
-      const stop = (): void => {
-        if (child.killed) return
-        if (process.platform !== "win32" && child.pid) {
-          try {
-            process.kill(-child.pid, "SIGKILL")
-            return
-          } catch {
-            // Fall back to the direct child if the process group already exited.
-          }
-        }
-        child.kill("SIGKILL")
-      }
+      const stop = (): void => killChildProcessTree(child)
       const fail = (message: string): void => {
         if (settled) return
         settled = true
@@ -460,8 +463,8 @@ export class NodeManagedHookRuntimeExecutor implements ManagedHookRuntimeExecuto
         reject(new Error(message))
       }
       const abort = (): void => {
+        cancellationRequested = true
         stop()
-        fail("Managed hook execution was cancelled")
       }
       const timer = setTimeout(
         () => {
@@ -495,6 +498,7 @@ export class NodeManagedHookRuntimeExecutor implements ManagedHookRuntimeExecuto
       child.once("error", () => fail("Managed hook could not be started"))
       child.once("close", (exitCode) => {
         if (settled) return
+        if (cancellationRequested) return fail("Managed hook execution was cancelled")
         if (timedOut) return fail("Managed hook timed out")
         if (outputLimitExceeded) return fail("Managed hook exceeded the output limit")
         if (exitCode !== 0) return fail("Managed hook exited unsuccessfully")

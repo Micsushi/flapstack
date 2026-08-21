@@ -83,15 +83,15 @@ describe("agent chat waits", () => {
         targetNames: ["Worker"],
       }),
     ])
-    expect(advanceChatWaits(databasePath, 0)).toBe(0)
+    expect(advanceChatWaits(sqlite, 0)).toBe(0)
 
     sqlite
       .prepare(
         "UPDATE agent_runs SET status = 'success', completed_at = unixepoch() WHERE id IN ('run-waiter','run-target')",
       )
       .run()
-    expect(advanceChatWaits(databasePath, 0)).toBe(0)
-    expect(advanceChatWaits(databasePath, 0)).toBe(1)
+    expect(advanceChatWaits(sqlite, 0)).toBe(0)
+    expect(advanceChatWaits(sqlite, 0)).toBe(1)
 
     expect(listAgentChatWaits(sqlite)).toEqual([])
     expect(
@@ -130,8 +130,8 @@ describe("agent chat waits", () => {
         "UPDATE agent_runs SET status = 'success', completed_at = unixepoch() WHERE id IN ('run-waiter','run-target')",
       )
       .run()
-    expect(advanceChatWaits(databasePath, 0)).toBe(0)
-    expect(advanceChatWaits(databasePath, 0)).toBe(1)
+    expect(advanceChatWaits(sqlite, 0)).toBe(0)
+    expect(advanceChatWaits(sqlite, 0)).toBe(1)
     expect(sqlite.prepare("SELECT status FROM chat_waits").get()).toEqual({ status: "completed" })
 
     // The caller run must be active again for a replay to reach the lookup.
@@ -163,7 +163,7 @@ describe("agent chat waits", () => {
     expect(registerChatWait(sqlite, input)).toMatchObject({ ok: true, created: true })
 
     sqlite.prepare("UPDATE chats SET archived_at = unixepoch() WHERE id = 'target'").run()
-    expect(advanceChatWaits(databasePath, 0)).toBe(0)
+    expect(advanceChatWaits(sqlite, 0)).toBe(0)
     expect(sqlite.prepare("SELECT status FROM chat_waits").get()).toEqual({ status: "failed" })
 
     const surfaced = listAgentChatWaits(sqlite)
@@ -202,6 +202,45 @@ describe("agent chat waits", () => {
     expect(surfaced.error).toHaveLength(200)
     expect(surfaced).not.toHaveProperty("prompt")
     expect(JSON.stringify(surfaced)).not.toContain("x".repeat(201))
+  })
+
+  it("filters archived failures before applying the global surface limit", () => {
+    sqlite
+      .prepare(
+        `INSERT INTO chat_waits
+          (id, waiter_chat_id, waiter_run_id, target_chat_ids, idempotency_key, status, error,
+           created_at, updated_at, completed_at)
+         VALUES ('live-failure', 'waiter', 'run-waiter', '["target"]', 'live-failure',
+           'failed', 'live failure', 1, 1, 1)`,
+      )
+      .run()
+    const insertChat = sqlite.prepare(
+      `INSERT INTO chats
+        (id, name, scope, permission_mode, harness, archived_at)
+       VALUES (?, ?, 'global', 'full-access', 'codex', 1)`,
+    )
+    const insertWait = sqlite.prepare(
+      `INSERT INTO chat_waits
+        (id, waiter_chat_id, waiter_run_id, target_chat_ids, idempotency_key, status, error,
+         created_at, updated_at, completed_at)
+       VALUES (?, ?, 'run-waiter', '["target"]', ?, 'failed', 'archived failure', ?, ?, ?)`,
+    )
+    for (let index = 0; index < 20; index += 1) {
+      const chatId = `archived-waiter-${index}`
+      insertChat.run(chatId, chatId)
+      insertWait.run(
+        `archived-failure-${index}`,
+        chatId,
+        `archived-${index}`,
+        index + 2,
+        index + 2,
+        index + 2,
+      )
+    }
+
+    expect(listAgentChatWaits(sqlite)).toEqual([
+      expect.objectContaining({ id: "live-failure", chatId: "waiter" }),
+    ])
   })
 
   it("rejects circular wait dependencies", () => {

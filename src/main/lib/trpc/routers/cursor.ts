@@ -14,6 +14,7 @@ import {
 } from "../../../../shared/chat-mode"
 import { captureCheckpoint } from "../../checkpoints"
 import { cancelStaleRunningRuns, completeAgentRun } from "../../agent-run-lifecycle"
+import { assertSubChatNotRewinding } from "../../sub-chat-rewind-guard"
 import { agentRuns, chats, getDatabase, getDatabasePath, subChats } from "../../db"
 import {
   buildCursorEnv,
@@ -182,6 +183,7 @@ async function createCursorRun(params: {
   worktreePath: string | null
   promptMessageId?: string
 }) {
+  assertSubChatNotRewinding(params.subChatId)
   const db = getDatabase()
   const existingRun = db.select().from(agentRuns).where(eq(agentRuns.id, params.runId)).get()
   if (existingRun) return existingRun

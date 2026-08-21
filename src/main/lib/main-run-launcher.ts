@@ -82,7 +82,14 @@ import {
   type McpServerConfig,
 } from "./claude-config"
 import { discoverPluginMcpServers } from "./plugins"
-import { getApprovedPluginMcpServers, getEnabledPlugins } from "./trpc/routers/claude-settings"
+import {
+  getApprovedPluginMcpServers,
+  getApprovedProjectMcpConfigs,
+  getEnabledPlugins,
+  isProjectMcpConfigApproved,
+} from "./trpc/routers/claude-settings"
+import { hydrateMcpServerSecrets } from "./mcp-secrets"
+import { strictClaudeMcpSdkOptions } from "./claude-mcp-sdk-options"
 import {
   DEFAULT_OLLAMA_BASE_URL,
   findUnavailableLocalModelTier,
@@ -692,13 +699,15 @@ export class MainRuntimeLaunchService {
               this.hookRuntimeExecutor.execute(record, input, signal, authority.cwd),
             )
           : {}
-        const mcpServers =
-          enforceExtensionPolicy && authority.policy.disabledMcpNames.length > 0
-            ? filterClaudeExtensionMcpServers(
-                await loadClaudeMcpServers(authority.cwd),
-                authority.policy,
-              )
-            : undefined
+        const loadedMcpServers = Object.fromEntries(
+          Object.entries(await loadClaudeMcpServers(authority.cwd)).map(([name, server]) => [
+            name,
+            hydrateMcpServerSecrets(server),
+          ]),
+        )
+        const mcpServers = enforceExtensionPolicy
+          ? filterClaudeExtensionMcpServers(loadedMcpServers, authority.policy)
+          : loadedMcpServers
         return {
           cwd: authority.cwd,
           pathToClaudeCodeExecutable: await resolveBundledClaudePath(),
@@ -778,7 +787,7 @@ export class MainRuntimeLaunchService {
           ...claudePermissionOptions(context.launch.permission.mode),
           ...(context.launch.model ? { model: context.launch.model } : {}),
           ...sdkOptions,
-          ...(mcpServers ? { mcpServers } : {}),
+          ...strictClaudeMcpSdkOptions(mcpServers),
           ...(Object.keys(hooks).length > 0 ? { hooks, includeHookEvents: true } : {}),
         }
       },
@@ -1232,20 +1241,35 @@ function buildClaudeRuntimePrompt(
 }
 
 async function loadClaudeMcpServers(cwd: string): Promise<Record<string, McpServerConfig>> {
-  const [config, dirConfig, projectJson, enabledPlugins, pluginConfigs, approvedPlugins] =
-    await Promise.all([
-      readClaudeConfig(),
-      readClaudeDirConfig(),
-      readProjectMcpJson(cwd),
-      getEnabledPlugins(),
-      discoverPluginMcpServers(),
-      getApprovedPluginMcpServers(),
-    ])
+  const [
+    config,
+    dirConfig,
+    projectJson,
+    enabledPlugins,
+    pluginConfigs,
+    approvedPlugins,
+    approvedProjectMcpConfigs,
+  ] = await Promise.all([
+    readClaudeConfig(),
+    readClaudeDirConfig(),
+    readProjectMcpJson(cwd),
+    getEnabledPlugins(),
+    discoverPluginMcpServers(),
+    getApprovedPluginMcpServers(),
+    getApprovedProjectMcpConfigs(),
+  ])
   const [globalServers, projectConfigServers] = await Promise.all([
     getMergedGlobalMcpServers(config, dirConfig),
     getMergedLocalProjectMcpServers(cwd, config, dirConfig),
   ])
-  const projectServers = { ...projectJson, ...projectConfigServers }
+  const approvedProjectJson = isProjectMcpConfigApproved(
+    cwd,
+    projectJson,
+    new Set(approvedProjectMcpConfigs),
+  )
+    ? projectJson
+    : {}
+  const projectServers = { ...approvedProjectJson, ...projectConfigServers }
   const pluginServers: Record<string, McpServerConfig> = {}
   for (const plugin of pluginConfigs) {
     if (!enabledPlugins.includes(plugin.pluginSource)) continue

@@ -42,7 +42,7 @@ type StoredCredential = {
 
 type CredentialStoreFile = {
   schemaVersion: typeof STORE_SCHEMA_VERSION
-  credentials: Partial<Record<CredentialId, StoredCredential>>
+  credentials: Record<string, StoredCredential>
   retiredLegacySources?: CredentialId[]
 }
 
@@ -125,7 +125,10 @@ function parseStore(raw: string): CredentialStoreFile {
   }
   const credentials = parsed.credentials as Record<string, unknown>
   for (const [id, value] of Object.entries(credentials)) {
-    if (!(CREDENTIAL_IDS as readonly string[]).includes(id) || !isStoredCredential(value)) {
+    if (
+      (!(CREDENTIAL_IDS as readonly string[]).includes(id) && !/^mcp\.[a-f0-9]{64}$/.test(id)) ||
+      !isStoredCredential(value)
+    ) {
       throw new Error("Invalid credential store entry")
     }
   }
@@ -223,8 +226,8 @@ export class CredentialService {
   private readonly storageDir: string
   private readonly encryption: CredentialEncryption
   private readonly now: () => number
-  private readonly sessionCredentials = new Map<CredentialId, SessionCredential>()
-  private readonly resolutionWarnings = new Map<CredentialId, string>()
+  private readonly sessionCredentials = new Map<string, SessionCredential>()
+  private readonly resolutionWarnings = new Map<string, string>()
 
   constructor(options: CredentialServiceOptions = {}) {
     this.storageDir = options.storageDir ?? defaultStorageDir()
@@ -440,6 +443,83 @@ export class CredentialService {
 
   listStatuses(): CredentialStatus[] {
     return CREDENTIAL_IDS.map((id) => this.status(id))
+  }
+
+  setOpaque(
+    id: string,
+    rawSecret: string,
+    options: { requirePersistence?: boolean } = {},
+  ): { persistence: "encrypted" | "session" } {
+    if (!/^mcp\.[a-f0-9]{64}$/.test(id)) throw new Error("Invalid opaque credential identifier")
+    const secret = rawSecret.trim()
+    if (!secret) throw new Error("Credential cannot be empty")
+    const fingerprint = credentialFingerprint(secret)
+    const updatedAt = this.now()
+    const inspected = this.encryption.inspect()
+    if (inspected.available) {
+      try {
+        const ciphertext = this.encryption.encrypt(secret)
+        if (this.encryption.decrypt(ciphertext) !== secret) {
+          throw new Error("Encrypted credential verification failed")
+        }
+        const store = this.readStoreStrict()
+        store.credentials[id] = {
+          ciphertext: ciphertext.toString("base64"),
+          fingerprint,
+          updatedAt,
+          encryptionBackend: inspected.backend,
+        }
+        this.writeStoreAtomic(store)
+        this.sessionCredentials.delete(id)
+        return { persistence: "encrypted" }
+      } catch {
+        if (options.requirePersistence) return { persistence: "session" }
+        // Fall through to session-only storage if the OS backend fails.
+      }
+    }
+    if (options.requirePersistence) return { persistence: "session" }
+    const store = this.readStoreStrict()
+    if (store.credentials[id]) {
+      delete store.credentials[id]
+      try {
+        this.writeStoreAtomic(store)
+      } catch {
+        throw new Error(
+          "Credential replacement was rejected because the prior durable value could not be retired.",
+        )
+      }
+    }
+    this.sessionCredentials.set(id, {
+      secret,
+      fingerprint,
+      updatedAt,
+      warning: inspected.warning ?? "Secure credential persistence is unavailable.",
+    })
+    return { persistence: "session" }
+  }
+
+  resolveOpaque(id: string): string | null {
+    if (!/^mcp\.[a-f0-9]{64}$/.test(id)) return null
+    const session = this.sessionCredentials.get(id)
+    if (session) return session.secret
+    try {
+      const stored = this.readStoreStrict().credentials[id]
+      if (!stored) return null
+      const secret = this.encryption.decrypt(Buffer.from(stored.ciphertext, "base64"))
+      return credentialFingerprint(secret) === stored.fingerprint ? secret : null
+    } catch {
+      return null
+    }
+  }
+
+  removeOpaque(id: string): void {
+    if (!/^mcp\.[a-f0-9]{64}$/.test(id)) return
+    this.sessionCredentials.delete(id)
+    const store = this.readStoreStrict()
+    if (store.credentials[id]) {
+      delete store.credentials[id]
+      this.writeStoreAtomic(store)
+    }
   }
 
   remove(id: CredentialId): CredentialStatus {
