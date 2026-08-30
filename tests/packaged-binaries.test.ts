@@ -82,10 +82,14 @@ describe("packaged harness preparation", () => {
       options: { env: { ELECTRON_RUN_AS_NODE: "1" }, timeout: 180_000 },
     })
     expect(invocation!.args[1]).toContain(
-      join("/resources/app.asar/node_modules", "better-sqlite3"),
+      JSON.stringify(join("/resources/app.asar/node_modules", "better-sqlite3")),
     )
-    expect(invocation!.args[1]).toContain(join("/resources/app.asar/node_modules", "sharp"))
-    expect(invocation!.args[1]).toContain(join("/resources/app.asar/node_modules", "node-pty"))
+    expect(invocation!.args[1]).toContain(
+      JSON.stringify(join("/resources/app.asar/node_modules", "sharp")),
+    )
+    expect(invocation!.args[1]).toContain(
+      JSON.stringify(join("/resources/app.asar/node_modules", "node-pty")),
+    )
   })
 
   it("pins optional native packages for every macOS package architecture", () => {
