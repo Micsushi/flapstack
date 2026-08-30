@@ -8,6 +8,14 @@ export function sanitizeProviderErrorText(value: unknown): string {
     return "The previous provider session expired. Start a fresh response and retry."
   }
 
+  if (
+    /(?:fetch failed|network request failed|socket hang up|ECONNRESET|ENETUNREACH|ENOTFOUND|EAI_AGAIN)/i.test(
+      text,
+    )
+  ) {
+    return "The provider connection was interrupted. Check your network and retry. Local credentials were kept."
+  }
+
   return text
     .replace(INTERNAL_PROVIDER_NAMES, "Provider runtime")
     .replace(/session\.(?:create|fork|prompt_async)/gi, "session request")

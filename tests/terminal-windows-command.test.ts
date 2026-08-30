@@ -6,6 +6,8 @@ import {
   captureTerminalPtyOwnedProcesses,
   isTerminalProcessAlive,
   formatInitialCommands,
+  releaseTerminalPtyResources,
+  releaseUnixPtyResources,
   releaseWindowsPtyConoutWorker,
   terminalPtyOwnedProcessIds,
   terminalPtyPlatformOptions,
@@ -138,6 +140,17 @@ describe("terminal initial command formatting", () => {
     expect(disposeReceiver).toBe(connection)
     expect(terminationCount).toBe(0)
     expect(destroyed).toEqual(["input", "output"])
+  })
+
+  it("releases guarded Unix node-pty resources once without touching Windows", async () => {
+    const destroy = vi.fn()
+    const ptyProcess = { destroy }
+
+    expect(releaseUnixPtyResources(ptyProcess, "darwin")).toBe(true)
+    expect(releaseUnixPtyResources(ptyProcess, "linux")).toBe(true)
+    await expect(releaseTerminalPtyResources(ptyProcess, "darwin")).resolves.toBe(true)
+    expect(releaseUnixPtyResources({ destroy }, "win32")).toBe(false)
+    expect(destroy).toHaveBeenCalledOnce()
   })
 
   it("waits for Windows PTY readiness before allowing performance teardown", async () => {

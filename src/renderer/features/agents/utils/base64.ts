@@ -11,3 +11,13 @@ export function base64ToUtf8(base64: string): string {
   const bytes = Uint8Array.from(binString, (char) => char.codePointAt(0)!)
   return new TextDecoder().decode(bytes)
 }
+
+export function dataUrlToBlob(dataUrl: string): Blob {
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
+  if (!match) {
+    throw new Error("Visual capture derivative is not a base64 data URL.")
+  }
+
+  const bytes = Uint8Array.from(atob(match[1]), (char) => char.codePointAt(0)!)
+  return new Blob([bytes], { type: "image/png" })
+}

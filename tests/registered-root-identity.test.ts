@@ -18,6 +18,7 @@ import * as schema from "../src/main/lib/db/schema"
 import {
   assertRegisteredWorktree,
   bindRegisteredFilesystemRoot,
+  matchesRegisteredFilesystemIdentity,
 } from "../src/main/lib/git/security/path-validation"
 import { filesRouter } from "../src/main/lib/trpc/routers/files"
 import { runsRouter } from "../src/main/lib/trpc/routers/runs"
@@ -41,6 +42,20 @@ afterEach(() => {
 })
 
 describe("durable registered filesystem root identity", () => {
+  it("rejects device drift even when the directory inode matches", () => {
+    const registration = { deviceId: "16777232", inodeId: "85483053" }
+
+    expect(
+      matchesRegisteredFilesystemIdentity(registration, { dev: 16777230n, ino: 85483053n }),
+    ).toBe(false)
+    expect(
+      matchesRegisteredFilesystemIdentity(registration, { dev: 16777230n, ino: 85483054n }),
+    ).toBe(false)
+    expect(
+      matchesRegisteredFilesystemIdentity(registration, { dev: 16777232n, ino: 85483053n }),
+    ).toBe(true)
+  })
+
   it("fails closed until an existing pathname is explicitly bound", () => {
     const { root } = createRegisteredProject()
 

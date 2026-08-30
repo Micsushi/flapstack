@@ -30,6 +30,7 @@ import type {
   ChatTransferWindowDestination,
 } from "../shared/chat-window-transfer"
 import type { ChatWorkbenchSessionPresentation } from "../shared/chat-workbench"
+import type { AppCommand } from "../shared/app-command"
 
 export interface UpdateInfo {
   version: string
@@ -200,6 +201,7 @@ export interface DesktopApi {
   // Shortcuts
   onShortcutNewAgent: (callback: () => void) => () => void
   onShortcutOpenSettings: (callback: () => void) => () => void
+  onAppCommand: (callback: (command: AppCommand) => void) => () => void
   onCliOpenDirectory: (callback: () => void) => () => void
   onDevRendererControlRequest: (
     callback: (payload: DevRendererControlRequest) => void,

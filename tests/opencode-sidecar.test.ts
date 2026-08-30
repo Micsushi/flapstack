@@ -35,7 +35,10 @@ import {
   executableSearchDirs,
   resolveOpencodeBinary,
 } from "../src/main/lib/harness/opencode-sidecar/binary"
-import { OpencodeClient } from "../src/main/lib/harness/opencode-sidecar/client"
+import {
+  DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
+  OpencodeClient,
+} from "../src/main/lib/harness/opencode-sidecar/client"
 import {
   buildOpencodeConfig,
   writeIsolatedConfig,
@@ -56,6 +59,7 @@ import {
   refreshProviderModels,
 } from "../src/main/lib/harness/opencode-sidecar/models"
 import {
+  DEFAULT_OPENCODE_STARTUP_TIMEOUT_MS,
   sanitizeSidecarParentEnvironment,
   startSidecar,
 } from "../src/main/lib/harness/opencode-sidecar/launcher"
@@ -84,9 +88,25 @@ describe("provider error boundary", () => {
     expect(message).toBe("Provider runtime session request failed: HTTP 500")
     expect(message).not.toMatch(/opencode|1code|prompt_async/i)
   })
+
+  it("turns provider network loss into an actionable retry message", () => {
+    const message = sanitizeProviderErrorText(
+      new TypeError("OpenCode request failed: fetch failed (ECONNRESET)"),
+    )
+    expect(message).toBe(
+      "The provider connection was interrupted. Check your network and retry. Local credentials were kept.",
+    )
+    expect(message).not.toMatch(/opencode|econnreset|fetch failed/i)
+  })
 })
 
 describe("stale provider session recovery", () => {
+  it("starts a fresh session because every sidecar has isolated storage", () => {
+    const source = readFileSync("src/main/lib/harness/opencode-sidecar/session.ts", "utf8")
+    expect(source).not.toContain("client.forkSession")
+    expect(source).toContain("client.createSession")
+  })
+
   it("recovers only from a missing fork source", () => {
     expect(isStaleSidecarSessionError(new Error("OpenCode session.fork failed: HTTP 404"))).toBe(
       true,
@@ -860,6 +880,11 @@ The operation was aborted.`,
 })
 
 describe("OpenCode request deadlines", () => {
+  it("allows slow first-run project initialization", () => {
+    expect(DEFAULT_OPENCODE_STARTUP_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000)
+    expect(DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000)
+  })
+
   const makeClient = (fetchImpl: typeof fetch) =>
     new OpencodeClient({
       baseUrl: "http://127.0.0.1:1",
@@ -881,6 +906,30 @@ describe("OpenCode request deadlines", () => {
   it("times out a prompt fetch that ignores AbortSignal", async () => {
     const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch
     await expect(makeClient(fetchImpl).promptAsync("session", "hello")).rejects.toThrow("timed out")
+  })
+
+  it("recovers when health polling loses the network once", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ healthy: true, version: "test" }), {
+          headers: { "content-type": "application/json" },
+        }),
+      ) as unknown as typeof fetch
+    const client = new OpencodeClient({
+      baseUrl: "http://127.0.0.1:1",
+      directory: "/tmp",
+      password: "test",
+      fetchImpl,
+      requestTimeoutMs: 50,
+    })
+
+    await expect(client.waitForHealth(1_000)).resolves.toEqual({
+      healthy: true,
+      version: "test",
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -1302,7 +1351,7 @@ describe("run finalization isolation", () => {
       captureManifest: () => order.push("manifest"),
       captureUsage: async () => {
         order.push("usage")
-        throw new Error("usage unavailable")
+        throw new TypeError("fetch failed")
       },
       onError: (stage) => errors.push(stage),
     })
@@ -1311,6 +1360,7 @@ describe("run finalization isolation", () => {
     expect(updateSubChatStatus).toHaveBeenCalledOnce()
     expect(order).toEqual(["checkpoint", "run:checkpoint-after", "subchat", "manifest", "usage"])
     expect(errors).toEqual(["usage"])
+    expect(mergeSidecarUsage([])).toEqual({ costQuality: "unknown" })
   })
 })
 

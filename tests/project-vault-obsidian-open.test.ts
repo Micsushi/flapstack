@@ -1,7 +1,7 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -21,6 +21,7 @@ describe("safe Obsidian vault opening", () => {
     directory = mkdtempSync(join(tmpdir(), "flapstack-obsidian-open-"))
     vaultRoot = join(directory, "vault & calc.exe (safe) # %")
     mkdirSync(vaultRoot)
+    vaultRoot = realpathSync(vaultRoot)
     sqlite = new Database(join(directory, "agents.db"))
     migrate(drizzle(sqlite, { schema }), { migrationsFolder: resolve(process.cwd(), "drizzle") })
     sqlite.pragma("foreign_keys = ON")

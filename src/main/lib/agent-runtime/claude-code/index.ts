@@ -1,5 +1,6 @@
 export {
   ClaudeCodeRuntimeAdapter,
+  ClaudeRuntimeFailedError,
   ClaudeRuntimeUncertainError,
   createClaudeCodeRuntimeAdapter,
 } from "./adapter"

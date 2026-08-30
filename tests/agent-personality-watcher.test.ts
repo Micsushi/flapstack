@@ -22,7 +22,10 @@ describe("Agent Personality filesystem watcher", () => {
     await watcher.observe(root)
     await writeFile(join(personality, "v1.md"), "# External edit\n")
 
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce(), { timeout: 2_000 })
+    // Chokidar's awaitWriteFinish timer can be delayed when the full suite is
+    // saturating the host. Keep this above the product debounce threshold and
+    // assert the event rather than depending on a workstation-speed deadline.
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce(), { timeout: 20_000 })
     await watcher.close()
     await writeFile(join(personality, "v2.md"), "# After close\n")
     await new Promise((resolve) => setTimeout(resolve, 150))

@@ -151,6 +151,12 @@
       "copyright": "Copyright Drizzle Team",
       "source": "https://github.com/drizzle-team/drizzle-orm/blob/0.45.2/LICENSE"
     },
+    "fastdom@1.0.12": {
+      "declaredLicense": "MIT",
+      "template": "MIT",
+      "copyright": "Copyright (c) 2016 Wilson Page <wilsonpage@me.com>",
+      "source": "https://registry.npmjs.org/fastdom/-/fastdom-1.0.12.tgz"
+    },
     "guid-typescript@1.0.9": {
       "declaredLicense": "ISC",
       "template": "ISC",
@@ -204,6 +210,12 @@
       "template": "MIT",
       "copyright": "Copyright (c) 2025 Steve King",
       "source": "https://github.com/steveukx/git-js/blob/simple-git%403.36.0/LICENSE"
+    },
+    "strictdom@1.0.1": {
+      "declaredLicense": "MIT",
+      "template": "MIT",
+      "copyright": "Copyright (c) 2013 Wilson Page <wilsonpage@me.com>",
+      "source": "https://registry.npmjs.org/strictdom/-/strictdom-1.0.1.tgz"
     },
     "trpc-electron@0.1.2": {
       "declaredLicense": "MIT",

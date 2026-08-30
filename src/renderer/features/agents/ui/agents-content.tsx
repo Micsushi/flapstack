@@ -367,6 +367,7 @@ function AgentsContentInner() {
   const chatWorkbenchLayoutRef = useRef(chatWorkbenchLayout)
   const chatWorkbenchRevisionRef = useRef(0)
   const chatWorkbenchCompactRef = useRef(false)
+  const presentedWorkbenchChatIdsRef = useRef<ReadonlySet<string>>(new Set())
   const [editableWorkbenchChatIds, setEditableWorkbenchChatIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   )
@@ -816,6 +817,11 @@ function AgentsContentInner() {
     if (!desktop?.claimChat) return
     let cancelled = false
     const liveChatIds = new Set(workbenchChatIds)
+    const previouslyPresentedChatIds = presentedWorkbenchChatIdsRef.current
+    presentedWorkbenchChatIdsRef.current = liveChatIds
+    for (const chatId of previouslyPresentedChatIds) {
+      if (!liveChatIds.has(chatId)) void desktop.releaseChat(chatId)
+    }
     setEditableWorkbenchChatIds((current) => {
       const next = new Set([...current].filter((chatId) => liveChatIds.has(chatId)))
       return next.size === current.size ? current : next
@@ -823,6 +829,10 @@ function AgentsContentInner() {
     for (const chatId of workbenchChatIds) {
       if (editableWorkbenchChatIds.has(chatId)) continue
       void desktop.claimChat(chatId).then((result) => {
+        if (cancelled && result.ok) {
+          if (!presentedWorkbenchChatIdsRef.current.has(chatId)) void desktop.releaseChat(chatId)
+          return
+        }
         if (cancelled || !result.ok) return
         setEditableWorkbenchChatIds((current) => new Set([...current, chatId]))
       })
@@ -3297,7 +3307,7 @@ function AgentsContentInner() {
                                 className="min-w-0 flex-1 truncate text-left"
                                 onClick={() => handleSelectStandaloneTerminal(presentationId)}
                               >
-                                Terminal{owner?.name ? ` â€” ${owner.name}` : ""}
+                                Terminal{owner?.name ? ` · ${owner.name}` : ""}
                               </button>
                               <button
                                 type="button"
@@ -3911,7 +3921,7 @@ export function AgentsContent() {
       <Suspense
         fallback={
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            LoadingÃ¢â‚¬Â¦
+            Loading…
           </div>
         }
       >

@@ -40,7 +40,7 @@ export function localProductPerformanceSupport(input: {
         "Package performance capture is unavailable without executing and observing the exact package.",
     }
   }
-  if (input.platform !== "win32") {
+  if (input.platform === "linux") {
     return {
       supported: false,
       reason: `Built-in headless product benchmark adapters are unavailable on ${input.platform}.`,

@@ -33,6 +33,8 @@ export function McpExternalMutationRefreshBridge() {
         ]),
       chatLineage: (chatId) => utils.spawnedAgents.previewLineage.invalidate({ chatId }),
       projectVault: createProjectVaultQueryInvalidator({
+        graph: ({ projectId }) => utils.projectVaults.getGraph.invalidate({ projectId }),
+        notes: () => utils.projectVaults.readNote.invalidate(),
         project: ({ projectId }) =>
           Promise.all([
             utils.projectVaults.listSections.invalidate({ projectId }),

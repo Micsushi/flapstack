@@ -54,35 +54,7 @@ export function WindowsTitleBar({
     checkFrameState()
   }, [isWindows])
 
-  // The Undo/Redo affordance only exists in the Windows frameless title bar, so
-  // the shortcut must not silently swallow Ctrl/Cmd+Z on macOS and Linux.
   const showsAppControls = isWindows && !hasNativeFrame
-
-  useEffect(() => {
-    if (!showsAppControls) return
-    const handleHistoryShortcut = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return
-      const target = event.target
-      if (
-        target instanceof HTMLElement &&
-        (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
-      ) {
-        return
-      }
-      const available = event.shiftKey ? actionHistory.canRedo : actionHistory.canUndo
-      if (!available) return
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      const operation = event.shiftKey ? redoAppAction() : undoAppAction()
-      void operation.catch((error) =>
-        toast.error(event.shiftKey ? "Redo failed" : "Undo failed", {
-          description: error instanceof Error ? error.message : String(error),
-        }),
-      )
-    }
-    window.addEventListener("keydown", handleHistoryShortcut, true)
-    return () => window.removeEventListener("keydown", handleHistoryShortcut, true)
-  }, [actionHistory.canRedo, actionHistory.canUndo, showsAppControls])
 
   // Don't render on non-Windows or when using native frame
   if (!showsAppControls) return null

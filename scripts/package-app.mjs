@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url"
 import { preparePackageResources, resolvePackageTargets } from "./prepare-package-resources.mjs"
 import { writePackageProvenance } from "./lib/package-provenance.mjs"
 import { prepareDependencyLicenseNotices } from "./lib/dependency-license-notices.mjs"
+import { prepareDarwinTargetDependencies } from "./lib/darwin-target-dependencies.mjs"
 import { ensureNativeAbi } from "./ensure-native-abi.mjs"
 import {
   acquirePackageOutput,
@@ -124,12 +125,31 @@ export function runBuilder(args, options = {}) {
   }
 }
 
+export function runAppBuild(options = {}) {
+  const runner = options.spawn ?? spawnSync
+  const command = options.command ?? (process.platform === "win32" ? "npm.cmd" : "npm")
+  const result = runner(command, ["run", "build"], {
+    cwd: options.cwd ?? root,
+    stdio: options.stdio ?? "inherit",
+  })
+  if (result.error) throw result.error
+  if (result.signal) throw new Error(`Application build terminated by ${result.signal}`)
+  if (result.status !== 0)
+    throw new Error(`Application build failed with exit code ${result.status}`)
+}
+
 export async function executePackageBuild(build, options = {}) {
   const rootDirectory = options.root ?? root
+  const buildApp = options.buildApp ?? runAppBuild
   const writeProvenance = options.writeProvenance ?? writePackageProvenance
   const prepareNotices = options.prepareNotices ?? prepareDependencyLicenseNotices
+  const prepareTargetDependencies =
+    options.prepareTargetDependencies ?? prepareDarwinTargetDependencies
   const prepareResources = options.prepareResources ?? preparePackageResources
   const builder = options.builder ?? runBuilder
+  // Build before touching the previous package so a source-build failure keeps
+  // the last known-good output intact.
+  buildApp({ cwd: rootDirectory })
   // Capture the source before the output transaction moves a previous package
   // into its temporary backup. The backup is build state, not source input.
   writeProvenance(build, {
@@ -141,6 +161,7 @@ export async function executePackageBuild(build, options = {}) {
     outputDirectory: build.outputDirectory,
   })
   try {
+    await prepareTargetDependencies(build.targets, { root: rootDirectory })
     prepareNotices({ root: rootDirectory })
     await prepareResources(build.targets)
     builder(build.builderArgs)

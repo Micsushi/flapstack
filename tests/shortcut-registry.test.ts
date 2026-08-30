@@ -44,6 +44,11 @@ describe("shortcut registry", () => {
     expect(getResolvedHotkey("open-settings", config, "win32")).toBe("ctrl+,")
   })
 
+  it("keeps the macOS voice shortcut clear of the VoiceOver modifier", () => {
+    expect(getResolvedHotkey("voice-input", undefined, "darwin")).toBe("ctrl+shift+space")
+    expect(getResolvedHotkey("voice-input", undefined, "darwin")).not.toBe("ctrl+opt")
+  })
+
   it("migrates only valid editable v1 bindings", () => {
     expect(
       migrateHotkeysConfig({

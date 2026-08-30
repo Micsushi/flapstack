@@ -8,10 +8,21 @@ import { tempRoot } from "./portability-test-helpers"
 
 afterEach(() => {
   delete process.env.FLAPSTACK_DB_PATH
+  vi.doUnmock("electron")
   vi.resetModules()
 })
 
 describe("database maintenance coordinator", () => {
+  it("loads an explicit headless database path without Electron", async () => {
+    process.env.FLAPSTACK_DB_PATH = join(await tempRoot(), "agents.db")
+    vi.doMock("electron", () => {
+      throw new Error("Electron is unavailable in the packaged Node sidecar")
+    })
+
+    const database = await import("../src/main/lib/db")
+    expect(database.getDatabasePath()).toBe(process.env.FLAPSTACK_DB_PATH)
+  })
+
   it("recovers provably dead owner and access markers but preserves a live foreign owner", async () => {
     const root = await tempRoot()
     const databasePath = join(root, "agents.db")
@@ -288,7 +299,96 @@ describe("database maintenance coordinator", () => {
     kill.mockRestore()
   })
 
-  it("holds the database lease through resume failure cleanup", async () => {
+  it("keeps maintenance active when failed begin cleanup cannot release the access lease", async () => {
+    process.env.FLAPSTACK_DB_PATH = join(await tempRoot(), "agents.db")
+    const startInstalledUsageDaemon = vi.fn()
+    vi.doMock("../src/main/lib/usage-daemon/platform", () => ({
+      stopInstalledUsageDaemon: vi.fn(async () => true),
+      startInstalledUsageDaemon,
+    }))
+    const database = await import("../src/main/lib/db")
+    const access = await import("../src/main/lib/db/access")
+    const events: string[] = []
+    database.registerDatabaseMaintenanceParticipant("paused-before-failure", {
+      pause: () => events.push("first-pause"),
+      resume: () => events.push("first-resume"),
+    })
+    database.registerDatabaseMaintenanceParticipant("begin-failure", {
+      pause: () => {
+        events.push("second-pause")
+        access.setDatabaseAccessTestHooks({
+          beforeMarkerQuarantine: (_path, kind) => {
+            if (kind === "owner") throw new Error("lease release failed")
+          },
+        })
+        throw new Error("participant pause failed")
+      },
+      resume: () => events.push("second-resume"),
+    })
+
+    const failure = await database.beginDatabaseMaintenance("failed-begin").then(
+      () => null,
+      (error: unknown) => error,
+    )
+
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect((failure as AggregateError).errors.map(String).join("\n")).toContain(
+      "participant pause failed",
+    )
+    expect((failure as AggregateError).errors.map(String).join("\n")).toContain(
+      "lease release failed",
+    )
+    expect(events).toEqual(["first-pause", "second-pause", "first-resume"])
+    expect(database.isDatabaseMaintenanceActive()).toBe(true)
+    expect(startInstalledUsageDaemon).not.toHaveBeenCalled()
+
+    access.setDatabaseAccessTestHooks(null)
+    await database.endDatabaseMaintenance("failed-begin")
+    expect(database.isDatabaseMaintenanceActive()).toBe(false)
+    expect(startInstalledUsageDaemon).toHaveBeenCalledOnce()
+    database.closeDatabase()
+  })
+
+  it("keeps maintenance active while end cleanup cannot release the access lease", async () => {
+    process.env.FLAPSTACK_DB_PATH = join(await tempRoot(), "agents.db")
+    const startInstalledUsageDaemon = vi.fn()
+    vi.doMock("../src/main/lib/usage-daemon/platform", () => ({
+      stopInstalledUsageDaemon: vi.fn(async () => true),
+      startInstalledUsageDaemon,
+    }))
+    const database = await import("../src/main/lib/db")
+    const access = await import("../src/main/lib/db/access")
+    const activeDuringResume: boolean[] = []
+    database.registerDatabaseMaintenanceParticipant("release-failure", {
+      pause: vi.fn(),
+      resume: () => activeDuringResume.push(database.isDatabaseMaintenanceActive()),
+    })
+    await database.beginDatabaseMaintenance("failed-end")
+    access.setDatabaseAccessTestHooks({
+      beforeMarkerQuarantine: (_path, kind) => {
+        if (kind === "owner") throw new Error("lease release failed")
+      },
+    })
+
+    await expect(database.endDatabaseMaintenance("failed-end")).rejects.toThrow(
+      "lease release failed",
+    )
+    expect(database.isDatabaseMaintenanceActive()).toBe(true)
+    expect(activeDuringResume).toEqual([true])
+    expect(startInstalledUsageDaemon).not.toHaveBeenCalled()
+    expect(() => access.openAppDatabase(process.env.FLAPSTACK_DB_PATH!)).toThrow(
+      /paused for bounded maintenance/i,
+    )
+
+    access.setDatabaseAccessTestHooks(null)
+    await database.endDatabaseMaintenance("failed-end")
+    expect(activeDuringResume).toEqual([true, false])
+    expect(database.isDatabaseMaintenanceActive()).toBe(false)
+    expect(startInstalledUsageDaemon).toHaveBeenCalledOnce()
+    database.closeDatabase()
+  })
+
+  it("releases database guards before participant resume cleanup", async () => {
     process.env.FLAPSTACK_DB_PATH = join(await tempRoot(), "agents.db")
     const startInstalledUsageDaemon = vi.fn()
     vi.doMock("../src/main/lib/usage-daemon/platform", () => ({
@@ -296,12 +396,20 @@ describe("database maintenance coordinator", () => {
       startInstalledUsageDaemon,
     }))
     const database = await import("../src/main/lib/db")
+    const access = await import("../src/main/lib/db/access")
     database.initDatabase()
-    let activeDuringResume = false
+    let activeDuringResume = true
+    let databaseAvailableDuringResume = false
+    let externalAccessAvailableDuringResume = false
     database.registerDatabaseMaintenanceParticipant("resume-failure", {
       pause: vi.fn(),
       resume: () => {
         activeDuringResume = database.isDatabaseMaintenanceActive()
+        databaseAvailableDuringResume = database.getDatabase() !== null
+        try {
+          access.openAppDatabase(process.env.FLAPSTACK_DB_PATH!).close()
+          externalAccessAvailableDuringResume = true
+        } catch {}
         throw new Error("resume failed")
       },
     })
@@ -309,7 +417,9 @@ describe("database maintenance coordinator", () => {
     await expect(database.endDatabaseMaintenance("resume-failure-test")).rejects.toThrow(
       "resume failed",
     )
-    expect(activeDuringResume).toBe(true)
+    expect(activeDuringResume).toBe(false)
+    expect(databaseAvailableDuringResume).toBe(true)
+    expect(externalAccessAvailableDuringResume).toBe(true)
     expect(database.isDatabaseMaintenanceActive()).toBe(false)
     expect(startInstalledUsageDaemon).not.toHaveBeenCalled()
     database.closeDatabase()

@@ -144,21 +144,10 @@ export async function* runSidecarSession(
       input.permissionMode,
       input.customPermissions,
     )
-    let sessionId: string | null = null
-    if (input.resumeSessionId) {
-      try {
-        sessionId = await client.forkSession(input.resumeSessionId, input.signal)
-        await client.setSessionPermissions(sessionId, permission, input.signal)
-      } catch (error) {
-        // Stale session id (sidecar restarted or storage reset) - start fresh        // instead of failing the whole run with a 404.
-        if (isStaleSidecarSessionError(error)) {
-          sessionId = null
-        } else {
-          throw error
-        }
-      }
-    }
-    if (!sessionId) sessionId = await client.createSession(permission, input.signal)
+    // Every run gets a new isolated XDG data directory, so a session ID from a
+    // previous sidecar cannot be forked here. Chat context is already rebuilt
+    // into the prompt by the router.
+    const sessionId = await client.createSession(permission, input.signal)
     yield { kind: "session-start", sessionId }
 
     yield { kind: "phase", phase: "streaming" }

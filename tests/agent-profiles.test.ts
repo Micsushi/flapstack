@@ -313,6 +313,60 @@ describe("Agent Profile workflow production binding", () => {
 })
 
 describe("Agent Profile lifecycle and resolution", () => {
+  it("versions a stale built-in catalog entry once and preserves its history", () => {
+    const stale = definition({ harness: "codex", runtimePreference: "auto" })
+    sqlite
+      .prepare(
+        `INSERT INTO agent_profiles
+           (id, name, description, category, scope_type, project_id, source,
+            current_version, created_at, updated_at, archived_at)
+         VALUES ('builtin.planner', 'Old Planner', 'Old definition', 'old',
+           'built-in', NULL, 'built-in', 1, 1, 1, NULL)`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO agent_profile_versions
+           (profile_id, version, base_profile_id, base_profile_version,
+            capability_json, presentation_json, provenance_json, created_at)
+         VALUES ('builtin.planner', 1, NULL, NULL, ?, ?, ?, 1)`,
+      )
+      .run(
+        JSON.stringify(stale.capability),
+        JSON.stringify(stale.presentation),
+        JSON.stringify({
+          kind: "built-in",
+          sourceLabel: "Old starter catalog",
+          importedAt: null,
+          trusted: true,
+          disabledRequirements: [],
+          digest: "old",
+          inheritCapabilityFields: [],
+          inheritPresentationFields: [],
+          personalityRef: null,
+        }),
+      )
+
+    const service = createAgentProfileService(sqlite)
+    service.ensureStarterCatalog()
+    service.ensureStarterCatalog()
+
+    expect(
+      service.get({ profileId: "builtin.planner", version: 1 }).version.definition.capability,
+    ).toMatchObject({ harness: "codex", runtimePreference: "auto" })
+    expect(
+      service.get({ profileId: "builtin.planner", version: 2 }).version.definition.capability,
+    ).toMatchObject({ harness: "claude-code", runtimePreference: "claude-code" })
+    expect(service.list({}).find((profile) => profile.id === "builtin.planner")).toMatchObject({
+      name: "Planner",
+      source: "built-in",
+      currentVersion: 2,
+    })
+    expect(
+      service.auditEvents("builtin.planner").filter((event) => event.action === "starter-updated"),
+    ).toHaveLength(1)
+  })
+
   it("versions CRUD, rejects cycles, narrows authority, and freezes snapshots", () => {
     const service = createAgentProfileService(sqlite)
     service.ensureStarterCatalog()

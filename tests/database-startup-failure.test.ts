@@ -2,7 +2,11 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { runIsolatedStartupTasks, runRequiredStartup } from "../src/main/lib/startup-gate"
+import {
+  describeRequiredStartupFailure,
+  runIsolatedStartupTasks,
+  runRequiredStartup,
+} from "../src/main/lib/startup-gate"
 
 const directories: string[] = []
 
@@ -16,6 +20,33 @@ afterEach(() => {
 })
 
 describe("required database startup", () => {
+  it("provides secret-safe native recovery guidance for a corrupt database", () => {
+    const error = Object.assign(new Error("file is not a database: credential=secret"), {
+      code: "SQLITE_NOTADB",
+    })
+
+    expect(describeRequiredStartupFailure(error, "/profile/data/agents.db")).toEqual({
+      title: "Flapstack could not start safely",
+      message: "The local database could not be opened.",
+      detail:
+        "Flapstack did not reset or replace your local data.\n\n" +
+        "Database: /profile/data/agents.db\n\n" +
+        "Keep this file for recovery. Restore a known-good backup or move the damaged profile aside, then reopen Flapstack.\n\n" +
+        "Reason: SQLite reported that the database is damaged or unreadable.",
+    })
+  })
+
+  it("does not expose arbitrary required-startup error text", () => {
+    const notice = describeRequiredStartupFailure(
+      new Error("permission recovery failed with API_KEY=secret"),
+      "/profile/data/agents.db",
+    )
+
+    expect(notice.message).toBe("Flapstack stopped before opening a window.")
+    expect(notice.detail).not.toContain("API_KEY")
+    expect(notice.detail).not.toContain("secret")
+  })
+
   it("continues later startup services after an optional service fails", async () => {
     const order: string[] = []
     const report = vi.fn()

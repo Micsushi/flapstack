@@ -10,6 +10,10 @@ describe("project vault custom note file-management surface", () => {
     ),
     "utf8",
   )
+  const viewSource = readFileSync(
+    resolve(process.cwd(), "src/renderer/features/project-vault/project-vault-view.tsx"),
+    "utf8",
+  )
 
   it("exposes the complete folder lifecycle with keyboard labels", () => {
     expect(source).toContain('aria-label="Manage vault folders and attachments"')
@@ -25,7 +29,9 @@ describe("project vault custom note file-management surface", () => {
 
   it("exposes safe raster upload, read, rename, move, remove, and restore controls", () => {
     expect(source).toContain('aria-label="Safe raster attachment file"')
-    expect(source).toContain('accept="image/png,image/jpeg,image/gif,image/webp"')
+    expect(source).toContain(
+      'accept=".png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp"',
+    )
     for (const operation of [
       "createAttachment",
       "readAttachment",
@@ -51,5 +57,18 @@ describe("project vault custom note file-management surface", () => {
     expect(source).toContain('aria-live="polite"')
     expect(source).toContain("Conflict:")
     expect(source).toContain("Reload the attachment")
+  })
+
+  it("preserves custom-note drafts and exposes explicit external conflict resolution", () => {
+    expect(source).toContain("applyVaultEditorExternalSnapshot")
+    expect(viewSource).toContain("projectVaultCustomNoteEditorCacheAtom")
+    expect(viewSource).toContain(
+      "protectUnsavedVaultDraftsBeforeUnload(event, customNoteEditorCache)",
+    )
+    expect(source).toContain("adoptExternalNote")
+    expect(source).toContain("keepBothNotes")
+    expect(source).toContain("Custom note conflict")
+    expect(source).toContain("Use external version")
+    expect(source).toContain("Keep both versions")
   })
 })

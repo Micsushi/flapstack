@@ -8,6 +8,8 @@ type Invalidate = () => unknown | Promise<unknown>
 
 export type ProjectVaultQueryInvalidators = {
   project: (input: { projectId: string }) => unknown | Promise<unknown>
+  graph: (input: { projectId: string }) => unknown | Promise<unknown>
+  notes: (input: { projectId: string }) => unknown | Promise<unknown>
   list: (input: { projectId: string }) => unknown | Promise<unknown>
   get: (input: {
     projectId: string
@@ -30,13 +32,18 @@ export function createProjectVaultQueryInvalidator(
   return (projectId, change) =>
     change
       ? Promise.all([
+          invalidators.graph({ projectId }),
           invalidators.list({ projectId }),
           invalidators.get({ projectId, sectionId: change.sectionId }),
           invalidators.backups({ projectId, sectionId: change.sectionId }),
           invalidators.backup({ projectId, sectionId: change.sectionId }),
           invalidators.search({ projectId }),
         ])
-      : invalidators.project({ projectId })
+      : Promise.all([
+          invalidators.project({ projectId }),
+          invalidators.graph({ projectId }),
+          invalidators.notes({ projectId }),
+        ])
 }
 
 export type ProductMcpRendererInvalidators = {

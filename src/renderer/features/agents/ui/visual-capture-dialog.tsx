@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "../../../components/ui/dialog"
 import { trpc } from "../../../lib/trpc"
+import { dataUrlToBlob } from "../utils/base64"
 
 type Source = {
   id: string
@@ -333,7 +334,7 @@ export function VisualCaptureDialog({
     record: { id: string; derivativeSha256: string }
     dataUrl: string
   }) => {
-    const blob = await fetch(artifact.dataUrl).then((response) => response.blob())
+    const blob = dataUrlToBlob(artifact.dataUrl)
     const file = new File(
       [blob],
       `flapstack-visual-${artifact.record.id}-${artifact.record.derivativeSha256}.png`,

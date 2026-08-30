@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { createHash, randomUUID } from "node:crypto"
+import { createRequire } from "node:module"
 import { and, asc, desc, eq, isNull } from "drizzle-orm"
 import { app, BrowserWindow, ipcMain } from "electron"
 import { sleep } from "../../../shared/sleep"
@@ -756,6 +757,7 @@ export async function requestDevRendererControl(
 }
 
 let electronExecutableSha256: Promise<string> | undefined
+const require = createRequire(import.meta.url)
 
 export async function controlElectronPerformanceMeasurement(input: {
   budgetId: string
@@ -798,10 +800,12 @@ export async function controlElectronPerformanceMeasurement(input: {
 
 async function runningApplicationManifestSha256(): Promise<string> {
   if (app.isPackaged) {
+    const { createReadStream: createOriginalReadStream, statSync: originalStatSync } =
+      require("original-fs") as typeof import("node:fs")
     const candidates = [join(process.resourcesPath, "app.asar"), app.getAppPath()]
     const artifact = candidates.find((entry) => {
       try {
-        return existsSync(entry) && statSync(entry).isFile()
+        return originalStatSync(entry).isFile()
       } catch {
         return false
       }
@@ -809,7 +813,7 @@ async function runningApplicationManifestSha256(): Promise<string> {
     if (!artifact) {
       throw new Error("Running Electron application artifact is unavailable for identity capture.")
     }
-    return sha256File(artifact)
+    return sha256File(artifact, createOriginalReadStream)
   }
 
   const root = app.getAppPath()
@@ -867,10 +871,13 @@ function collectApplicationManifestFiles(root: string, relativePath: string): st
   })
 }
 
-function sha256File(filePath: string): Promise<string> {
+function sha256File(
+  filePath: string,
+  createStream: typeof createReadStream = createReadStream,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = createHash("sha256")
-    const stream = createReadStream(filePath)
+    const stream = createStream(filePath)
     stream.on("error", reject)
     stream.on("data", (chunk) => hash.update(chunk))
     stream.on("end", () => resolve(hash.digest("hex")))

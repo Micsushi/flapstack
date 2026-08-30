@@ -15,5 +15,23 @@ if [ -z "$DIR" ] || [ ! -d "$DIR" ]; then
   exit 1
 fi
 
-# Open Flapstack app with the directory argument
-open -a "Flapstack" --args "$DIR"
+# Open the exact app bundle that owns this launcher. The installed command is a
+# symlink into Contents/Resources/cli, so this also works for renamed builds.
+SCRIPT_PATH="$0"
+while [ -L "$SCRIPT_PATH" ]; do
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  LINK_TARGET="$(readlink "$SCRIPT_PATH")"
+  case "$LINK_TARGET" in
+    /*) SCRIPT_PATH="$LINK_TARGET" ;;
+    *) SCRIPT_PATH="$SCRIPT_DIR/$LINK_TARGET" ;;
+  esac
+done
+
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+APP_BUNDLE="$(cd "$SCRIPT_DIR/../../.." 2>/dev/null && pwd)"
+
+if [ -n "$APP_BUNDLE" ] && [ -d "$APP_BUNDLE" ] && [[ "$APP_BUNDLE" == *.app ]]; then
+  open "$APP_BUNDLE" --args "$DIR"
+else
+  open -a "Flapstack" --args "$DIR"
+fi

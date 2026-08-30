@@ -8,7 +8,7 @@ export function createIsolatedTestGitEnvironment(options = {}) {
   const testEnv = { ...env }
   const platform = options.platform ?? process.platform
   const paths = platform === "win32" ? win32 : posix
-  if (platform === "win32") {
+  if (platform === "win32" || platform === "darwin") {
     const realpath = options.realpath ?? realpathSync.native
     for (const key of ["TEMP", "TMP", "TMPDIR"]) {
       if (!testEnv[key]) continue

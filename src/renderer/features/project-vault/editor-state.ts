@@ -1,3 +1,5 @@
+import { atom } from "jotai"
+
 export type VaultDocumentSnapshot = {
   version: number
   content: string
@@ -15,6 +17,12 @@ export type VaultEditorState = {
 
 export function createVaultEditorState(snapshot: VaultDocumentSnapshot): VaultEditorState {
   return { base: snapshot, draft: snapshot.content, conflict: null, revision: 0 }
+}
+
+export function createVaultConflictCopyPath(relativePath: string): string {
+  return relativePath.toLocaleLowerCase("en-US").endsWith(".md")
+    ? `${relativePath.slice(0, -3)} (local copy).md`
+    : `${relativePath} (local copy).md`
 }
 
 export function updateVaultEditorDraft(state: VaultEditorState, draft: string): VaultEditorState {
@@ -59,6 +67,8 @@ export type VaultEditorCache = Record<
   string,
   Record<string, VaultEditorState | undefined> | undefined
 >
+
+export const projectVaultCustomNoteEditorCacheAtom = atom<VaultEditorCache>({})
 
 export function hasUnsavedVaultDrafts(cache: VaultEditorCache): boolean {
   return Object.values(cache).some((projectEditors) =>

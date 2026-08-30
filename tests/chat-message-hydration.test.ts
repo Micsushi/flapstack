@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   hydrateChatFromPersistedMessages,
+  sanitizePersistedHarnessMessages,
   shouldAutoGenerateInitialResponse,
 } from "../src/renderer/features/agents/main/chat-message-hydration"
 
@@ -26,6 +27,44 @@ describe("chat message hydration", () => {
 
     expect(hydrateChatFromPersistedMessages(chat, [])).toBe(false)
     expect(chat.messages).toEqual([{ id: "existing" }])
+  })
+
+  it("hides historical harness envelopes without changing user or tool parts", () => {
+    const user = {
+      role: "user",
+      parts: [{ type: "text", text: "Explain [FLAPSTACK PRODUCT MCP] literally." }],
+    }
+    const tool = { type: "tool-read", text: "[FLAPSTACK PRODUCT MCP] tool output" }
+
+    expect(
+      sanitizePersistedHarnessMessages([
+        user,
+        {
+          role: "assistant",
+          parts: [
+            {
+              type: "reasoning",
+              text: "[FLAPSTACK PRODUCT MCP]\nhidden\n[/FLAPSTACK PRODUCT MCP]\nVisible reason",
+            },
+            {
+              type: "text",
+              text: "[FLAPSTACK PRODUCT MCP]\nhidden\n[/FLAPSTACK PRODUCT MCP]NANOGPT_OK",
+            },
+            tool,
+          ],
+        },
+      ]),
+    ).toEqual([
+      user,
+      {
+        role: "assistant",
+        parts: [
+          { type: "reasoning", text: "Visible reason" },
+          { type: "text", text: "NANOGPT_OK" },
+          tool,
+        ],
+      },
+    ])
   })
 
   it("never regenerates a stale one-message transcript for an existing Chat", () => {

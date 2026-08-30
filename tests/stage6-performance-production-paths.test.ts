@@ -71,6 +71,18 @@ describe("Stage 6 PF03 production-backed performance controls", () => {
     expect(windowsPtyResourceCount()).toBeLessThanOrEqual(afterFirst)
   })
 
+  it("releases macOS native descriptors between terminal lifecycles", async () => {
+    if (process.platform !== "darwin") return
+    const rootPath = temporaryRoot()
+    const initialCount = readdirSync("/dev/fd").length
+
+    for (let index = 0; index < 20; index += 1) {
+      await runProductTerminalLifecycle({ rootPath, id: `resource-release-${index}` })
+    }
+
+    expect(readdirSync("/dev/fd").length).toBeLessThanOrEqual(initialCount)
+  })
+
   it("observes live PTY sessions at the requested terminal capacity", async () => {
     const rootPath = temporaryRoot()
 

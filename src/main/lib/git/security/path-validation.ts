@@ -254,18 +254,24 @@ function verifyFilesystemRootIdentity(registration: RegisteredFilesystemRoot): v
     if (realpathSync(lexicalPath) !== registration.canonicalPath) {
       throw new PathValidationError("Registered root canonical path changed", "SYMLINK_ESCAPE")
     }
-    if (
-      registration.deviceId !== null &&
-      registration.inodeId !== null &&
-      (info.dev.toString() !== registration.deviceId ||
-        info.ino.toString() !== registration.inodeId)
-    ) {
+    if (!matchesRegisteredFilesystemIdentity(registration, info)) {
       throw new PathValidationError("Registered root filesystem identity changed", "SYMLINK_ESCAPE")
     }
   } catch (error) {
     if (error instanceof PathValidationError) throw error
     throw new PathValidationError("Registered root identity cannot be verified", "SYMLINK_ESCAPE")
   }
+}
+
+export function matchesRegisteredFilesystemIdentity(
+  registration: Pick<RegisteredFilesystemRoot, "deviceId" | "inodeId">,
+  observed: { dev: bigint; ino: bigint },
+): boolean {
+  if (registration.deviceId === null || registration.inodeId === null) return true
+  return (
+    observed.dev.toString() === registration.deviceId &&
+    observed.ino.toString() === registration.inodeId
+  )
 }
 
 /**

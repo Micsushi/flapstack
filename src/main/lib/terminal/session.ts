@@ -8,6 +8,7 @@ import type { InternalCreateSessionParams, TerminalSession } from "./types"
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
 const windowsPtyReleases = new WeakMap<object, Promise<boolean>>()
+const unixPtyReleases = new WeakSet<object>()
 
 export function terminalShellArgs(shell: string, performanceOwnershipToken?: string): string[] {
   const shellName = path.win32.basename(shell).toLowerCase()
@@ -71,6 +72,38 @@ export async function releaseWindowsPtyConoutWorker(
 ): Promise<boolean> {
   const release = getOrStartWindowsPtyConoutWorkerRelease(ptyProcess, platform, options)
   return release ? release : false
+}
+
+/**
+ * node-pty's public Unix kill() seam signals the child but does not dispose its
+ * master stream or queued writer. Use the guarded runtime destroy() seam once.
+ */
+export function releaseUnixPtyResources(
+  ptyProcess: unknown,
+  platform: NodeJS.Platform = os.platform(),
+): boolean {
+  if (platform === "win32" || !isRecord(ptyProcess) || typeof ptyProcess.destroy !== "function") {
+    return false
+  }
+  if (unixPtyReleases.has(ptyProcess)) return true
+
+  unixPtyReleases.add(ptyProcess)
+  try {
+    Reflect.apply(ptyProcess.destroy, ptyProcess, [])
+    return true
+  } catch {
+    unixPtyReleases.delete(ptyProcess)
+    return false
+  }
+}
+
+export async function releaseTerminalPtyResources(
+  ptyProcess: unknown,
+  platform: NodeJS.Platform = os.platform(),
+): Promise<boolean> {
+  return platform === "win32"
+    ? releaseWindowsPtyConoutWorker(ptyProcess, platform)
+    : releaseUnixPtyResources(ptyProcess, platform)
 }
 
 /** Ensure bounded performance controls cannot request teardown while kill() is still deferred. */

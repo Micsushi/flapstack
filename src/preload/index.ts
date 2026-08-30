@@ -49,6 +49,7 @@ import type {
   ChatTransferWindowDestination,
 } from "../shared/chat-window-transfer"
 import type { ChatWorkbenchSessionPresentation } from "../shared/chat-workbench"
+import { APP_COMMAND_CHANNEL, parseAppCommand, type AppCommand } from "../shared/app-command"
 
 // Expose tRPC IPC bridge for type-safe communication
 exposeElectronTRPC()
@@ -291,6 +292,14 @@ contextBridge.exposeInMainWorld("desktopApi", {
     const handler = () => callback()
     ipcRenderer.on("shortcut:open-settings", handler)
     return () => ipcRenderer.removeListener("shortcut:open-settings", handler)
+  },
+  onAppCommand: (callback: (command: AppCommand) => void) => {
+    const handler = (_event: unknown, raw: unknown) => {
+      const command = parseAppCommand(raw)
+      if (command) callback(command)
+    }
+    ipcRenderer.on(APP_COMMAND_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(APP_COMMAND_CHANNEL, handler)
   },
   onCliOpenDirectory: (callback: () => void) => {
     const handler = () => callback()
@@ -559,6 +568,7 @@ export interface DesktopApi {
   // Shortcuts
   onShortcutNewAgent: (callback: () => void) => () => void
   onShortcutOpenSettings: (callback: () => void) => () => void
+  onAppCommand: (callback: (command: AppCommand) => void) => () => void
   onCliOpenDirectory: (callback: () => void) => () => void
   onDevRendererControlRequest: (
     callback: (payload: DevRendererControlRequest) => void,

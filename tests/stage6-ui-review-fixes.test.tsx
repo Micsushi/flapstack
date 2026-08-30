@@ -80,6 +80,26 @@ describe("Stage 6 UI review regressions", () => {
     expect(`${document}${app}`).not.toContain("Â")
   })
 
+  it("renders the Chat loading fallback without mojibake", () => {
+    const agentsContent = source("src/renderer/features/agents/ui/agents-content.tsx")
+
+    expect(agentsContent).toContain("Loading…")
+    expect(agentsContent).not.toContain("LoadingÃ")
+  })
+
+  it("renders terminal labels and loading states without mojibake", () => {
+    const paths = [
+      "src/renderer/features/agents/workbench/chat-workbench.tsx",
+      "src/renderer/features/agents/ui/agents-content.tsx",
+      "src/renderer/features/terminal/workbench-terminal-pane.tsx",
+    ]
+    const content = paths.map(source).join("\n")
+
+    expect(content).toContain("Terminal ·")
+    expect(content).toContain("Starting Terminal…")
+    expect(content).not.toMatch(/â€”|â€¦/)
+  })
+
   it("reports every mobile Settings mutation and clipboard failure truthfully", () => {
     const mobile = source(
       "src/renderer/components/dialogs/settings-tabs/agents-mobile-companion-tab.tsx",

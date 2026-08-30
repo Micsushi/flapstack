@@ -125,12 +125,14 @@ beforeEach(() => {
   homeDir = mkdtempSync(join(tmpdir(), "flapstack-e1-home-"))
   electronState.userDataPath = userDataDir
   electronState.homePath = homeDir
+  process.env.FLAPSTACK_DB_PATH = join(userDataDir, "agents.db")
   process.env.FLAPSTACK_CONFIG_DIR = userDataDir
   createTestSchema()
 })
 
 afterEach(() => {
   closeDatabase()
+  delete process.env.FLAPSTACK_DB_PATH
   delete process.env.FLAPSTACK_CONFIG_DIR
   rmSync(userDataDir, { recursive: true, force: true })
   rmSync(homeDir, { recursive: true, force: true })
@@ -400,9 +402,11 @@ describe("permanent chat deletion", () => {
       branch: "flapstack/successful",
       archivedAt: new Date(),
     })
-    vi.mocked(removeWorktree)
-      .mockResolvedValueOnce({ success: false, error: "worktree busy" })
-      .mockResolvedValueOnce({ success: true })
+    vi.mocked(removeWorktree).mockImplementation(async (_projectPath, worktreePath) =>
+      worktreePath === failed.worktreePath
+        ? { success: false, error: "worktree busy" }
+        : { success: true },
+    )
 
     await expect(
       chatsRouter.createCaller(ctx).deleteArchived({ ids: [failed.id, successful.id] }),

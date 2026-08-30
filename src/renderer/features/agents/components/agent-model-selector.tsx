@@ -174,6 +174,8 @@ export function AgentModelTuningSelector({
   claude,
   codex,
 }: AgentModelTuningSelectorProps) {
+  const reasoningAvailable = selectedAgentId !== "local"
+  const effectiveReasoningEnabled = reasoningAvailable && reasoningEnabled
   const selectedClaudeModel =
     claude.models.find((model) => model.id === claude.selectedModelId) || claude.models[0]
   const claudeEfforts =
@@ -228,11 +230,22 @@ export function AgentModelTuningSelector({
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label={`Model tuning: reasoning ${reasoningEnabled ? "on" : "off"}${selectedValue ? `, ${selectedValue}` : ""}${fastModeEnabled ? ", Fast" : ""}`}
+          aria-label={
+            reasoningAvailable
+              ? `Model tuning: reasoning ${effectiveReasoningEnabled ? "on" : "off"}${selectedValue ? `, ${selectedValue}` : ""}${fastModeEnabled ? ", Fast" : ""}`
+              : "Model tuning: reasoning unavailable"
+          }
+          disabled={!reasoningAvailable}
           className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-xs text-foreground transition-colors hover:bg-accent outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
         >
           <Brain className="h-3 w-3 text-muted-foreground" />
-          <span>{reasoningEnabled ? selectedValue || "Reasoning" : "Reasoning off"}</span>
+          <span>
+            {reasoningAvailable
+              ? effectiveReasoningEnabled
+                ? selectedValue || "Reasoning"
+                : "Reasoning off"
+              : "Reasoning unavailable"}
+          </span>
           {fastModeEnabled && (
             <span className="flex items-center gap-0.5 text-amber-500">
               <Zap className="h-3 w-3" />

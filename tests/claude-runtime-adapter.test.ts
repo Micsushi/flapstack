@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk"
-import { createClaudeCodeRuntimeAdapter } from "../src/main/lib/agent-runtime/claude-code"
+import {
+  ClaudeRuntimeFailedError,
+  createClaudeCodeRuntimeAdapter,
+} from "../src/main/lib/agent-runtime/claude-code"
 import {
   baseDependencies,
   collect,
@@ -208,5 +211,25 @@ describe("Claude Code Runtime adapter", () => {
       expect.arrayContaining([expect.objectContaining({ kind: "lifecycle", phase: "completed" })]),
     )
     expect(JSON.stringify(appended)).not.toContain("MUST_NOT_APPEND")
+  })
+
+  it("rejects completion after an authoritative failed result", async () => {
+    const failedResult = {
+      ...fixture.events.at(-1)!,
+      is_error: true,
+      terminal_reason: "api_error",
+    } as SDKMessage
+    const adapter = createClaudeCodeRuntimeAdapter(
+      baseDependencies({ query: () => iterable([failedResult]) }),
+    )
+    const context = runtimeContext()
+    const session = await adapter.startSession(context)
+    const turn = await adapter.startTurn(context, session, "FIXTURE_PROMPT")
+
+    await expect(collect(adapter.streamActivity(context, session, turn))).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "lifecycle", phase: "failed" })]),
+    )
+    expect(await adapter.reconcile(context)).toBe("completed")
+    await expect(adapter.complete(context)).rejects.toBeInstanceOf(ClaudeRuntimeFailedError)
   })
 })

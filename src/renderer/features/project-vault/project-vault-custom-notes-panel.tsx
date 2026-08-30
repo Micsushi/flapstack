@@ -1,30 +1,68 @@
 "use client"
 
-import { FileImage, FilePlus2, FolderCog, Loader2, Save, Trash2 } from "lucide-react"
+import { diffLines } from "diff"
+import { useAtom } from "jotai"
+import {
+  AlertTriangle,
+  Copy,
+  FileImage,
+  FilePlus2,
+  FolderCog,
+  Loader2,
+  RefreshCw,
+  Save,
+  Trash2,
+} from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import { Textarea } from "../../components/ui/textarea"
 import { trpc } from "../../lib/trpc"
+import { cn } from "../../lib/utils"
+import {
+  applyVaultEditorExternalSnapshot,
+  createVaultConflictCopyPath,
+  createVaultEditorState,
+  hasVaultEditorChanges,
+  markVaultEditorConflict,
+  projectVaultCustomNoteEditorCacheAtom,
+  rebaseVaultEditorAfterSave,
+  updateVaultEditorDraft,
+  type VaultDocumentSnapshot,
+} from "./editor-state"
+
+function toCustomNoteSnapshot(data: {
+  version: number
+  content: string
+  contentHash: string
+  externallyModified: boolean
+}): VaultDocumentSnapshot {
+  return {
+    version: data.version,
+    content: data.content,
+    contentHash: data.contentHash,
+    currentContentHash: data.contentHash,
+    externallyModified: data.externallyModified,
+  }
+}
 
 export function ProjectVaultCustomNotesPanel({ projectId }: { projectId: string }) {
   const utils = trpc.useUtils()
   const graph = trpc.projectVaults.getGraph.useQuery({ projectId })
-  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [selectedStableId, setSelectedStableId] = useState<string | null>(null)
   const [managingFiles, setManagingFiles] = useState(false)
   const [creating, setCreating] = useState(false)
   const [newPath, setNewPath] = useState("")
   const [newTitle, setNewTitle] = useState("")
-  const note = trpc.projectVaults.readNote.useQuery(
-    { projectId, relativePath: selectedPath ?? "placeholder.md" },
-    { enabled: Boolean(selectedPath) },
-  )
-  const [draft, setDraft] = useState("")
+  const [conflictDestination, setConflictDestination] = useState("")
+  const [editorCache, setEditorCache] = useAtom(projectVaultCustomNoteEditorCacheAtom)
   const create = trpc.projectVaults.createNote.useMutation()
   const update = trpc.projectVaults.updateNote.useMutation()
   const remove = trpc.projectVaults.removeNote.useMutation()
   const restore = trpc.projectVaults.restoreNote.useMutation()
+  const adoptExternal = trpc.projectVaults.adoptExternalNote.useMutation()
+  const keepBoth = trpc.projectVaults.keepBothNotes.useMutation()
   const notes = useMemo(
     () =>
       (graph.data?.nodes ?? [])
@@ -32,15 +70,42 @@ export function ProjectVaultCustomNotesPanel({ projectId }: { projectId: string 
         .sort((left, right) => left.relativePath.localeCompare(right.relativePath)),
     [graph.data],
   )
+  const selectedNote = notes.find((item) => item.stableId === selectedStableId)
+  const selectedPath = selectedNote?.relativePath ?? null
+  const note = trpc.projectVaults.readNote.useQuery(
+    { projectId, relativePath: selectedPath ?? "placeholder.md" },
+    { enabled: Boolean(selectedPath) },
+  )
+  const editor = selectedStableId ? editorCache[projectId]?.[selectedStableId] : undefined
+  const conflictDiff = useMemo(
+    () => (editor?.conflict ? diffLines(editor.conflict.content, editor.draft) : []),
+    [editor?.conflict, editor?.draft],
+  )
 
   useEffect(() => {
-    if (note.data) setDraft(note.data.content)
-  }, [note.data])
+    const stableId = note.data?.identity?.id
+    if (!note.data || !stableId) return
+    const snapshot = toCustomNoteSnapshot(note.data)
+    setEditorCache((current) => {
+      const projectEditors = current[projectId] ?? {}
+      const existing = projectEditors[stableId]
+      const next = applyVaultEditorExternalSnapshot(existing, snapshot)
+      return next === existing
+        ? current
+        : { ...current, [projectId]: { ...projectEditors, [stableId]: next } }
+    })
+  }, [note.data, projectId, setEditorCache])
 
-  const refresh = async () => {
+  useEffect(() => {
+    setConflictDestination(
+      editor?.conflict && selectedPath ? createVaultConflictCopyPath(selectedPath) : "",
+    )
+  }, [editor?.conflict?.currentContentHash, selectedPath])
+
+  const refresh = async (relativePath = selectedPath) => {
     await utils.projectVaults.getGraph.invalidate({ projectId })
-    if (selectedPath) {
-      await utils.projectVaults.readNote.invalidate({ projectId, relativePath: selectedPath })
+    if (relativePath) {
+      await utils.projectVaults.readNote.invalidate({ projectId, relativePath })
     }
   }
 
@@ -54,29 +119,141 @@ export function ProjectVaultCustomNotesPanel({ projectId }: { projectId: string 
       setCreating(false)
       setNewPath("")
       setNewTitle("")
-      setSelectedPath(created.relativePath)
+      const stableId = created.identity?.id
+      if (!stableId) throw new Error("Created note is missing its stable identity.")
+      utils.projectVaults.readNote.setData(
+        { projectId, relativePath: created.relativePath },
+        created,
+      )
+      setEditorCache((current) => ({
+        ...current,
+        [projectId]: {
+          ...(current[projectId] ?? {}),
+          [stableId]: createVaultEditorState(toCustomNoteSnapshot(created)),
+        },
+      }))
+      setSelectedStableId(stableId)
       setManagingFiles(false)
-      await refresh()
+      await refresh(created.relativePath)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not create note")
     }
   }
 
   const save = async () => {
-    if (!note.data || !selectedPath) return
+    if (!editor || !selectedPath || !selectedStableId || editor.conflict) return
+    const submittedRevision = editor.revision
     try {
       const saved = await update.mutateAsync({
         projectId,
         relativePath: selectedPath,
-        expectedVersion: note.data.version,
-        expectedHash: note.data.contentHash,
-        content: draft,
+        expectedVersion: editor.base.version,
+        expectedHash: editor.base.contentHash,
+        content: editor.draft,
       })
       utils.projectVaults.readNote.setData({ projectId, relativePath: selectedPath }, saved)
+      const snapshot = toCustomNoteSnapshot(saved)
+      setEditorCache((current) => {
+        const projectEditors = current[projectId] ?? {}
+        const currentEditor = projectEditors[selectedStableId]
+        return !currentEditor
+          ? current
+          : {
+              ...current,
+              [projectId]: {
+                ...projectEditors,
+                [selectedStableId]: rebaseVaultEditorAfterSave(
+                  currentEditor,
+                  snapshot,
+                  submittedRevision,
+                ),
+              },
+            }
+      })
       await utils.projectVaults.getGraph.invalidate({ projectId })
       toast.success("Note saved")
     } catch (error) {
+      try {
+        const current = await utils.projectVaults.readNote.fetch({
+          projectId,
+          relativePath: selectedPath,
+        })
+        const snapshot = toCustomNoteSnapshot(current)
+        setEditorCache((cache) => {
+          const projectEditors = cache[projectId] ?? {}
+          const currentEditor = projectEditors[selectedStableId]
+          if (!currentEditor) return cache
+          return {
+            ...cache,
+            [projectId]: {
+              ...projectEditors,
+              [selectedStableId]: applyVaultEditorExternalSnapshot(currentEditor, snapshot),
+            },
+          }
+        })
+      } catch {
+        // Keep the local draft intact while the persistent toast reports the failed save.
+      }
       toast.error(error instanceof Error ? error.message : "Could not save note")
+    }
+  }
+
+  const useExternalVersion = async (current: VaultDocumentSnapshot) => {
+    if (!selectedPath || !selectedStableId) return
+    try {
+      const resolved = current.externallyModified
+        ? toCustomNoteSnapshot(
+            await adoptExternal.mutateAsync({
+              projectId,
+              relativePath: selectedPath,
+              expectedVersion: current.version,
+              expectedHash: current.contentHash,
+            }),
+          )
+        : current
+      setEditorCache((cache) => ({
+        ...cache,
+        [projectId]: {
+          ...(cache[projectId] ?? {}),
+          [selectedStableId]: createVaultEditorState(resolved),
+        },
+      }))
+      await refresh(selectedPath)
+      toast.success("External note version adopted")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "External note changed again")
+    }
+  }
+
+  const keepBothVersions = async () => {
+    if (!editor?.conflict || !selectedPath || !selectedStableId || !conflictDestination.trim()) {
+      return
+    }
+    try {
+      const kept = await keepBoth.mutateAsync({
+        projectId,
+        relativePath: selectedPath,
+        destinationPath: conflictDestination,
+        expectedVersion: editor.conflict.version,
+        expectedCurrentHash: editor.conflict.contentHash,
+        draftContent: editor.draft,
+      })
+      const keptStableId = kept.identity?.id
+      if (!keptStableId) throw new Error("Conflict copy is missing its stable identity.")
+      setEditorCache((cache) => ({
+        ...cache,
+        [projectId]: {
+          ...(cache[projectId] ?? {}),
+          [selectedStableId]: createVaultEditorState(editor.conflict!),
+          [keptStableId]: createVaultEditorState(toCustomNoteSnapshot(kept)),
+        },
+      }))
+      utils.projectVaults.readNote.setData({ projectId, relativePath: kept.relativePath }, kept)
+      setSelectedStableId(keptStableId)
+      await refresh(kept.relativePath)
+      toast.success(`Kept both versions. Local draft saved as ${kept.relativePath}.`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not keep both note versions")
     }
   }
 
@@ -91,9 +268,8 @@ export function ProjectVaultCustomNotesPanel({ projectId }: { projectId: string 
         expectedVersion: note.data.version,
         expectedHash: note.data.contentHash,
       })
-      setSelectedPath(null)
-      setDraft("")
-      await refresh()
+      setSelectedStableId(null)
+      await refresh(exactPath)
       toast.success("Note moved to recoverable trash", {
         action: {
           label: "Restore",
@@ -105,9 +281,9 @@ export function ProjectVaultCustomNotesPanel({ projectId }: { projectId: string 
                 relativePath: removed.relativePath,
                 expectedVersion: removed.version,
               })
-              .then(async () => {
-                setSelectedPath(removed.relativePath)
-                await refresh()
+              .then(async (restoredNote) => {
+                setSelectedStableId(restoredNote.identity?.id ?? null)
+                await refresh(restoredNote.relativePath)
               })
               .catch((error) => toast.error(error.message || "Could not restore note"))
           },
@@ -133,7 +309,7 @@ export function ProjectVaultCustomNotesPanel({ projectId }: { projectId: string 
               className="h-7 w-7"
               onClick={() => {
                 setManagingFiles(true)
-                setSelectedPath(null)
+                setSelectedStableId(null)
                 setCreating(false)
               }}
               aria-label="Manage vault folders and attachments"
@@ -198,9 +374,9 @@ export function ProjectVaultCustomNotesPanel({ projectId }: { projectId: string 
                 key={item.nodeId}
                 type="button"
                 className="block w-full truncate rounded px-2 py-1.5 text-left text-xs hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
-                aria-current={selectedPath === item.relativePath ? "page" : undefined}
+                aria-current={selectedStableId === item.stableId ? "page" : undefined}
                 onClick={() => {
-                  setSelectedPath(item.relativePath)
+                  setSelectedStableId(item.stableId ?? null)
                   setManagingFiles(false)
                 }}
               >
@@ -220,7 +396,7 @@ export function ProjectVaultCustomNotesPanel({ projectId }: { projectId: string 
           <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
             Select a custom note or create one.
           </div>
-        ) : note.isFetching || !note.data ? (
+        ) : note.isFetching || !note.data || !editor ? (
           <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading note…
           </div>
@@ -243,14 +419,120 @@ export function ProjectVaultCustomNotesPanel({ projectId }: { projectId: string 
               <Button
                 size="sm"
                 onClick={() => void save()}
-                disabled={update.isPending || draft === note.data.content}
+                disabled={
+                  update.isPending ||
+                  !hasVaultEditorChanges(editor) ||
+                  Boolean(editor.conflict) ||
+                  editor.base.externallyModified
+                }
               >
                 <Save className="mr-2 h-4 w-4" /> Save
               </Button>
             </div>
+
+            {editor.base.externallyModified && !editor.conflict && (
+              <section className="border-b border-amber-500/40 bg-amber-500/5 p-4" role="status">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-600" />
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-sm font-semibold">Changed outside Flapstack</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Review this Obsidian version, then adopt it before saving further edits.
+                    </p>
+                    <Button
+                      className="mt-3"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void useExternalVersion(editor.base)}
+                      disabled={adoptExternal.isPending}
+                    >
+                      <RefreshCw className="mr-2 h-4 w-4" /> Adopt external version
+                    </Button>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {editor.conflict && (
+              <section
+                className="border-b border-red-500/40 bg-red-500/5 p-4"
+                aria-live="assertive"
+              >
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 text-red-600" />
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-sm font-semibold">Custom note conflict</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      The current disk version and your local draft are both preserved. Review the
+                      exact diff, then choose one explicitly.
+                    </p>
+                    <div
+                      className="mt-3 max-h-52 overflow-auto rounded-md border bg-background font-mono text-xs"
+                      role="region"
+                      aria-label="Conflict diff between current custom note and local draft"
+                    >
+                      {conflictDiff.map((part, index) => (
+                        <pre
+                          key={index}
+                          className={cn(
+                            "m-0 whitespace-pre-wrap px-3 py-0.5",
+                            part.added && "bg-green-500/10 text-green-700 dark:text-green-300",
+                            part.removed && "bg-red-500/10 text-red-700 dark:text-red-300",
+                          )}
+                        >
+                          {part.added ? "+ " : part.removed ? "- " : "  "}
+                          {part.value}
+                        </pre>
+                      ))}
+                    </div>
+                    <label className="mt-3 block space-y-1.5 text-xs font-medium">
+                      Local draft copy path
+                      <Input
+                        value={conflictDestination}
+                        onChange={(event) => setConflictDestination(event.target.value)}
+                        aria-label="Local draft conflict copy path"
+                        disabled={keepBoth.isPending}
+                      />
+                    </label>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void useExternalVersion(editor.conflict!)}
+                        disabled={adoptExternal.isPending}
+                      >
+                        <RefreshCw className="mr-2 h-4 w-4" /> Use external version
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => void keepBothVersions()}
+                        disabled={!conflictDestination.trim() || keepBoth.isPending}
+                      >
+                        <Copy className="mr-2 h-4 w-4" /> Keep both versions
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
             <Textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
+              value={editor.draft}
+              onChange={(event) => {
+                if (!selectedStableId) return
+                setEditorCache((cache) => {
+                  const projectEditors = cache[projectId] ?? {}
+                  const currentEditor = projectEditors[selectedStableId]
+                  if (!currentEditor) return cache
+                  let next = updateVaultEditorDraft(currentEditor, event.target.value)
+                  if (next.base.externallyModified && hasVaultEditorChanges(next)) {
+                    next = markVaultEditorConflict(next, next.base)
+                  }
+                  return {
+                    ...cache,
+                    [projectId]: { ...projectEditors, [selectedStableId]: next },
+                  }
+                })
+              }}
               className="min-h-0 flex-1 resize-none rounded-none border-0 p-6 font-mono text-sm focus-visible:ring-0"
               aria-label={`Edit custom note ${note.data.title}`}
               spellCheck={false}
@@ -577,7 +859,7 @@ function VaultFileManager({ projectId }: { projectId: string }) {
               Raster image
               <input
                 type="file"
-                accept="image/png,image/jpeg,image/gif,image/webp"
+                accept=".png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp"
                 aria-label="Safe raster attachment file"
                 className="block w-full rounded-md border bg-background px-3 py-2 text-xs file:mr-3 file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs file:font-medium"
                 disabled={attachmentPending}

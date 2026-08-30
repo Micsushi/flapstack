@@ -123,3 +123,35 @@ jobs:
             release-preview/windows-security-report.json.sha256
           if-no-files-found: error
           retention-days: 3
+
+  macos-verify:
+    if: vars.FLAPSTACK_MACOS_CI_ENABLED == 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+    concurrency:
+      group: macos-ci-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build
+        run: npm run build
+
+      - name: Build macOS Preview
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run package:preview:mac
+
+      - name: Inspect macOS Preview
+        run: npm run package:smoke:preview:mac

@@ -235,7 +235,7 @@ describe("Stage 6 Electron performance control", () => {
       "src/renderer/features/agents/search/chat-search-bar.tsx",
       "utf8",
     )
-    expect(orchestrator).toContain("classifyWindowsFlapstackProcesses")
+    expect(orchestrator).toContain("classifyNativeFlapstackProcesses")
     expect(orchestrator).toContain("FLAPSTACK_DEV_INSTANCE")
     expect(orchestrator).toContain('FLAPSTACK_KEEP_RENDERER_ACTIVE: "1"')
     expect(orchestrator).not.toContain("FLAPSTACK_DEV_PORT")
@@ -248,11 +248,10 @@ describe("Stage 6 Electron performance control", () => {
     expect(orchestrator).not.toContain("open_test_chat")
     expect(orchestrator).toContain("control_electron_performance_measurement")
     expect(orchestrator).toMatch(/descriptor\.pid|descriptor\?\.pid/)
-    expect(orchestrator).toContain("windowsTaskkillArgs")
-    expect(orchestrator).toContain("drainWindowsOwnedProcessIds")
+    expect(orchestrator).toContain("killNativeProcess")
+    expect(orchestrator).toContain("drainOwnedProcessIds")
     expect(orchestrator).toContain("if (drained.stable)")
-    expect(orchestrator).toContain("findStage6IsolatedWindowsProcessIds")
-    expect(orchestrator).not.toContain("windowsTaskkillArgs(launched.child.pid")
+    expect(orchestrator).toContain("findStage6IsolatedNativeProcessIds")
     expect(orchestrator).toContain("rmSync(target")
     expect(orchestrator).toContain("relative(appDataRoot, target)")
     expect(orchestrator).toContain("cleanupAllOwned")
@@ -274,6 +273,9 @@ describe("Stage 6 Electron performance control", () => {
       /client\.callTool\(\{ name, arguments: args \}, undefined, \{\s*timeout: timeoutMs,\s*\}\)/,
     )
     expect(rendererControl).toContain("four exact selected chats")
+    expect(rendererControl).toContain('window.desktopApi?.platform === "darwin"')
+    expect(rendererControl).toContain("metaKey: isMac")
+    expect(rendererControl).toContain("ctrlKey: !isMac")
     expect(rendererControl).toContain("waitForSearchCompletion")
     expect(rendererControl).toContain("new MutationObserver")
     expect(searchBar).toContain("data-chat-search-completed-query")
@@ -443,7 +445,7 @@ describe("Stage 6 Electron performance control", () => {
     expect(adapter).toContain("stage6-electron-supervisor.mjs")
     expect(adapter).not.toContain("timeout:")
     const supervisor = readFileSync("scripts/stage6-electron-supervisor.mjs", "utf8")
-    expect(supervisor).toContain("windowsTaskkillArgs(child.pid, true, true)")
+    expect(supervisor).toContain("killNativeProcess(child.pid, { force: true, tree: true })")
     expect(supervisor).toContain("FLAPSTACK_STAGE6_RUN_TOKEN")
     expect(supervisor).toContain("cleanupOwnedTree")
     expect(supervisor).toMatch(/closeCleanupError[\s\S]*cleanupOwnedTree\(\)/)
@@ -492,5 +494,8 @@ describe("Stage 6 Electron performance control", () => {
     expect(source).toMatch(
       /requestDevRendererControlForWindow[\s\S]*runningApplicationManifestSha256\(\)/,
     )
+    expect(source).toContain('require("original-fs")')
+    expect(source).toContain("originalStatSync(entry).isFile()")
+    expect(source).toContain("sha256File(artifact, createOriginalReadStream)")
   })
 })

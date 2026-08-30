@@ -171,7 +171,7 @@ function ChatWorkbenchComponent({
     const terminalChatId = getTerminalPresentationChatId(presentationId)
     if (!terminalChatId) return chatNames.get(presentationId) ?? "New Chat"
     const ownerName = chatNames.get(terminalChatId)
-    return ownerName ? `Terminal â€” ${ownerName}` : "Terminal"
+    return ownerName ? `Terminal · ${ownerName}` : "Terminal"
   }
   const chatAccents = useMemo(
     () => new Map(chats.map((chat) => [chat.id, chat.accentColor ?? null])),

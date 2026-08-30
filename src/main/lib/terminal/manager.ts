@@ -6,8 +6,7 @@ import { portManager } from "./port-manager"
 import {
   captureTerminalPtyOwnedProcesses,
   createSession,
-  initiateWindowsPtyConoutWorkerRelease,
-  releaseWindowsPtyConoutWorker,
+  releaseTerminalPtyResources,
   setupInitialCommands,
   terminateUnreadyWindowsPty,
   waitForWindowsPtyReady,
@@ -189,10 +188,7 @@ export class TerminalManager extends EventEmitter {
   ): Promise<void> {
     const { paneId } = params
     session.isAlive = false
-    initiateWindowsPtyConoutWorkerRelease(
-      session.pty,
-      this.cleanupOptions?.platform ?? process.platform,
-    )
+    void releaseTerminalPtyResources(session.pty, this.cleanupOptions?.platform ?? process.platform)
 
     // Check if shell crashed quickly - try fallback
     const sessionDuration = Date.now() - session.startTime
@@ -247,7 +243,7 @@ export class TerminalManager extends EventEmitter {
     } catch {
       // Continue through the guarded resource release.
     }
-    await releaseWindowsPtyConoutWorker(
+    await releaseTerminalPtyResources(
       session.pty,
       this.cleanupOptions?.platform ?? process.platform,
     )
@@ -385,7 +381,7 @@ export class TerminalManager extends EventEmitter {
 
   private async killSessionWithTimeout(paneId: string, session: TerminalSession): Promise<boolean> {
     if (!session.isAlive) {
-      await releaseWindowsPtyConoutWorker(
+      await releaseTerminalPtyResources(
         session.pty,
         this.cleanupOptions?.platform ?? process.platform,
       )
@@ -408,7 +404,7 @@ export class TerminalManager extends EventEmitter {
         if (sigkillTimeout) clearTimeout(sigkillTimeout)
         void (async () => {
           try {
-            await releaseWindowsPtyConoutWorker(
+            await releaseTerminalPtyResources(
               session.pty,
               this.cleanupOptions?.platform ?? process.platform,
             )
@@ -563,10 +559,7 @@ export class TerminalManager extends EventEmitter {
     }
     await Promise.all(
       Array.from(this.sessions.values(), (session) =>
-        releaseWindowsPtyConoutWorker(
-          session.pty,
-          this.cleanupOptions?.platform ?? process.platform,
-        ),
+        releaseTerminalPtyResources(session.pty, this.cleanupOptions?.platform ?? process.platform),
       ),
     )
     this.sessions.clear()

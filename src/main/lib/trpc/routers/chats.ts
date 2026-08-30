@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm"
-import { BrowserWindow, dialog } from "electron"
+import { app, BrowserWindow, dialog } from "electron"
 import * as fs from "fs/promises"
 import * as path from "path"
 import simpleGit from "simple-git"
@@ -72,6 +72,7 @@ import { createRuntimeChatLifecycleService } from "../../agent-runtime/chat-life
 import { CrossProviderDelegationService } from "../../agent-runtime/cross-provider-delegation"
 import { getMainRuntimeLaunchService } from "../../main-run-launcher"
 import { CHAT_MODES } from "../../../../shared/chat-mode"
+import { ensureGlobalChatRuntimePath } from "../../global-chat-runtime"
 import { mergeRuntimeMessages } from "../../agent-runtime/message-merge"
 import {
   AGENT_PROFILE_LAUNCH_BLOCKING_CONFLICT_CODES,
@@ -629,7 +630,7 @@ export const chatsRouter = router({
     return { ...chat, subChats: chatSubChats, project }
   }),
 
-  getMetadata: publicProcedure.input(z.object({ id: z.string() })).query(({ input }) => {
+  getMetadata: publicProcedure.input(z.object({ id: z.string() })).query(async ({ input }) => {
     const db = getDatabase()
     const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
     if (!chat) return null
@@ -659,7 +660,12 @@ export const chatsRouter = router({
       ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
       : null
 
-    return { ...chat, subChats: chatSubChats, project }
+    const globalRuntimePath =
+      chat.scope === "global"
+        ? await ensureGlobalChatRuntimePath(app.getPath("userData"), chat.id)
+        : null
+
+    return { ...chat, subChats: chatSubChats, project, globalRuntimePath }
   }),
 
   getTranscript: publicProcedure
@@ -1174,10 +1180,15 @@ export const chatsRouter = router({
       }
 
       const persistedChat = db.select().from(chats).where(eq(chats.id, chat.id)).get() ?? chat
+      const globalRuntimePath =
+        input.scope === "global"
+          ? await ensureGlobalChatRuntimePath(app.getPath("userData"), chat.id)
+          : null
       const response = {
         ...persistedChat,
         subChats: [subChat],
         project,
+        globalRuntimePath,
       }
 
       // Track workspace created

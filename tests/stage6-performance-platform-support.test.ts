@@ -8,10 +8,9 @@ vi.mock("../src/main/lib/performance/product-adapters", () => ({
 import { localProductPerformanceSupport } from "../src/main/lib/performance/product-runner"
 
 describe("Stage 6 local performance platform support", () => {
-  it("fails closed where built-in headless product adapters are unavailable", () => {
+  it("supports built-in headless product adapters on Windows and macOS", () => {
     expect(localProductPerformanceSupport({ platform: "darwin", buildType: "dev" })).toEqual({
-      supported: false,
-      reason: expect.stringMatching(/adapter.*unavailable.*darwin/i),
+      supported: true,
     })
     expect(localProductPerformanceSupport({ platform: "linux", buildType: "dev" })).toEqual({
       supported: false,

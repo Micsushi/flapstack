@@ -1,15 +1,16 @@
-import { spawn, spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs"
 import { basename, relative, resolve, sep } from "node:path"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import {
-  classifyWindowsFlapstackProcesses,
-  drainWindowsOwnedProcessIds,
-  findStage6IsolatedWindowsProcessIds,
-  queryWindowsProcesses,
-  windowsTaskkillArgs,
-} from "./lib/windows-processes.mjs"
+  classifyNativeFlapstackProcesses,
+  drainOwnedProcessIds,
+  findStage6IsolatedNativeProcessIds,
+  killNativeProcess,
+  processDescendsFromNative,
+  queryNativeProcesses,
+} from "./lib/native-processes.mjs"
 import {
   flapstackProfilePath,
   electronAppDataRoot,
@@ -144,8 +145,10 @@ try {
 }
 
 async function launchExactProcess() {
-  if (process.platform !== "win32") {
-    throw new Error("Stage 6 exact-process Electron orchestration is currently Windows-only.")
+  if (process.platform !== "win32" && process.platform !== "darwin") {
+    throw new Error(
+      `Stage 6 exact-process Electron orchestration is unsupported on ${process.platform}.`,
+    )
   }
   const nodeExecutable = realpathSync(resolve(process.env.FLAPSTACK_STAGE6_NODE_EXECUTABLE || ""))
   const electronExecutable = realpathSync(
@@ -223,11 +226,11 @@ async function waitForDescriptor(child, launchedAtEpoch, readChildOutput) {
   while (Date.now() < deadline) {
     let hasOwnedDescendant = false
     if (child.exitCode !== null) {
-      const processes = queryWindowsProcesses()
+      const processes = queryNativeProcesses()
       hasOwnedDescendant = processes.some(
         (entry) =>
           Number(entry.ProcessId) !== child.pid &&
-          processDescendsFrom(processes, Number(entry.ProcessId), child.pid),
+          processDescendsFromNative(processes, Number(entry.ProcessId), child.pid),
       )
     }
     if (child.exitCode !== null && !hasOwnedDescendant) {
@@ -257,12 +260,15 @@ async function waitForDescriptor(child, launchedAtEpoch, readChildOutput) {
 async function verifyOwnedProcess(launcherPid, descriptor) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    const processes = queryWindowsProcesses()
-    const classification = classifyWindowsFlapstackProcesses(processes, {
+    const processes = queryNativeProcesses()
+    const classification = classifyNativeFlapstackProcesses(processes, {
       root: repositoryRoot,
       profilePath,
     })
-    if (classification.rendererPid && processDescendsFrom(processes, descriptor.pid, launcherPid)) {
+    if (
+      classification.rendererPid &&
+      processDescendsFromNative(processes, descriptor.pid, launcherPid)
+    ) {
       const descriptorProcess = processes.find(
         (entry) => Number(entry.ProcessId) === Number(descriptor.pid),
       )
@@ -271,18 +277,6 @@ async function verifyOwnedProcess(launcherPid, descriptor) {
     await pollTick()
   }
   throw new Error("Stage 6 Electron descriptor process is not owned by the exact launcher.")
-}
-
-function processDescendsFrom(processes, processId, ancestorId) {
-  const byPid = new Map(processes.map((entry) => [Number(entry.ProcessId), entry]))
-  let current = Number(processId)
-  const seen = new Set()
-  while (current > 0 && !seen.has(current)) {
-    if (current === Number(ancestorId)) return true
-    seen.add(current)
-    current = Number(byPid.get(current)?.ParentProcessId)
-  }
-  return false
 }
 
 async function connect(descriptor) {
@@ -436,15 +430,9 @@ async function callTool(client, name, args) {
 
 async function teardown(launched) {
   await launched.client?.close().catch(() => undefined)
-  const drained = await drainWindowsOwnedProcessIds({
+  const drained = await drainOwnedProcessIds({
     findOwned: () => findRemainingOwnedProcesses(launched),
-    kill: (pid) => {
-      const killed = spawnSync("taskkill.exe", windowsTaskkillArgs(pid, true), {
-        windowsHide: true,
-        encoding: "utf8",
-      })
-      return `${pid}:${String(killed.status)}:${String(killed.stderr ?? "").trim()}`.slice(0, 500)
-    },
+    kill: (pid) => killNativeProcess(pid, { force: true }),
     wait: pollTick,
   })
   if (drained.stable) {
@@ -457,10 +445,11 @@ async function teardown(launched) {
 }
 
 function findRemainingOwnedProcesses(launched) {
-  return findStage6IsolatedWindowsProcessIds(queryWindowsProcesses(), {
+  return findStage6IsolatedNativeProcessIds(queryNativeProcesses(), {
     root: repositoryRoot,
     profilePath,
     instance,
+    runToken,
     launchedAtEpoch: launched.launchedAtEpoch,
     launcherPid: launched.child.pid,
     launcherExited: launched.child.exitCode !== null,
@@ -511,10 +500,10 @@ async function removeIsolatedProfile() {
 
 function bindIdentity(previous, current) {
   if (!current?.identitySha256) throw new Error("Stage 6 Electron build identity is missing.")
-  const processes = queryWindowsProcesses()
+  const processes = queryNativeProcesses()
   if (
     ![...ownedLaunches].some((launched) =>
-      processDescendsFrom(processes, current.rendererProcessId, launched.child.pid),
+      processDescendsFromNative(processes, current.rendererProcessId, launched.child.pid),
     )
   ) {
     throw new Error("Stage 6 Electron sample renderer is not owned by the exact launcher.")

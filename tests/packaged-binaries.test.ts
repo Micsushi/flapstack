@@ -22,6 +22,8 @@ import {
   verifyCachedBinaryDigest,
 } from "../scripts/lib/packaged-binary.mjs"
 import { resolvePackageBuild } from "../scripts/package-app.mjs"
+import { runMacNativeModulesSmoke } from "../scripts/inspect-packaged-binaries.mjs"
+import { resolveDarwinTargetPackages } from "../scripts/lib/darwin-target-dependencies.mjs"
 import { resolvePackageTargets } from "../scripts/prepare-package-resources.mjs"
 import { validateWhisperDirectory } from "../scripts/prepare-whisper-binary.mjs"
 
@@ -60,6 +62,42 @@ function executable(dir: string, name: string, contents: Buffer) {
 }
 
 describe("packaged harness preparation", () => {
+  it("loads packaged macOS native modules through the bundled Electron runtime", () => {
+    let invocation: {
+      runtime: string
+      args: string[]
+      options: { env: NodeJS.ProcessEnv; timeout: number }
+    } | null = null
+    runMacNativeModulesSmoke(
+      "/Applications/Flapstack.app/Contents/MacOS/Flapstack",
+      "/resources/app.asar/node_modules",
+      (runtime: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
+        invocation = { runtime, args, options }
+        return { status: 0, stdout: "native-modules-ok", stderr: "" }
+      },
+    )
+
+    expect(invocation).toMatchObject({
+      runtime: "/Applications/Flapstack.app/Contents/MacOS/Flapstack",
+      options: { env: { ELECTRON_RUN_AS_NODE: "1" }, timeout: 180_000 },
+    })
+    expect(invocation!.args[1]).toContain("/resources/app.asar/node_modules/better-sqlite3")
+    expect(invocation!.args[1]).toContain("/resources/app.asar/node_modules/sharp")
+    expect(invocation!.args[1]).toContain("/resources/app.asar/node_modules/node-pty")
+  })
+
+  it("pins optional native packages for every macOS package architecture", () => {
+    const lock = requireFromTest("../package-lock.json")
+    expect(resolveDarwinTargetPackages(["darwin-x64", "darwin-arm64"], lock)).toEqual([
+      expect.objectContaining({ name: "@img/sharp-darwin-x64", target: "darwin-x64" }),
+      expect.objectContaining({ name: "@img/sharp-libvips-darwin-x64", target: "darwin-x64" }),
+      expect.objectContaining({ name: "@openai/codex-darwin-x64", target: "darwin-x64" }),
+      expect.objectContaining({ name: "@img/sharp-darwin-arm64", target: "darwin-arm64" }),
+      expect.objectContaining({ name: "@img/sharp-libvips-darwin-arm64", target: "darwin-arm64" }),
+      expect.objectContaining({ name: "@openai/codex-darwin-arm64", target: "darwin-arm64" }),
+    ])
+  })
+
   it("requires exact resource targets instead of deriving architectures from the host", () => {
     expect(resolvePackageTargets(["darwin-arm64", "darwin-x64"])).toEqual([
       "darwin-arm64",
@@ -127,6 +165,7 @@ describe("packaged harness preparation", () => {
         "--config=electron-builder.preview.mac.cjs",
       ]),
     })
+    expect(requireFromTest("../electron-builder.preview.mac.cjs").npmRebuild).toBe(true)
   })
 
   it("gives Windows preview packages a separate app, protocol, and output identity", () => {
@@ -186,6 +225,7 @@ describe("packaged harness preparation", () => {
         "!node_modules/node-pty/prebuilds/**/*",
         "!node_modules/node-pty/third_party/**/*",
         "!node_modules/better-sqlite3/build/Release/test_extension.node",
+        "!node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
         "!node_modules/**/{test,tests,__tests__}/**/*",
         "!node_modules/**/*.test.{js,cjs,mjs,ts,tsx}",
         "!**/*.{obj,pdb,lib,exp,iobj,ipdb,ilk}",
@@ -207,6 +247,10 @@ describe("packaged harness preparation", () => {
     ])
     expect(packageJson.build.mac.files).toEqual([
       ...packageJson.build.files,
+      "!node_modules/@img/sharp-darwin-!(${arch})/**/*",
+      "!node_modules/@img/sharp-libvips-darwin-!(${arch})/**/*",
+      "!node_modules/@openai/codex-darwin-!(${arch})/**/*",
+      "!node_modules/node-pty/bin/**/*",
       "!node_modules/onnxruntime-node/bin/napi-v3/linux/**/*",
       "!node_modules/onnxruntime-node/bin/napi-v3/win32/**/*",
       "!node_modules/onnxruntime-node/bin/napi-v3/darwin/!(${arch})/**/*",
@@ -264,6 +308,26 @@ describe("packaged harness preparation", () => {
         ["**/*", ...packageJson.build[configKey].files],
       )
       const filter = matcher.createFilter()
+      expect(
+        filter(
+          join(
+            process.cwd(),
+            "node_modules",
+            "@anthropic-ai",
+            "claude-agent-sdk-darwin-arm64",
+            "claude",
+          ),
+          lstatSync(
+            join(
+              process.cwd(),
+              "node_modules",
+              "@anthropic-ai",
+              "claude-agent-sdk-darwin-arm64",
+              "claude",
+            ),
+          ),
+        ),
+      ).toBe(false)
       const keptBindings = ["win32", "darwin", "linux"].flatMap((candidatePlatform) =>
         ["x64", "arm64"]
           .filter((candidateArchitecture) => {
@@ -282,6 +346,51 @@ describe("packaged harness preparation", () => {
           .map((candidateArchitecture) => `${candidatePlatform}-${candidateArchitecture}`),
       )
       expect(keptBindings).toEqual([`${platform}-${architecture}`])
+      if (platform === "darwin") {
+        expect(
+          filter(
+            join(
+              process.cwd(),
+              "node_modules",
+              "node-pty",
+              "bin",
+              "darwin-arm64-140",
+              "node-pty.node",
+            ),
+            lstatSync(process.cwd()),
+          ),
+        ).toBe(false)
+        const keptSharpArchitectures = ["x64", "arm64"].filter((candidateArchitecture) =>
+          filter(
+            join(
+              process.cwd(),
+              "node_modules",
+              "@img",
+              `sharp-darwin-${candidateArchitecture}`,
+              "lib",
+              `sharp-darwin-${candidateArchitecture}-0.35.3.node`,
+            ),
+            lstatSync(process.cwd()),
+          ),
+        )
+        expect(keptSharpArchitectures).toEqual([architecture])
+        const keptCodexArchitectures = ["x64", "arm64"].filter((candidateArchitecture) =>
+          filter(
+            join(
+              process.cwd(),
+              "node_modules",
+              "@openai",
+              `codex-darwin-${candidateArchitecture}`,
+              "vendor",
+              candidateArchitecture === "x64" ? "x86_64-apple-darwin" : "aarch64-apple-darwin",
+              "bin",
+              "codex",
+            ),
+            lstatSync(process.cwd()),
+          ),
+        )
+        expect(keptCodexArchitectures).toEqual([architecture])
+      }
     }
   })
 

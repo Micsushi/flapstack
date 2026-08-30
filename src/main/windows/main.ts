@@ -1296,7 +1296,9 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
         sandbox: false, // Required for electron-trpc
         webSecurity: true,
         partition: "persist:main", // Use persistent session for cookies
-        ...(launchPresentation.keepRendererActive ? { backgroundThrottling: false } : {}),
+        ...(process.platform === "darwin" || launchPresentation.keepRendererActive
+          ? { backgroundThrottling: false }
+          : {}),
       },
     })
     const createdWindow = window
