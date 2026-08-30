@@ -21,7 +21,7 @@ import {
   validateBundledBinary,
   verifyCachedBinaryDigest,
 } from "../scripts/lib/packaged-binary.mjs"
-import { resolvePackageBuild } from "../scripts/package-app.mjs"
+import { resolvePackageBuild, runAppBuild } from "../scripts/package-app.mjs"
 import { runMacNativeModulesSmoke } from "../scripts/inspect-packaged-binaries.mjs"
 import { resolveDarwinTargetPackages } from "../scripts/lib/darwin-target-dependencies.mjs"
 import { resolvePackageTargets } from "../scripts/prepare-package-resources.mjs"
@@ -136,6 +136,25 @@ describe("packaged harness preparation", () => {
     expect(resolvePackageBuild({ platform: "linux", architectures: ["arm64"] })).toMatchObject({
       targets: ["linux-arm64"],
       builderArgs: ["--linux", "--arm64"],
+    })
+  })
+
+  it("builds packages through Node without a platform command shim", () => {
+    const cwd = join(tmpdir(), "flapstack-package-build")
+    let invocation: unknown
+
+    runAppBuild({
+      cwd,
+      spawn: (command: string, args: string[], options: unknown) => {
+        invocation = { command, args, options }
+        return { status: 0 }
+      },
+    })
+
+    expect(invocation).toEqual({
+      command: process.execPath,
+      args: [join(cwd, "scripts", "build.mjs")],
+      options: { cwd, stdio: "inherit" },
     })
   })
 

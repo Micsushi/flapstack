@@ -127,9 +127,9 @@ export function runBuilder(args, options = {}) {
 
 export function runAppBuild(options = {}) {
   const runner = options.spawn ?? spawnSync
-  const command = options.command ?? (process.platform === "win32" ? "npm.cmd" : "npm")
-  const result = runner(command, ["run", "build"], {
-    cwd: options.cwd ?? root,
+  const cwd = options.cwd ?? root
+  const result = runner(process.execPath, [path.join(cwd, "scripts", "build.mjs")], {
+    cwd,
     stdio: options.stdio ?? "inherit",
   })
   if (result.error) throw result.error
