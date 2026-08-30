@@ -81,9 +81,11 @@ describe("packaged harness preparation", () => {
       runtime: "/Applications/Flapstack.app/Contents/MacOS/Flapstack",
       options: { env: { ELECTRON_RUN_AS_NODE: "1" }, timeout: 180_000 },
     })
-    expect(invocation!.args[1]).toContain("/resources/app.asar/node_modules/better-sqlite3")
-    expect(invocation!.args[1]).toContain("/resources/app.asar/node_modules/sharp")
-    expect(invocation!.args[1]).toContain("/resources/app.asar/node_modules/node-pty")
+    expect(invocation!.args[1]).toContain(
+      join("/resources/app.asar/node_modules", "better-sqlite3"),
+    )
+    expect(invocation!.args[1]).toContain(join("/resources/app.asar/node_modules", "sharp"))
+    expect(invocation!.args[1]).toContain(join("/resources/app.asar/node_modules", "node-pty"))
   })
 
   it("pins optional native packages for every macOS package architecture", () => {
@@ -283,6 +285,7 @@ describe("packaged harness preparation", () => {
       ["linux", "linux", "x64"],
       ["linux", "linux", "arm64"],
     ] as const
+    const fixtureStat = lstatSync(join(process.cwd(), "package.json"))
     for (const [configKey, platform, architecture] of targets) {
       const appMatcher = new FileMatcher(
         process.cwd(),
@@ -294,12 +297,10 @@ describe("packaged harness preparation", () => {
       expect(
         appFilter(
           join(process.cwd(), "native", "stt-sidecar", "target", "release", "build.exe"),
-          lstatSync(process.cwd()),
+          fixtureStat,
         ),
       ).toBe(false)
-      expect(
-        appFilter(join(process.cwd(), "out", "main", "index.js"), lstatSync(process.cwd())),
-      ).toBe(true)
+      expect(appFilter(join(process.cwd(), "out", "main", "index.js"), fixtureStat)).toBe(true)
 
       const matcher = new FileMatcher(
         process.cwd(),
@@ -317,15 +318,7 @@ describe("packaged harness preparation", () => {
             "claude-agent-sdk-darwin-arm64",
             "claude",
           ),
-          lstatSync(
-            join(
-              process.cwd(),
-              "node_modules",
-              "@anthropic-ai",
-              "claude-agent-sdk-darwin-arm64",
-              "claude",
-            ),
-          ),
+          fixtureStat,
         ),
       ).toBe(false)
       const keptBindings = ["win32", "darwin", "linux"].flatMap((candidatePlatform) =>
@@ -341,7 +334,7 @@ describe("packaged harness preparation", () => {
               candidateArchitecture,
               "onnxruntime_binding.node",
             )
-            return filter(binding, lstatSync(binding))
+            return filter(binding, fixtureStat)
           })
           .map((candidateArchitecture) => `${candidatePlatform}-${candidateArchitecture}`),
       )
@@ -357,7 +350,7 @@ describe("packaged harness preparation", () => {
               "darwin-arm64-140",
               "node-pty.node",
             ),
-            lstatSync(process.cwd()),
+            fixtureStat,
           ),
         ).toBe(false)
         const keptSharpArchitectures = ["x64", "arm64"].filter((candidateArchitecture) =>
@@ -370,7 +363,7 @@ describe("packaged harness preparation", () => {
               "lib",
               `sharp-darwin-${candidateArchitecture}-0.35.3.node`,
             ),
-            lstatSync(process.cwd()),
+            fixtureStat,
           ),
         )
         expect(keptSharpArchitectures).toEqual([architecture])
@@ -386,7 +379,7 @@ describe("packaged harness preparation", () => {
               "bin",
               "codex",
             ),
-            lstatSync(process.cwd()),
+            fixtureStat,
           ),
         )
         expect(keptCodexArchitectures).toEqual([architecture])

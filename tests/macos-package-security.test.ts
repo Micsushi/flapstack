@@ -1,5 +1,4 @@
 import {
-  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -135,20 +134,17 @@ describe("macOS package security report", () => {
       }),
     ).rejects.toThrow(/does not match/)
 
-    const modeRunner = (_command: string, args: string[]) => {
-      if (args[0] === "attach") {
-        const mountPath = args[args.indexOf("-mountpoint") + 1]!
-        cpSync(app, join(mountPath, "Flapstack.app"), { recursive: true })
-        chmodSync(join(mountPath, "Flapstack.app", "Contents", "payload"), 0o755)
-      }
-      return { status: 0, stdout: "", stderr: "" }
-    }
+    const modeManifest = manifest.map((item) =>
+      item.path === "Contents/payload" && item.kind === "file"
+        ? { ...item, mode: item.mode === 0o755 ? 0o644 : 0o755 }
+        : item,
+    )
     await expect(
       assertDiskImageContainsApp({
         artifactPath: artifact,
         expectedAppPath: app,
-        expectedManifest: manifest,
-        spawn: modeRunner,
+        expectedManifest: modeManifest,
+        spawn: runner,
       }),
     ).rejects.toThrow(/does not match/)
 

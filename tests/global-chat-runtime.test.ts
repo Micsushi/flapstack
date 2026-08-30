@@ -16,10 +16,10 @@ describe("global Chat runtime directory", () => {
 
       expect(runtimePath).toBe(getGlobalChatRuntimePath(userDataPath, "../../outside"))
       expect(relative(userDataPath, runtimePath)).toBe(
-        "data/global-chats/%2E%2E%2F%2E%2E%2Foutside",
+        join("data", "global-chats", "%2E%2E%2F%2E%2E%2Foutside"),
       )
       expect(relative(userDataPath, getGlobalChatRuntimePath(userDataPath, ".."))).toBe(
-        "data/global-chats/%2E%2E",
+        join("data", "global-chats", "%2E%2E"),
       )
       expect((await stat(runtimePath)).isDirectory()).toBe(true)
     } finally {
