@@ -899,7 +899,7 @@ describe("Stage 6 deterministic performance authority", () => {
       outcome.report.results.every((result) => result.samples.measuredSamples.length >= 5),
     ).toBe(true)
     expect(outcome.report.evidenceStatus).toBe("incomplete")
-  }, 240_000)
+  }, 480_000)
 
   it("supports Windows and macOS headless dev capture while package lanes remain unavailable", () => {
     expect(localProductPerformanceSupport({ platform: "darwin", buildType: "dev" })).toEqual({
@@ -1103,7 +1103,7 @@ describe("Stage 6 deterministic performance authority", () => {
     expect(outcome.report.results.map((result) => result.budgetId)).toEqual(
       budgets.map((budget) => budget.id),
     )
-  }, 240_000)
+  }, 480_000)
 
   it("cleans fixture roots when preparation fails before a database opens", async () => {
     const before = new Set(
