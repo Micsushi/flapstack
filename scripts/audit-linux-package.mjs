@@ -134,7 +134,7 @@ async function scanLinuxPackageText(packageRoot, manifest) {
     if (stat.files || stat.link) continue
     const buffer = asar.extractFile(asarPath, entry)
     const displayPath = `resources/app.asar/${entry.replaceAll("\\", "/")}`
-    assertNoEmbeddedNativePayload(displayPath, buffer)
+    assertNoEmbeddedNativePayload(displayPath, buffer, stat.unpacked)
     includedPaths.add(displayPath)
     includedFileHashes.set(displayPath, createHash("sha256").update(buffer).digest("hex"))
     asarFiles += 1
@@ -149,7 +149,8 @@ async function scanLinuxPackageText(packageRoot, manifest) {
   }
 }
 
-export function assertNoEmbeddedNativePayload(filePath, buffer) {
+export function assertNoEmbeddedNativePayload(filePath, buffer, unpacked = false) {
+  if (unpacked) return
   const extension = path.posix.extname(filePath).toLowerCase()
   if (BUILD_OUTPUT_EXTENSIONS.has(extension)) {
     throw new Error(`${filePath}: native build output must not be distributed`)

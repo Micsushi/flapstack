@@ -166,5 +166,12 @@ describe("Linux package security report", () => {
         Buffer.from([0x7f, 0x45, 0x4c, 0x46, ...new Array(60).fill(0)]),
       ),
     ).toThrow(/unpacked.*inventoried/i)
+    expect(() =>
+      assertNoEmbeddedNativePayload(
+        "resources/app.asar/node_modules/example/libexample.so.1",
+        Buffer.from([0x7f, 0x45, 0x4c, 0x46, ...new Array(60).fill(0)]),
+        true,
+      ),
+    ).not.toThrow()
   })
 })
