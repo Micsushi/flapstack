@@ -406,9 +406,12 @@ export function encodePcmWav(samples: Float32Array, sampleRate = 16_000): ArrayB
 export function toMicrophoneError(error: unknown, platform: string): Error {
   if (!(error instanceof Error)) return new Error("Failed to start recording")
   if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
-    const recovery = platform.toLowerCase().includes("win")
+    const normalizedPlatform = platform.toLowerCase()
+    const recovery = normalizedPlatform.includes("win")
       ? "Windows Settings > Privacy & security > Microphone"
-      : "System Settings > Privacy & Security > Microphone"
+      : normalizedPlatform.includes("mac")
+        ? "System Settings > Privacy & Security > Microphone"
+        : "your desktop environment's privacy settings"
     return new Error(`Microphone access denied. Allow Flapstack in ${recovery}.`)
   }
   if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {

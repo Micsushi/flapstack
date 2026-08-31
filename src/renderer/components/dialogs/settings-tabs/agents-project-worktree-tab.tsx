@@ -9,6 +9,7 @@ import { AIPenIcon, ExternalLinkIcon, FolderFilledIcon, ImageIcon } from "../../
 import { invalidateProjectIcon, useProjectIcon } from "../../../lib/hooks/use-project-icon"
 import { ProjectIcon } from "../../ui/project-icon"
 import finderIcon from "../../../assets/app-icons/finder.png"
+import { getFileManagerName, getPlatform } from "../../../lib/utils/platform"
 import { Select, SelectContent, SelectItem, SelectTrigger } from "../../ui/select"
 import {
   AlertDialog,
@@ -392,8 +393,12 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                 onClick={handleOpenInFinder}
                 disabled={!project?.path}
               >
-                <img src={finderIcon} alt="" className="h-3.5 w-3.5" />
-                Finder
+                {getPlatform() === "darwin" ? (
+                  <img src={finderIcon} alt="" className="h-3.5 w-3.5" />
+                ) : (
+                  <FolderOpen className="h-3.5 w-3.5" />
+                )}
+                {getFileManagerName()}
               </Button>
             </div>
 

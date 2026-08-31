@@ -17,6 +17,7 @@ import {
 } from "../../../../components/ui/context-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../../components/ui/tooltip"
 import { cn } from "../../../../lib/utils"
+import { getFileManagerName } from "../../../../lib/utils/platform"
 import { useState } from "react"
 import { HiMiniMinus, HiMiniPlus } from "react-icons/hi2"
 import { trpc } from "../../../../lib/trpc"
@@ -271,7 +272,7 @@ export function FileItem({
           <ContextMenuSeparator />
           <ContextMenuItem onClick={handleRevealInFinder}>
             <FolderIcon className="mr-2 size-4" />
-            Reveal in Finder
+            Reveal in {getFileManagerName()}
           </ContextMenuItem>
           <ContextMenuItem onClick={handleOpenInEditor}>
             <ExternalLinkIcon className="mr-2 size-4" />

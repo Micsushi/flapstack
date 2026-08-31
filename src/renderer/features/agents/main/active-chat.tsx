@@ -83,7 +83,7 @@ import { trpc, trpcClient } from "../../../lib/trpc"
 import { stopManagedSpeech } from "../../../lib/speech-playback"
 import { cn } from "../../../lib/utils"
 import { hotPathConsole as console } from "../../../lib/hot-path-console"
-import { isDesktopApp } from "../../../lib/utils/platform"
+import { getPlatform, isDesktopApp } from "../../../lib/utils/platform"
 import { ChangesPanel } from "../../changes"
 import { useCommitActions } from "../../changes/components/commit-input"
 import { DiffCenterPeekDialog } from "../../changes/components/diff-center-peek-dialog"
@@ -4952,7 +4952,10 @@ const ChatViewInner = memo(function ChatViewInner({
   ).length
   const showStreamingCue =
     (isStreaming || isCompacting) && !hasAssistantOutputForLatestTurn(messages)
-  const runErrorPresentation = useMemo(() => presentRunError(error?.message), [error?.message])
+  const runErrorPresentation = useMemo(
+    () => presentRunError(error?.message, getPlatform()),
+    [error?.message],
+  )
   const jumpToTranscriptMarker = useCallback((marker: TranscriptMarker) => {
     if (
       messageVirtualizerRef.current?.scrollToMessage(marker.id, {

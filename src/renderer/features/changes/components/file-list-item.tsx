@@ -12,6 +12,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
 import { cn } from "@/lib/utils"
+import { getFileManagerName } from "@/lib/utils/platform"
 import { getStatusIndicator } from "../utils/status"
 import type { FileStatus } from "../../../../shared/changes-types"
 
@@ -134,7 +135,9 @@ export const FileListItem = memo(function FileListItem({
         )}
         {(onCopyPath || onCopyRelativePath) && onRevealInFinder && <ContextMenuSeparator />}
         {onRevealInFinder && (
-          <ContextMenuItem onClick={onRevealInFinder}>Reveal in Finder</ContextMenuItem>
+          <ContextMenuItem onClick={onRevealInFinder}>
+            Reveal in {getFileManagerName()}
+          </ContextMenuItem>
         )}
         {(onOpenInFilePreview || onOpenInEditor) && <ContextMenuSeparator />}
         {onOpenInFilePreview && (

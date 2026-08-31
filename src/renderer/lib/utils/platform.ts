@@ -45,6 +45,17 @@ export function isLinux(): boolean {
 }
 
 /**
+ * Get the user-facing name for the platform file manager.
+ */
+export function getFileManagerName(
+  platform: ReturnType<typeof getPlatform> = getPlatform(),
+): string {
+  if (platform === "darwin") return "Finder"
+  if (platform === "win32") return "File Explorer"
+  return "File Manager"
+}
+
+/**
  * Get the correct shortcut display string based on platform
  * In web browser: uses Option (⌥) modifier for shortcuts that would conflict
  * In Electron: uses simpler shortcuts without Option

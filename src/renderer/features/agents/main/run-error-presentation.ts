@@ -6,16 +6,25 @@ export type RunErrorPresentation = {
 
 const USAGE_LIMIT_PATTERN =
   /(?:\b429\b|insufficient[_ -]?quota|rate[_ -]?limit|usage limit|quota exceeded|out of (?:usage|credits)|too many requests)/i
-const WINDOWS_LAUNCH_PATTERN = /(?:spawn\s+eperm|access is denied)/i
+const LOCAL_LAUNCH_PERMISSION_PATTERN =
+  /(?:spawn\b[^\r\n]{0,512}\b(?:eperm|eacces)\b|access is denied)/i
 const AUTH_PATTERN = /(?:\b401\b|unauthori[sz]ed|authentication failed|sign[- ]?in required)/i
 
-export function presentRunError(rawMessage: string | null | undefined): RunErrorPresentation {
+export function presentRunError(
+  rawMessage: string | null | undefined,
+  platform: "darwin" | "win32" | "linux" | "unknown" = "unknown",
+): RunErrorPresentation {
   const detail = rawMessage?.trim()
-  if (detail && WINDOWS_LAUNCH_PATTERN.test(detail)) {
+  if (detail && LOCAL_LAUNCH_PERMISSION_PATTERN.test(detail)) {
+    const message =
+      platform === "win32"
+        ? "Windows blocked Flapstack from starting the Codex App Server. This is a local launch or permissions problem, not a usage-limit error."
+        : platform === "linux"
+          ? "Linux blocked Flapstack from starting the Codex App Server. Check executable permissions and mount options, then retry."
+          : "The operating system blocked Flapstack from starting the Codex App Server. Check local permissions, then retry."
     return {
       title: "Codex couldn’t start",
-      message:
-        "Windows blocked Flapstack from starting the Codex App Server. This is a local launch or permissions problem, not a usage-limit error.",
+      message,
       technicalDetail: detail,
     }
   }
