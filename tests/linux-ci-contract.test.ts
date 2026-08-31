@@ -30,6 +30,11 @@ describe("Linux CI contract", () => {
     expect(job["runs-on"]).toEqual(["self-hosted", "Linux", "X64", "flapstack"])
     const steps = Object.fromEntries(job.steps.map((step) => [step.name, step]))
     expect(steps["Setup Node"].with?.["node-version"]).toBe(22)
+    expect(steps["Setup Python"].with?.["python-version"]).toBe("3.12")
+    expect(steps["Setup Rust"].with?.toolchain).toBe("1.98.0")
+    expect(steps["Install Linux package prerequisites"].run).toBe(
+      "python -m pip install --disable-pip-version-check cmake==4.4.3",
+    )
     expect(steps["Install dependencies"].run).toBe("npm ci --legacy-peer-deps")
     expect(steps.Check.run).toBe("npm run check -- --portable-linux")
     expect(steps["Build Linux Preview artifacts"].run).toBe(
