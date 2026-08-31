@@ -356,6 +356,7 @@ npm run package:preview:linux # unpacked Flapstack Preview test build
 npm run package:preview:linux:artifacts # Flapstack Preview AppImage and deb
 npm run package:inspect:preview:linux
 npm run package:smoke:preview:linux
+npm run package:audit:preview:linux
 npm run package:release:linux # clean exact-source checkout only
 npm run package:preview:linux:arm64 # run on a native arm64 Linux host
 npm run package:release:linux:arm64 # run on a clean native arm64 Linux host

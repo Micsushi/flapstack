@@ -41,9 +41,10 @@ npm run check -- --portable-linux
 npm run package:preview:linux:artifacts
 npm run package:inspect:preview:linux
 npm run package:smoke:preview:linux
+npm run package:audit:preview:linux
 ```
 
-Replace the last three commands with their `:arm64` variants on a native arm64
+Replace the last four commands with their `:arm64` variants on a native arm64
 host. The smoke loads Claude, Codex, whisper.cpp, the speech sidecar,
 better-sqlite3, Sharp, and node-pty from the packaged app.
 
@@ -94,8 +95,14 @@ Production packaging accepts only a clean exact-source checkout:
 npm run package:release:linux
 npm run package:inspect:release:linux
 npm run package:smoke:release:linux
+npm run package:audit:release:linux
 sha256sum release/Flapstack-*.AppImage release/Flapstack-*.deb
 ```
+
+The audit verifies exact-source provenance, dependency license notices, secret
+scan coverage, ELF architecture, Debian package identity and dependencies,
+desktop and protocol registration, AppImage identity, and artifact hashes. It
+writes a JSON report and adjacent SHA256 marker in the package output folder.
 
 Before publication, repeat install, launch, upgrade, service, keyring, protocol,
 CLI, restart, and uninstall checks on clean supported hosts. Record the exact
