@@ -901,13 +901,12 @@ describe("Stage 6 deterministic performance authority", () => {
     expect(outcome.report.evidenceStatus).toBe("incomplete")
   }, 480_000)
 
-  it("supports Windows and macOS headless dev capture while package lanes remain unavailable", () => {
+  it("supports Windows, macOS, and Linux headless dev capture while package lanes remain unavailable", () => {
     expect(localProductPerformanceSupport({ platform: "darwin", buildType: "dev" })).toEqual({
       supported: true,
     })
     expect(localProductPerformanceSupport({ platform: "linux", buildType: "dev" })).toEqual({
-      supported: false,
-      reason: expect.stringMatching(/adapter.*unavailable.*linux/i),
+      supported: true,
     })
     expect(localProductPerformanceSupport({ platform: "win32", buildType: "dev" })).toEqual({
       supported: true,

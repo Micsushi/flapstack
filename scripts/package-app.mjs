@@ -29,6 +29,10 @@ const channelConfigs = {
     preview: "electron-builder.preview.win.cjs",
     release: "electron-builder.release.win.cjs",
   },
+  linux: {
+    preview: "electron-builder.preview.linux.cjs",
+    release: "electron-builder.release.linux.cjs",
+  },
 }
 const defaultNativeAbiMarker = path.join(root, "node_modules", ".native-abi")
 

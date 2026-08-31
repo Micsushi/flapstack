@@ -32,6 +32,7 @@ describe("test-control lifecycle", () => {
   it("isolates and sanitizes explicit Preview test profiles", () => {
     expect(isPreviewExecutable("C:\\Apps\\Flapstack Preview.exe")).toBe(true)
     expect(isPreviewExecutable("/Applications/Flapstack Preview")).toBe(true)
+    expect(isPreviewExecutable("/opt/Flapstack-Preview/flapstack-preview")).toBe(true)
     expect(isPreviewExecutable("C:\\Apps\\Flapstack.exe")).toBe(false)
     expect(resolvePreviewUserDataName()).toBe("Flapstack Preview")
     expect(resolvePreviewUserDataName("609c/settings proof")).toBe(

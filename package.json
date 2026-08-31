@@ -10,8 +10,10 @@
   "description": "Flapstack - local-first workspace for multi-project, multi-agent coding work",
   "homepage": "",
   "author": {
-    "name": "Flapstack"
+    "name": "Flapstack",
+    "email": "wenjian2@ualberta.ca"
   },
+  "desktopName": "flapstack.desktop",
   "main": "out/main/index.js",
   "scripts": {
     "preinstall": "node scripts/windows-prerequisites.mjs --if-windows",
@@ -47,6 +49,20 @@
     "package:win": "node scripts/package-app.mjs --platform=win32 --arch=x64",
     "package:linux": "node scripts/package-app.mjs --platform=linux --arch=x64",
     "package:linux:arm64": "node scripts/package-app.mjs --platform=linux --arch=arm64",
+    "package:preview:linux": "node scripts/package-app.mjs --ensure-native-abi --platform=linux --arch=x64 --dir --channel=preview",
+    "package:preview:linux:arm64": "node scripts/package-app.mjs --ensure-native-abi --platform=linux --arch=arm64 --dir --channel=preview",
+    "package:preview:linux:artifacts": "node scripts/package-app.mjs --platform=linux --arch=x64 --channel=preview",
+    "package:preview:linux:artifacts:arm64": "node scripts/package-app.mjs --platform=linux --arch=arm64 --channel=preview",
+    "package:release:linux": "node scripts/package-app.mjs --platform=linux --arch=x64 --channel=release",
+    "package:release:linux:arm64": "node scripts/package-app.mjs --platform=linux --arch=arm64 --channel=release",
+    "package:inspect:preview:linux": "node scripts/inspect-packaged-binaries.mjs --app=release-preview/linux-unpacked/flapstack-preview --platform=linux-x64",
+    "package:inspect:preview:linux:arm64": "node scripts/inspect-packaged-binaries.mjs --app=release-preview/linux-arm64-unpacked/flapstack-preview --platform=linux-arm64",
+    "package:smoke:preview:linux": "node scripts/inspect-packaged-binaries.mjs --app=release-preview/linux-unpacked/flapstack-preview --platform=linux-x64 --smoke",
+    "package:smoke:preview:linux:arm64": "node scripts/inspect-packaged-binaries.mjs --app=release-preview/linux-arm64-unpacked/flapstack-preview --platform=linux-arm64 --smoke",
+    "package:inspect:release:linux": "node scripts/inspect-packaged-binaries.mjs --app=release/linux-unpacked/flapstack --platform=linux-x64",
+    "package:inspect:release:linux:arm64": "node scripts/inspect-packaged-binaries.mjs --app=release/linux-arm64-unpacked/flapstack --platform=linux-arm64",
+    "package:smoke:release:linux": "node scripts/inspect-packaged-binaries.mjs --app=release/linux-unpacked/flapstack --platform=linux-x64 --smoke",
+    "package:smoke:release:linux:arm64": "node scripts/inspect-packaged-binaries.mjs --app=release/linux-arm64-unpacked/flapstack --platform=linux-arm64 --smoke",
     "dist": "node scripts/package-app.mjs",
     "claude:download": "node scripts/download-claude-binary.mjs --version=2.1.207",
     "claude:download:all": "node scripts/download-claude-binary.mjs --version=2.1.207 --all",
@@ -264,6 +280,7 @@
     "asarUnpack": [
       "node_modules/better-sqlite3/**/*",
       "node_modules/node-pty/**/*",
+      "node_modules/@img/sharp-libvips-*/**/*",
       "node_modules/@anthropic-ai/claude-agent-sdk/**/*",
       "node_modules/@agentclientprotocol/codex-acp/**/*",
       "node_modules/@openai/codex/**/*",
@@ -382,7 +399,23 @@
         "deb"
       ],
       "icon": "build/icons",
-      "category": "Development"
+      "category": "Development",
+      "syncDesktopName": true
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0",
+        "libgbm1",
+        "libasound2"
+      ]
     },
     "nsis": {
       "oneClick": false,

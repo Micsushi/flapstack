@@ -27,6 +27,7 @@ import {
   queryWindowsProcesses,
   windowsTaskkillArgs,
 } from "./lib/windows-processes.mjs"
+import { linuxDevNeedsNoSandbox } from "./lib/linux-electron-sandbox.mjs"
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)))
 const LOCAL_ENV_FILE = resolve(ROOT, ".env.local")
@@ -49,10 +50,25 @@ const STALE_PATTERNS = [
   `${ROOT}/node_modules/electron/dist`,
   `${ROOT}/release/.*/Flapstack.app/Contents/MacOS/Flapstack`,
   `${ROOT}/release-preview/.*/Flapstack Preview.app/Contents/MacOS/Flapstack Preview`,
+  `${ROOT}/release/linux-.*unpacked/`,
+  `${ROOT}/release-preview/linux-.*unpacked/`,
 ]
 
 // 1) Never let Electron run as a bare Node process.
 delete process.env.ELECTRON_RUN_AS_NODE
+
+// npm cannot install Electron's SUID helper as root:4755. On Linux hosts where
+// Chromium cannot use that helper, keep development runnable without changing
+// the sandbox policy of packaged applications.
+if (
+  process.env.NO_SANDBOX === undefined &&
+  linuxDevNeedsNoSandbox({
+    sandboxPath: resolve(ROOT, "node_modules/electron/dist/chrome-sandbox"),
+  })
+) {
+  process.env.NO_SANDBOX = "1"
+  console.warn("[dev] Linux Electron SUID sandbox unavailable; using --no-sandbox for development.")
+}
 
 function stalePids() {
   if (IS_WIN) {

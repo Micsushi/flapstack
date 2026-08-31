@@ -6,9 +6,12 @@ import {
   findStage6SupervisorOwnedNativeProcesses,
   killNativeProcess,
   parseDarwinProcessList,
+  parsePosixProcessList,
   processDescendsFromNative,
   queryNativeProcesses,
 } from "../scripts/lib/native-processes.mjs"
+// @ts-expect-error JavaScript build-script helper intentionally has no declaration file.
+import { linuxDevNeedsNoSandbox } from "../scripts/lib/linux-electron-sandbox.mjs"
 
 const root = "/Users/test/Documents/GitHub/flapstack"
 const electronRoot = `${root}/node_modules/electron/dist`
@@ -18,6 +21,32 @@ const started = "Wed Aug 26 12:00:00 2026"
 const startedChild = "Wed Aug 26 12:00:01 2026"
 
 describe("native Flapstack process ownership", () => {
+  it("disables only an unavailable Linux development SUID sandbox", () => {
+    expect(
+      linuxDevNeedsNoSandbox({
+        platform: "linux",
+        sandboxPath: "/electron/chrome-sandbox",
+        stat: () => ({ uid: 1000, mode: 0o100755 }),
+      }),
+    ).toBe(true)
+    expect(
+      linuxDevNeedsNoSandbox({
+        platform: "linux",
+        sandboxPath: "/electron/chrome-sandbox",
+        stat: () => ({ uid: 0, mode: 0o104755 }),
+      }),
+    ).toBe(false)
+    expect(
+      linuxDevNeedsNoSandbox({
+        platform: "darwin",
+        sandboxPath: "/electron/chrome-sandbox",
+        stat: () => {
+          throw new Error("must not inspect non-Linux hosts")
+        },
+      }),
+    ).toBe(false)
+  })
+
   it("parses macOS ps output without losing commands that contain spaces", () => {
     const processes = parseDarwinProcessList(
       [
@@ -53,6 +82,29 @@ describe("native Flapstack process ownership", () => {
     expect(processes[0].ProcessId).toBe(101)
   })
 
+  it("queries and terminates Linux processes through the bounded POSIX path", () => {
+    const processes = queryNativeProcesses({
+      platform: "linux",
+      spawn: () => ({
+        status: 0,
+        stdout: ` 101 1 ${started}     /usr/lib/electron/electron ${root}`,
+        stderr: "",
+      }),
+    })
+    const calls: Array<[number, string]> = []
+
+    expect(processes).toEqual(
+      parsePosixProcessList(` 101 1 ${started}     /usr/lib/electron/electron ${root}`),
+    )
+    expect(
+      killNativeProcess(101, {
+        platform: "linux",
+        kill: (pid: number, signal: string) => calls.push([pid, signal]),
+      }),
+    ).toBe("101:0:")
+    expect(calls).toEqual([[101, "SIGTERM"]])
+  })
+
   it("classifies the exact macOS dev renderer without adopting another profile", () => {
     const profile = "/Users/test/Library/Application Support/Flapstack Dev stage6-perf-1"
     const processes = [
@@ -74,6 +126,60 @@ describe("native Flapstack process ownership", () => {
     expect(
       classifyNativeFlapstackProcesses(processes, { root, profilePath: profile }),
     ).toMatchObject({ mainPid: 101, rendererPid: 102 })
+  })
+
+  it("classifies a Linux renderer exposed as /proc/self/exe", () => {
+    const linuxRoot = "/home/test/flapstack"
+    const profile = "/home/test/.config/Flapstack Dev linux"
+    const processes = [
+      processEntry(
+        101,
+        1,
+        started,
+        `${linuxRoot}/node_modules/electron/dist/electron . --no-sandbox`,
+      ),
+      processEntry(
+        102,
+        101,
+        startedChild,
+        `/proc/self/exe --type=renderer --user-data-dir=${profile} --app-path=${linuxRoot}`,
+      ),
+      processEntry(
+        202,
+        201,
+        startedChild,
+        `/proc/self/exe --type=renderer --user-data-dir=${profile} --app-path=${linuxRoot}`,
+      ),
+    ]
+
+    expect(
+      classifyNativeFlapstackProcesses(processes, { root: linuxRoot, profilePath: profile }),
+    ).toMatchObject({ mainPid: 101, rendererPid: 102 })
+  })
+
+  it("pairs verification with the main process that owns the matching renderer", () => {
+    const linuxRoot = "/home/test/flapstack"
+    const profile = "/home/test/.config/Flapstack Dev expected"
+    const processes = [
+      processEntry(101, 1, started, `${linuxRoot}/node_modules/electron/dist/electron .`),
+      processEntry(
+        102,
+        101,
+        startedChild,
+        `/proc/self/exe --type=renderer --app-path=${linuxRoot}`,
+      ),
+      processEntry(201, 1, started, `${linuxRoot}/node_modules/electron/dist/electron .`),
+      processEntry(
+        202,
+        201,
+        startedChild,
+        `/proc/self/exe --type=renderer --user-data-dir=${profile} --app-path=${linuxRoot}`,
+      ),
+    ]
+
+    expect(
+      classifyNativeFlapstackProcesses(processes, { root: linuxRoot, profilePath: profile }),
+    ).toMatchObject({ mainPid: 201, rendererPid: 202 })
   })
 
   it("retains quoted Windows app-path classification", () => {

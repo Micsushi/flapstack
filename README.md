@@ -314,14 +314,17 @@ Prerequisites:
 - Node.js 22
 - Python 3.11 recommended for native module rebuilds
 - Xcode Command Line Tools on macOS
-- CMake for macOS/Linux packages that build bundled whisper.cpp binaries
+- On Linux: CMake and Rust/Cargo for bundled native speech binaries
+- On Linux: a FUSE 2 runtime (`libfuse2t64` on Ubuntu 24.04) when using AppImage
+- On Linux: `secret-tool`, an unlocked Secret Service keyring, and a user systemd
+  session for secure background usage tracking
 - On Windows: CMake, Rust MSVC, Visual Studio 2022 Build Tools with Desktop C++
   and x64/x86 Spectre-mitigated libraries, plus the Windows 10/11 SDK
 
 Install and run:
 
 ```bash
-npm ci --legacy-peer-deps
+npm ci
 npm run claude:download
 npm run codex:download
 npm run dev
@@ -348,6 +351,13 @@ npm run package:preview:mac # local packaged testing: Flapstack Preview.app
 npm run package:mac
 npm run package:release:mac # unsigned beta DMGs for Apple Silicon and Intel
 npm run package:smoke:mac
+npm run package:preview:linux # unpacked Flapstack Preview test build
+npm run package:preview:linux:artifacts # Flapstack Preview AppImage and deb
+npm run package:inspect:preview:linux
+npm run package:smoke:preview:linux
+npm run package:release:linux # clean exact-source checkout only
+npm run package:preview:linux:arm64 # run on a native arm64 Linux host
+npm run package:release:linux:arm64 # run on a clean native arm64 Linux host
 ```
 
 macOS development, packaged testing, and production use separate app names,
@@ -365,6 +375,8 @@ the required Node/Electron ABI, verifies it, and only then writes a new marker.
 
 See [docs/releasing-macos.md](docs/releasing-macos.md) for the unsigned DMG release
 pipeline, Gatekeeper instructions, checksums, and public-release process.
+See [docs/releasing-linux.md](docs/releasing-linux.md) for Linux support boundaries,
+package installation, desktop integration, dependencies, and release checks.
 
 ## Useful Commands
 

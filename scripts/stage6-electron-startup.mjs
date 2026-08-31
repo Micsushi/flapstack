@@ -145,7 +145,7 @@ try {
 }
 
 async function launchExactProcess() {
-  if (process.platform !== "win32" && process.platform !== "darwin") {
+  if (!["win32", "darwin", "linux"].includes(process.platform)) {
     throw new Error(
       `Stage 6 exact-process Electron orchestration is unsupported on ${process.platform}.`,
     )

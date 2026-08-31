@@ -21,7 +21,7 @@ const startupScript = realpathSync(
 const electronRoot = realpathSync(resolve(repositoryRoot, "node_modules", "electron", "dist"))
 const electronRelationship = relative(electronRoot, electronExecutable)
 if (
-  (process.platform !== "win32" && process.platform !== "darwin") ||
+  !["win32", "darwin", "linux"].includes(process.platform) ||
   nodeExecutable !== realpathSync(process.execPath) ||
   electronExecutable === nodeExecutable ||
   !electronRelationship ||

@@ -22,7 +22,7 @@ import {
   verifyCachedBinaryDigest,
 } from "../scripts/lib/packaged-binary.mjs"
 import { resolvePackageBuild, runAppBuild } from "../scripts/package-app.mjs"
-import { runMacNativeModulesSmoke } from "../scripts/inspect-packaged-binaries.mjs"
+import { inspectLinuxApp, runMacNativeModulesSmoke } from "../scripts/inspect-packaged-binaries.mjs"
 import { resolveDarwinTargetPackages } from "../scripts/lib/darwin-target-dependencies.mjs"
 import { resolvePackageTargets } from "../scripts/prepare-package-resources.mjs"
 import { validateWhisperDirectory } from "../scripts/prepare-whisper-binary.mjs"
@@ -213,6 +213,55 @@ describe("packaged harness preparation", () => {
     })
   })
 
+  it("gives Linux preview packages a separate app, protocol, and output identity", () => {
+    const packageJson = requireFromTest("../package.json")
+    expect(
+      resolvePackageBuild({
+        platform: "linux",
+        architectures: ["x64"],
+        dir: true,
+        channel: "preview",
+      }),
+    ).toMatchObject({
+      targets: ["linux-x64"],
+      channel: "preview",
+      builderArgs: expect.arrayContaining([
+        "--linux",
+        "--x64",
+        "--dir",
+        "--config=electron-builder.preview.linux.cjs",
+      ]),
+    })
+    expect(requireFromTest("../electron-builder.preview.linux.cjs")).toMatchObject({
+      appId: "dev.flapstack.app.preview",
+      productName: "Flapstack-Preview",
+      extraMetadata: { desktopName: "flapstack-preview.desktop" },
+      linux: { executableName: "flapstack-preview", syncDesktopName: true },
+      protocols: [{ name: "Flapstack Preview", schemes: ["flapstack-preview"] }],
+    })
+    expect(packageJson.author.email).toBeTruthy()
+    expect(packageJson.desktopName).toBe("flapstack.desktop")
+    expect(packageJson.build.deb.depends).toEqual(expect.arrayContaining(["libgbm1", "libasound2"]))
+    expect(packageJson.scripts["package:preview:linux:artifacts"]).toContain(
+      "--platform=linux --arch=x64 --channel=preview",
+    )
+    expect(packageJson.scripts["package:preview:linux:artifacts:arm64"]).toContain(
+      "--platform=linux --arch=arm64 --channel=preview",
+    )
+    expect(packageJson.scripts["package:release:linux:arm64"]).toContain(
+      "--platform=linux --arch=arm64 --channel=release",
+    )
+    expect(packageJson.scripts["package:smoke:preview:linux:arm64"]).toContain(
+      "--platform=linux-arm64 --smoke",
+    )
+  })
+
+  it("routes Linux package inspection through ELF and native-module checks", () => {
+    expect(() => inspectLinuxApp("/tmp/flapstack", "darwin-x64")).toThrow(
+      "Unsupported Linux package platform",
+    )
+  })
+
   it("requires Authenticode for Windows release packages", () => {
     expect(
       resolvePackageBuild({
@@ -245,6 +294,7 @@ describe("packaged harness preparation", () => {
 
   it("keeps ONNX Runtime payload filtering target- and architecture-specific", () => {
     const packageJson = requireFromTest("../package.json")
+    expect(packageJson.build.asarUnpack).toContain("node_modules/@img/sharp-libvips-*/**/*")
     expect(packageJson.build.files).toEqual(
       expect.arrayContaining([
         "!node_modules/node-pty/prebuilds/**/*",

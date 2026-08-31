@@ -15,7 +15,7 @@ function processText(entry) {
   return `${entry?.ExecutablePath ?? ""}\n${entry?.CommandLine ?? ""}`
 }
 
-export function parseDarwinProcessList(output) {
+export function parsePosixProcessList(output) {
   const processes = []
   for (const line of String(output ?? "").split("\n")) {
     const match =
@@ -34,27 +34,36 @@ export function parseDarwinProcessList(output) {
   return processes
 }
 
-export function queryDarwinProcesses(options = {}) {
+export const parseDarwinProcessList = parsePosixProcessList
+
+export function queryPosixProcesses(options = {}) {
   const runner = options.spawn ?? spawnSync
+  const platformName = options.platform === "linux" ? "Linux" : "macOS"
   const result = runner("ps", ["-axo", "pid=,ppid=,lstart=,command="], {
     encoding: "utf8",
     env: { ...process.env, LC_ALL: "C" },
   })
   if (result.error) {
-    throw new Error(`Could not start macOS process inspection: ${result.error.message}`)
+    throw new Error(`Could not start ${platformName} process inspection: ${result.error.message}`)
   }
   if (result.status !== 0) {
     throw new Error(
-      `macOS process inspection failed with exit code ${result.status}: ${String(result.stderr ?? "").trim()}`,
+      `${platformName} process inspection failed with exit code ${result.status}: ${String(result.stderr ?? "").trim()}`,
     )
   }
-  return parseDarwinProcessList(result.stdout)
+  return parsePosixProcessList(result.stdout)
+}
+
+export function queryDarwinProcesses(options = {}) {
+  return queryPosixProcesses({ ...options, platform: "darwin" })
 }
 
 export function queryNativeProcesses(options = {}) {
   const platform = options.platform ?? process.platform
   if (platform === "win32") return queryWindowsProcesses(options)
-  if (platform === "darwin") return queryDarwinProcesses(options)
+  if (platform === "darwin" || platform === "linux") {
+    return queryPosixProcesses({ ...options, platform })
+  }
   throw new Error(`Native process inspection is unsupported on ${platform}.`)
 }
 
@@ -78,8 +87,7 @@ export function classifyNativeFlapstackProcesses(processes, options) {
   const root = normalized(options.root)
   const electronRoot = `${root}/node_modules/electron/dist/`
   const profile = normalized(options.profilePath)
-  let mainPid = null
-  let rendererPid = null
+  const mainPids = []
   const packagedPids = []
 
   for (const entry of processes) {
@@ -91,13 +99,25 @@ export function classifyNativeFlapstackProcesses(processes, options) {
       continue
     }
     if (!text.includes(electronRoot)) continue
-    if (!command.includes("--type=")) mainPid ??= pid
+    if (!command.includes("--type=")) mainPids.push(pid)
+  }
+
+  let mainPid = null
+  let rendererPid = null
+  for (const entry of processes) {
+    const pid = Number(entry.ProcessId)
+    const command = normalized(entry.CommandLine)
+    const owningMainPid = mainPids.find((candidate) =>
+      processDescendsFromNative(processes, pid, candidate),
+    )
     if (
       command.includes(profile) &&
       command.includes("--type=renderer") &&
-      (command.includes(`--app-path=${root}`) || command.includes(`--app-path=\"${root}\"`))
+      (command.includes(`--app-path=${root}`) || command.includes(`--app-path=\"${root}\"`)) &&
+      owningMainPid
     ) {
       rendererPid ??= pid
+      mainPid ??= owningMainPid
     }
   }
   return { mainPid, rendererPid, packagedPids: packagedPids.sort((a, b) => a - b) }
@@ -263,7 +283,7 @@ export function killNativeProcess(pid, options = {}) {
     })
     return `${pid}:${String(result.status)}:${String(result.stderr ?? "").trim()}`.slice(0, 500)
   }
-  if (platform !== "darwin") {
+  if (platform !== "darwin" && platform !== "linux") {
     throw new Error(`Native process termination is unsupported on ${platform}.`)
   }
   try {

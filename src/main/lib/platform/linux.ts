@@ -2,14 +2,43 @@
  * Linux Platform Provider
  */
 
-import { exec } from "node:child_process"
-import { existsSync, lstatSync, readlinkSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readlinkSync, symlinkSync, unlinkSync } from "node:fs"
 import * as path from "node:path"
-import { promisify } from "node:util"
 import { BasePlatformProvider } from "./base"
 import type { ShellConfig, PathConfig, CliConfig, EnvironmentConfig } from "./types"
+import { isPreviewExecutable } from "../mcp-test-control/lifecycle"
 
-const execAsync = promisify(exec)
+export function linuxCliManagementSupported(
+  input: { defaultApp: boolean; executablePath: string } = {
+    defaultApp: Boolean(process.defaultApp),
+    executablePath: process.execPath,
+  },
+): boolean {
+  return !input.defaultApp && !isPreviewExecutable(input.executablePath)
+}
+
+function installedCliTarget(installPath: string): string | null {
+  try {
+    return lstatSync(installPath).isSymbolicLink() ? readlinkSync(installPath) : null
+  } catch {
+    return null
+  }
+}
+
+function expectedCliTarget(sourcePath: string): string {
+  const appImage = process.env.APPIMAGE
+  return appImage && path.isAbsolute(appImage) && existsSync(appImage) ? appImage : sourcePath
+}
+
+function isFlapstackCliTarget(target: string): boolean {
+  const normalized = path.resolve(target)
+  if (process.env.APPIMAGE && normalized === path.resolve(process.env.APPIMAGE)) return true
+  return (
+    path.basename(normalized) === "flapstack" &&
+    path.basename(path.dirname(normalized)) === "cli" &&
+    path.basename(path.dirname(path.dirname(normalized))) === "resources"
+  )
+}
 
 export class LinuxPlatformProvider extends BasePlatformProvider {
   readonly platform = "linux" as const
@@ -61,10 +90,11 @@ export class LinuxPlatformProvider extends BasePlatformProvider {
   }
 
   getCliConfig(): CliConfig {
+    const home = this.getHome()
     return {
-      installPath: "/usr/local/bin/flapstack",
+      installPath: path.join(home, ".local", "bin", "flapstack"),
       scriptName: "flapstack",
-      requiresAdmin: true, // Usually needs sudo, but we try without first
+      requiresAdmin: false,
     }
   }
 
@@ -138,29 +168,36 @@ export class LinuxPlatformProvider extends BasePlatformProvider {
   }
 
   async installCli(sourcePath: string): Promise<{ success: boolean; error?: string }> {
+    if (!linuxCliManagementSupported()) {
+      return {
+        success: false,
+        error: process.defaultApp
+          ? "Install the flapstack command from a packaged app build."
+          : "Flapstack Preview cannot install or replace the production flapstack command.",
+      }
+    }
     const cliConfig = this.getCliConfig()
     const installPath = cliConfig.installPath
+    const target = expectedCliTarget(sourcePath)
 
-    if (!existsSync(sourcePath)) {
+    if (!existsSync(target)) {
       return { success: false, error: "CLI script not found in app bundle" }
     }
 
     try {
-      // Remove existing if present
-      if (existsSync(installPath)) {
-        try {
-          await execAsync(`rm -f ${installPath}`, { windowsHide: true })
-        } catch {
-          await execAsync(`sudo rm -f ${installPath}`, { windowsHide: true })
+      const currentTarget = installedCliTarget(installPath)
+      if (existsSync(installPath) || currentTarget !== null) {
+        if (currentTarget === null || !isFlapstackCliTarget(currentTarget)) {
+          return {
+            success: false,
+            error: "The flapstack command already exists and is not owned by this app.",
+          }
         }
+        if (path.resolve(currentTarget) === path.resolve(target)) return { success: true }
+        unlinkSync(installPath)
       }
-
-      // Create symlink - try without sudo first
-      try {
-        await execAsync(`ln -s "${sourcePath}" ${installPath}`, { windowsHide: true })
-      } catch {
-        await execAsync(`sudo ln -s "${sourcePath}" ${installPath}`, { windowsHide: true })
-      }
+      mkdirSync(path.dirname(installPath), { recursive: true })
+      symlinkSync(target, installPath)
 
       console.log("[CLI] Installed flapstack command to", installPath)
       return { success: true }
@@ -172,21 +209,28 @@ export class LinuxPlatformProvider extends BasePlatformProvider {
   }
 
   async uninstallCli(): Promise<{ success: boolean; error?: string }> {
+    if (!linuxCliManagementSupported()) {
+      return {
+        success: false,
+        error: "Flapstack Preview cannot uninstall the production flapstack command.",
+      }
+    }
     const cliConfig = this.getCliConfig()
     const installPath = cliConfig.installPath
 
     try {
-      if (!existsSync(installPath)) {
+      const currentTarget = installedCliTarget(installPath)
+      if (!existsSync(installPath) && currentTarget === null) {
         console.log("[CLI] CLI command not installed, nothing to uninstall")
         return { success: true }
       }
-
-      // Try without sudo first
-      try {
-        await execAsync(`rm -f ${installPath}`, { windowsHide: true })
-      } catch {
-        await execAsync(`sudo rm -f ${installPath}`, { windowsHide: true })
+      if (currentTarget === null || !isFlapstackCliTarget(currentTarget)) {
+        return {
+          success: false,
+          error: "The flapstack command is not owned by this app.",
+        }
       }
+      unlinkSync(installPath)
 
       console.log("[CLI] Uninstalled flapstack command")
       return { success: true }
@@ -204,7 +248,7 @@ export class LinuxPlatformProvider extends BasePlatformProvider {
       const stat = lstatSync(cliConfig.installPath)
       if (!stat.isSymbolicLink()) return false
       const target = readlinkSync(cliConfig.installPath)
-      return target === sourcePath
+      return path.resolve(target) === path.resolve(expectedCliTarget(sourcePath))
     } catch {
       return false
     }

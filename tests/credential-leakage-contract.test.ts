@@ -56,12 +56,13 @@ describe("credential leakage contracts", () => {
   it("matches the Preview bundle executable in stale-process cleanup", () => {
     const dev = source("../scripts/dev.mjs")
     const verifier = source("../scripts/verify-dev-instance.mjs")
+    const nativeProcesses = source("../scripts/lib/native-processes.mjs")
     expect(dev).toContain("Flapstack Preview.app/Contents/MacOS/Flapstack Preview")
-    expect(verifier).toContain("realpathSync")
-    expect(verifier).toContain("--app-path=${root}")
+    expect(verifier).toContain("classifyNativeFlapstackProcesses")
+    expect(nativeProcesses).toContain("--app-path=${root}")
     expect(verifier).toContain("FLAPSTACK_DEV_INSTANCE")
     expect(verifier).toContain("profileName")
-    expect(verifier).toContain("release-preview")
+    expect(nativeProcesses).toContain("release-preview")
   })
 
   it("never logs credential fragments or binds OAuth callbacks beyond loopback", () => {

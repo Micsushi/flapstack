@@ -53,7 +53,7 @@ function runSidecarSmoke(binary) {
   console.log("Parakeet sidecar smoke: ping ok")
 }
 
-export function runMacNativeModulesSmoke(runtime, packagedModules, runner = spawnSync) {
+export function runPackagedNativeModulesSmoke(runtime, packagedModules, runner = spawnSync) {
   const source = `
 const Database = require(${JSON.stringify(path.join(packagedModules, "better-sqlite3"))})
 const db = new Database(":memory:")
@@ -101,6 +101,8 @@ sharp({ create: { width: 1, height: 1, channels: 4, background: "#00000000" } })
   }
   console.log("Native module smoke: better-sqlite3, Sharp, and node-pty ok")
 }
+
+export const runMacNativeModulesSmoke = runPackagedNativeModulesSmoke
 
 export function assertDigestMarker(binary, marker) {
   const markerStat = fs.lstatSync(marker)
@@ -155,6 +157,8 @@ export function readWindowsElectronVersion(appPath, runner = spawnSync) {
   }
   return version
 }
+
+export const readLinuxElectronVersion = readWindowsElectronVersion
 
 export function inspectWindowsApp(appPath, platformKey, options = {}) {
   if (platformKey !== "win32-x64") {
@@ -356,18 +360,94 @@ export function inspectMacApp(appPath, platformKey, options = {}) {
   return { appPath, platformKey, electronVersion, binaries }
 }
 
+export function inspectLinuxApp(appPath, platformKey, options = {}) {
+  if (!/^linux-(arm64|x64)$/.test(platformKey)) {
+    throw new Error(`Unsupported Linux package platform: ${platformKey}`)
+  }
+  const packageRoot = path.dirname(appPath)
+  const resources = path.join(packageRoot, "resources")
+  const bin = path.join(resources, "bin")
+  const unpacked = path.join(resources, "app.asar.unpacked", "node_modules")
+  const binaries = {
+    Flapstack: appPath,
+    Claude: path.join(bin, "claude"),
+    Codex: path.join(bin, "codex"),
+    Whisper: path.join(bin, "whisper-cli"),
+    Parakeet: path.join(bin, "flapstack-stt-sidecar"),
+    "better-sqlite3": path.join(
+      unpacked,
+      "better-sqlite3",
+      "build",
+      "Release",
+      "better_sqlite3.node",
+    ),
+    "node-pty": path.join(unpacked, "node-pty", "build", "Release", "pty.node"),
+  }
+  for (const [label, binary] of Object.entries(binaries)) {
+    const inspection = assertBundledBinary(binary, platformKey, {
+      requireExecutable: !["better-sqlite3", "node-pty"].includes(label),
+    })
+    console.log(`${label}: regular ${inspection.format} ${inspection.architectures.join("+")}`)
+  }
+  assertDigestMarker(binaries.Parakeet, path.join(bin, ".stt-sidecar.sha256"))
+  for (const license of [
+    "flapstack-stt-sidecar-LICENSE",
+    "transcribe.cpp-LICENSE",
+    "whisper.cpp-LICENSE",
+  ]) {
+    const licensePath = path.join(bin, license)
+    const stat = fs.lstatSync(licensePath)
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`${licensePath}: expected a regular license file`)
+    }
+    console.log(`${license}: regular file`)
+  }
+  const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
+  const expectedElectronVersion = String(packageJson.devDependencies.electron).replace(
+    /^[^0-9]*/,
+    "",
+  )
+  const electronVersion = (options.readVersion ?? readLinuxElectronVersion)(appPath)
+  if (electronVersion !== expectedElectronVersion) {
+    throw new Error(
+      `Electron version mismatch: expected ${expectedElectronVersion}, found ${electronVersion}`,
+    )
+  }
+  console.log(`Electron version: ${electronVersion}`)
+  if (options.smoke) {
+    runSmoke(
+      "Claude",
+      binaries.Claude,
+      ["--version"],
+      new RegExp(CLAUDE_VERSION.replaceAll(".", "\\.")),
+    )
+    runSmoke(
+      "Codex",
+      binaries.Codex,
+      ["--version"],
+      new RegExp(CODEX_VERSION.replaceAll(".", "\\.")),
+    )
+    runSmoke("Whisper", binaries.Whisper, ["--help"], /whisper|usage:/i)
+    runSidecarSmoke(binaries.Parakeet)
+    runPackagedNativeModulesSmoke(appPath, path.join(resources, "app.asar", "node_modules"))
+  }
+  return { appPath, platformKey, electronVersion, binaries }
+}
+
 function main() {
   const args = process.argv.slice(2)
   const app = readArg(args, "--app")
   const platform = readArg(args, "--platform")
   if (!app || !platform) {
     throw new Error(
-      "Usage: --app=<app path> --platform=darwin-arm64|darwin-x64|win32-x64 [--smoke] [--native-modules-smoke]",
+      "Usage: --app=<app path> --platform=darwin-arm64|darwin-x64|linux-arm64|linux-x64|win32-x64 [--smoke] [--native-modules-smoke]",
     )
   }
   const appPath = path.resolve(app)
   if (platform === "win32-x64") {
     inspectWindowsApp(appPath, platform, { smoke: args.includes("--smoke") })
+  } else if (platform.startsWith("linux-")) {
+    inspectLinuxApp(appPath, platform, { smoke: args.includes("--smoke") })
   } else {
     inspectMacApp(appPath, platform, {
       smoke: args.includes("--smoke"),

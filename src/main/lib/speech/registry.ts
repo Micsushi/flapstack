@@ -72,7 +72,7 @@ export function resolveSupportedTtsVoiceId(
 
 export function getNativeTtsAvailability() {
   const platform = os.platform()
-  if (platform === "darwin" || platform === "win32" || platform === "linux") {
+  if (platform === "darwin" || platform === "win32") {
     return { available: true, status: "available" as const }
   }
   return {

@@ -30,8 +30,26 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 APP_BUNDLE="$(cd "$SCRIPT_DIR/../../.." 2>/dev/null && pwd)"
 
-if [ -n "$APP_BUNDLE" ] && [ -d "$APP_BUNDLE" ] && [[ "$APP_BUNDLE" == *.app ]]; then
-  open "$APP_BUNDLE" --args "$DIR"
-else
-  open -a "Flapstack" --args "$DIR"
-fi
+case "$(uname -s)" in
+  Darwin)
+    if [ -n "$APP_BUNDLE" ] && [ -d "$APP_BUNDLE" ] && [[ "$APP_BUNDLE" == *.app ]]; then
+      open "$APP_BUNDLE" --args "$DIR"
+    else
+      open -a "Flapstack" --args "$DIR"
+    fi
+    ;;
+  Linux)
+    APP_ROOT="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd)"
+    for EXECUTABLE in "$APP_ROOT/flapstack" "$APP_ROOT/flapstack-preview"; do
+      if [ -x "$EXECUTABLE" ]; then
+        exec "$EXECUTABLE" "$DIR"
+      fi
+    done
+    echo "Error: Flapstack executable not found"
+    exit 1
+    ;;
+  *)
+    echo "Error: Unsupported platform"
+    exit 1
+    ;;
+esac

@@ -74,6 +74,7 @@ describe("macOS product platform behavior", () => {
       const selectedDirectory = join(root, "project with spaces")
       const marker = join(root, "open-arguments.txt")
       const openStub = join(root, "stub", "open")
+      const unameStub = join(root, "stub", "uname")
       mkdirSync(dirname(launcher), { recursive: true })
       mkdirSync(dirname(installedLauncher), { recursive: true })
       mkdirSync(selectedDirectory)
@@ -83,6 +84,8 @@ describe("macOS product platform behavior", () => {
       symlinkSync(launcher, installedLauncher)
       writeFileSync(openStub, '#!/bin/sh\nprintf "%s\\n" "$@" > "$FLAPSTACK_OPEN_MARKER"\n')
       chmodSync(openStub, 0o755)
+      writeFileSync(unameStub, '#!/bin/sh\nprintf "Darwin\\n"\n')
+      chmodSync(unameStub, 0o755)
 
       const result = spawnSync("/bin/bash", [installedLauncher, selectedDirectory], {
         encoding: "utf8",
