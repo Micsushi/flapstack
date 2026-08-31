@@ -46,6 +46,9 @@ jobs:
       - name: Audit Linux Preview
         run: npm run package:audit:preview:linux
 
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Rehash Linux Preview audit
         shell: bash
         run: |

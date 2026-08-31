@@ -39,6 +39,9 @@ describe("Linux CI contract", () => {
     expect(steps["Inspect Linux Preview"].run).toBe("npm run package:inspect:preview:linux")
     expect(steps["Smoke Linux Preview"].run).toBe("npm run package:smoke:preview:linux")
     expect(steps["Audit Linux Preview"].run).toBe("npm run package:audit:preview:linux")
+    expect(steps["Audit production dependencies"].run).toBe(
+      "npm audit --omit=dev --audit-level=high",
+    )
     expect(steps["Rehash Linux Preview audit"].run).toContain("sha256sum")
     expect(steps["Upload Linux Preview"].with?.path).toContain(
       "release-preview/linux-security-report-x64.json",
