@@ -97,9 +97,9 @@ function openPathInApp(app: ExternalApp, targetPath: string): Promise<void> {
   if (launch.kind === "reveal") shell.showItemInFolder(launch.path)
   else if (launch.kind === "default") return openWithDefaultHandler(launch.path)
   else {
-    return spawnExternalCommand(process.platform, launch.command, launch.args).catch(() =>
-      openWithDefaultHandler(expandedPath),
-    )
+    return spawnExternalCommand(process.platform, launch.command, launch.args, {
+      cwd: launch.cwd,
+    }).catch(() => openWithDefaultHandler(expandedPath))
   }
   return Promise.resolve()
 }

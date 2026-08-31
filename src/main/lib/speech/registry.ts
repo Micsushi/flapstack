@@ -2,7 +2,7 @@ import os from "node:os"
 import { whisperCppAdapter } from "./stt-whisper-cpp"
 import { parakeetStreamingAdapter } from "./stt-parakeet-streaming"
 import { kokoroTtsAdapter } from "./tts-kokoro"
-import { nativeTtsAdapter } from "./tts-native"
+import { nativeTtsAdapter, resolveLinuxTtsCommand } from "./tts-native"
 import type { SttAdapter, SttAdapterInfo, TtsAdapter, TtsAdapterInfo, VoiceSettings } from "./types"
 
 // Stage 2 is local-only for dictation. Keep Cloud Whisper's credential helpers
@@ -73,6 +73,9 @@ export function resolveSupportedTtsVoiceId(
 export function getNativeTtsAvailability() {
   const platform = os.platform()
   if (platform === "darwin" || platform === "win32") {
+    return { available: true, status: "available" as const }
+  }
+  if (platform === "linux" && resolveLinuxTtsCommand()) {
     return { available: true, status: "available" as const }
   }
   return {

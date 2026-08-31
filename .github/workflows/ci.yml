@@ -13,7 +13,7 @@ jobs:
   verify:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, Linux, X64, flapstack]
-    timeout-minutes: 30
+    timeout-minutes: 60
     concurrency:
       group: ci-${{ github.ref }}
       cancel-in-progress: true
@@ -31,6 +31,41 @@ jobs:
 
       - name: Check
         run: npm run check -- --portable-linux
+
+      - name: Build Linux Preview artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run package:preview:linux:artifacts
+
+      - name: Inspect Linux Preview
+        run: npm run package:inspect:preview:linux
+
+      - name: Smoke Linux Preview
+        run: npm run package:smoke:preview:linux
+
+      - name: Audit Linux Preview
+        run: npm run package:audit:preview:linux
+
+      - name: Rehash Linux Preview audit
+        shell: bash
+        run: |
+          report="release-preview/linux-security-report-x64.json"
+          expected="$(awk '{print $1}' "$report.sha256")"
+          actual="$(sha256sum "$report" | awk '{print $1}')"
+          test "$actual" = "$expected"
+
+      - name: Upload Linux Preview
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: flapstack-preview-linux-${{ github.sha }}
+          path: |
+            release-preview/linux-unpacked
+            release-preview/*.AppImage
+            release-preview/*.deb
+            release-preview/linux-security-report-x64.json
+            release-preview/linux-security-report-x64.json.sha256
+          if-no-files-found: error
+          retention-days: 3
 
   verify-pr:
     if: github.event_name == 'pull_request'

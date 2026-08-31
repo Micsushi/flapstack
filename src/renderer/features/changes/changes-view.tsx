@@ -33,6 +33,7 @@ import { usePRStatus } from "../../hooks/usePRStatus"
 import { useFileChangeListener } from "../../lib/hooks/use-file-change-listener"
 import type { ChangeCategory, ChangedFile } from "../../../shared/changes-types"
 import { cn } from "../../lib/utils"
+import { getFileManagerName } from "../../lib/utils/platform"
 import { ChangesFileFilter, type SubChatFilterItem } from "./components/changes-file-filter"
 import { CommitInput } from "./components/commit-input"
 import { HistoryView, type CommitInfo } from "./components/history-view"
@@ -188,7 +189,9 @@ const ChangesFileItemWithContext = memo(function ChangesFileItemWithContext({
             <ContextMenuItem onClick={onCopyPath}>Copy Path</ContextMenuItem>
             <ContextMenuItem onClick={onCopyRelativePath}>Copy Relative Path</ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem onClick={onRevealInFinder}>Reveal in Finder</ContextMenuItem>
+            <ContextMenuItem onClick={onRevealInFinder}>
+              Reveal in {getFileManagerName()}
+            </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={onOpenInFilePreview}>Open in File Preview</ContextMenuItem>
             <ContextMenuItem onClick={onOpenInEditor}>Open in {editorLabel}</ContextMenuItem>

@@ -24,6 +24,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { trpc } from "@/lib/trpc"
 import { preferredEditorAtom } from "@/lib/atoms"
 import { useResolvedHotkeyDisplay } from "@/lib/hotkeys"
+import { getFileManagerName } from "@/lib/utils/platform"
 import { APP_META } from "../../../../shared/external-apps"
 import { EDITOR_ICONS } from "@/lib/editor-icons"
 import { ProviderChipIcon } from "@/features/agents/components/provider-chip-icon"
@@ -405,7 +406,7 @@ export const InfoSection = memo(function InfoSection({
           value={folderName}
           title={worktreePath}
           onClick={handleOpenFolder}
-          tooltip="Open in Finder"
+          tooltip={`Open in ${getFileManagerName()}`}
         />
       )}
       {/* Open in Editor - only for actual git worktrees (under ~/.flapstack/worktrees/) */}

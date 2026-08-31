@@ -4,7 +4,7 @@ import { spawn, type ChildProcess } from "node:child_process"
 export type ExternalAppLaunch =
   | { kind: "reveal"; path: string }
   | { kind: "default"; path: string }
-  | { kind: "spawn"; command: string; args: string[] }
+  | { kind: "spawn"; command: string; args: string[]; cwd?: string }
 
 const WINDOWS_COMMANDS: Partial<Record<ExternalApp, string>> = {
   cursor: "cursor",
@@ -36,6 +36,19 @@ const LINUX_COMMANDS: Partial<Record<ExternalApp, string>> = {
   windsurf: "windsurf",
   sublime: "subl",
   ghostty: "ghostty",
+  terminal: "x-terminal-emulator",
+  trae: "trae",
+  intellij: "idea",
+  webstorm: "webstorm",
+  pycharm: "pycharm",
+  phpstorm: "phpstorm",
+  rubymine: "rubymine",
+  goland: "goland",
+  clion: "clion",
+  rider: "rider",
+  datagrip: "datagrip",
+  fleet: "fleet",
+  rustrover: "rustrover",
 }
 
 type SpawnProcess = typeof spawn
@@ -198,6 +211,9 @@ export function resolveExternalAppLaunch(
   }
   const command = platform === "win32" ? WINDOWS_COMMANDS[app] : LINUX_COMMANDS[app]
   if (!command) return { kind: "default", path: targetPath }
+  if (platform === "linux" && app === "terminal") {
+    return { kind: "spawn", command, args: [], cwd: targetPath }
+  }
   return {
     kind: "spawn",
     command,

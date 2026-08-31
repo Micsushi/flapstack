@@ -12,9 +12,21 @@ let isFallbackCache = false
 const CACHE_TTL_MS = 60_000 // 1 minute cache
 const FALLBACK_CACHE_TTL_MS = 10_000 // 10 second cache for fallback (retry sooner)
 
-// Track PATH fix state for macOS GUI app PATH fix
+// Track PATH repair state for Unix desktop launches with a minimal environment.
 let pathFixAttempted = false
 let pathFixSucceeded = false
+
+export function shouldRecoverMissingCommandWithShellEnv(
+  platform: NodeJS.Platform,
+  error: unknown,
+): boolean {
+  return (
+    (platform === "darwin" || platform === "linux") &&
+    error instanceof Error &&
+    "code" in error &&
+    error.code === "ENOENT"
+  )
+}
 
 /**
  * Build Windows PATH by combining process.env.PATH with common install locations.
@@ -195,15 +207,12 @@ export async function execWithShellEnv(
       windowsHide: true,
     })
   } catch (error) {
-    // Only retry on ENOENT (command not found), only on macOS
+    // Only retry on ENOENT (command not found) on Unix desktop platforms.
     // Skip if we've already successfully fixed PATH, or if a fix attempt is in progress
     if (
-      process.platform !== "darwin" ||
+      !shouldRecoverMissingCommandWithShellEnv(process.platform, error) ||
       pathFixSucceeded ||
-      pathFixAttempted ||
-      !(error instanceof Error) ||
-      !("code" in error) ||
-      error.code !== "ENOENT"
+      pathFixAttempted
     ) {
       throw error
     }

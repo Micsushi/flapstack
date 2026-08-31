@@ -1,5 +1,5 @@
 import { execFile as execFileCallback, type ChildProcess } from "node:child_process"
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { assertSpeechTextWithinLimit } from "./speech-text"
@@ -52,6 +52,14 @@ export const nativeTtsAdapter: TtsAdapter = {
         status: available ? "available" : "unavailable",
       }
     }
+    if (process.platform === "linux") {
+      const available = resolveLinuxTtsCommand() !== null
+      return {
+        available,
+        status: available ? "available" : "unavailable",
+        ...(!available ? { reason: "Install espeak-ng to enable native Linux speech." } : {}),
+      }
+    }
     return {
       available: false,
       status: "unavailable",
@@ -67,12 +75,19 @@ export const nativeTtsAdapter: TtsAdapter = {
     if (process.platform === "win32") {
       return listWindowsVoices()
     }
+    if (process.platform === "linux") {
+      const command = resolveLinuxTtsCommand()
+      if (!command) return []
+      const { stdout } = await execFileAsync(command, ["--voices"], { timeout: 5000 })
+      return parseLinuxEspeakVoices(stdout)
+    }
     return []
   },
 
   async speak(input: TtsInput): Promise<TtsResult> {
     if (process.platform === "darwin") return speakMacos(input)
     if (process.platform === "win32") return speakWindows(input)
+    if (process.platform === "linux") return speakLinux(input)
     throw new Error("Native TTS is not available on this platform.")
   },
 
@@ -81,6 +96,46 @@ export const nativeTtsAdapter: TtsAdapter = {
       if (requestScopeId === undefined || owner === requestScopeId) child.kill()
     }
   },
+}
+
+const LINUX_TTS_COMMANDS = [
+  "/usr/bin/espeak-ng",
+  "/usr/local/bin/espeak-ng",
+  "/usr/bin/espeak",
+  "/usr/local/bin/espeak",
+]
+
+export function resolveLinuxTtsCommand(
+  exists: (path: string) => boolean = isExecutableCommand,
+): string | null {
+  return LINUX_TTS_COMMANDS.find((command) => exists(command)) ?? null
+}
+
+function isExecutableCommand(command: string): boolean {
+  try {
+    accessSync(command, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function buildLinuxEspeakArgs(
+  voiceId: string | undefined,
+  rate: number,
+  outputPath: string,
+): string[] {
+  return ["--stdin", ...(voiceId ? ["-v", voiceId] : []), "-s", String(rate), "-w", outputPath]
+}
+
+export function parseLinuxEspeakVoices(stdout: string): TtsVoice[] {
+  return stdout.split(/\r?\n/).flatMap((line) => {
+    const match = line.match(/^\s*\d+\s+(\S+)\s+\S+\s+(\S+)/)
+    if (!match) return []
+    const language = match[1]!
+    const id = match[2]!
+    return [{ id, label: `${id} (${language})`, language }]
+  })
 }
 
 function commandExists(command: string) {
@@ -155,6 +210,35 @@ async function speakWindows(input: TtsInput): Promise<TtsResult> {
       mimeType: "audio/wav",
       adapterId: nativeTtsAdapter.id,
       voiceId: input.voiceId || "default",
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+async function speakLinux(input: TtsInput): Promise<TtsResult> {
+  const text = normalizeText(input.text)
+  if (!text) throw new Error("Text is required for speech.")
+  assertSpeechTextWithinLimit(text)
+  const command = resolveLinuxTtsCommand()
+  if (!command) throw new Error("Install espeak-ng to enable native Linux speech.")
+
+  const dir = mkdtempSync(path.join(os.tmpdir(), "flapstack-tts-"))
+  const wavPath = path.join(dir, "speech.wav")
+  const voiceId = input.voiceId || undefined
+  const rate = Math.round(175 * clamp(input.rate ?? 1, 0.5, 2))
+  try {
+    await execFileAsync(
+      command,
+      buildLinuxEspeakArgs(voiceId, rate, wavPath),
+      { timeout: 120000, input: text },
+      input.requestScopeId,
+    )
+    return {
+      audioBase64: readFileSync(wavPath).toString("base64"),
+      mimeType: "audio/wav",
+      adapterId: nativeTtsAdapter.id,
+      voiceId: voiceId ?? "default",
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })

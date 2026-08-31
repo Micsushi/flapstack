@@ -22,5 +22,13 @@ describe("external app availability", () => {
       command: "which",
       args: ["code"],
     })
+    expect(getExternalAppProbe("linux", "terminal")).toEqual({
+      command: "which",
+      args: ["x-terminal-emulator"],
+    })
+    expect(getExternalAppProbe("linux", "intellij")).toEqual({
+      command: "which",
+      args: ["idea"],
+    })
   })
 })

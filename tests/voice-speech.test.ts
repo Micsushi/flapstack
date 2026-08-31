@@ -681,6 +681,9 @@ describe("microphone failure states", () => {
     const denied = Object.assign(new Error("denied"), { name: "NotAllowedError" })
     expect(toMicrophoneError(denied, "Win32").message).toContain("Windows Settings")
     expect(toMicrophoneError(denied, "MacIntel").message).toContain("System Settings")
+    expect(toMicrophoneError(denied, "Linux x86_64").message).toContain(
+      "desktop environment's privacy settings",
+    )
   })
 
   it("distinguishes missing and busy microphones", () => {

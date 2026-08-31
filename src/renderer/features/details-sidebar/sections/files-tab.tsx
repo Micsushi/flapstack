@@ -27,6 +27,7 @@ import {
 import { RenameDialog } from "@/components/rename-dialog"
 import { preferredEditorAtom } from "@/lib/atoms"
 import { getAppOption } from "@/components/open-in-button"
+import { getFileManagerName } from "@/lib/utils/platform"
 import { getFileIconByExtension } from "../../agents/mentions/agents-file-mention"
 import { fileSearchDialogOpenAtom } from "../../agents/atoms"
 import { fileTreeExpandedAtomFamily } from "../atoms"
@@ -269,7 +270,7 @@ const TreeNode = memo(function TreeNode({
             Open in {editorLabel}
           </ContextMenuItem>
           <ContextMenuItem onClick={() => onContextAction("reveal-finder", node)}>
-            Reveal in Finder
+            Reveal in {getFileManagerName()}
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem onClick={() => onContextAction("copy-path", node)}>
