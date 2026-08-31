@@ -36,6 +36,19 @@ const LINUX_COMMANDS: Partial<Record<ExternalApp, string>> = {
   windsurf: "windsurf",
   sublime: "subl",
   ghostty: "ghostty",
+  terminal: "x-terminal-emulator",
+  trae: "trae",
+  intellij: "idea",
+  webstorm: "webstorm",
+  pycharm: "pycharm",
+  phpstorm: "phpstorm",
+  rubymine: "rubymine",
+  goland: "goland",
+  clion: "clion",
+  rider: "rider",
+  datagrip: "datagrip",
+  fleet: "fleet",
+  rustrover: "rustrover",
 }
 
 type SpawnProcess = typeof spawn
@@ -201,6 +214,11 @@ export function resolveExternalAppLaunch(
   return {
     kind: "spawn",
     command,
-    args: platform === "win32" && app === "terminal" ? ["-d", targetPath] : [targetPath],
+    args:
+      app === "terminal"
+        ? platform === "win32"
+          ? ["-d", targetPath]
+          : [`--working-directory=${targetPath}`]
+        : [targetPath],
   }
 }

@@ -381,7 +381,13 @@ export function systemdUserUnitPath(serviceId?: string | null): string {
 
 export function buildSystemdUserUnit(params: DaemonInstallParams): string {
   const escape = (value: string | number) =>
-    String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/%/g, "%%")
+    String(value)
+      .replace(/\\/g, "\\\\")
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r")
+      .replace(/\t/g, "\\t")
+      .replace(/"/g, '\\"')
+      .replace(/%/g, "%%")
   return `[Unit]
 Description=Flapstack usage daemon
 After=network-online.target

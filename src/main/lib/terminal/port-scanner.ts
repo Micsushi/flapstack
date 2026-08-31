@@ -118,8 +118,10 @@ export async function getListeningPortsForPids(pids: number[]): Promise<PortInfo
   const platform = os.platform()
   let ports: PortInfo[] = []
 
-  if (platform === "darwin" || platform === "linux") {
+  if (platform === "darwin") {
     ports = await getListeningPortsLsof(pids)
+  } else if (platform === "linux") {
+    ports = await getListeningPortsLinux(pids)
   } else if (platform === "win32") {
     ports = await getListeningPortsWindows(pids)
   }
@@ -127,6 +129,45 @@ export async function getListeningPortsForPids(pids: number[]): Promise<PortInfo
   // Update cache
   setCacheEntry(portCache, cacheKey, { ports, timestamp: Date.now() }, PORT_CACHE_TTL)
   return ports
+}
+
+export function parseSsListeningPorts(output: string, pids: readonly number[]): PortInfo[] {
+  const pidSet = new Set(pids)
+  const ports: PortInfo[] = []
+  for (const line of output.split(/\r?\n/)) {
+    const columns = line.trim().split(/\s+/)
+    if (columns.length < 6 || columns[0] !== "LISTEN") continue
+    const localAddress = columns[3]!
+    const addressMatch = localAddress.match(/^(?:\[([^\]]+)\]|(.+)):(\d+)$/)
+    const processMatch = line.match(/users:\(\(\"([^\"]+)\",pid=(\d+),/)
+    if (!addressMatch || !processMatch) continue
+    const pid = Number.parseInt(processMatch[2]!, 10)
+    const port = Number.parseInt(addressMatch[3]!, 10)
+    if (!pidSet.has(pid) || port < 1 || port > 65535) continue
+    const address = addressMatch[1] || addressMatch[2] || "*"
+    ports.push({
+      port,
+      pid,
+      address: address === "*" ? "0.0.0.0" : address,
+      processName: processMatch[1]!,
+    })
+  }
+  return ports
+}
+
+async function getListeningPortsLinux(pids: number[]): Promise<PortInfo[]> {
+  try {
+    const { stdout } = await execFileAsync("ss", ["-ltnpH"], {
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 5000,
+      windowsHide: true,
+    })
+    const ports = parseSsListeningPorts(stdout, pids)
+    if (ports.length > 0) return ports
+  } catch {
+    // Older/minimal systems may lack iproute2. Try the legacy lsof path below.
+  }
+  return getListeningPortsLsof(pids)
 }
 
 /**

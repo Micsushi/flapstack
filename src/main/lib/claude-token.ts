@@ -1,4 +1,4 @@
-import { execSync, spawn } from "node:child_process"
+import { execSync, spawn, spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -96,10 +96,16 @@ function readFromWindowsCredentialManager(): ClaudeOAuthCredential | null {
 function readFromLinuxSecretService(): ClaudeOAuthCredential | null {
   try {
     // Try secret-tool (works with GNOME Keyring, KDE Wallet via libsecret)
-    const result = execSync(
-      'secret-tool lookup service "Claude Code" account "credentials" 2>/dev/null',
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
-    ).trim()
+    const result = spawnSync(
+      "secret-tool",
+      ["lookup", "service", "Claude Code", "account", "credentials"],
+      {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 10_000,
+        windowsHide: true,
+      },
+    ).stdout.trim()
 
     if (result) {
       const credentials: ClaudeCredentials = JSON.parse(result)
@@ -118,11 +124,12 @@ function readFromLinuxSecretService(): ClaudeOAuthCredential | null {
 
   // Fallback: try pass (password-store)
   try {
-    const result = execSync("pass show claude-code/credentials 2>/dev/null", {
+    const result = spawnSync("pass", ["show", "claude-code/credentials"], {
       encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 10_000,
       windowsHide: true,
-    }).trim()
+    }).stdout.trim()
 
     if (result) {
       const credentials: ClaudeCredentials = JSON.parse(result)
@@ -262,16 +269,17 @@ function getExtendedPath(): string {
 export function isClaudeCliInstalled(): boolean {
   try {
     // Use 'where' on Windows, 'which' on Unix-like systems
-    const command = isWindows() ? "where claude" : "which claude"
+    const command = isWindows() ? "where.exe" : "which"
     const fullPath = getExtendedPath()
 
-    execSync(command, {
+    const result = spawnSync(command, ["claude"], {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, PATH: fullPath },
+      timeout: 5_000,
       windowsHide: true,
     })
-    return true
+    return result.status === 0
   } catch {
     return false
   }
@@ -296,7 +304,7 @@ export function runClaudeSetupToken(
       // Don't use 'inherit' - it causes hang in non-TTY environments
       // Use 'ignore' for stdin and 'pipe' for stdout/stderr
       stdio: ["ignore", "pipe", "pipe"],
-      shell: true,
+      shell: shouldUseShellForClaudeSetup(process.platform),
       env: { ...process.env, PATH: fullPath },
       windowsHide: true,
     })
@@ -356,4 +364,8 @@ export function runClaudeSetupToken(
       }
     })
   })
+}
+
+export function shouldUseShellForClaudeSetup(platform: NodeJS.Platform): boolean {
+  return platform === "win32"
 }

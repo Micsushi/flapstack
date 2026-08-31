@@ -1,17 +1,18 @@
 import { app } from "electron"
-import { execSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { stripVTControlCharacters } from "node:util"
 import { getDefaultShell, isWindows, platform } from "../platform"
 import { resolveClaudeBinaryPath } from "./binary"
+import { buildLoginShellInvocation, CLAUDE_ENV_DELIMITER } from "./shell-invocation"
 
 // Cache the shell environment
 let cachedShellEnv: Record<string, string> | null = null
 
 // Delimiter for parsing env output
-const DELIMITER = "_CLAUDE_ENV_DELIMITER_"
+const DELIMITER = CLAUDE_ENV_DELIMITER
 
 // Keys to strip (prevent interference from unrelated providers)
 // NOTE: We intentionally keep ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL in production
@@ -151,10 +152,10 @@ export function getClaudeShellEnvironment(): Record<string, string> {
 
   // macOS/Linux: spawn interactive login shell to get full environment
   const shell = getDefaultShell()
-  const command = `echo -n "${DELIMITER}"; env; echo -n "${DELIMITER}"; exit`
+  const invocation = buildLoginShellInvocation(shell)
 
   try {
-    const output = execSync(`${shell} -ilc '${command}'`, {
+    const output = execFileSync(invocation.file, invocation.args, {
       encoding: "utf8",
       timeout: 5000,
       windowsHide: true,
