@@ -20,7 +20,7 @@ permissions:
 jobs:
   scheduled-health:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
-    runs-on: [self-hosted, Linux, X64, server1, flapstack]
+    runs-on: [self-hosted, Linux, X64, flapstack]
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -39,7 +39,7 @@ jobs:
 
   codex-catalog:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
-    runs-on: [self-hosted, Linux, X64, server1, flapstack]
+    runs-on: [self-hosted, Linux, X64, flapstack]
     timeout-minutes: 15
     steps:
       - name: Checkout

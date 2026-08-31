@@ -12,7 +12,7 @@ permissions:
 jobs:
   verify:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, Linux, X64, server1, flapstack]
+    runs-on: [self-hosted, Linux, X64, flapstack]
     timeout-minutes: 30
     concurrency:
       group: ci-${{ github.ref }}

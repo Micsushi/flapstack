@@ -61,7 +61,7 @@ function allowsOnlyTrustedEvents(condition: string | undefined): boolean {
 describe("GitHub Actions self-hosted runner policy", () => {
   it("keeps pull-request CI on GitHub-hosted Linux", () => {
     expect(ci).toMatch(
-      /verify:\s+if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'\s+runs-on: \[self-hosted, Linux, X64, server1, flapstack\]/,
+      /verify:\s+if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'\s+runs-on: \[self-hosted, Linux, X64, flapstack\]/,
     )
     expect(ci).toMatch(
       /verify-pr:\s+if: github\.event_name == 'pull_request'\s+runs-on: ubuntu-latest/,
@@ -70,9 +70,9 @@ describe("GitHub Actions self-hosted runner policy", () => {
     expect(ci).toContain("Windows Preview security report changed after audit")
   })
 
-  it("runs only the portable test suite on Server1 Linux", () => {
+  it("runs only the portable test suite on self-hosted Linux", () => {
     expect(ci).toMatch(
-      /runs-on: \[self-hosted, Linux, X64, server1, flapstack\][\s\S]*?run: npm run check -- --portable-linux/,
+      /runs-on: \[self-hosted, Linux, X64, flapstack\][\s\S]*?run: npm run check -- --portable-linux/,
     )
 
     const checkScript = readFileSync(resolve(root, "scripts/check.mjs"), "utf8")
@@ -91,9 +91,9 @@ describe("GitHub Actions self-hosted runner policy", () => {
     }
   })
 
-  it("keeps pull-request provider checks off Server1", () => {
+  it("keeps pull-request provider checks off self-hosted runners", () => {
     expect(providerDrift).toMatch(
-      /codex-catalog:\s+if: github\.event_name == 'schedule' \|\| \(github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'\)\s+runs-on: \[self-hosted, Linux, X64, server1, flapstack\]/,
+      /codex-catalog:\s+if: github\.event_name == 'schedule' \|\| \(github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'\)\s+runs-on: \[self-hosted, Linux, X64, flapstack\]/,
     )
     expect(providerDrift).toMatch(
       /codex-catalog-pr:\s+if: github\.event_name == 'pull_request'\s+runs-on: ubuntu-latest/,
@@ -111,9 +111,9 @@ describe("GitHub Actions self-hosted runner policy", () => {
     expect(unsafeJobs).toEqual([])
   })
 
-  it("retains the trusted Server1 label and explicit read-only permissions", () => {
-    expect(ci).toContain("runs-on: [self-hosted, Linux, X64, server1, flapstack]")
-    expect(providerDrift).toContain("runs-on: [self-hosted, Linux, X64, server1, flapstack]")
+  it("retains the trusted repository label and explicit read-only permissions", () => {
+    expect(ci).toContain("runs-on: [self-hosted, Linux, X64, flapstack]")
+    expect(providerDrift).toContain("runs-on: [self-hosted, Linux, X64, flapstack]")
     for (const workflowName of ["ci.yml", "provider-drift.yml"]) {
       const workflow = workflows.find(({ name }) => name === workflowName)?.workflow
       expect(workflow?.permissions, workflowName).toEqual({ contents: "read" })
