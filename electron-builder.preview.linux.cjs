@@ -10,6 +10,7 @@ module.exports = {
   productName: "Flapstack-Preview",
   npmRebuild: true,
   extraMetadata: {
+    name: "flapstack-preview",
     desktopName: "flapstack-preview.desktop",
   },
   protocols: [

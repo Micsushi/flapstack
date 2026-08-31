@@ -20,8 +20,8 @@ native package, desktop, service, keyring, display, and uninstall matrix.
 - Debian 12 x64: the Debian package has a clean container X11 launch smoke. A
   container smoke proves package dependencies and runtime startup, not a full
   desktop or hardware certification.
-- Linux arm64: build, inspection, and smoke commands exist, but the target is
-  uncertified until they run on native arm64 hardware.
+- Linux arm64: package, inspection, and bundled-runtime smoke pass in AArch64
+  userspace under QEMU. Native arm64 hardware remains uncertified.
 - Wayland screen capture: the app launches natively on Wayland. Screen capture
   also requires a working XDG Desktop Portal and PipeWire session plus an
   interactive user grant. Headless launch evidence does not certify capture.
@@ -53,22 +53,27 @@ Install the Debian package with the operating system package manager so all
 runtime dependencies are resolved:
 
 ```bash
-sudo apt install ./flapstack_0.1.0_amd64.deb
+sudo apt install ./flapstack-preview_0.1.0_amd64.deb
 flapstack-preview
-sudo apt remove flapstack
+sudo apt remove flapstack-preview
 ```
 
 The package declares Electron's GPU and audio runtime libraries in addition to
 electron-builder's desktop dependencies. Preview and production packages use
-different executable, desktop, protocol, and profile identities.
+different package, executable, desktop, protocol, and profile identities.
 
-AppImage requires a FUSE 2 runtime. Ubuntu 24.04 supplies it as
-`libfuse2t64`. When FUSE installation is not wanted, AppImage also supports its
-standard extract-and-run mode:
+AppImage uses electron-builder's static runtime, so it does not require the
+legacy FUSE 2 userspace library. Direct mounting still requires kernel FUSE
+access. Where FUSE mounts are unavailable, use the standard extract-and-run
+mode:
 
 ```bash
 ./Flapstack-Preview-0.1.0.AppImage --appimage-extract-and-run
 ```
+
+On hosts that disable unprivileged user namespaces, the portable runtime may
+fall back to launching Electron without its Chromium sandbox. Use the Debian
+package for Ubuntu's AppArmor-backed sandbox integration.
 
 ## Desktop services and credentials
 
@@ -89,10 +94,10 @@ Production packaging accepts only a clean exact-source checkout:
 npm run package:release:linux
 npm run package:inspect:release:linux
 npm run package:smoke:release:linux
-sha256sum release/Flapstack-*.AppImage release/flapstack_*.deb
+sha256sum release/Flapstack-*.AppImage release/Flapstack-*.deb
 ```
 
 Before publication, repeat install, launch, upgrade, service, keyring, protocol,
 CLI, restart, and uninstall checks on clean supported hosts. Record the exact
-source commit and artifact checksums. Do not infer arm64, Wayland capture, or an
-untested distribution from x64 Ubuntu evidence.
+source commit and artifact checksums. Do not infer native arm64 hardware
+behavior, Wayland capture, or an untested distribution from x64 Ubuntu evidence.

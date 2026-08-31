@@ -218,6 +218,9 @@
     "appId": "dev.flapstack.app",
     "productName": "Flapstack",
     "npmRebuild": true,
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
     "protocols": [
       {
         "name": "Flapstack",

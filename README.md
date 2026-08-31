@@ -315,7 +315,8 @@ Prerequisites:
 - Python 3.11 recommended for native module rebuilds
 - Xcode Command Line Tools on macOS
 - On Linux: CMake and Rust/Cargo for bundled native speech binaries
-- On Linux: a FUSE 2 runtime (`libfuse2t64` on Ubuntu 24.04) when using AppImage
+- On Linux: kernel FUSE access for direct AppImage mounting; extract-and-run is
+  available where FUSE mounts are unavailable
 - On Linux: `secret-tool`, an unlocked Secret Service keyring, and a user systemd
   session for secure background usage tracking
 - On Windows: CMake, Rust MSVC, Visual Studio 2022 Build Tools with Desktop C++

@@ -26,6 +26,18 @@ export function stableRustToolchainName(platform, arch) {
   return `stable-${target}`
 }
 
+export function resolveSttBuildEnv(targetKey, env = process.env) {
+  if (targetKey !== "linux-arm64") return {}
+  const portableCpu = "-DGGML_NATIVE=OFF"
+  const buildEnv = {
+    TRANSCRIBE_CMAKE_ARGS: [env.TRANSCRIBE_CMAKE_ARGS?.trim(), portableCpu]
+      .filter(Boolean)
+      .join(" "),
+  }
+  if (env.CMAKE_ARGS?.trim()) buildEnv.CMAKE_ARGS = `${env.CMAKE_ARGS.trim()} ${portableCpu}`
+  return buildEnv
+}
+
 function argsValue(name) {
   const inline = process.argv.find((value) => value.startsWith(`${name}=`))
   if (inline) return inline.slice(name.length + 1)
@@ -96,7 +108,7 @@ function build(targetKey) {
   const result = spawnSync(cargo.command, args, {
     cwd: crate,
     stdio: "inherit",
-    env: { ...process.env, ...cargo.env },
+    env: { ...process.env, ...cargo.env, ...resolveSttBuildEnv(targetKey) },
   })
   if (result.error) throw result.error
   if (result.status !== 0) throw new Error(`STT sidecar build failed for ${targetKey}`)

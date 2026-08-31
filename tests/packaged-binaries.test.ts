@@ -235,12 +235,16 @@ describe("packaged harness preparation", () => {
     expect(requireFromTest("../electron-builder.preview.linux.cjs")).toMatchObject({
       appId: "dev.flapstack.app.preview",
       productName: "Flapstack-Preview",
-      extraMetadata: { desktopName: "flapstack-preview.desktop" },
+      extraMetadata: {
+        name: "flapstack-preview",
+        desktopName: "flapstack-preview.desktop",
+      },
       linux: { executableName: "flapstack-preview", syncDesktopName: true },
       protocols: [{ name: "Flapstack Preview", schemes: ["flapstack-preview"] }],
     })
     expect(packageJson.author.email).toBeTruthy()
     expect(packageJson.desktopName).toBe("flapstack.desktop")
+    expect(packageJson.build.toolsets).toEqual({ appimage: "1.0.3" })
     expect(packageJson.build.deb.depends).toEqual(expect.arrayContaining(["libgbm1", "libasound2"]))
     expect(packageJson.scripts["package:preview:linux:artifacts"]).toContain(
       "--platform=linux --arch=x64 --channel=preview",
