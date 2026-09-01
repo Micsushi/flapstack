@@ -27,4 +27,8 @@ module.exports = {
     ...packageJson.build.linux,
     executableName: "flapstack-preview",
   },
+  deb: {
+    ...packageJson.build.deb,
+    afterInstall: "build/linux-after-install-preview.sh",
+  },
 }

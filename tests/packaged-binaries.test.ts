@@ -241,6 +241,10 @@ describe("packaged harness preparation", () => {
       },
       linux: { executableName: "flapstack-preview", syncDesktopName: true },
       protocols: [{ name: "Flapstack Preview", schemes: ["flapstack-preview"] }],
+      deb: { afterInstall: "build/linux-after-install-preview.sh" },
+    })
+    expect(requireFromTest("../electron-builder.release.linux.cjs")).toMatchObject({
+      deb: { afterInstall: "build/linux-after-install-release.sh" },
     })
     expect(packageJson.author.email).toBeTruthy()
     expect(packageJson.desktopName).toBe("flapstack.desktop")

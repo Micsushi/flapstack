@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest"
 // @ts-expect-error JavaScript package-audit helper intentionally has no declaration file.
 import {
   assertDebPackageMetadata,
+  assertDebPostInstallScript,
   assertEmbeddedProvenance,
   assertLinuxPackageDirectoryMode,
   assertLinuxDesktopEntry,
@@ -55,6 +56,21 @@ describe("Linux package security report", () => {
     expect(() => assertLinuxPackageDirectoryMode(0o777, "application directory")).toThrow(
       /mode 0755.*0777/i,
     )
+  })
+
+  it("repairs restrictive directory modes during Debian installs and upgrades", () => {
+    const previewScript = [
+      "# flapstack-install-mode-v1",
+      'chmod 0755 -- "/opt/Flapstack-Preview"',
+      'chmod 0755 -- "/opt/Flapstack-Preview/resources"',
+    ].join("\n")
+    expect(() => assertDebPostInstallScript(previewScript, { channel: "preview" })).not.toThrow()
+    expect(() =>
+      assertDebPostInstallScript(
+        '# flapstack-install-mode-v1\nchmod 0755 -- "/opt/Flapstack-Preview"',
+        { channel: "preview" },
+      ),
+    ).toThrow(/resources/i)
   })
 
   it("rejects package collisions, wrong architectures, and missing dependencies", () => {

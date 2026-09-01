@@ -250,6 +250,26 @@ export function assertLinuxPackageDirectoryMode(mode, label) {
   }
 }
 
+export function assertDebPostInstallScript(contents, expected) {
+  const productDirectory = expected.channel === "preview" ? "Flapstack-Preview" : "Flapstack"
+  const applicationDirectory = `/opt/${productDirectory}`
+  const requiredLines = [
+    "# flapstack-install-mode-v1",
+    `chmod 0755 -- "${applicationDirectory}"`,
+    `chmod 0755 -- "${applicationDirectory}/resources"`,
+  ]
+  const lines = new Set(
+    String(contents)
+      .split(/\r?\n/)
+      .map((line) => line.trim()),
+  )
+  for (const requiredLine of requiredLines) {
+    if (!lines.has(requiredLine)) {
+      throw new Error(`Debian post-install script must contain: ${requiredLine}`)
+    }
+  }
+}
+
 export function assertLinuxDesktopEntry(contents, expected) {
   const preview = expected.channel === "preview"
   const executable =
@@ -336,6 +356,9 @@ async function inspectDebArtifact(outputRoot, expected, provenanceBytes) {
   const extractionRoot = fs.mkdtempSync(path.join(tmpdir(), "flapstack-linux-audit-"))
   try {
     run("dpkg-deb", ["--extract", candidate, extractionRoot])
+    const controlRoot = path.join(extractionRoot, ".control")
+    fs.mkdirSync(controlRoot)
+    run("dpkg-deb", ["--control", candidate, controlRoot])
     const preview = expected.channel === "preview"
     const packageName = preview ? "flapstack-preview" : "flapstack"
     const productDirectory = preview ? "Flapstack-Preview" : "Flapstack"
@@ -346,6 +369,11 @@ async function inspectDebArtifact(outputRoot, expected, provenanceBytes) {
       "Debian application directory",
     )
     assertLinuxPackageDirectoryMode(fs.lstatSync(resourcesPath).mode, "Debian resources directory")
+    const postInstallPath = path.join(controlRoot, "postinst")
+    assertDebPostInstallScript(
+      readRegularFile(postInstallPath, "Debian post-install script").toString("utf8"),
+      expected,
+    )
     const executableStat = fs.lstatSync(executablePath)
     if (
       executableStat.isSymbolicLink() ||
@@ -381,6 +409,7 @@ async function inspectDebArtifact(outputRoot, expected, provenanceBytes) {
       metadata,
       desktopEntry: relativePath(extractionRoot, desktopPath),
       executable: relativePath(extractionRoot, executablePath),
+      postInstall: relativePath(extractionRoot, postInstallPath),
       embeddedProvenanceSha256,
     }
   } finally {
