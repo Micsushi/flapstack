@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest"
 import {
   assertDebPackageMetadata,
   assertEmbeddedProvenance,
+  assertLinuxPackageDirectoryMode,
   assertLinuxDesktopEntry,
   assertLinuxNativeInventory,
   assertNoEmbeddedNativePayload,
@@ -44,6 +45,16 @@ describe("Linux package security report", () => {
         },
       ),
     ).not.toThrow()
+  })
+
+  it("requires Debian application directories to be traversable by desktop users", () => {
+    expect(() => assertLinuxPackageDirectoryMode(0o755, "application directory")).not.toThrow()
+    expect(() => assertLinuxPackageDirectoryMode(0o700, "application directory")).toThrow(
+      /mode 0755.*0700/i,
+    )
+    expect(() => assertLinuxPackageDirectoryMode(0o777, "application directory")).toThrow(
+      /mode 0755.*0777/i,
+    )
   })
 
   it("rejects package collisions, wrong architectures, and missing dependencies", () => {

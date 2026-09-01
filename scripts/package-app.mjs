@@ -168,7 +168,12 @@ export async function executePackageBuild(build, options = {}) {
     await prepareTargetDependencies(build.targets, { root: rootDirectory })
     prepareNotices({ root: rootDirectory })
     await prepareResources(build.targets)
-    builder(build.builderArgs)
+    const previousUmask = build.platform === "linux" ? process.umask(0o022) : undefined
+    try {
+      builder(build.builderArgs)
+    } finally {
+      if (previousUmask !== undefined) process.umask(previousUmask)
+    }
     completePackageOutput(handle)
   } catch (error) {
     failPackageOutput(handle)

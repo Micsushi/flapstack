@@ -243,6 +243,13 @@ export function assertDebPackageMetadata(metadata, expected) {
   }
 }
 
+export function assertLinuxPackageDirectoryMode(mode, label) {
+  const permissions = mode & 0o777
+  if (permissions !== 0o755) {
+    throw new Error(`${label} must use mode 0755, found 0${permissions.toString(8)}`)
+  }
+}
+
 export function assertLinuxDesktopEntry(contents, expected) {
   const preview = expected.channel === "preview"
   const executable =
@@ -333,6 +340,12 @@ async function inspectDebArtifact(outputRoot, expected, provenanceBytes) {
     const packageName = preview ? "flapstack-preview" : "flapstack"
     const productDirectory = preview ? "Flapstack-Preview" : "Flapstack"
     const executablePath = path.join(extractionRoot, "opt", productDirectory, packageName)
+    const resourcesPath = path.join(extractionRoot, "opt", productDirectory, "resources")
+    assertLinuxPackageDirectoryMode(
+      fs.lstatSync(path.dirname(executablePath)).mode,
+      "Debian application directory",
+    )
+    assertLinuxPackageDirectoryMode(fs.lstatSync(resourcesPath).mode, "Debian resources directory")
     const executableStat = fs.lstatSync(executablePath)
     if (
       executableStat.isSymbolicLink() ||
@@ -353,7 +366,7 @@ async function inspectDebArtifact(outputRoot, expected, provenanceBytes) {
       expected,
     )
     const embeddedProvenance = readRegularFile(
-      path.join(extractionRoot, "opt", productDirectory, "resources", "package-provenance.json"),
+      path.join(resourcesPath, "package-provenance.json"),
       "Debian embedded package provenance",
     )
     const embeddedProvenanceSha256 = assertEmbeddedProvenance(
