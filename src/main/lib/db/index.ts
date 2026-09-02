@@ -1,6 +1,5 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
-import { app } from "electron"
 import { dirname, join } from "path"
 import { existsSync, lstatSync, mkdirSync, realpathSync } from "fs"
 import { migrateDatabase } from "./migrate"
@@ -35,7 +34,7 @@ export function getDatabasePath(): string {
   const explicitPath = process.env.FLAPSTACK_DB_PATH
   if (explicitPath) return explicitPath
 
-  const userDataPath = app.getPath("userData")
+  const userDataPath = getElectronApp().getPath("userData")
   const dataDir = join(userDataPath, "data")
 
   // Ensure data directory exists
@@ -51,6 +50,7 @@ export function getDatabasePath(): string {
  * Handles both development and production (packaged) environments
  */
 function getMigrationsPath(): string {
+  const app = getElectronApp()
   if (app.isPackaged) {
     // Production: migrations bundled in resources
     return join(process.resourcesPath, "migrations")
@@ -231,48 +231,53 @@ export async function beginDatabaseMaintenance(owner: string): Promise<void> {
     await maintenanceAccessLease.waitForDrain()
     closeDatabase()
   } catch (error) {
+    const failures: unknown[] = [error]
+    const releaseFailure = releaseDatabaseMaintenanceAccess()
+    if (releaseFailure) failures.push(releaseFailure)
     for (const participant of paused.reverse()) {
       try {
         await participant.resume()
       } catch (resumeError) {
-        console.error("[DB] Failed to resume a maintenance participant:", resumeError)
+        failures.push(resumeError)
       }
     }
-    try {
-      maintenanceAccessLease?.release()
-      maintenanceAccessLease = null
-      restartUsageDaemon()
-    } finally {
-      maintenanceOwner = null
+    if (!releaseFailure) {
+      try {
+        restartUsageDaemon()
+      } catch (restartError) {
+        failures.push(restartError)
+      }
     }
-    throw error
+    throwMaintenanceFailures("Failed to begin database maintenance and recover cleanly.", failures)
   }
 }
 
 export async function endDatabaseMaintenance(owner: string): Promise<void> {
   if (maintenanceOwner !== owner) throw new Error("Database maintenance owner does not match.")
-  let failure: unknown
+  const failures: unknown[] = []
   try {
     initializeDatabase(owner)
   } catch (error) {
-    failure = error
+    failures.push(error)
   }
+  const releaseFailure = releaseDatabaseMaintenanceAccess()
+  if (releaseFailure) failures.push(releaseFailure)
   for (const participant of [...maintenanceParticipants.values()].reverse()) {
     try {
       await participant.resume()
     } catch (error) {
-      failure ??= error
+      failures.push(error)
     }
   }
-  maintenanceOwner = null
-  maintenanceAccessLease?.release()
-  maintenanceAccessLease = null
-  try {
-    restartUsageDaemon()
-  } catch (error) {
-    failure ??= error
+  if (!releaseFailure) {
+    try {
+      restartUsageDaemon()
+    } catch (error) {
+      failures.push(error)
+    }
   }
-  if (failure) throw failure
+  if (failures.length > 0)
+    throwMaintenanceFailures("Failed to end database maintenance cleanly.", failures)
 }
 
 export function isDatabaseMaintenanceActive(): boolean {
@@ -290,11 +295,32 @@ function restartUsageDaemon(): void {
   if (configDir) startInstalledUsageDaemon(configDir)
 }
 
+function releaseDatabaseMaintenanceAccess(): unknown | null {
+  try {
+    maintenanceAccessLease?.release()
+  } catch (error) {
+    return error
+  }
+  maintenanceAccessLease = null
+  maintenanceOwner = null
+  return null
+}
+
+function throwMaintenanceFailures(message: string, failures: unknown[]): never {
+  if (failures.length === 1) throw failures[0]
+  throw new AggregateError(failures, message)
+}
+
 function getDatabasePathUnsafe(): string {
   const explicitPath = process.env.FLAPSTACK_DB_PATH
-  const databasePath = explicitPath ?? join(app.getPath("userData"), "data", "agents.db")
+  const databasePath =
+    explicitPath ?? join(getElectronApp().getPath("userData"), "data", "agents.db")
   configureAppDatabasePath(databasePath)
   return databasePath
+}
+
+function getElectronApp(): typeof import("electron").app {
+  return (require("electron") as typeof import("electron")).app
 }
 
 // Re-export schema for convenience

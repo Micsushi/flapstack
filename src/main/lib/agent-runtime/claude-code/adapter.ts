@@ -36,6 +36,7 @@ type RunState = {
   queryInput: ClaudeRuntimeQueryInput | null
   turnStarted: boolean
   terminal: boolean
+  failed: boolean
   cancelled: boolean
   deliveredProviderMessages: number
   retryUsed: boolean
@@ -52,6 +53,15 @@ export class ClaudeRuntimeUncertainError extends Error {
   constructor(message = "Claude SDK stream ended without an authoritative result") {
     super(message)
     this.name = "ClaudeRuntimeUncertainError"
+  }
+}
+
+export class ClaudeRuntimeFailedError extends Error {
+  readonly code = "claude-runtime-failed"
+
+  constructor(message = "Claude runtime returned an authoritative failed result") {
+    super(message)
+    this.name = "ClaudeRuntimeFailedError"
   }
 }
 
@@ -226,7 +236,12 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
             const batch = state.mapper.map(message)
             await this.dependencies.appendActivity(context, batch)
             const terminal = (message as { type?: string }).type === "result"
-            if (terminal) state.terminal = true
+            if (terminal) {
+              state.terminal = true
+              state.failed = batch.some(
+                (activity) => activity.kind === "lifecycle" && activity.phase === "failed",
+              )
+            }
             for (const activity of batch) yield activity
             if (terminal) return
           }
@@ -320,6 +335,7 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
         "Claude runtime cannot complete without an authoritative terminal result",
       )
     }
+    if (state.failed) throw new ClaudeRuntimeFailedError()
     await this.dependencies.complete?.(context)
   }
 
@@ -388,6 +404,7 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
       queryInput: null,
       turnStarted: false,
       terminal: false,
+      failed: false,
       cancelled: false,
       deliveredProviderMessages: 0,
       retryUsed: false,

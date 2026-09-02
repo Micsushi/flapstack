@@ -77,6 +77,8 @@ describe("Settings release visibility", () => {
     expect(app).toContain("<BillingMethodPage />")
     expect(app).toContain("claudeCode.getIntegration.useQuery")
     expect(app).toContain("codex.getIntegration.useQuery")
+    expect(app).toContain("claudeIntegration.data?.isConnected && !billingMethod")
+    expect(app).not.toContain('setBillingMethod("api-key")')
     expect(billing).toContain('setBillingMethod("local-only")')
     expect(chatInput).not.toContain("anthropicOnboardingCompletedAtom")
     expect(chatInput).not.toContain("codexOnboardingCompletedAtom")

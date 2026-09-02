@@ -14,6 +14,52 @@ const POSTDATED_STAGE3_DATA_MIGRATIONS = [
 ] as const
 const MULTI_AGENT_OPERATIONS_MIGRATION_TAG = "0037_multi_agent_operations"
 const FINAL_STAGE4_MIGRATION_TAG = "0038_agent_profiles"
+const MOBILE_PAIRING_IDENTITY_MIGRATION_TAG = "0047_mobile_pairing_identity"
+const REBUILDABLE_LEGACY_MULTI_AGENT_TABLES = new Map<string, readonly string[]>([
+  [
+    "coordination_action_intents",
+    [
+      "id",
+      "idempotency_key",
+      "task_id",
+      "engine",
+      "action",
+      "target_agent_id",
+      "payload_json",
+      "state",
+      "provider_identity_json",
+      "result_json",
+      "created_at",
+      "updated_at",
+    ],
+  ],
+  [
+    "orchestration_control_targets",
+    ["intent_id", "agent_id", "run_id", "state", "error", "updated_at"],
+  ],
+  [
+    "orchestration_messages",
+    [
+      "id",
+      "task_id",
+      "agent_id",
+      "direction",
+      "kind",
+      "state",
+      "body",
+      "provider_message_id",
+      "created_at",
+    ],
+  ],
+  [
+    "orchestration_workflow_checkpoints",
+    ["workflow_run_id", "step_id", "status", "output_json", "error", "updated_at"],
+  ],
+  [
+    "orchestration_workflow_runs",
+    ["id", "task_id", "status", "definition_json", "stop_intent", "created_at", "updated_at"],
+  ],
+])
 
 type Journal = {
   entries: Array<{ tag: string; when: number }>
@@ -41,6 +87,7 @@ export function migrateDatabase(
     normalizeStage3TimestampMigration(sqlite, migrationsFolder)
     normalizePostdatedStage3DataMigrations(sqlite, migrationsFolder)
     normalizeMultiAgentOperationsTransitionMigration(sqlite, migrationsFolder)
+    normalizeRelocatedMobilePairingIdentityMigration(sqlite, migrationsFolder)
     migrate(database, { migrationsFolder })
     recoverLegacyQueuedRunPrompts(sqlite)
   } finally {
@@ -51,6 +98,120 @@ export function migrateDatabase(
   if (violations.length > 0) {
     throw new Error(`Database migration left ${violations.length} foreign key violation(s).`)
   }
+}
+
+/**
+ * A short-lived Dev migration published the eventual 0047 mobile identity SQL
+ * at an earlier timestamp. Drizzle keys migration progress by timestamp, so a
+ * profile from that build owns the canonical mobile schema but later attempts
+ * to create it again after upgrading the intervening migrations.
+ *
+ * Accept only the exact canonical migration hash and schema authority. Apply
+ * every still-pending canonical migration before moving that verified journal
+ * row to its permanent timestamp, so the repair cannot skip intervening work.
+ */
+export function normalizeRelocatedMobilePairingIdentityMigration(
+  sqlite: Database.Database,
+  migrationsFolder: string,
+): boolean {
+  if (!tableExists(sqlite, "__drizzle_migrations")) return false
+
+  const journal = readJournal(migrationsFolder)
+  const current = journal.entries.find(
+    (entry) => entry.tag === MOBILE_PAIRING_IDENTITY_MIGRATION_TAG,
+  )
+  if (!current) {
+    throw new Error(`Missing ${MOBILE_PAIRING_IDENTITY_MIGRATION_TAG} migration metadata.`)
+  }
+  if (migrationRecorded(sqlite, current.when)) return false
+
+  const migrationSql = readFileSync(join(migrationsFolder, `${current.tag}.sql`), "utf8")
+  const hash = createHash("sha256").update(migrationSql).digest("hex")
+  const relocated = sqlite
+    .prepare(
+      "SELECT created_at FROM __drizzle_migrations WHERE hash = ? AND created_at <> ? ORDER BY created_at",
+    )
+    .all(hash, current.when) as Array<{ created_at: number }>
+  if (relocated.length === 0) return false
+  if (relocated.length !== 1) {
+    throw new Error("Relocated mobile pairing migration has ambiguous journal authority.")
+  }
+  if (!migrationAuthorityMatches(sqlite, migrationSql)) {
+    throw new Error("Relocated mobile pairing migration has malformed or partial authority.")
+  }
+
+  let latest = latestMigrationTime(sqlite)
+  const latestEntry = journal.entries.find((entry) => entry.when === latest)
+  if (!latestEntry || latest >= current.when) {
+    throw new Error("Relocated mobile pairing migration cannot establish a safe upgrade boundary.")
+  }
+  const latestRow = sqlite
+    .prepare("SELECT hash FROM __drizzle_migrations WHERE created_at = ? LIMIT 1")
+    .get(latest) as { hash: string } | undefined
+  const latestSql = readFileSync(join(migrationsFolder, `${latestEntry.tag}.sql`), "utf8")
+  if (latestRow?.hash !== createHash("sha256").update(latestSql).digest("hex")) {
+    throw new Error("Relocated mobile pairing migration follows a non-canonical upgrade boundary.")
+  }
+
+  for (const entry of journal.entries) {
+    if (entry.when <= latest || entry.when >= current.when) continue
+    if (migrationRecorded(sqlite, entry.when)) {
+      latest = Math.max(latest, entry.when)
+      continue
+    }
+    applyMigration(sqlite, migrationsFolder, entry)
+    latest = Math.max(latest, entry.when)
+  }
+
+  const moved = sqlite
+    .prepare("UPDATE __drizzle_migrations SET created_at = ? WHERE hash = ? AND created_at = ?")
+    .run(current.when, hash, relocated[0].created_at)
+  if (moved.changes !== 1) {
+    throw new Error("Relocated mobile pairing migration journal repair was not atomic.")
+  }
+  return true
+}
+
+function migrationAuthorityMatches(sqlite: Database.Database, migrationSql: string): boolean {
+  const reference = new Database(":memory:")
+  try {
+    reference.pragma("foreign_keys = OFF")
+    for (const statement of migrationSql.split("--> statement-breakpoint")) {
+      if (statement.trim()) reference.exec(statement)
+    }
+    const expected = migrationAuthority(reference)
+    if (expected.length === 0) return false
+    const actual = migrationAuthority(
+      sqlite,
+      expected.map(({ name }) => name),
+    )
+    return JSON.stringify(actual) === JSON.stringify(expected)
+  } finally {
+    reference.close()
+  }
+}
+
+function migrationAuthority(
+  sqlite: Database.Database,
+  names?: readonly string[],
+): Array<{ type: string; name: string; table: string; sql: string }> {
+  const rows = sqlite
+    .prepare(
+      `SELECT type, name, tbl_name AS 'table', sql
+       FROM sqlite_master
+       WHERE name NOT LIKE 'sqlite_%'
+       ORDER BY type, name`,
+    )
+    .all() as Array<{ type: string; name: string; table: string; sql: string | null }>
+  const allowed = names ? new Set(names) : null
+  return rows
+    .filter((row) => !allowed || allowed.has(row.name))
+    .map((row) => ({
+      type: row.type,
+      name: row.name,
+      table: row.table,
+      sql: normalizeSchemaSql(row.sql ?? ""),
+    }))
 }
 
 /**
@@ -125,26 +286,129 @@ export function normalizeMultiAgentOperationsTransitionMigration(
   const statements = multiAgentTransitionStatements(migrationsFolder)
   const canonicalTableSql = statements[0]
 
+  let changed = false
   if (tableExists(sqlite, "orchestration_transition_events")) {
     if (!transitionAuthorityComplete(sqlite, canonicalTableSql)) {
       throw new Error("Recorded multi-agent transition authority is malformed or partial.")
     }
-    return false
-  }
-  if (!tableExists(sqlite, "task_orchestrations") || !taskOrchestrationAuthorityComplete(sqlite)) {
+  } else if (
+    !tableExists(sqlite, "task_orchestrations") ||
+    !taskOrchestrationAuthorityComplete(sqlite)
+  ) {
     throw new Error(
       "Recorded multi-agent operations migration is missing task_orchestrations authority.",
     )
+  } else {
+    const repair = sqlite.transaction(() => {
+      for (const statement of statements) sqlite.exec(statement)
+    })
+    repair.immediate()
+    if (!transitionAuthorityComplete(sqlite, canonicalTableSql)) {
+      throw new Error("Multi-agent transition authority repair did not produce canonical storage.")
+    }
+    changed = true
   }
 
+  return repairLegacyMultiAgentOperationsAuthority(sqlite, migrationsFolder) || changed
+}
+
+function repairLegacyMultiAgentOperationsAuthority(
+  sqlite: Database.Database,
+  migrationsFolder: string,
+): boolean {
+  if (!taskOrchestrationAuthorityComplete(sqlite)) {
+    throw new Error("Recorded multi-agent operations migration has malformed task authority.")
+  }
+  const migrationSql = readFileSync(
+    join(migrationsFolder, `${MULTI_AGENT_OPERATIONS_MIGRATION_TAG}.sql`),
+    "utf8",
+  )
+  const statements = migrationSql
+    .split("--> statement-breakpoint")
+    .map((statement) => statement.trim())
+    .filter(Boolean)
+  const tableStatements = statements.filter((statement) => statement.startsWith("CREATE TABLE `"))
+  const remainingStatements = statements.filter(
+    (statement) =>
+      statement.startsWith("CREATE INDEX `") ||
+      statement.startsWith("CREATE UNIQUE INDEX `") ||
+      statement.startsWith("CREATE TRIGGER `"),
+  )
+  let changed = false
   const repair = sqlite.transaction(() => {
-    for (const statement of statements) sqlite.exec(statement)
+    for (const statement of tableStatements) {
+      const name = createdObjectName(statement, "TABLE")
+      const stored = sqlite
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(name) as { sql: string } | undefined
+      if (!stored) {
+        sqlite.exec(statement)
+        changed = true
+        continue
+      }
+      if (normalizeTableSchemaSql(stored.sql) === normalizeTableSchemaSql(statement)) continue
+      const legacyColumns = REBUILDABLE_LEGACY_MULTI_AGENT_TABLES.get(name)
+      const actualColumns = [...columns(sqlite, name)]
+      if (!legacyColumns || actualColumns.length !== legacyColumns.length) {
+        throw new Error(
+          `Recorded multi-agent table ${name} is malformed or unsupported (${actualColumns.join(",")}).`,
+        )
+      }
+      if (actualColumns.join("\0") !== legacyColumns.join("\0")) {
+        throw new Error(
+          `Recorded multi-agent table ${name} is malformed or unsupported (${actualColumns.join(",")}).`,
+        )
+      }
+      rebuildCanonicalTable(sqlite, name, statement, actualColumns)
+      changed = true
+    }
+
+    for (const statement of remainingStatements) {
+      const kind = statement.startsWith("CREATE TRIGGER") ? "TRIGGER" : "INDEX"
+      const name = createdObjectName(statement, kind)
+      const stored = sqlite
+        .prepare("SELECT sql FROM sqlite_master WHERE type = ? AND name = ?")
+        .get(kind.toLowerCase(), name) as { sql: string } | undefined
+      if (!stored) {
+        sqlite.exec(statement)
+        changed = true
+        continue
+      }
+      if (normalizeSchemaSql(stored.sql) !== normalizeSchemaSql(statement)) {
+        throw new Error(`Recorded multi-agent ${kind.toLowerCase()} ${name} is malformed.`)
+      }
+    }
   })
   repair.immediate()
-  if (!transitionAuthorityComplete(sqlite, canonicalTableSql)) {
-    throw new Error("Multi-agent transition authority repair did not produce canonical storage.")
+  return changed
+}
+
+function rebuildCanonicalTable(
+  sqlite: Database.Database,
+  name: string,
+  canonicalStatement: string,
+  copiedColumns: readonly string[],
+): void {
+  const temporary = `__repair_0037_${name}`
+  if (tableExists(sqlite, temporary)) {
+    throw new Error(`Recorded multi-agent table ${name} has an ambiguous repair artifact.`)
   }
-  return true
+  const temporaryStatement = canonicalStatement
+    .replaceAll(`\`${name}\``, `\`${temporary}\``)
+    .replaceAll(`"${name}"`, `"${temporary}"`)
+  sqlite.exec(temporaryStatement)
+  const quoted = copiedColumns.map((column) => `\`${column}\``).join(",")
+  sqlite.exec(`INSERT INTO \`${temporary}\` (${quoted}) SELECT ${quoted} FROM \`${name}\``)
+  sqlite.exec(`DROP TABLE \`${name}\``)
+  sqlite.exec(`ALTER TABLE \`${temporary}\` RENAME TO \`${name}\``)
+}
+
+function createdObjectName(statement: string, kind: "TABLE" | "INDEX" | "TRIGGER"): string {
+  const match = /^CREATE(?: UNIQUE)? (TABLE|INDEX|TRIGGER) `([^`]+)`/.exec(statement)
+  if (!match || match[1] !== kind) {
+    throw new Error(`Canonical multi-agent ${kind.toLowerCase()} statement is invalid.`)
+  }
+  return match[2]
 }
 
 function taskOrchestrationAuthorityComplete(sqlite: Database.Database): boolean {
@@ -272,6 +536,10 @@ function indexColumns(sqlite: Database.Database, name: string): string[] {
 
 function normalizeSchemaSql(sql: string): string {
   return sql.trim().replace(/;$/, "").replace(/\s+/g, " ")
+}
+
+function normalizeTableSchemaSql(sql: string): string {
+  return normalizeSchemaSql(sql).replace(/[`"]([^`"]+)[`"](?=\W|$)/g, "`$1`")
 }
 
 /**

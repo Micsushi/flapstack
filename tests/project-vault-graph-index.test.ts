@@ -9,13 +9,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
 import { bindFilesystemRootIdentity } from "../src/main/lib/git/security/path-validation"
 import {
+  startProductMcpInvalidationBridge,
+  type ProductMcpInvalidationBridge,
+} from "../src/main/lib/mcp-control/invalidation-bridge"
+import {
   ProjectVaultGraphIndex,
   currentProjectVaultGraph,
 } from "../src/main/lib/project-vaults/graph-index"
+import type { ProductMcpRendererInvalidation } from "../src/shared/product-mcp-invalidation"
 
 let directory = ""
 let root = ""
 let sqlite: Database.Database
+let invalidationBridge: ProductMcpInvalidationBridge | null = null
 
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "flapstack-vault-graph-"))
@@ -37,7 +43,9 @@ beforeEach(() => {
   bindFilesystemRootIdentity(root, drizzle(sqlite, { schema }))
 })
 
-afterEach(() => {
+afterEach(async () => {
+  await invalidationBridge?.stop()
+  invalidationBridge = null
   sqlite.close()
   rmSync(directory, { recursive: true, force: true })
 })
@@ -187,18 +195,31 @@ describe("project vault graph generations", () => {
   })
 
   it("watches external Obsidian-style atomic changes and publishes the final state", async () => {
+    const invalidations: ProductMcpRendererInvalidation[] = []
+    invalidationBridge = await startProductMcpInvalidationBridge({
+      onInvalidation: (event) => invalidations.push(event),
+    })
     writeFileSync(join(root, "A.md"), "# A\n")
     const index = new ProjectVaultGraphIndex(sqlite)
     await index.rebuild("project-1")
     await index.startWatching("project-1")
     try {
+      await vi.waitFor(() => expect(invalidations).toHaveLength(1))
+      invalidations.length = 0
       writeFileSync(join(root, "B.md"), "# B\n[[A]]\n")
       await pollUntil(() => currentProjectVaultGraph(sqlite, "project-1").nodes.length === 2)
       expect(currentProjectVaultGraph(sqlite, "project-1").edges).toHaveLength(1)
+      await vi.waitFor(() => expect(invalidations).toHaveLength(1))
+      expect(invalidations[0]).toEqual({
+        version: 1,
+        source: "product-mcp",
+        domains: ["vaults"],
+        projectIds: ["project-1"],
+      })
     } finally {
       await index.closeWatchers()
     }
-  })
+  }, 20_000)
 
   it("retains watcher error handling for its lifetime and cleans up idempotently", async () => {
     const watchers: TestWatcher[] = []

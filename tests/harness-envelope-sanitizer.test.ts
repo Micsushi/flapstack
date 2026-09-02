@@ -11,6 +11,11 @@ describe("harness envelope sanitizer", () => {
     expect(sanitizeHarnessEnvelopeEcho("Visible first.\n[FILE:/private/context]\npartial")).toBe(
       "Visible first.",
     )
+    expect(
+      sanitizeHarnessEnvelopeEcho(
+        "[FLAPSTACK PRODUCT MCP]\nhidden tool guidance\n[/FLAPSTACK PRODUCT MCP]\nOPENROUTER_RESUME_OK",
+      ),
+    ).toBe("OPENROUTER_RESUME_OK")
   })
 
   it("preserves ordinary inline discussion of envelope marker syntax", () => {

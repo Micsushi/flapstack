@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { realpathSync } from "node:fs"
 import { relative, resolve, sep } from "node:path"
 import {
-  queryWindowsProcesses,
-  windowsProcessCreationEpoch,
-  windowsTaskkillArgs,
-} from "./lib/windows-processes.mjs"
+  findStage6SupervisorOwnedNativeProcesses,
+  killNativeProcess,
+  queryNativeProcesses,
+} from "./lib/native-processes.mjs"
 
 const [budgetId, action, warmupText, repeatText, rootText] = process.argv.slice(2)
 const repositoryRoot = realpathSync(resolve(rootText || ""))
@@ -21,7 +21,7 @@ const startupScript = realpathSync(
 const electronRoot = realpathSync(resolve(repositoryRoot, "node_modules", "electron", "dist"))
 const electronRelationship = relative(electronRoot, electronExecutable)
 if (
-  process.platform !== "win32" ||
+  (process.platform !== "win32" && process.platform !== "darwin") ||
   nodeExecutable !== realpathSync(process.execPath) ||
   electronExecutable === nodeExecutable ||
   !electronRelationship ||
@@ -104,18 +104,13 @@ function cleanupOwnedTree() {
   while (Date.now() < deadline) {
     const owned = findOwnedTree()
     if (owned.startup) {
-      spawnSync("taskkill.exe", windowsTaskkillArgs(child.pid, true, true), {
-        windowsHide: true,
-        encoding: "utf8",
-      })
+      killNativeProcess(child.pid, { force: true, tree: true })
     }
     for (const entry of owned.electron) {
-      spawnSync("taskkill.exe", windowsTaskkillArgs(Number(entry.ProcessId), true, true), {
-        windowsHide: true,
-        encoding: "utf8",
-      })
+      killNativeProcess(Number(entry.ProcessId), { force: true, tree: true })
     }
     if (!owned.startup && owned.electron.length === 0) return
+    sleepSync(100)
   }
   const finalOwned = findOwnedTree()
   if (!finalOwned.startup && finalOwned.electron.length === 0) return
@@ -123,31 +118,13 @@ function cleanupOwnedTree() {
 }
 
 function findOwnedTree() {
-  const processes = queryWindowsProcesses()
-  const startupCandidate = processes.find((entry) => Number(entry.ProcessId) === child.pid)
-  const startupCreatedAt = startupCandidate ? windowsProcessCreationEpoch(startupCandidate) : null
-  const startupCommand = String(startupCandidate?.CommandLine ?? "").toLowerCase()
-  const startup =
-    startupCandidate &&
-    Number.isFinite(startupCreatedAt) &&
-    startupCreatedAt >= launchedAtEpoch - 1_000 &&
-    startupCreatedAt <= launchedAtEpoch + 10_000 &&
-    startupCommand.includes(startupScript.toLowerCase()) &&
-    startupCommand.includes(runToken)
-      ? startupCandidate
-      : null
-  const electron = processes.filter((entry) => {
-    const executable = String(entry.ExecutablePath ?? "").toLowerCase()
-    const command = String(entry.CommandLine ?? "").toLowerCase()
-    const createdAt = windowsProcessCreationEpoch(entry)
-    return (
-      executable.startsWith(`${electronRoot.toLowerCase()}\\`) &&
-      command.includes(runToken) &&
-      Number.isFinite(createdAt) &&
-      createdAt >= launchedAtEpoch - 1_000
-    )
+  return findStage6SupervisorOwnedNativeProcesses(queryNativeProcesses(), {
+    startupPid: child.pid,
+    startupScript,
+    runToken,
+    electronRoot,
+    launchedAtEpoch,
   })
-  return { startup, electron }
 }
 
 function boundedCount(value) {
@@ -156,4 +133,8 @@ function boundedCount(value) {
     throw new Error("Stage 6 Electron supervisor sample count is out of bounds.")
   }
   return count
+}
+
+function sleepSync(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
 }

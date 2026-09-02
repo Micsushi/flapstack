@@ -57,6 +57,17 @@ describe("authoritative Chat workbench selection", () => {
     expect(agentsContent).toContain("closeWorkbenchChats(chatIds)")
   })
 
+  it("releases desktop ownership when a Chat leaves the workbench", () => {
+    const agentsContent = readFileSync(
+      new URL("../src/renderer/features/agents/ui/agents-content.tsx", import.meta.url),
+      "utf8",
+    )
+
+    expect(agentsContent).toContain("presentedWorkbenchChatIdsRef")
+    expect(agentsContent).toContain("desktop.releaseChat(chatId)")
+    expect(agentsContent).toContain("if (cancelled && result.ok)")
+  })
+
   it("does not publish, select, or claim the empty-layout sentinel as a real Chat", () => {
     const agentsContent = readFileSync(
       new URL("../src/renderer/features/agents/ui/agents-content.tsx", import.meta.url),

@@ -654,10 +654,15 @@ export function parseOllamaChatLine(line: string): NormalizedLocalModelEvent[] {
   }
 
   const events: NormalizedLocalModelEvent[] = []
+  let thinkingProgress = false
   if (isRecord(parsed.message)) {
     if (parsed.message.tool_calls !== undefined && !Array.isArray(parsed.message.tool_calls)) {
       throw new LocalModelStreamError("provider-response-invalid")
     }
+    if (parsed.message.thinking !== undefined && typeof parsed.message.thinking !== "string") {
+      throw new LocalModelStreamError("provider-response-invalid")
+    }
+    thinkingProgress = typeof parsed.message.thinking === "string"
     if (typeof parsed.message.content === "string" && parsed.message.content) {
       events.push({ kind: "text-delta", delta: parsed.message.content })
     }
@@ -678,7 +683,7 @@ export function parseOllamaChatLine(line: string): NormalizedLocalModelEvent[] {
   } else if (!parsed.done) {
     throw new LocalModelStreamError("provider-response-invalid")
   }
-  if (!parsed.done && events.length === 0) {
+  if (!parsed.done && events.length === 0 && !thinkingProgress) {
     throw new LocalModelStreamError("provider-response-invalid")
   }
   if (parsed.done) {
@@ -711,6 +716,7 @@ function createOllamaToolProvider(input: {
           body: JSON.stringify({
             model: input.model,
             stream: true,
+            think: false,
             messages: request.messages.map(toOllamaRequestMessage),
             ...(request.tools.length > 0 ? { tools: request.tools } : {}),
           }),

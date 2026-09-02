@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -70,14 +78,9 @@ try {
 
   mkdirSync(configDir, { recursive: true })
   const db = new DatabaseSync(dbPath)
-  db.exec("CREATE TABLE agent_runs (id text PRIMARY KEY)")
-  for (const migration of [
-    "0009_exotic_red_wolf.sql",
-    "0011_usage_generation_reconciliation.sql",
-    "0012_usage_alert_threshold_micros.sql",
-    "0013_cursor_usage_account_cleanup.sql",
-    "0015_dear_toad_men.sql",
-  ]) {
+  for (const migration of readdirSync(join(root, "drizzle"))
+    .filter((name) => /^\d{4}_.+\.sql$/.test(name))
+    .sort()) {
     db.exec(
       readFileSync(join(root, "drizzle", migration), "utf8").replaceAll(
         "--> statement-breakpoint",
@@ -124,7 +127,7 @@ try {
     })
 
   install()
-  const first = await waitForRunning(dbPath)
+  const first = await waitForRunning(dbPath, null, serviceId)
   if (expectedProvider) await waitForProviderSample(dbPath, expectedProvider)
   if (expectAlert) await waitForSentAlert(dbPath, expectedProvider)
   assertLaunchAgent(serviceId, plistPath, executable, daemonEntry, secretNamespace)
@@ -134,7 +137,7 @@ try {
   assertLaunchAgentRemoved(serviceId, plistPath)
 
   install()
-  const restarted = await waitForRunning(dbPath, first.pid)
+  const restarted = await waitForRunning(dbPath, first.pid, serviceId)
   assertLaunchAgent(serviceId, plistPath, executable, daemonEntry, secretNamespace)
 
   writeFileSync(
@@ -162,7 +165,7 @@ function readStatus(dbPath) {
   try {
     return db
       .prepare(
-        "SELECT running, pid, last_heartbeat_at, last_poll_at FROM usage_daemon_status WHERE id = 'singleton'",
+        "SELECT running, pid, last_heartbeat_at, last_poll_at, last_error FROM usage_daemon_status WHERE id = 'singleton'",
       )
       .get()
   } finally {
@@ -226,20 +229,35 @@ async function waitForSentAlert(dbPath, providerId) {
   )
 }
 
-async function waitForRunning(dbPath, previousPid = null) {
-  return waitFor(() => {
+async function waitForRunning(dbPath, previousPid, serviceId) {
+  try {
+    return await waitFor(() => {
+      const status = readStatus(dbPath)
+      if (
+        status?.running === 1 &&
+        status.pid != null &&
+        status.pid !== previousPid &&
+        status.last_heartbeat_at != null &&
+        status.last_poll_at != null
+      ) {
+        return status
+      }
+      return null
+    }, "packaged usage daemon to start and poll")
+  } catch (error) {
     const status = readStatus(dbPath)
-    if (
-      status?.running === 1 &&
-      status.pid != null &&
-      status.pid !== previousPid &&
-      status.last_heartbeat_at != null &&
-      status.last_poll_at != null
-    ) {
-      return status
-    }
-    return null
-  }, "packaged usage daemon to start and poll")
+    let launchAgent = "unavailable"
+    try {
+      launchAgent = execFileSync(
+        "launchctl",
+        ["print", `gui/${process.getuid()}/dev.flapstack.usage-daemon.${serviceId}`],
+        { encoding: "utf8" },
+      )
+    } catch {}
+    throw new Error(
+      `${error.message}; daemon status: ${JSON.stringify(status ?? null)}; launchd: ${launchAgent}`,
+    )
+  }
 }
 
 async function waitForStopped(pid) {
@@ -285,8 +303,14 @@ function assertLaunchAgentRemoved(serviceId, plistPath) {
 async function waitFor(predicate, description, timeoutMs = 15_000) {
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
-    const result = predicate()
-    if (result) return result
+    try {
+      const result = predicate()
+      if (result) return result
+    } catch (error) {
+      if (!/SQLITE_BUSY|database is locked/i.test(error instanceof Error ? error.message : "")) {
+        throw error
+      }
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 100))
   }
   throw new Error(`Timed out waiting for ${description}`)

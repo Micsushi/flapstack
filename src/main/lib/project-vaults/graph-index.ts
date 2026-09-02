@@ -5,6 +5,7 @@ import { lstat, opendir } from "node:fs/promises"
 import { basename, extname, join, posix, relative, sep } from "node:path"
 import * as schema from "../db/schema"
 import { assertRegisteredFilesystemRoot } from "../git/security/path-validation"
+import { publishLocalProjectVaultGraphInvalidation } from "../mcp-control/invalidation-bridge"
 import { readFileInsideRoot } from "../path-safety"
 import {
   parseObsidianNote,
@@ -197,6 +198,8 @@ export class ProjectVaultGraphIndex {
           .run(projectId, generationId, now)
       })
       .immediate()
+
+    publishLocalProjectVaultGraphInvalidation(projectId)
 
     return {
       generationId,

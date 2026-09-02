@@ -243,8 +243,16 @@ async function observeLongChatRender(): Promise<void> {
 async function observeLargeSearch(): Promise<void> {
   const viewport = requireLargeFixtureTranscript()
   const previousScrollTop = viewport.scrollTop
+  const isMac = window.desktopApi?.platform === "darwin"
   viewport.dispatchEvent(
-    new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "f", ctrlKey: true }),
+    new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "f",
+      code: "KeyF",
+      metaKey: isMac,
+      ctrlKey: !isMac,
+    }),
   )
   await nextAnimationFrame()
   const search = requireVisibleElement<HTMLInputElement>(

@@ -425,25 +425,18 @@ function AppContent() {
     }
   }, [billingMethod, anthropicOnboardingCompleted, setBillingMethod])
 
-  // Auto-skip onboarding if user has existing CLI config (API key or proxy)
-  // This allows users with ANTHROPIC_API_KEY to use the app without OAuth
+  // Auto-select Claude Code only when its local login is actually connected.
+  // API keys and proxy settings remain explicit onboarding choices.
   useEffect(() => {
-    if (cliConfig?.hasConfig && !billingMethod) {
-      console.log("[App] Detected existing CLI config, auto-completing onboarding")
-      if (cliConfig.hasSystemToken) {
-        setBillingMethod("claude-subscription")
-        setAnthropicOnboardingCompleted(true)
-      } else {
-        setBillingMethod("api-key")
-        setApiKeyOnboardingCompleted(true)
-      }
+    if (claudeIntegration.data?.isConnected && !billingMethod) {
+      console.log("[App] Detected Claude Code login, auto-completing onboarding")
+      setBillingMethod("claude-subscription")
+      setAnthropicOnboardingCompleted(true)
     }
   }, [
-    cliConfig?.hasConfig,
-    cliConfig?.hasSystemToken,
+    claudeIntegration.data?.isConnected,
     billingMethod,
     setAnthropicOnboardingCompleted,
-    setApiKeyOnboardingCompleted,
     setBillingMethod,
   ])
 

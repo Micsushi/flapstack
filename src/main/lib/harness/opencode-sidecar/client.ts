@@ -23,6 +23,9 @@ export type OpencodeClientOptions = {
 
 export type OpencodeHealth = { healthy: boolean; version: string }
 
+/** First-run OpenCode project discovery can exceed 30 seconds on macOS. */
+export const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 60_000
+
 export class OpencodeClient {
   private readonly baseUrl: string
   private readonly directory: string
@@ -35,7 +38,7 @@ export class OpencodeClient {
     this.directory = opts.directory
     this.authHeader = "Basic " + Buffer.from(`opencode:${opts.password}`).toString("base64")
     this.fetchImpl = opts.fetchImpl ?? fetch
-    this.requestTimeoutMs = opts.requestTimeoutMs ?? 15_000
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS
   }
 
   private headers(extra?: Record<string, string>): Record<string, string> {

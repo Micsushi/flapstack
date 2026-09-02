@@ -7,7 +7,11 @@ import { fileURLToPath } from "node:url"
 import { createRequire } from "node:module"
 import { build } from "esbuild"
 import { ensureNativeAbi } from "./ensure-native-abi.mjs"
-import { queryWindowsProcesses, windowsTaskkillArgs } from "./lib/windows-processes.mjs"
+import {
+  killNativeProcess,
+  nativeProcessCreationEpoch,
+  queryNativeProcesses,
+} from "./lib/native-processes.mjs"
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 if (resolve(process.cwd()) !== repositoryRoot) {
@@ -39,6 +43,7 @@ const args = process.argv.slice(2)
 const boundedCi = args.includes("--ci")
 let result
 if (boundedCi) {
+  ensureNativeAbi("node")
   result = spawnSync(process.execPath, [runtimeEntry, ...args], {
     cwd: repositoryRoot,
     env: process.env,
@@ -155,16 +160,12 @@ function waitForHostedProcessesGone(options) {
 }
 
 function cleanupHostedProcesses(options) {
-  if (process.platform !== "win32") return
   const deadline = Date.now() + 10_000
   while (Date.now() < deadline) {
     const owned = findHostedProcesses(options)
     if (owned.length === 0) return
     for (const entry of owned) {
-      spawnSync("taskkill.exe", windowsTaskkillArgs(Number(entry.ProcessId), true, true), {
-        windowsHide: true,
-        encoding: "utf8",
-      })
+      killNativeProcess(Number(entry.ProcessId), { force: true, tree: true })
     }
     sleepSync(100)
   }
@@ -172,18 +173,18 @@ function cleanupHostedProcesses(options) {
 }
 
 function findHostedProcesses(options) {
-  if (process.platform !== "win32") return []
   const executable = normalize(options.electronExecutable)
   const nodeExecutable = normalize(options.nodeExecutable)
   const runtimeEntry = normalize(options.runtimeEntry)
   const runToken = normalize(options.runToken)
-  return queryWindowsProcesses().filter((entry) => {
-    const createdAtMatch = /\/Date\((\d+)/.exec(String(entry.CreationDate ?? ""))
-    const createdAt = createdAtMatch ? Number(createdAtMatch[1]) : Date.parse(entry.CreationDate)
+  return queryNativeProcesses().filter((entry) => {
+    const createdAt = nativeProcessCreationEpoch(entry)
     const command = normalize(entry.CommandLine)
     return (
       (normalize(entry.ExecutablePath) === executable ||
-        normalize(entry.ExecutablePath) === nodeExecutable) &&
+        normalize(entry.ExecutablePath) === nodeExecutable ||
+        command.includes(executable) ||
+        command.includes(nodeExecutable)) &&
       Number.isFinite(createdAt) &&
       createdAt >= options.launchedAtEpoch - 1_000 &&
       (command.includes(runtimeEntry) || command.includes(runToken))
@@ -193,7 +194,7 @@ function findHostedProcesses(options) {
 
 function normalize(value) {
   return String(value ?? "")
-    .replaceAll("/", "\\")
+    .replaceAll("\\", "/")
     .toLowerCase()
 }
 

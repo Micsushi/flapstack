@@ -21,6 +21,8 @@ import type { McpStdioRegistration } from "../../mcp-control/registration"
 
 const MAX_LOG_LINES = 200
 const BASE_URL_REGEX = /https?:\/\/127\.0\.0\.1:\d+/
+/** npx and OpenCode can both perform first-run setup before printing the URL. */
+export const DEFAULT_OPENCODE_STARTUP_TIMEOUT_MS = 60_000
 
 export type SidecarHandle = {
   baseUrl: string
@@ -156,7 +158,7 @@ export async function startSidecar(params: {
     },
   }
 
-  const startupTimeoutMs = params.startupTimeoutMs ?? 20_000
+  const startupTimeoutMs = params.startupTimeoutMs ?? DEFAULT_OPENCODE_STARTUP_TIMEOUT_MS
 
   return new Promise<SidecarStartResult>((resolve) => {
     let settled = false

@@ -147,4 +147,13 @@ describe("AgentModelTuningSelector", () => {
     await act(async () => toggle.click())
     expect(props.onReasoningEnabledChange).toHaveBeenCalledWith(false)
   })
+
+  it("marks reasoning unavailable for local models", () => {
+    const { container } = renderTuning({ selectedAgentId: "local" })
+    const trigger = container.querySelector("button")
+
+    expect(trigger?.hasAttribute("disabled")).toBe(true)
+    expect(trigger?.getAttribute("aria-label")).toBe("Model tuning: reasoning unavailable")
+    expect(container.textContent).toContain("Reasoning unavailable")
+  })
 })

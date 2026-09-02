@@ -124,5 +124,5 @@ function platformRecovery(): string {
   if (process.platform === "linux") {
     return "Verify the active X11/Wayland portal permits screen sharing, then retry."
   }
-  return "Grant Screen Recording permission in System Settings, then restart capture."
+  return "Grant Screen Recording permission in System Settings, verify the source is not protected content, then restart Flapstack and retry."
 }

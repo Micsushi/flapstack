@@ -10,6 +10,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -177,10 +178,13 @@ export function assertProjectVaultGitTrackingTransitionSupported(projectRoot: st
 }
 
 function getGitExclusionPlan(projectRootInput: string): GitExclusionPlan {
-  const projectRoot = resolve(projectRootInput)
-  assertSafeGitMetadataPath(projectRoot, "Project root", "directory")
+  const lexicalProjectRoot = resolve(projectRootInput)
+  assertSafeGitMetadataPath(lexicalProjectRoot, "Project root", "directory")
+  const projectRoot = realpathSync(lexicalProjectRoot)
 
-  const repositoryRoot = resolve(runGit(projectRoot, ["rev-parse", "--show-toplevel"]))
+  const repositoryRoot = realpathSync(
+    resolve(runGit(projectRoot, ["rev-parse", "--show-toplevel"])),
+  )
   const projectRelativePath = relative(repositoryRoot, projectRoot)
   if (
     projectRelativePath === ".." ||

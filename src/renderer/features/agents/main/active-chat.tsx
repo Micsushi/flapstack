@@ -47,6 +47,7 @@ import { ChatTranscriptOverview } from "./chat-transcript-overview"
 import { buildTranscriptMarkers, type TranscriptMarker } from "./chat-transcript-overview-model"
 import {
   hydrateChatFromPersistedMessages,
+  sanitizePersistedHarnessMessages,
   shouldAutoGenerateInitialResponse,
 } from "./chat-message-hydration"
 import { createPersistedMessageCache } from "./persisted-message-cache"
@@ -6365,8 +6366,9 @@ function ChatViewScoped({
   // Fallback for web: use sandbox_id
   const sandboxId = agentChat?.sandbox_id
   const sandboxUrl = sandboxId ? `https://3003-${sandboxId}.e2b.app` : null
-  // Desktop uses worktreePath, web uses sandboxUrl
-  const chatWorkingDir = activeTargetWorktreePath || worktreePath || sandboxUrl
+  const globalRuntimePath = (agentChat as any)?.globalRuntimePath as string | undefined
+  // Global Chats use an app-owned runtime directory without gaining a project checkout.
+  const chatWorkingDir = activeTargetWorktreePath || worktreePath || globalRuntimePath || sandboxUrl
 
   // Plugin MCP approval - disabled for now since official marketplace plugins
   // are trusted by default. Will re-enable when third-party plugin support is added.
@@ -7402,15 +7404,17 @@ Make sure to preserve all functionality from both branches when resolving confli
       const chatSandboxUrl = chatSandboxId ? `https://3003-${chatSandboxId}.e2b.app` : null
       const isRemoteChat = !!(agentChat as any)?.isRemote || !!chatSandboxId
       const targetWorktreePath = appStore.get(selectedTargetWorktreePathAtomFamily(subChatId))
-      const runWorktreePath = targetWorktreePath || worktreePath
+      const runWorktreePath = targetWorktreePath || worktreePath || globalRuntimePath
       const desiredSubChat = agentSubChats.find((sc) => sc.id === subChatId)
       const rawDesiredMessages = desiredSubChat?.messages
       const readDesiredMessages = () =>
-        Array.isArray(rawDesiredMessages)
-          ? rawDesiredMessages
-          : typeof rawDesiredMessages === "string"
-            ? persistedMessageCache.read(subChatId, rawDesiredMessages)
-            : []
+        sanitizePersistedHarnessMessages(
+          Array.isArray(rawDesiredMessages)
+            ? rawDesiredMessages
+            : typeof rawDesiredMessages === "string"
+              ? persistedMessageCache.read(subChatId, rawDesiredMessages)
+              : [],
+        )
 
       const existing = agentChatStore.get(subChatId)
       if (existing) {
@@ -7860,14 +7864,14 @@ Make sure to preserve all functionality from both branches when resolving confli
         mode: subChatMode,
         model: modelString,
       })
-    } else if (worktreePath) {
+    } else if (chatWorkingDir) {
       if (chatProvider === "local") {
         const model = appStore.get(selectedLocalModelIdAtom)
         if (model) {
           newSubChatTransport = new LocalModelChatTransport({
             chatId,
             subChatId: newId,
-            cwd: worktreePath,
+            cwd: chatWorkingDir,
             projectPath,
             endpoint: appStore.get(localModelEndpointAtom),
             model,
@@ -7880,7 +7884,7 @@ Make sure to preserve all functionality from both branches when resolving confli
         newSubChatTransport = new OpencodeChatTransport({
           chatId,
           subChatId: newId,
-          cwd: worktreePath,
+          cwd: chatWorkingDir,
           projectPath,
           provider: chatProvider,
           model: selectedModel || fallbackModel,
@@ -7890,7 +7894,7 @@ Make sure to preserve all functionality from both branches when resolving confli
         newSubChatTransport = new ACPChatTransport({
           chatId,
           subChatId: newId,
-          cwd: worktreePath,
+          cwd: chatWorkingDir,
           projectPath,
           projectId: (agentChat as any)?.project?.id ?? (agentChat as any)?.projectId ?? undefined,
           mode: newSubChatMode,
@@ -7900,7 +7904,7 @@ Make sure to preserve all functionality from both branches when resolving confli
         newSubChatTransport = new CursorChatTransport({
           chatId,
           subChatId: newId,
-          cwd: worktreePath,
+          cwd: chatWorkingDir,
           projectPath,
         })
       } else {
@@ -7908,7 +7912,7 @@ Make sure to preserve all functionality from both branches when resolving confli
         newSubChatTransport = new IPCChatTransport({
           chatId,
           subChatId: newId,
-          cwd: worktreePath,
+          cwd: chatWorkingDir,
           projectPath,
           projectId: (agentChat as any)?.project?.id ?? (agentChat as any)?.projectId ?? undefined,
           mode: newSubChatMode,
@@ -8011,7 +8015,7 @@ Make sure to preserve all functionality from both branches when resolving confli
       forceUpdate({}) // Trigger re-render
     }
   }, [
-    worktreePath,
+    chatWorkingDir,
     chatId,
     defaultAgentMode,
     activeSubChatId,

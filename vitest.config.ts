@@ -1,5 +1,7 @@
 import { defineConfig } from "vitest/config"
 
+const boundedHost = ["win32", "darwin"].includes(process.platform)
+
 export default defineConfig({
   plugins: [
     {
@@ -17,10 +19,9 @@ export default defineConfig({
     include: ["tests/**/*.test.{ts,tsx}"],
     setupFiles: ["tests/setup-beta-features.ts"],
     passWithNoTests: false,
-    // Windows filesystem, Git worktree, and SQLite integration tests contend heavily
-    // at Vitest's host-wide default. Four workers keeps their 20s behavioral deadlines
-    // meaningful instead of turning resource starvation into nondeterministic failures.
-    maxWorkers: process.platform === "win32" ? 4 : undefined,
-    testTimeout: process.platform === "win32" ? 20_000 : 5_000,
+    // Native filesystem, Git worktree, child-process, and SQLite integration tests
+    // contend heavily on Windows and macOS at Vitest's host-wide default.
+    maxWorkers: boundedHost ? 4 : undefined,
+    testTimeout: boundedHost ? 20_000 : 5_000,
   },
 })

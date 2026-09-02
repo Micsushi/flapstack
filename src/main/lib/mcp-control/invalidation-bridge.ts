@@ -117,6 +117,15 @@ export function publishLocalProjectVaultInvalidation(change: ProjectVaultRendere
   }
 }
 
+export function publishLocalProjectVaultGraphInvalidation(projectId: string): void {
+  publishLocalProductInvalidation({
+    version: 1,
+    source: "product-mcp",
+    domains: ["vaults"],
+    projectIds: [projectId],
+  })
+}
+
 type ProductInvalidationWindow = {
   isDestroyed: () => boolean
   webContents: {

@@ -158,4 +158,37 @@ describe("isolated test Git environment", () => {
 
     isolated.cleanup()
   })
+
+  it("canonicalizes macOS temporary directories for child tests", () => {
+    const spawn = (_command: string, args: string[]) => {
+      if (args.join(" ").endsWith("user.name")) {
+        return { status: 0, stdout: "Human User\n", stderr: "" }
+      }
+      if (args.join(" ").endsWith("user.email")) {
+        return { status: 0, stdout: "human@example.com\n", stderr: "" }
+      }
+      return { status: 0, stdout: "", stderr: "" }
+    }
+
+    const isolated = createIsolatedTestGitEnvironment({
+      env: {
+        TEMP: "/var/folders/test/T",
+        TMP: "/var/folders/test/T",
+        TMPDIR: "/var/folders/test/T",
+      },
+      makeDirectory: () => "/private/var/folders/test/T/flapstack-test-git",
+      platform: "darwin",
+      realpath: () => "/private/var/folders/test/T",
+      remove: vi.fn(),
+      spawn,
+    })
+
+    expect(isolated.env).toMatchObject({
+      TEMP: "/private/var/folders/test/T",
+      TMP: "/private/var/folders/test/T",
+      TMPDIR: "/private/var/folders/test/T",
+    })
+
+    isolated.cleanup()
+  })
 })

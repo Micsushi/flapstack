@@ -1,5 +1,9 @@
 # macOS releases
 
+See [macOS feature readiness](macos-feature-readiness.md) for the current
+feature-by-feature implementation, dependency, hardware, and certification
+status.
+
 Flapstack `0.1.0` is a macOS-only public beta. A `v0.1.0` tag on the current
 `main` commit triggers GitHub Actions to build separate Apple Silicon and Intel
 DMGs on matching native GitHub-hosted Macs, run package checks, generate
@@ -9,6 +13,27 @@ The `0.1.0` apps are intentionally **unsigned and not notarized by Apple**. No
 Apple Developer membership or signing secrets are required. macOS will warn
 that Apple cannot verify the developer or check the app for malicious software.
 The published release body comes from [releases/0.1.0.md](releases/0.1.0.md).
+
+## Pull request and main-branch verification
+
+The regular CI workflow includes a native Apple Silicon package and smoke-test
+job. It is intentionally gated by the repository variable
+`FLAPSTACK_MACOS_CI_ENABLED=true` so macOS runner minutes are not consumed while
+the Server 2 runner work is underway. Once that work is ready, the owner can
+explicitly enable this targeted hosted lane. A skipped job does not provide
+macOS package evidence.
+
+For a complete local macOS gate, run:
+
+```bash
+npm run verify:mac:local
+```
+
+The command selects an installed Node 22 runtime when the active shell uses an
+unsupported Node version. It runs the repository and production dependency
+gates, builds both Preview architectures, exercises package and usage-daemon
+smokes, runs an isolated install/upgrade/rollback/uninstall lifecycle, audits
+both app bundles, and writes sanitized reports under `.local-evidence/`.
 
 ## Install the unsigned beta
 
@@ -34,6 +59,14 @@ Before making the repository public:
 - Confirm the Apache-2.0 license and bundled third-party notices are present.
 - Confirm `.env`, credentials, tokens, local databases, and generated packages
   are ignored and absent from Git history.
+
+The macOS package auditor inventories every bundled file and Mach-O binary,
+checks exact source provenance and dependency license text, rejects escaping
+symlinks and likely credentials, records SHA-256 hashes, and reports the code
+signature and entitlements policy. The unsigned beta is accepted only under its
+explicit beta policy; linker-generated ad-hoc signatures are recorded as
+beta-only and never count as signed. A future signed candidate must also pass
+the auditor with `--require-signed`.
 
 Before promoting the beta as stable, run these on a clean production profile:
 
@@ -65,9 +98,10 @@ git push origin v0.1.0
 ```
 
 The workflow publishes `Flapstack-0.1.0-arm64.dmg`,
-`Flapstack-0.1.0-x64.dmg`, and `SHA256SUMS.txt`. A repeated tag, a tag not on the
-current `main` commit, or a tag whose version does not match `package.json`
-fails.
+`Flapstack-0.1.0-x64.dmg`, and `SHA256SUMS.txt`. Each native build job also
+retains its package security report and report checksum as workflow evidence. A
+repeated tag, a tag not on the current `main` commit, or a tag whose version
+does not match `package.json` fails.
 
 Signing and notarization should return for a later release. That removes the
 unidentified-developer warning and gives users Apple's malware-check signal.

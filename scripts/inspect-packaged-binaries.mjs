@@ -53,6 +53,55 @@ function runSidecarSmoke(binary) {
   console.log("Parakeet sidecar smoke: ping ok")
 }
 
+export function runMacNativeModulesSmoke(runtime, packagedModules, runner = spawnSync) {
+  const source = `
+const Database = require(${JSON.stringify(path.join(packagedModules, "better-sqlite3"))})
+const db = new Database(":memory:")
+db.prepare("select 1").get()
+db.close()
+const sharp = require(${JSON.stringify(path.join(packagedModules, "sharp"))})
+const pty = require(${JSON.stringify(path.join(packagedModules, "node-pty"))})
+sharp({ create: { width: 1, height: 1, channels: 4, background: "#00000000" } })
+  .png()
+  .toBuffer()
+  .then((image) => {
+    if (!Buffer.isBuffer(image) || image.length === 0) throw new Error("sharp returned no image")
+    const terminal = pty.spawn("/bin/sh", ["-c", "exit 0"], {
+      cols: 80,
+      rows: 24,
+      cwd: process.cwd(),
+      env: process.env,
+    })
+    const timer = setTimeout(() => {
+      try { terminal.kill() } catch {}
+      process.exit(2)
+    }, 5_000)
+    terminal.onExit(() => {
+      clearTimeout(timer)
+      process.stdout.write("native-modules-ok")
+      process.exit(0)
+    })
+  })
+  .catch((error) => {
+    process.stderr.write(String(error && error.stack || error))
+    process.exit(3)
+  })
+`
+  const result = runner(runtime, ["-e", source], {
+    encoding: "utf8",
+    // Cold Rosetta translation can exceed one minute on a busy Apple Silicon host.
+    timeout: 180_000,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+  })
+  if (result.error) throw new Error(`Native module smoke failed: ${result.error.message}`)
+  const output = `${result.stdout || ""}\n${result.stderr || ""}`.trim()
+  if (result.status !== 0 || !output.includes("native-modules-ok")) {
+    const exit = result.signal ? `signal ${result.signal}` : `status ${result.status}`
+    throw new Error(`Native module smoke exited with ${exit}: ${output}`)
+  }
+  console.log("Native module smoke: better-sqlite3, Sharp, and node-pty ok")
+}
+
 export function assertDigestMarker(binary, marker) {
   const markerStat = fs.lstatSync(marker)
   if (!markerStat.isFile() || markerStat.isSymbolicLink()) {
@@ -232,11 +281,29 @@ export function inspectMacApp(appPath, platformKey, options = {}) {
       "Release",
       "better_sqlite3.node",
     ),
+    "node-pty": path.join(
+      resources,
+      "app.asar.unpacked",
+      "node_modules",
+      "node-pty",
+      "build",
+      "Release",
+      "pty.node",
+    ),
+    "node-pty-spawn-helper": path.join(
+      resources,
+      "app.asar.unpacked",
+      "node_modules",
+      "node-pty",
+      "build",
+      "Release",
+      "spawn-helper",
+    ),
   }
 
   for (const [label, binary] of Object.entries(binaries)) {
     const inspection = assertBundledBinary(binary, platformKey, {
-      requireExecutable: label !== "better-sqlite3",
+      requireExecutable: !["better-sqlite3", "node-pty"].includes(label),
     })
     console.log(`${label}: regular ${inspection.format} ${inspection.architectures.join("+")}`)
   }
@@ -283,6 +350,9 @@ export function inspectMacApp(appPath, platformKey, options = {}) {
     runSmoke("Whisper", binaries.Whisper, ["--help"], /whisper|usage:/i)
     runSidecarSmoke(binaries.Parakeet)
   }
+  if (options.smoke || options.nativeModulesSmoke) {
+    runMacNativeModulesSmoke(binaries.Flapstack, path.join(resources, "app.asar", "node_modules"))
+  }
   return { appPath, platformKey, electronVersion, binaries }
 }
 
@@ -292,14 +362,17 @@ function main() {
   const platform = readArg(args, "--platform")
   if (!app || !platform) {
     throw new Error(
-      "Usage: --app=<app path> --platform=darwin-arm64|darwin-x64|win32-x64 [--smoke]",
+      "Usage: --app=<app path> --platform=darwin-arm64|darwin-x64|win32-x64 [--smoke] [--native-modules-smoke]",
     )
   }
   const appPath = path.resolve(app)
   if (platform === "win32-x64") {
     inspectWindowsApp(appPath, platform, { smoke: args.includes("--smoke") })
   } else {
-    inspectMacApp(appPath, platform, { smoke: args.includes("--smoke") })
+    inspectMacApp(appPath, platform, {
+      smoke: args.includes("--smoke"),
+      nativeModulesSmoke: args.includes("--native-modules-smoke"),
+    })
   }
 }
 

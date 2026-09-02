@@ -54,9 +54,11 @@ describe("Windows package security report", () => {
   it("wires explicit Preview and signed-release audit entrypoints", () => {
     const packageJson = JSON.parse(readFileSync("package.json", "utf8"))
     expect(packageJson.overrides).toMatchObject({
-      dompurify: "3.4.12",
+      dompurify: "3.4.14",
       "fast-uri": "3.1.5",
       "ip-address": "10.4.0",
+      "js-yaml": "5.4.1",
+      nanoid: "3.3.18",
       sharp: "0.35.3",
       tar: "7.5.22",
     })

@@ -73,7 +73,7 @@ export function WorkbenchTerminalPane({
         />
       ) : (
         <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-          Starting Terminalâ€¦
+          Starting Terminal…
         </div>
       )}
     </div>

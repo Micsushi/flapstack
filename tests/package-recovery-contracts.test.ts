@@ -543,7 +543,9 @@ describe("package output recovery", () => {
     await expect(
       executePackageBuild(build, {
         root,
+        buildApp: () => calls.push("app-build"),
         writeProvenance: () => calls.push("provenance"),
+        prepareTargetDependencies: async () => calls.push("target-dependencies"),
         prepareNotices: () => calls.push("notices"),
         prepareResources: async () => calls.push("resources"),
         builder: () => {
@@ -553,7 +555,14 @@ describe("package output recovery", () => {
       }),
     ).rejects.toThrow(/builder interrupted/)
 
-    expect(calls).toEqual(["provenance", "notices", "resources", "builder"])
+    expect(calls).toEqual([
+      "app-build",
+      "provenance",
+      "target-dependencies",
+      "notices",
+      "resources",
+      "builder",
+    ])
     expect(existsSync(join(outputDirectory, ".flapstack-package-incomplete"))).toBe(true)
     expect(
       existsSync(join(root, "node_modules", ".flapstack-package-locks", "package-app.lock")),
@@ -561,6 +570,7 @@ describe("package output recovery", () => {
 
     await executePackageBuild(build, {
       root,
+      buildApp: () => {},
       writeProvenance: () => {},
       prepareNotices: () => {},
       prepareResources: async () => {},
@@ -583,6 +593,7 @@ describe("package output recovery", () => {
 
     await executePackageBuild(build, {
       root,
+      buildApp: () => {},
       writeProvenance: () => {},
       prepareNotices: () => {},
       prepareResources: async () => {},
@@ -608,6 +619,7 @@ describe("package output recovery", () => {
       },
       {
         root,
+        buildApp: () => {},
         writeProvenance: () => {
           expect(existsSync(join(outputDirectory, "previous.exe"))).toBe(true)
           expect(existsSync(backupDirectory)).toBe(false)
@@ -620,6 +632,35 @@ describe("package output recovery", () => {
 
     expect(readFileSync(join(outputDirectory, "current.exe"), "utf8")).toBe("current")
     expect(existsSync(backupDirectory)).toBe(false)
+  })
+
+  it("keeps the previous package when the current application build fails", async () => {
+    const root = temporaryDirectory()
+    const outputDirectory = join(root, "release-preview")
+    mkdirSync(outputDirectory)
+    writeFileSync(join(outputDirectory, "previous.exe"), "previous")
+
+    await expect(
+      executePackageBuild(
+        {
+          targets: ["win32-x64"],
+          builderArgs: ["--win", "--x64", "--dir"],
+          outputDirectory,
+        },
+        {
+          root,
+          buildApp: () => {
+            throw new Error("source build failed")
+          },
+          writeProvenance: () => {
+            throw new Error("provenance should not run")
+          },
+        },
+      ),
+    ).rejects.toThrow(/source build failed/)
+
+    expect(readFileSync(join(outputDirectory, "previous.exe"), "utf8")).toBe("previous")
+    expect(existsSync(join(outputDirectory, ".flapstack-package-incomplete"))).toBe(false)
   })
 })
 

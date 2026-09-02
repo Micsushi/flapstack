@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import {
   migrateDatabase,
   normalizeMultiAgentOperationsTransitionMigration,
+  normalizeRelocatedMobilePairingIdentityMigration,
 } from "../src/main/lib/db/migrate"
 import * as schema from "../src/main/lib/db/schema"
 import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "../src/main/lib/run-launch-service"
@@ -111,6 +112,71 @@ describe("Stage 3 migration rebase", () => {
     }
   })
 
+  it("repairs the relocated canonical mobile identity migration without skipping work", () => {
+    const { sqlite, directory } = database("relocated-mobile-identity")
+    try {
+      migrate(drizzle(sqlite, { schema }), {
+        migrationsFolder: migrationSubset(directory, 41),
+      })
+      installRelocatedMobileIdentityMigration(sqlite)
+      sqlite
+        .prepare(
+          `INSERT INTO mobile_devices
+             (id, name, public_key_algorithm, public_key, public_key_fingerprint, created_at)
+           VALUES ('preserved-device', 'Preserved', 'Ed25519', 'key', 'fingerprint', 1)`,
+        )
+        .run()
+
+      expect(normalizeRelocatedMobilePairingIdentityMigration(sqlite, sourceMigrations)).toBe(true)
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+      expect(normalizeRelocatedMobilePairingIdentityMigration(sqlite, sourceMigrations)).toBe(false)
+
+      expect(tableNames(sqlite)).toEqual(
+        expect.arrayContaining([
+          "project_vault_graph_nodes",
+          "visual_artifacts",
+          "mobile_auth_challenges",
+          "mobile_event_log",
+          "chat_waits",
+        ]),
+      )
+      expect(
+        sqlite.prepare("SELECT name FROM mobile_devices WHERE id = ?").get("preserved-device"),
+      ).toEqual({ name: "Preserved" })
+      const current = migrationEntry("0047_mobile_pairing_identity")
+      expect(
+        sqlite
+          .prepare("SELECT hash, created_at FROM __drizzle_migrations WHERE hash = ?")
+          .all(migrationHash(current.tag)),
+      ).toEqual([{ hash: migrationHash(current.tag), created_at: current.when }])
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("fails closed for malformed relocated mobile identity authority", () => {
+    const { sqlite, directory } = database("malformed-relocated-mobile-identity")
+    try {
+      migrate(drizzle(sqlite, { schema }), {
+        migrationsFolder: migrationSubset(directory, 41),
+      })
+      installRelocatedMobileIdentityMigration(sqlite)
+      sqlite.exec("DROP INDEX mobile_auth_challenges_hash_idx")
+
+      expect(() =>
+        normalizeRelocatedMobilePairingIdentityMigration(sqlite, sourceMigrations),
+      ).toThrow(/malformed or partial authority/i)
+      expect(tableNames(sqlite)).not.toContain("project_vault_graph_nodes")
+      expect(
+        sqlite
+          .prepare("SELECT count(*) count FROM __drizzle_migrations WHERE created_at = ?")
+          .get(migrationEntry("0047_mobile_pairing_identity").when),
+      ).toEqual({ count: 0 })
+    } finally {
+      sqlite.close()
+    }
+  })
+
   it("repairs a supported pre-table 0037 profile exactly once and preserves data", async () => {
     const { path, sqlite } = database("missing-transition-table")
     try {
@@ -177,6 +243,75 @@ describe("Stage 3 migration rebase", () => {
           )
           .all("orchestration_transition_events", "orchestration_transition_events"),
       ).toEqual(before)
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("rebuilds supported pre-final 0037 tables and restores missing authority", () => {
+    const { sqlite } = database("legacy-0037-tables")
+    try {
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+      sqlite.pragma("foreign_keys = OFF")
+      sqlite.exec(`
+        CREATE TABLE __legacy_orchestration_workflow_runs (
+          id text PRIMARY KEY NOT NULL,
+          task_id text NOT NULL,
+          status text NOT NULL,
+          definition_json text NOT NULL,
+          stop_intent integer DEFAULT false NOT NULL,
+          created_at integer NOT NULL,
+          updated_at integer NOT NULL
+        );
+        INSERT INTO __legacy_orchestration_workflow_runs
+          SELECT id, task_id, status, definition_json, stop_intent, created_at, updated_at
+          FROM orchestration_workflow_runs;
+        DROP TABLE orchestration_workflow_runs;
+        ALTER TABLE __legacy_orchestration_workflow_runs
+          RENAME TO orchestration_workflow_runs;
+
+        CREATE TABLE __legacy_orchestration_messages (
+          id text PRIMARY KEY NOT NULL,
+          task_id text NOT NULL,
+          agent_id text,
+          direction text NOT NULL,
+          kind text NOT NULL,
+          state text NOT NULL,
+          body text,
+          provider_message_id text,
+          created_at integer NOT NULL
+        );
+        INSERT INTO __legacy_orchestration_messages
+          SELECT id, task_id, agent_id, direction, kind, state, body, provider_message_id,
+            created_at FROM orchestration_messages;
+        DROP TABLE orchestration_messages;
+        ALTER TABLE __legacy_orchestration_messages RENAME TO orchestration_messages;
+        DROP TABLE orchestration_authority_approvals;
+      `)
+      sqlite.pragma("foreign_keys = ON")
+
+      expect(normalizeMultiAgentOperationsTransitionMigration(sqlite, sourceMigrations)).toBe(true)
+      expect(normalizeMultiAgentOperationsTransitionMigration(sqlite, sourceMigrations)).toBe(false)
+      expect(columns(sqlite, "orchestration_workflow_runs")).toContain("approval_audit_id")
+      expect(columns(sqlite, "orchestration_messages")).toContain("action_intent_id")
+      expect(tableNames(sqlite)).toContain("orchestration_authority_approvals")
+      expect(
+        sqlite
+          .prepare(
+            `SELECT name FROM sqlite_master
+             WHERE type = 'index' AND name IN (
+               'orchestration_workflow_approval_once_idx',
+               'orchestration_messages_action_intent_idx',
+               'orchestration_authority_task_idx'
+             ) ORDER BY name`,
+          )
+          .all(),
+      ).toEqual([
+        { name: "orchestration_authority_task_idx" },
+        { name: "orchestration_messages_action_intent_idx" },
+        { name: "orchestration_workflow_approval_once_idx" },
+      ])
+      expect(sqlite.pragma("foreign_key_check")).toEqual([])
     } finally {
       sqlite.close()
     }
@@ -906,10 +1041,28 @@ function migrationEntry(tag: string): { tag: string; when: number } {
   return entry
 }
 
-function initialPromptMigrationHash(): string {
+function installRelocatedMobileIdentityMigration(sqlite: Database.Database): void {
+  const tag = "0047_mobile_pairing_identity"
+  const sql = readFileSync(join(sourceMigrations, `${tag}.sql`), "utf8")
+  const install = sqlite.transaction(() => {
+    for (const statement of sql.split("--> statement-breakpoint")) {
+      if (statement.trim()) sqlite.exec(statement)
+    }
+    sqlite
+      .prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)")
+      .run(migrationHash(tag), 1784054923088)
+  })
+  install.immediate()
+}
+
+function migrationHash(tag: string): string {
   return createHash("sha256")
-    .update(readFileSync(join(sourceMigrations, "0020_silky_sphinx.sql"), "utf8"))
+    .update(readFileSync(join(sourceMigrations, `${tag}.sql`), "utf8"))
     .digest("hex")
+}
+
+function initialPromptMigrationHash(): string {
+  return migrationHash("0020_silky_sphinx")
 }
 
 function columns(sqlite: Database.Database, table: string): string[] {

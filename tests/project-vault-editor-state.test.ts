@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest"
 import {
   applyVaultEditorExternalSnapshot,
   createVaultEditorState,
+  createVaultConflictCopyPath,
   hasVaultEditorChanges,
   markVaultEditorConflict,
   protectUnsavedVaultDraftsBeforeUnload,
@@ -20,6 +21,13 @@ const base: VaultDocumentSnapshot = {
 }
 
 describe("project vault editor state", () => {
+  it("keeps a conflict copy beside its source note", () => {
+    expect(createVaultConflictCopyPath("Decision.md")).toBe("Decision (local copy).md")
+    expect(createVaultConflictCopyPath("Research/Decision.md")).toBe(
+      "Research/Decision (local copy).md",
+    )
+  })
+
   it("keeps the local draft and current version together on conflict", () => {
     const edited = updateVaultEditorDraft(createVaultEditorState(base), "my draft")
     const current: VaultDocumentSnapshot = {

@@ -148,7 +148,7 @@ export const ALL_SHORTCUT_ACTIONS: ShortcutAction[] = [
     label: "Voice input",
     description: "Hold to dictate into the active composer",
     category: "agents",
-    defaults: platformDefaults("ctrl+opt", "ctrl+alt"),
+    defaults: platformDefaults("ctrl+shift+space", "ctrl+alt"),
     editable: false,
     focusPolicy: "workspace",
     dispatch: "local",

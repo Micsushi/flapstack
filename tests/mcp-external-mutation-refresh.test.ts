@@ -108,6 +108,8 @@ describe("product MCP external mutation refresh", () => {
     const calls: string[] = []
     const projectVault = createProjectVaultQueryInvalidator({
       project: ({ projectId }) => calls.push(`project:${projectId}`),
+      graph: ({ projectId }) => calls.push(`graph:${projectId}`),
+      notes: ({ projectId }) => calls.push(`notes:${projectId}`),
       list: ({ projectId }) => calls.push(`list:${projectId}`),
       get: ({ projectId, sectionId }) => calls.push(`get:${projectId}:${sectionId}`),
       backups: ({ projectId, sectionId }) => calls.push(`backups:${projectId}:${sectionId}`),
@@ -147,6 +149,7 @@ describe("product MCP external mutation refresh", () => {
     )
 
     expect(calls).toEqual([
+      "graph:project-1",
       "list:project-1",
       "get:project-1:context",
       "backups:project-1:context",
@@ -160,7 +163,7 @@ describe("product MCP external mutation refresh", () => {
       domains: ["vaults"],
       projectIds: ["project-2"],
     })
-    expect(calls.at(-1)).toBe("project:project-2")
+    expect(calls.slice(-3)).toEqual(["project:project-2", "graph:project-2", "notes:project-2"])
   })
 
   it("publishes only successful changed product mutations after their response", () => {

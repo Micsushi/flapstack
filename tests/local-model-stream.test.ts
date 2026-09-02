@@ -31,7 +31,7 @@ describe("local model stream", () => {
       async (_url, init) => {
         requests.push(JSON.parse(String(init?.body)))
         return byteStreamResponse([
-          '{"message":{"role":"assistant","content":"hel',
+          '{"message":{"role":"assistant","content":"","thinking":"checking"},"done":false}\n{"message":{"role":"assistant","content":"hel',
           'lo"},"done":false}\n{"message":{"role":"assistant","content":" world"},',
           '"done":false}\n{"done":true,"prompt_eval_count":4,"eval_count":2}\n',
         ])
@@ -61,6 +61,7 @@ describe("local model stream", () => {
     expect(requests[0]).toMatchObject({
       model: "fixture:latest",
       stream: true,
+      think: false,
       messages: [
         { role: "system", content: "project context" },
         { role: "user", content: "old question" },

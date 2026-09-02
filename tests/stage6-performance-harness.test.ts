@@ -842,14 +842,24 @@ describe("Stage 6 deterministic performance authority", () => {
     }
   })
 
-  it("binds every implemented workflow to a real Windows development adapter", () => {
+  it("binds every implemented workflow to real Windows and macOS development adapters", () => {
     const adapters = createProductPerformanceAdapters({
       allowTestCandidate: true,
       testRecordLimit: 32,
       testStreamEventLimit: 128,
     })
+    const darwinCandidate = createCandidateBinding({
+      ...candidateInput(),
+      platform: "darwin",
+      osRelease: "24.6.0",
+      architecture: "arm64",
+      hardwareClass: "reference-laptop",
+      powerProfile: "balanced-ac",
+      cpuModel: "Apple M2",
+    })
 
     expect(validateProductPerformanceAdapterCoverage(adapters, testCandidate)).toEqual([])
+    expect(validateProductPerformanceAdapterCoverage(adapters, darwinCandidate)).toEqual([])
     for (const metric of Object.keys(REQUIRED_PRODUCTION_SEAMS)) {
       const budget = applicableBudgets().find((entry) => entry.metric === metric)!
       const supported = adapters.some(
@@ -891,10 +901,9 @@ describe("Stage 6 deterministic performance authority", () => {
     expect(outcome.report.evidenceStatus).toBe("incomplete")
   }, 240_000)
 
-  it("supports schema platforms for dev capture while package lanes remain unavailable", () => {
+  it("supports Windows and macOS headless dev capture while package lanes remain unavailable", () => {
     expect(localProductPerformanceSupport({ platform: "darwin", buildType: "dev" })).toEqual({
-      supported: false,
-      reason: expect.stringMatching(/adapter.*unavailable.*darwin/i),
+      supported: true,
     })
     expect(localProductPerformanceSupport({ platform: "linux", buildType: "dev" })).toEqual({
       supported: false,

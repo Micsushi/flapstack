@@ -38,6 +38,7 @@ import { ResizableSidebar } from "../../components/ui/resizable-sidebar"
 import { AgentsSidebar } from "../sidebar/agents-sidebar"
 import { AgentsContent } from "../agents/ui/agents-content"
 import { WindowsTitleBar } from "../../components/windows-title-bar"
+import { AppCommandBridge } from "../../components/app-command-bridge"
 import { useAgentSubChatStore } from "../agents/stores/sub-chat-store"
 import {
   AGENTS_SIDEBAR_WIDTH_MIGRATION_KEY,
@@ -408,6 +409,7 @@ export function AgentsLayout() {
     <TooltipProvider delayDuration={300}>
       {/* Global queue processor - handles message queues for all sub-chats */}
       <QueueProcessor />
+      <AppCommandBridge onNavigate={moveInNavigationHistory} />
       <ClaudeLoginModal
         hideCustomModelSettingsLink={claudeLoginModalConfig.hideCustomModelSettingsLink}
         autoStartAuth={claudeLoginModalConfig.autoStartAuth}

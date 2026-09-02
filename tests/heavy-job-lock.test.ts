@@ -216,13 +216,20 @@ describe("shared heavy-job lock", () => {
       tmpdir(),
       `flapstack-heavy-job-test-${process.pid}-child-signal.txt`,
     )
+    const signalTriggerPath = join(
+      tmpdir(),
+      `flapstack-heavy-job-test-${process.pid}-signal-trigger.txt`,
+    )
     rmSync(readyPath, { force: true })
     rmSync(childSignalPath, { force: true })
+    rmSync(signalTriggerPath, { force: true })
     writeFileSync(
       signalPreload,
       [
+        'const { existsSync } = require("node:fs")',
         'if (process.argv[1]?.endsWith("with-heavy-job-lock.mjs")) {',
-        '  setTimeout(() => process.emit("SIGTERM"), 500)',
+        `  const trigger = ${JSON.stringify(signalTriggerPath)}`,
+        '  const timer = setInterval(() => { if (existsSync(trigger)) { clearInterval(timer); process.emit("SIGTERM") } }, 25)',
         "}",
       ].join("\n"),
       "utf8",
@@ -271,6 +278,7 @@ describe("shared heavy-job lock", () => {
       expect(contender.stderr).toContain("cancellation")
       expect(pidIsAlive(ownedPid)).toBe(true)
       const exited = waitForExit(wrapper)
+      writeFileSync(signalTriggerPath, "terminate", "utf8")
       expect(await exited).toMatchObject({ code: 143 })
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 100))
       if (process.platform !== "win32") {
@@ -285,6 +293,7 @@ describe("shared heavy-job lock", () => {
       if (grandchildPid && pidIsAlive(grandchildPid)) process.kill(grandchildPid, "SIGKILL")
       rmSync(readyPath, { force: true })
       rmSync(childSignalPath, { force: true })
+      rmSync(signalTriggerPath, { force: true })
       rmSync(signalPreload, { force: true })
       rmSync(lockPath, { force: true })
     }

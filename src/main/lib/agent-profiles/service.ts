@@ -66,9 +66,60 @@ export class AgentProfileService {
       .transaction(() => {
         for (const starter of STARTER_AGENT_PROFILES) {
           const exists = this.sqlite
-            .prepare("SELECT id FROM agent_profiles WHERE id = ?")
-            .get(starter.id)
-          if (exists) continue
+            .prepare(
+              `SELECT id, name, description, category, source, current_version
+               FROM agent_profiles WHERE id = ?`,
+            )
+            .get(starter.id) as Row | undefined
+          if (exists) {
+            if (String(exists.source) !== "built-in") {
+              throw new Error(`Starter Agent Profile ${starter.id} has non-built-in authority.`)
+            }
+            const currentVersion = Number(exists.current_version)
+            const current = this.get({ profileId: starter.id, version: currentVersion })
+            const definitionChanged =
+              canonicalJson(current.version.definition) !== canonicalJson(starter.definition)
+            const metadataChanged =
+              String(exists.name) !== starter.name ||
+              String(exists.description) !== starter.description ||
+              String(exists.category) !== starter.category
+            if (!definitionChanged && !metadataChanged) continue
+
+            const nextVersion = definitionChanged ? currentVersion + 1 : currentVersion
+            if (definitionChanged) {
+              this.insertVersion(starter.id, nextVersion, starter.definition, {
+                kind: "built-in",
+                sourceLabel: "Flapstack starter catalog",
+                importedAt: null,
+                trusted: true,
+                disabledRequirements: [],
+              })
+            }
+            const now = epoch()
+            const updated = this.sqlite
+              .prepare(
+                `UPDATE agent_profiles SET name = ?, description = ?, category = ?,
+                   current_version = ?, updated_at = ?, archived_at = NULL
+                 WHERE id = ? AND source = 'built-in' AND current_version = ?`,
+              )
+              .run(
+                starter.name,
+                starter.description,
+                starter.category,
+                nextVersion,
+                now,
+                starter.id,
+                currentVersion,
+              )
+            if (updated.changes !== 1) throw versionConflict()
+            this.audit(starter.id, "starter-updated", {
+              previousVersion: currentVersion,
+              version: nextVersion,
+              definitionChanged,
+              metadataChanged,
+            })
+            continue
+          }
           const now = epoch()
           this.sqlite
             .prepare(

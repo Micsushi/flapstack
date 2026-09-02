@@ -270,10 +270,12 @@ describe("Stage 6 T2-core performance coverage", () => {
 
   it("runs the bounded performance gate only from the supported Windows check path", () => {
     const source = readFileSync("scripts/check.mjs", "utf8")
+    const runner = readFileSync("scripts/stage6-performance.mjs", "utf8")
 
     expect(source).toContain("scripts/stage6-performance.mjs")
     expect(source).toContain('"--ci"')
     expect(source).toMatch(/process\.platform\s*===\s*"win32"/)
+    expect(runner).toMatch(/if \(boundedCi\) \{\s*ensureNativeAbi\("node"\)/)
   })
 
   it("measures harness overhead in outlier-resistant fixed batches", () => {

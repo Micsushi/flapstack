@@ -59,7 +59,11 @@ import {
   type ProductMcpInvalidationBridge,
 } from "./lib/mcp-control/invalidation-bridge"
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
-import { runIsolatedStartupTasks, runRequiredStartup } from "./lib/startup-gate"
+import {
+  describeRequiredStartupFailure,
+  runIsolatedStartupTasks,
+  runRequiredStartup,
+} from "./lib/startup-gate"
 import {
   abortAndWaitForShutdownIdle,
   installBeforeQuitShutdown,
@@ -88,6 +92,7 @@ import {
   type ProtocolReceiptSource,
 } from "./lib/protocol-receipt"
 import { cleanupGitWatchers } from "./lib/git/watcher"
+import { APP_COMMAND_CHANNEL, type AppCommand } from "../shared/app-command"
 import { recoverInterruptedImports } from "./lib/portability/importer"
 import { beginExclusivePortabilityOperation } from "./lib/portability/operations"
 import { cancelAllPendingOAuth, handleMcpOAuthCallback } from "./lib/mcp-auth"
@@ -766,6 +771,10 @@ if (gotTheLock) {
     const buildMenu = () => {
       // Show devtools menu item only in dev mode or when unlocked
       const showDevTools = !app.isPackaged || devToolsUnlocked
+      const sendAppCommand = (command: AppCommand) => {
+        const win = BrowserWindow.getFocusedWindow() ?? getWindow()
+        if (win && !win.isDestroyed()) win.webContents.send(APP_COMMAND_CHANNEL, command)
+      }
       const template: Electron.MenuItemConstructorOptions[] = [
         {
           label: APP_DISPLAY_NAME,
@@ -908,8 +917,23 @@ if (gotTheLock) {
         {
           label: "Edit",
           submenu: [
-            { role: "undo" },
-            { role: "redo" },
+            ...(process.platform === "darwin"
+              ? ([
+                  {
+                    label: "Undo",
+                    accelerator: "Cmd+Z",
+                    click: () => sendAppCommand("history-undo"),
+                  },
+                  {
+                    label: "Redo",
+                    accelerator: "Cmd+Shift+Z",
+                    click: () => sendAppCommand("history-redo"),
+                  },
+                ] satisfies Electron.MenuItemConstructorOptions[])
+              : ([
+                  { role: "undo" },
+                  { role: "redo" },
+                ] satisfies Electron.MenuItemConstructorOptions[])),
             { type: "separator" },
             { role: "cut" },
             { role: "copy" },
@@ -961,6 +985,25 @@ if (gotTheLock) {
             { role: "togglefullscreen" },
           ],
         },
+        ...(process.platform === "darwin"
+          ? ([
+              {
+                label: "Go",
+                submenu: [
+                  {
+                    label: "Back",
+                    accelerator: "Cmd+[",
+                    click: () => sendAppCommand("navigate-back"),
+                  },
+                  {
+                    label: "Forward",
+                    accelerator: "Cmd+]",
+                    click: () => sendAppCommand("navigate-forward"),
+                  },
+                ],
+              },
+            ] satisfies Electron.MenuItemConstructorOptions[])
+          : []),
         {
           label: "Window",
           submenu: [
@@ -1162,6 +1205,15 @@ if (gotTheLock) {
             {
               name: "Automation services",
               run: async () => {
+                registerDatabaseMaintenanceParticipant("automation-services", {
+                  pause: async () => {
+                    await automationBetaTransition
+                    await stopAutomationBetaServices()
+                  },
+                  resume: async () => {
+                    if (isBetaFeatureEnabled("automations")) await startAutomationBetaServices()
+                  },
+                })
                 if (!isBetaFeatureEnabled("automations")) return
                 await startAutomationBetaServices()
               },
@@ -1345,7 +1397,19 @@ if (gotTheLock) {
         closeDatabase()
       },
       exit: (code) => app.exit(code),
-      report: (error) => console.error("[App] Failed required startup:", error),
+      report: (error) => {
+        console.error("[App] Failed required startup:", error)
+        const notice = describeRequiredStartupFailure(error, getDatabasePath())
+        dialog.showMessageBoxSync({
+          type: "error",
+          title: notice.title,
+          message: notice.message,
+          detail: notice.detail,
+          buttons: ["Quit"],
+          defaultId: 0,
+          noLink: true,
+        })
+      },
     })
     if (!startupReady) return
 

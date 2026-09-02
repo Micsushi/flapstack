@@ -1315,7 +1315,7 @@ function supportReason(
       reason: workflow?.unavailableReason ?? "No production seam owns this performance metric.",
     }
   }
-  if (candidate.platform !== "win32") {
+  if (candidate.platform === "linux") {
     return {
       supported: false,
       reason: `Observed product benchmark adapters are unavailable on ${candidate.platform}.`,

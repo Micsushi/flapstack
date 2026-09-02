@@ -290,6 +290,29 @@ describe("direct Codex Runtime adapter", () => {
     ).toMatchObject({ effort: "low", serviceTier: "fast" })
   })
 
+  it.each([
+    ["minimal", "low"],
+    ["ultra", "max"],
+  ])("maps shared %s effort to Codex App Server %s", async (requested, sent) => {
+    const client = new FakeCodexProtocolClient()
+    const adapter = createCodexRuntimeAdapterFactory({
+      appendActivity: collectActivity().append,
+      resolveThreadParams: () => ({ cwd: "/worktree" }),
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.144.1",
+      createClient: () => client,
+    })()
+    const context = runtimeContext()
+    context.launch.controls.modelEffort = requested
+
+    const session = await adapter.startSession(context)
+    await adapter.startTurn(context, session, "PROMPT")
+
+    expect(
+      client.requests.find((request) => request.method === "turn/start")?.params,
+    ).toMatchObject({ effort: sent })
+  })
+
   it("archives hidden Codex threads after a completed response", async () => {
     const client = new FakeCodexProtocolClient()
     const adapter = createCodexRuntimeAdapterFactory({

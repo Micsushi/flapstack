@@ -277,7 +277,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
             clientUserMessageId: context.runId,
             input,
             model: context.launch.model,
-            effort: context.launch.controls.modelEffort,
+            effort: normalizeCodexRuntimeEffort(context.launch.controls.modelEffort),
             ...(context.outputSchema ? { outputSchema: context.outputSchema } : {}),
             ...(context.launch.controls.serviceTier
               ? { serviceTier: context.launch.controls.serviceTier }
@@ -657,6 +657,12 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
   private now(): Date {
     return (this.options.now ?? (() => new Date()))()
   }
+}
+
+function normalizeCodexRuntimeEffort(effort: string | null): string | null {
+  if (effort === "minimal") return "low"
+  if (effort === "ultra") return "max"
+  return effort
 }
 
 function withServiceTier(

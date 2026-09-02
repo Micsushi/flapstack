@@ -55,6 +55,7 @@ import {
   hasVaultEditorChanges,
   hasUnsavedVaultDrafts,
   markVaultEditorConflict,
+  projectVaultCustomNoteEditorCacheAtom,
   protectUnsavedVaultDraftsBeforeUnload,
   rebaseVaultEditorAfterSave,
   updateVaultEditorDraft,
@@ -103,6 +104,7 @@ export function ProjectVaultView() {
   const [searchQuery, setSearchQuery] = useState("")
   const deferredQuery = useDeferredValue(searchQuery.trim())
   const [editorCache, setEditorCache] = useAtom(projectVaultEditorCacheAtom)
+  const customNoteEditorCache = useAtomValue(projectVaultCustomNoteEditorCacheAtom)
   const editors = editorCache[projectId] ?? {}
   const setEditors: Dispatch<SetStateAction<Partial<Record<SectionId, VaultEditorState>>>> = (
     update,
@@ -196,16 +198,18 @@ export function ProjectVaultView() {
 
   const editor = selectedSectionId ? editors[selectedSectionId] : undefined
   const selectedSection = sections.find((section) => section.sectionId === selectedSectionId)
-  const hasUnsavedDrafts = hasUnsavedVaultDrafts(editorCache)
+  const hasUnsavedDrafts =
+    hasUnsavedVaultDrafts(editorCache) || hasUnsavedVaultDrafts(customNoteEditorCache)
 
   useEffect(() => {
     if (!hasUnsavedDrafts) return
     const protectUnsavedDrafts = (event: BeforeUnloadEvent) => {
       protectUnsavedVaultDraftsBeforeUnload(event, editorCache)
+      protectUnsavedVaultDraftsBeforeUnload(event, customNoteEditorCache)
     }
     window.addEventListener("beforeunload", protectUnsavedDrafts)
     return () => window.removeEventListener("beforeunload", protectUnsavedDrafts)
-  }, [editorCache, hasUnsavedDrafts])
+  }, [customNoteEditorCache, editorCache, hasUnsavedDrafts])
   const backupsQuery = trpc.projectVaults.listBackups.useQuery(
     { projectId, sectionId: selectedSectionId ?? "index" },
     { enabled: !!projectId && !!selectedSectionId && showHistory },
