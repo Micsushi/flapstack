@@ -84,6 +84,7 @@ export function queueChatRun(
   db: Database.Database,
   input: {
     chatId: string
+    subChatId?: string
     initialPrompt: string
     idempotencyKey: string
     vaultContextSectionIds?: string[]
@@ -93,17 +94,17 @@ export function queueChatRun(
   if (!chat || chat.archived_at) {
     return { ok: false, code: "stale-target", message: "Chat is missing or archived." }
   }
-  if (!AGENT_HARNESSES.includes(chat.harness as AgentHarness)) {
-    return { ok: false, code: "invalid-input", message: "Chat does not use a launchable harness." }
-  }
-  const harness = chat.harness as AgentHarness
   const subChat = db
     .prepare(
-      "SELECT id, messages, mode, permission_mode, worktree_path, model FROM sub_chats WHERE chat_id = ? ORDER BY created_at LIMIT 1",
+      "SELECT id, messages, mode, harness, permission_mode, worktree_path, model FROM sub_chats WHERE chat_id = ? AND (? IS NULL OR id = ?) ORDER BY created_at, id LIMIT 1",
     )
-    .get(input.chatId) as Row | undefined
+    .get(input.chatId, input.subChatId ?? null, input.subChatId ?? null) as Row | undefined
   if (!subChat) {
     return { ok: false, code: "stale-target", message: "Chat conversation is missing." }
+  }
+  const harness = (subChat.harness ?? chat.harness) as AgentHarness
+  if (!AGENT_HARNESSES.includes(harness)) {
+    return { ok: false, code: "invalid-input", message: "Chat does not use a launchable harness." }
   }
   if (isSubChatRewinding(String(subChat.id))) {
     return {
@@ -118,11 +119,28 @@ export function queueChatRun(
   }
 
   const promptMessageId = `mcp-${input.idempotencyKey}`
+  const vaultSections =
+    input.vaultContextSectionIds === undefined ? null : JSON.stringify(input.vaultContextSectionIds)
+  const replay = (row: Row): QueueChatRunResult => {
+    if (
+      row.sub_chat_id !== subChat.id ||
+      row.initial_prompt !== input.initialPrompt ||
+      row.vault_context_sections !== vaultSections
+    )
+      return {
+        ok: false,
+        code: "invalid-input",
+        message: "Run request identity was reused with different content or target.",
+      }
+    return { ok: true, runId: String(row.id), created: false, status: String(row.status) }
+  }
   const existing = db
-    .prepare("SELECT id, status FROM agent_runs WHERE chat_id = ? AND prompt_message_id = ?")
+    .prepare(
+      "SELECT id, status, sub_chat_id, initial_prompt, vault_context_sections FROM agent_runs WHERE chat_id = ? AND prompt_message_id = ?",
+    )
     .get(input.chatId, promptMessageId) as Row | undefined
   if (existing) {
-    return { ok: true, runId: String(existing.id), created: false, status: String(existing.status) }
+    return replay(existing)
   }
 
   const runId = stableMcpRunId(input.chatId, input.idempotencyKey)
@@ -152,7 +170,11 @@ export function queueChatRun(
     permission: runtimePermissionSnapshot(permissionMode as RunPermissionMode, customPermissions),
   })
   const transaction = db.transaction(() => {
-    db.prepare("UPDATE sub_chats SET run_status = 'pending' WHERE id = ?").run(subChat.id)
+    db.prepare(
+      `UPDATE sub_chats SET run_status = CASE WHEN EXISTS (
+      SELECT 1 FROM agent_runs WHERE sub_chat_id = ? AND status = 'running'
+    ) THEN 'running' ELSE 'pending' END WHERE id = ?`,
+    ).run(subChat.id, subChat.id)
     db.prepare(
       `INSERT INTO agent_runs (
         id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
@@ -173,9 +195,7 @@ export function queueChatRun(
       subChat.worktree_path ?? chat.worktree_path ?? null,
       promptMessageId,
       input.initialPrompt,
-      input.vaultContextSectionIds === undefined
-        ? null
-        : JSON.stringify(input.vaultContextSectionIds),
+      vaultSections,
       ...runtimeSnapshotSqlValues(runtimeSnapshot),
       nowEpochSeconds(),
     )
@@ -184,10 +204,12 @@ export function queueChatRun(
     transaction.immediate()
   } catch (error) {
     const raced = db
-      .prepare("SELECT id, status FROM agent_runs WHERE id = ? AND chat_id = ?")
+      .prepare(
+        "SELECT id, status, sub_chat_id, initial_prompt, vault_context_sections FROM agent_runs WHERE id = ? AND chat_id = ?",
+      )
       .get(runId, input.chatId) as Row | undefined
     if (raced) {
-      return { ok: true, runId: String(raced.id), created: false, status: String(raced.status) }
+      return replay(raced)
     }
     throw error
   }
