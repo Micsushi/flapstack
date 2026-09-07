@@ -194,36 +194,62 @@ export class WorkspaceEditingService {
   }
 
   async save(input: SaveWorkspaceEdit) {
-    return this.saveRecord(saveWorkspaceEditSchema.parse(input), null)
+    const value = saveWorkspaceEditSchema.parse(input)
+    const scope = this.writable(value, value.intent)
+    return withRootLock(scope.root.canonicalPath, () => {
+      if (this.writable(value, value.intent).identity !== scope.identity)
+        throw new Error("Editor root changed")
+      return this.saveRecord(value, null)
+    })
   }
 
   async revert(input: z.infer<typeof revertWorkspaceEditSchema>) {
     const value = revertWorkspaceEditSchema.parse(input)
-    this.writable(value, "save")
-    let row = this.db
-      .select()
-      .from(schema.workspaceEdits)
-      .where(eq(schema.workspaceEdits.id, value.operationId))
-      .get()
-    if (!row || row.chatId !== value.chatId || row.projectId !== value.projectId)
-      throw new Error("Edit is unavailable in this scope")
-    if (row.state === "prepared") {
-      row = await withRootLock(row.rootPath, () => this.recover(row!))
-    }
-    if (row.state === "expired") throw new Error("This edit is outside the retained undo history")
-    if (row.state !== "applied") throw new Error("Only an applied edit can be reversed")
-    if (this.scope(value).identity !== row.rootIdentity)
-      throw new Error("Edit history belongs to a different registered root")
-    return this.saveRecord(
-      {
-        ...value,
-        relativePath: row.relativePath,
-        expectedSha256: row.afterSha256,
-        content: row.beforeContent,
-        intent: "save",
-      },
-      row.id,
-    )
+    const scope = this.writable(value, "save")
+    return withRootLock(scope.root.canonicalPath, async () => {
+      if (this.writable(value, "save").identity !== scope.identity)
+        throw new Error("Editor root changed")
+      const existing = this.db
+        .select()
+        .from(schema.workspaceEdits)
+        .where(eq(schema.workspaceEdits.id, value.id))
+        .get()
+      if (existing) {
+        if (
+          existing.projectId !== value.projectId ||
+          existing.chatId !== value.chatId ||
+          existing.revertsId !== value.operationId ||
+          existing.rootIdentity !== scope.identity ||
+          existing.rootPath !== scope.root.canonicalPath
+        )
+          throw new Error("Edit id was reused for a different request")
+        return this.dto(existing.state === "prepared" ? await this.recover(existing) : existing)
+      }
+      let row = this.db
+        .select()
+        .from(schema.workspaceEdits)
+        .where(eq(schema.workspaceEdits.id, value.operationId))
+        .get()
+      if (!row || row.chatId !== value.chatId || row.projectId !== value.projectId)
+        throw new Error("Edit is unavailable in this scope")
+      if (row.state === "prepared") {
+        row = await this.recover(row)
+      }
+      if (row.state === "expired") throw new Error("This edit is outside the retained undo history")
+      if (row.state !== "applied") throw new Error("Only an applied edit can be reversed")
+      if (this.scope(value).identity !== row.rootIdentity)
+        throw new Error("Edit history belongs to a different registered root")
+      return this.saveRecord(
+        {
+          ...value,
+          relativePath: row.relativePath,
+          expectedSha256: row.afterSha256,
+          content: row.beforeContent,
+          intent: "save",
+        },
+        row.id,
+      )
+    })
   }
 
   private async saveRecord(input: SaveWorkspaceEdit, revertsId: string | null) {
@@ -243,124 +269,120 @@ export class WorkspaceEditingService {
         revertsId,
       ]),
     )
-    return withRootLock(scope.root.canonicalPath, async () => {
-      if (this.writable(input, input.intent).identity !== scope.identity)
-        throw new Error("Editor root changed")
-      const existing = this.db
-        .select()
+    // Both callers hold the canonical-root lock through lookup, recovery and commit.
+    if (this.writable(input, input.intent).identity !== scope.identity)
+      throw new Error("Editor root changed")
+    const existing = this.db
+      .select()
+      .from(schema.workspaceEdits)
+      .where(eq(schema.workspaceEdits.id, input.id))
+      .get()
+    if (existing) {
+      if (existing.requestHash !== requestHash || existing.rootIdentity !== scope.identity)
+        throw new Error("Edit id was reused for a different request")
+      return this.dto(existing.state === "prepared" ? await this.recover(existing) : existing)
+    }
+    const pending = this.db
+      .select()
+      .from(schema.workspaceEdits)
+      .where(
+        and(
+          eq(schema.workspaceEdits.rootPath, scope.root.canonicalPath),
+          eq(schema.workspaceEdits.rootIdentity, scope.identity),
+          eq(schema.workspaceEdits.state, "prepared"),
+        ),
+      )
+      .orderBy(asc(schema.workspaceEdits.createdAt))
+      .limit(1000)
+      .all()
+    for (const row of pending) await this.recover(row, input)
+    const before = await this.readForSave({ ...input, relativePath: path })
+    if (before.sha256 !== input.expectedSha256) throw new WorkspaceEditConflictError(before.sha256)
+    const row: Row = {
+      id: input.id,
+      projectId: input.projectId,
+      chatId: input.chatId,
+      rootPath: scope.root.canonicalPath,
+      rootIdentity: scope.identity,
+      relativePath: path,
+      requestHash,
+      beforeContent: before.content,
+      afterContent: input.content,
+      beforeSha256: before.sha256,
+      afterSha256,
+      revertsId,
+      state: "prepared",
+      createdAt: Date.now(),
+    }
+    this.db.transaction((tx) => {
+      const usage = tx
+        .select({
+          count: sql<number>`count(case when state != 'expired' then 1 end)`,
+          bytes: sql<number>`coalesce(sum(length(cast(before_content as blob)) + length(cast(after_content as blob))), 0)`,
+        })
         .from(schema.workspaceEdits)
-        .where(eq(schema.workspaceEdits.id, input.id))
-        .get()
-      if (existing) {
-        if (existing.requestHash !== requestHash || existing.rootIdentity !== scope.identity)
-          throw new Error("Edit id was reused for a different request")
-        return this.dto(existing.state === "prepared" ? await this.recover(existing) : existing)
-      }
-      const pending = this.db
-        .select()
-        .from(schema.workspaceEdits)
-        .where(
-          and(
-            eq(schema.workspaceEdits.rootPath, scope.root.canonicalPath),
-            eq(schema.workspaceEdits.rootIdentity, scope.identity),
-            eq(schema.workspaceEdits.state, "prepared"),
-          ),
-        )
-        .orderBy(asc(schema.workspaceEdits.createdAt))
-        .limit(1000)
-        .all()
-      for (const row of pending) await this.recover(row, input)
-      const before = await this.readForSave({ ...input, relativePath: path })
-      if (before.sha256 !== input.expectedSha256)
-        throw new WorkspaceEditConflictError(before.sha256)
-      const row: Row = {
-        id: input.id,
-        projectId: input.projectId,
-        chatId: input.chatId,
-        rootPath: scope.root.canonicalPath,
-        rootIdentity: scope.identity,
-        relativePath: path,
-        requestHash,
-        beforeContent: before.content,
-        afterContent: input.content,
-        beforeSha256: before.sha256,
-        afterSha256,
-        revertsId,
-        state: "prepared",
-        createdAt: Date.now(),
-      }
-      this.db.transaction((tx) => {
-        const usage = tx
-          .select({
-            count: sql<number>`count(case when state != 'expired' then 1 end)`,
-            bytes: sql<number>`coalesce(sum(length(cast(before_content as blob)) + length(cast(after_content as blob))), 0)`,
-          })
+        .get()!
+      const needsSpace = () =>
+        usage.count >= 1000 || usage.bytes + before.byteLength + bytes.byteLength > 64 * 1024 * 1024
+      if (needsSpace()) {
+        const finalized = tx
+          .select()
           .from(schema.workspaceEdits)
-          .get()!
-        const needsSpace = () =>
-          usage.count >= 1000 ||
-          usage.bytes + before.byteLength + bytes.byteLength > 64 * 1024 * 1024
-        if (needsSpace()) {
-          const finalized = tx
-            .select()
-            .from(schema.workspaceEdits)
-            .where(sql`${schema.workspaceEdits.state} in ('applied', 'failed', 'conflict')`)
-            .orderBy(asc(schema.workspaceEdits.createdAt), asc(schema.workspaceEdits.id))
-            .limit(1000)
-            .all()
-          for (const old of finalized) {
-            if (!needsSpace()) break
-            tx.update(schema.workspaceEdits)
-              .set({ state: "expired", beforeContent: "", afterContent: "" })
-              .where(eq(schema.workspaceEdits.id, old.id))
-              .run()
-            usage.count--
-            usage.bytes -=
-              Buffer.byteLength(old.beforeContent) + Buffer.byteLength(old.afterContent)
-          }
+          .where(sql`${schema.workspaceEdits.state} in ('applied', 'failed', 'conflict')`)
+          .orderBy(asc(schema.workspaceEdits.createdAt), asc(schema.workspaceEdits.id))
+          .limit(1000)
+          .all()
+        for (const old of finalized) {
+          if (!needsSpace()) break
+          tx.update(schema.workspaceEdits)
+            .set({ state: "expired", beforeContent: "", afterContent: "" })
+            .where(eq(schema.workspaceEdits.id, old.id))
+            .run()
+          usage.count--
+          usage.bytes -= Buffer.byteLength(old.beforeContent) + Buffer.byteLength(old.afterContent)
         }
-        if (needsSpace()) throw new Error("Pending edit recovery fills the retained history limit")
-        tx.insert(schema.workspaceEdits).values(row).run()
-      })
-      try {
-        await this.write(
-          scope.root.canonicalPath,
-          path,
-          { data: bytes },
-          {
-            overwrite: true,
-            createParents: false,
-            expectedSha256: before.sha256,
-            maxExistingBytes: workspaceEditMaxBytes,
-            beforeCommit: () => {
-              if (this.writable(input, input.intent).identity !== scope.identity)
-                throw new Error("Editor root changed")
-            },
-            afterCommit: () => {
-              if (this.writable(input, input.intent).identity !== scope.identity)
-                throw new Error("Editor root changed")
-              this.finish(row, "applied")
-            },
-          },
-        )
-        return this.dto({ ...row, state: "applied" })
-      } catch (error) {
-        // If metadata is unavailable, keep the prepared record for a later retry/restart.
-        // The rooted writer already attempted safe rollback; never blindly restore here.
-        try {
-          await this.recover(row)
-        } catch {
-          /* Retain durable recovery bytes. */
-        }
-        try {
-          const current = await this.readForSave({ ...input, relativePath: path })
-          if (current.sha256 !== before.sha256) throw new WorkspaceEditConflictError(current.sha256)
-        } catch (conflict) {
-          if (conflict instanceof WorkspaceEditConflictError) throw conflict
-        }
-        throw error
       }
+      if (needsSpace()) throw new Error("Pending edit recovery fills the retained history limit")
+      tx.insert(schema.workspaceEdits).values(row).run()
     })
+    try {
+      await this.write(
+        scope.root.canonicalPath,
+        path,
+        { data: bytes },
+        {
+          overwrite: true,
+          createParents: false,
+          expectedSha256: before.sha256,
+          maxExistingBytes: workspaceEditMaxBytes,
+          beforeCommit: () => {
+            if (this.writable(input, input.intent).identity !== scope.identity)
+              throw new Error("Editor root changed")
+          },
+          afterCommit: () => {
+            if (this.writable(input, input.intent).identity !== scope.identity)
+              throw new Error("Editor root changed")
+            this.finish(row, "applied")
+          },
+        },
+      )
+      return this.dto({ ...row, state: "applied" })
+    } catch (error) {
+      // If metadata is unavailable, keep the prepared record for a later retry/restart.
+      // The rooted writer already attempted safe rollback; never blindly restore here.
+      try {
+        await this.recover(row)
+      } catch {
+        /* Retain durable recovery bytes. */
+      }
+      try {
+        const current = await this.readForSave({ ...input, relativePath: path })
+        if (current.sha256 !== before.sha256) throw new WorkspaceEditConflictError(current.sha256)
+      } catch (conflict) {
+        if (conflict instanceof WorkspaceEditConflictError) throw conflict
+      }
+      throw error
+    }
   }
 
   private async readForSave(input: z.infer<typeof workspaceEditTargetSchema>) {

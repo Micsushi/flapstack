@@ -139,6 +139,43 @@ it("expires old snapshots at the retention limit without losing idempotency or b
   expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(input.content)
 })
 
+it.each([false, true])("replays undo after source expiry (interrupted=%s)", async (interrupted) => {
+  const saved = await service.save(request())
+  const copy = sqlite.prepare(`INSERT INTO workspace_edits
+    SELECT ?, project_id, chat_id, root_path, root_identity, relative_path, request_hash,
+      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1
+    FROM workspace_edits WHERE id = ?`)
+  sqlite.transaction(() => {
+    for (let i = 0; i < 999; i++) copy.run(randomUUID(), saved.id)
+  })()
+  const undo = { ...scope, id: randomUUID(), operationId: saved.id }
+  if (interrupted) {
+    const interruptedService = new WorkspaceEditingService(db, (root, path, source, options) =>
+      writeFileInsideRoot(root, path, source, { ...options, afterCommit: undefined }),
+    )
+    await interruptedService.revert(undo)
+  }
+  const results = await Promise.all([service.revert(undo), service.revert(undo)])
+  expect(results[0]).toEqual(results[1])
+  expect(await service.revert(undo)).toEqual(results[0])
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
+  await expect(service.revert({ ...undo, operationId: randomUUID() })).rejects.toThrow("reused")
+  sqlite.prepare("UPDATE chats SET permission_mode = 'read-only'").run()
+  await expect(service.revert(undo)).rejects.toThrow("permit")
+})
+
+it("serializes duplicate reversals of a prepared source", async () => {
+  service = new WorkspaceEditingService(db, (root, path, source, options) =>
+    writeFileInsideRoot(root, path, source, { ...options, afterCommit: undefined }),
+  )
+  const saved = await service.save(request())
+  service = new WorkspaceEditingService(db)
+  const undo = { ...scope, id: randomUUID(), operationId: saved.id }
+  const results = await Promise.all([service.revert(undo), service.revert(undo)])
+  expect(results[0]).toEqual(results[1])
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
+})
+
 it("serializes competing editor saves and refuses the stale draft", async () => {
   const results = await Promise.allSettled([
     service.save(request("first")),

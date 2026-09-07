@@ -31,6 +31,9 @@ A repeated UUID returns
 its recorded outcome rather than running the write again; changing its request
 is rejected. Undo creates an inverse save, and reversing that save supplies redo.
 Both still require the exact current bytes and a valid root and permission scope.
+An undo retry resolves its own operation before consulting retained source text,
+including interrupted inverses whose source snapshot has since expired. Duplicate
+requests share the root lock through recovery and finalization.
 
 History reserves at most 1,000 retained snapshots and 64 MiB of before/after text
 per profile. Reserving a new operation expires oldest finalized snapshots as
@@ -45,5 +48,5 @@ Focused coverage is in `tests/workspace-editing.test.ts` and
 `tests/beta-feature-gates.test.ts`. Database-close tests model interrupted writes;
 an isolated Node child also exits after the file commit and before journal
 completion, then the reopened service recovers the prepared operation. The
-fixture passed on Windows. This is not an Electron app-crash or interactive
+fixture passed on Windows, Linux and macOS. This is not an Electron app-crash or interactive
 editor walkthrough. S7-F4 acceptance remains open.
