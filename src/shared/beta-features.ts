@@ -36,7 +36,7 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
     id: "workspaceEditing",
     label: "Workspace Editing",
     description:
-      "Edit connected chat text files with durable drafts, explicit conflict-checked Save, disk review and undo. Autosave and full conflict recovery are not yet available.",
+      "Edit connected chat text files with durable drafts, conflict-checked Save, opt-in autosave, disk review and undo. Full recovery controls remain unfinished.",
   },
   {
     id: "diffAnnotations",

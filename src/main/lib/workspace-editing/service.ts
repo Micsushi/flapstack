@@ -490,6 +490,8 @@ export class WorkspaceEditingService {
       return {
         draft,
         leaseToken: token,
+        autosaveAllowed:
+          parsePermissionMode(this.scope(value).chat.permissionMode) !== "ask-before-edits",
         diskSha256: disk.sha256,
         conflict: !!draft.pendingSave || disk.sha256 !== draft.baseSha256,
       }

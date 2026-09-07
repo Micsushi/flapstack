@@ -24,6 +24,8 @@ export type WorkspaceDraftSessionState = {
   busy: boolean
   error: string | null
   interruptedSave: boolean
+  autosave: boolean
+  autosaveAllowed: boolean
 }
 
 /** Serialize IPC writes; acknowledgements update server state, never newer typing. */
@@ -41,12 +43,21 @@ export function createWorkspaceDraftSession(
     busy: false,
     error: null,
     interruptedSave: false,
+    autosave: false,
+    autosaveAllowed: false,
   }
   let leaseToken = ""
   let blocked = false
   let queue = Promise.resolve()
   let pendingUpdate: Update | null = null
   let pendingSave: Save | null = null
+  let autosaveTimer: ReturnType<typeof setTimeout> | undefined
+  let editGeneration = 0
+  const cancelAutosave = () => {
+    editGeneration++
+    clearTimeout(autosaveTimer)
+    autosaveTimer = undefined
+  }
   const listeners = new Set<() => void>()
   const publish = (change: Partial<WorkspaceDraftSessionState>) => {
     state = { ...state, ...change }
@@ -136,9 +147,43 @@ export function createWorkspaceDraftSession(
         conflict: opened.conflict,
         disk: null,
         error: null,
+        autosaveAllowed: opened.autosaveAllowed === true,
+        autosave: false,
       })
       return true
     })
+  const save = (
+    intent: "save" | "autosave" = "save",
+    reviewedDiskSha256?: string,
+    generation = editGeneration,
+  ) => {
+    if (intent === "save") cancelAutosave()
+    const eligible = () =>
+      intent === "save" ||
+      (state.autosave &&
+        state.autosaveAllowed &&
+        state.phase === "ready" &&
+        generation === editGeneration)
+    return enqueue(async () => {
+      if (!eligible() || blocked || !(await syncBuffer()) || !eligible()) return false
+      if (
+        reviewedDiskSha256 &&
+        (intent !== "save" || state.draft?.pendingSave || state.disk?.sha256 !== reviewedDiskSha256)
+      )
+        return false
+      if (state.conflict && !reviewedDiskSha256) return false
+      if (!reviewedDiskSha256 && state.disk?.content === state.content) return true
+      pendingSave = {
+        ...draftTarget(),
+        id: crypto.randomUUID(),
+        expectedRevision: state.draft!.revision,
+        intent,
+        ...(reviewedDiskSha256 ? { reviewedDiskSha256 } : {}),
+      }
+      publish({ interruptedSave: true })
+      return applySave(await client.save(pendingSave))
+    })
+  }
   return {
     getSnapshot: () => state,
     subscribe: (listener: () => void) => {
@@ -150,6 +195,7 @@ export function createWorkspaceDraftSession(
     open,
     setContent: (content: string) => {
       if (state.phase !== "ready") return false
+      if (content === state.content) return true
       if (
         content.includes("\0") ||
         /[\uD800-\uDFFF]/u.test(content) ||
@@ -163,32 +209,26 @@ export function createWorkspaceDraftSession(
         return false
       }
       publish({ content, ...(!blocked && !state.conflict ? { error: null } : {}) })
+      cancelAutosave()
       if (!blocked) void flush()
+      if (state.autosave && state.autosaveAllowed && !blocked && !state.conflict) {
+        const generation = editGeneration
+        autosaveTimer = setTimeout(() => {
+          autosaveTimer = undefined
+          void save("autosave", undefined, generation)
+        }, 750)
+      }
       return true
     },
     flush,
-    save: (intent: "save" | "autosave" = "save", reviewedDiskSha256?: string) =>
-      enqueue(async () => {
-        if (blocked || !(await syncBuffer())) return false
-        if (
-          reviewedDiskSha256 &&
-          (intent !== "save" ||
-            state.draft?.pendingSave ||
-            state.disk?.sha256 !== reviewedDiskSha256)
-        )
-          return false
-        if (state.conflict && !reviewedDiskSha256) return false
-        if (!reviewedDiskSha256 && state.disk?.content === state.content) return true
-        pendingSave = {
-          ...draftTarget(),
-          id: crypto.randomUUID(),
-          expectedRevision: state.draft!.revision,
-          intent,
-          ...(reviewedDiskSha256 ? { reviewedDiskSha256 } : {}),
-        }
-        publish({ interruptedSave: true })
-        return applySave(await client.save(pendingSave))
-      }),
+    save,
+    setAutosave: (enabled: boolean) => {
+      if (state.phase !== "ready" || (enabled && !state.autosaveAllowed)) return false
+      cancelAutosave()
+      publish({ autosave: enabled })
+      // Opting in never writes a recovered/existing buffer; only later typing arms it.
+      return true
+    },
     retry: () =>
       enqueue(async () => {
         if (state.phase !== "ready") return false
@@ -219,15 +259,17 @@ export function createWorkspaceDraftSession(
           return false
         }
       }),
-    release: (isIdle: () => boolean = () => true) =>
-      enqueue(async () => {
+    release: (isIdle: () => boolean = () => true) => {
+      if (isIdle()) cancelAutosave()
+      return enqueue(async () => {
         if (state.phase !== "ready") return false
         if (!(await syncBuffer()) || !isIdle()) return false
         const input = draftTarget()
         publish({ phase: "closed" })
         await client.release(input)
         return true
-      }),
+      })
+    },
     hasUnpersistedText: () =>
       !!pendingUpdate || (!!state.draft && state.content !== state.draft.content),
     needsRetry: () => blocked,

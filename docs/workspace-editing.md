@@ -5,7 +5,8 @@ UTF-8 text files in a connected chat worktree: read, compare-and-save,
 save-as to a new path, same-directory rename, history and reversal. Connected
 chat text viewers now support durable drafts, explicit Save, disk review and
 shared file undo/redo. Unbound viewers, Markdown/image previews and beta-disabled
-viewers remain read-only. Autosave and full conflict recovery UI are not yet implemented.
+viewers remain read-only. Autosave is opt-in per editor; full conflict recovery
+UI remains unfinished.
 The compare-and-save authority subtask (S7-F4-T1) is accepted independently of
 those unfinished editor surfaces.
 
@@ -59,7 +60,7 @@ Each buffer is limited to 2 MiB of strict UTF-8. Draft storage separately allows
 at most 1,000 buffers and 64 MiB of text, with at most 64 live leases. Reaching a
 limit fails visibly without expiring saved buffers. Releasing a lease does not
 delete its buffer. These APIs and the editable Monaco panes remain behind the
-off-by-default beta. No autosave timer writes files.
+off-by-default beta.
 
 ## Text pane behavior
 
@@ -68,6 +69,21 @@ pending text before requesting a conflict-checked file write. Acknowledgements
 never replace newer typing. Interrupted requests retry the same revision and
 operation UUID. A failed buffer update prevents the pane's Close action; an
 unacknowledged buffer also requests the browser's unload confirmation.
+
+Autosave is off when an editor opens. Where the main process permits automatic
+edits, opting in arms a 750ms quiet-period debounce only after subsequent typing.
+It never writes an existing/recovered buffer merely because the editor opens,
+the setting is enabled or its setting change is undone/redone. The setting is
+shared by matching panes and participates in shared undo/redo. Turning it off
+or releasing the last view cancels pending timers and queued automatic writes;
+an already in-flight save finishes. Reopening a released editor starts with
+autosave off. Explicit Save cancels its pending automatic timer.
+
+Ask-before-edits reports autosave unavailable. Every automatic write still checks
+current main-process permissions and disk content, regardless of the capability
+reported when opening. Conflicts and failed/uncertain requests stop automatic
+writes; no background retry loop resolves them. The buffer stays available for
+explicit retry/review. Autosave uses the same journal and file undo as Save.
 
 Panes for the same chat/root/path share one renderer session. Navigation releases
 the lease after persistence; reopening restores the durable buffer, not a fresh
@@ -100,6 +116,10 @@ model disposal emitted one Monaco cancellation diagnostic; draft assertions pass
 The subsequent reviewed-replacement fixture passed with one recorded write and
 no browser errors. Invalid-input rejection also restores the exact visible buffer
 when Monaco undo groups earlier valid typing with the rejected input.
+Fake-clock tests cover debounce, new-typing-only activation, disable/close fences,
+shared ownership and failure suppression. The actual headless Monaco fixture
+also verified no write on opt-in, one write after typing, cancellation on close,
+reopening with the retained text and autosave off, and visible controls at 390px.
 
 Each save requires a project/chat scope, relative path, exact SHA-256 of the
 opened bytes and a fresh operation UUID. The main process checks ownership,

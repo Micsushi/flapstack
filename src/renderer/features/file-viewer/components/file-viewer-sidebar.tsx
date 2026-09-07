@@ -975,6 +975,23 @@ function CodeViewer({
             size="sm"
             variant="ghost"
             className="h-7"
+            aria-pressed={binding.state.autosave}
+            disabled={!editable || !binding.state.autosaveAllowed}
+            title={
+              binding.state.autosaveAllowed
+                ? "Opt in for this editor. Only new typing autosaves; closing or turning off cancels pending saves. An in-flight save finishes."
+                : "This editor requires explicit Save; automatic edits are unavailable."
+            }
+            onClick={() => binding.setAutosave(!binding.state.autosave)}
+          >
+            {binding.state.autosaveAllowed
+              ? `Autosave ${binding.state.autosave ? "on" : "off"}`
+              : "Autosave unavailable"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7"
             disabled={!binding.session || binding.state.busy}
             aria-expanded={reviewDisk}
             onClick={() =>

@@ -319,6 +319,7 @@ it("requires explicit file saves in ask-before-edits mode", async () => {
   const owner = draftOwner()
   db.update(schema.chats).set({ permissionMode: "ask-before-edits" }).run()
   const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  expect(opened.autosaveAllowed).toBe(false)
   const buffer = await service.updateDraft(draftUpdate(opened), owner)
   await expect(
     service.saveDraft({ ...draftSave(opened, buffer.revision), intent: "autosave" }, owner),

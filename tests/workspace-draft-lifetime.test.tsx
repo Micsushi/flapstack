@@ -20,6 +20,7 @@ const backend = vi.hoisted(() => {
       leaseToken: "lease",
       conflict: false,
       diskSha256: "a".repeat(64),
+      autosaveAllowed: true,
     }
   })
   const update = vi.fn(
@@ -136,6 +137,33 @@ it("shares ownership through a pane move and releases only the last view", async
   expect(moved.session.getSnapshot().content).toBe("moving draft")
   expect(backend.open).toHaveBeenCalledOnce()
   expect(backend.release).not.toHaveBeenCalled()
+})
+
+it("shares the opt-in across panes and reverses the setting without writing a file", async () => {
+  let binding!: ReturnType<typeof useWorkspaceDraft>
+  const value = target()
+  function Fixture() {
+    binding = useWorkspaceDraft(value)
+    return <span>{String(binding.state.autosave)}</span>
+  }
+  container = document.createElement("div")
+  document.body.append(container)
+  reactRoot = createRoot(container)
+  await act(async () => reactRoot!.render(<Fixture />))
+  await act(async () => {
+    expect(binding.setAutosave(true)).toBe(true)
+  })
+  const other = acquire(value)
+  expect(other.session.getSnapshot().autosave).toBe(true)
+  await act(async () => {
+    expect(await undoAppAction()).toBe(true)
+  })
+  expect(other.session.getSnapshot().autosave).toBe(false)
+  await act(async () => {
+    expect(await redoAppAction()).toBe(true)
+  })
+  expect(other.session.getSnapshot().autosave).toBe(true)
+  expect(backend.save).not.toHaveBeenCalled()
 })
 
 it("protects unacknowledged text from unload and stops blocking after persistence", async () => {

@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto"
-import { expect, it, vi } from "vitest"
+import { afterEach, expect, it, vi } from "vitest"
 import { createWorkspaceDraftSession } from "../src/renderer/features/file-viewer/workspace-draft-session"
 
 const target = { projectId: "project", chatId: "chat", relativePath: "file.txt" }
 const hash = (content: string) => createHash("sha256").update(content).digest("hex")
 type Client = Parameters<typeof createWorkspaceDraftSession>[1]
+afterEach(() => vi.useRealTimers())
 it("requires the displayed disk digest and explicit save to resolve a conflict", async () => {
   const f = fixture()
   await f.session.open()
@@ -100,6 +101,7 @@ function fixture() {
         leaseToken: lease,
         diskSha256: hash(disk),
         conflict: hash(disk) !== row.baseSha256,
+        autosaveAllowed: true,
       }
     }),
     update: vi.fn(update),
@@ -131,6 +133,115 @@ function gate() {
   })
   return { promise, release }
 }
+
+it("autosaves only new typing after opt-in and a quiet debounce", async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  await f.session.open()
+  f.session.setContent("existing recovered draft")
+  await f.session.flush()
+  expect(f.session.setAutosave(true)).toBe(true)
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(f.getWrites()).toBe(0)
+  f.session.setContent("first new edit")
+  await vi.advanceTimersByTimeAsync(500)
+  f.session.setContent("latest edit")
+  await vi.advanceTimersByTimeAsync(749)
+  expect(f.getWrites()).toBe(0)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(f.getWrites()).toBe(1)
+  expect(f.getDisk()).toBe("latest edit")
+  expect(f.client.save).toHaveBeenCalledWith(expect.objectContaining({ intent: "autosave" }))
+})
+
+it("cancels pending autosave on disable and close, and never saves on reopening", async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  await f.session.open()
+  f.session.setAutosave(true)
+  f.session.setContent("kept draft")
+  f.session.setAutosave(false)
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(f.getWrites()).toBe(0)
+  f.session.setAutosave(true)
+  f.session.setContent("new kept draft")
+  await f.session.release()
+  await f.session.open()
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(f.getWrites()).toBe(0)
+  expect(f.session.getSnapshot()).toMatchObject({ content: "new kept draft", autosave: false })
+})
+
+it("fences a queued autosave disabled while buffer persistence is delayed", async () => {
+  vi.useFakeTimers()
+  const f = fixture(),
+    pending = gate()
+  await f.session.open()
+  f.session.setAutosave(true)
+  vi.mocked(f.client.update).mockImplementationOnce(async (input) => {
+    await pending.promise
+    return f.update(input)
+  })
+  f.session.setContent("slow buffer")
+  await vi.advanceTimersByTimeAsync(750)
+  f.session.setAutosave(false)
+  pending.release()
+  await f.session.flush()
+  expect(f.getWrites()).toBe(0)
+  expect(f.getRow().content).toBe("slow buffer")
+})
+
+it("keeps the shared timer when another pane still owns the editor", async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  await f.session.open()
+  f.session.setAutosave(true)
+  f.session.setContent("shared edit")
+  expect(await f.session.release(() => false)).toBe(false)
+  await vi.advanceTimersByTimeAsync(750)
+  expect(f.getWrites()).toBe(1)
+})
+
+it("does not schedule autosave without capability or while conflicted", async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  const originalOpen = f.client.open
+  f.client.open = async (input) => ({ ...(await originalOpen(input)), autosaveAllowed: false })
+  // The session retains the passed client object, not a capability guessed in the renderer.
+  await f.session.open()
+  expect(f.session.setAutosave(true)).toBe(false)
+  f.session.setContent("explicit only")
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(f.getWrites()).toBe(0)
+  expect(await f.session.save()).toBe(true)
+  const other = fixture()
+  await other.session.open()
+  other.session.setAutosave(true)
+  other.changeDisk("external")
+  await other.session.refreshDisk()
+  other.session.setContent("conflicted draft")
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(other.getWrites()).toBe(0)
+})
+
+it("does not repeat uncertain autosaves or allow a timer to duplicate explicit Save", async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  await f.session.open()
+  f.session.setAutosave(true)
+  f.session.setContent("explicit wins")
+  await f.session.save()
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(f.getWrites()).toBe(1)
+  vi.mocked(f.client.save).mockRejectedValueOnce(new Error("Permission revoked"))
+  f.session.setContent("preserved after denial")
+  await vi.advanceTimersByTimeAsync(750)
+  f.session.setContent("later retained text")
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(f.client.save).toHaveBeenCalledTimes(2)
+  expect(f.session.getSnapshot().content).toBe("later retained text")
+  expect(f.session.needsRetry()).toBe(true)
+})
 
 it("coalesces queued typing and persists it without writing the file", async () => {
   const { session, client, getRow, getDisk } = fixture()

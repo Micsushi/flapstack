@@ -21,6 +21,8 @@ const idleState: WorkspaceDraftSessionState = {
   busy: false,
   error: null,
   interruptedSave: false,
+  autosave: false,
+  autosaveAllowed: false,
 }
 const idleSnapshot = () => idleState
 const idleSubscribe = () => () => undefined
@@ -104,6 +106,22 @@ export function acquireWorkspaceDraft(target: Target) {
   }
 }
 
+function changeAutosave(key: string | null, enabled: boolean) {
+  if (!key) return false
+  const previous = sessions.get(key)?.session.getSnapshot().autosave
+  if (previous === undefined || !sessions.get(key)?.session.setAutosave(enabled)) return false
+  const apply = (value: boolean) => {
+    if (!sessions.get(key)?.session.setAutosave(value))
+      throw new Error("Reopen this editor with automatic edit permission to change autosave.")
+  }
+  recordAppAction({
+    label: `${enabled ? "Enable" : "Disable"} editor autosave`,
+    undo: () => apply(previous),
+    redo: () => apply(enabled),
+  })
+  return true
+}
+
 export function useWorkspaceDraft(input: Target | null) {
   const projectId = input?.projectId,
     chatId = input?.chatId
@@ -145,6 +163,7 @@ export function useWorkspaceDraft(input: Target | null) {
   )
   return {
     session,
+    setAutosave: (enabled: boolean) => changeAutosave(key, enabled),
     state: active?.error ? { ...state, phase: "error" as const, error: active.error } : state,
   }
 }
