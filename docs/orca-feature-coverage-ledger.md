@@ -3,6 +3,32 @@
 Audit baseline: Orca upstream `45c4823109bbd57f926f8b0c8bd843aa3d34818f`
 on 2026-08-31.
 
+## Current reconciliation
+
+Checked 2026-09-07 UTC (2026-09-06 MDT): upstream `main` is
+`d53cbed43f48179313d40811aa9b3330a44f0a46`. Its README and recursive source tree,
+account selection, notification cooldown and Quick Open documentation were
+rechecked. This is a targeted refresh, not a new full upstream acceptance audit.
+The family dispositions below remain the planning baseline; an unchecked task
+must still be compared with implementation before pickup.
+
+| Area              | Current implementation evidence                                                                                                                                        | Remaining acceptance                                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Account selection | Flapstack `dccb44f0` includes durable run provenance, secret-free renderer identity and fail-closed selected Claude credential loading                                 | Managed Codex homes, Claude refresh and account-specific usage are still separate S7-F1 requirements            |
+| Search            | Same candidate includes bounded/cancellable file discovery and visible retry/error feedback                                                                            | Partial streamed results and multi-provider Quick Open remain S7-F2 work                                        |
+| Notifications     | Exact Chat/sub-chat targets reach the desktop click bridge; per-task throttling now preserves simultaneous task alerts and latest-click routing ignores stale metadata | Native notification-center delivery, closed-window recovery and cross-device delivery need installed evidence   |
+| Contracts         | Opt-in OmniRoute model discovery and validation-only Archify adapter exist in the candidate                                                                            | No inference execution, model qualification or cross-product recovery certification follows from these adapters |
+| Browser/remote    | Existing capture and mobile-control services do not establish managed Chromium or SSH workspace parity                                                                 | S8-F2/S8-F5 and S9 native/remote acceptance remain open                                                         |
+
+Upstream Quick Open now distinguishes worktree file search, the new-tab omnibox,
+and a host/project-scoped jump palette with recent tasks and tabs. Keep these
+behaviors in S7-F2-T2's scope instead of treating file search alone as parity.
+Upstream notification cooldown is keyed per notification; no upstream code was
+copied for Flapstack's independent per-task delivery fix. Source references:
+[Quick Open](https://github.com/stablyai/orca/blob/d53cbed43f48179313d40811aa9b3330a44f0a46/docs/site/content/docs/model/quick-open.mdx),
+[notification cooldown](https://github.com/stablyai/orca/blob/d53cbed43f48179313d40811aa9b3330a44f0a46/src/main/ipc/notification-burst-cooldown.ts),
+[account selection](https://github.com/stablyai/orca/blob/d53cbed43f48179313d40811aa9b3330a44f0a46/src/main/codex-accounts/codex-account-selection.ts).
+
 This ledger classifies current user-facing feature families from Orca's README,
 desktop component/service trees, CLI specs, mobile routes, and remote/relay
 documentation. Internal refactors, fixtures, benchmarks, and one-off bug fixes

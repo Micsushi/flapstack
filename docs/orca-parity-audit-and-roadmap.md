@@ -2,6 +2,11 @@
 
 Audit date: 2026-08-31
 
+For the targeted 2026-09-07 UTC (2026-09-06 MDT) reconciliation against upstream
+`d53cbed43f48179313d40811aa9b3330a44f0a46` and Flapstack's current committed
+candidate, see [the coverage ledger](orca-feature-coverage-ledger.md#current-reconciliation).
+The historical audit below is not an installed-parity claim.
+
 ## Baseline
 
 - Flapstack: clean `main` at `508ff7c3a8d36f64d154431631287a520ea06eb5`.
