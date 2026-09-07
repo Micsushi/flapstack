@@ -48,6 +48,14 @@ If a selected file leaves the capped results, selection returns to the first row
 
 ## File read limits
 
+Text and Markdown previews match disk-change events against the same rooted file
+identity used for reads. Windows drive and UNC paths accept native separators
+and casing; POSIX case and literal backslashes stay distinct. Navigating outside
+the selected root disables the watcher. `tests/file-viewer-watch-refresh.test.tsx`
+covers refresh and navigation without enabling file editing.
+The router suite also changes an isolated real file, receives its native watcher
+event, matches the rooted identity, and reloads the updated bytes.
+
 The text preview accepts up to 2 MiB and the binary preview up to 20 MiB.
 Rooted reads enforce the caller's byte cap while reading, not just when checking
 the initial file size. A file that grows beyond its cap is rejected after at

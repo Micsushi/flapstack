@@ -24,6 +24,18 @@ const state = vi.hoisted(() => ({
 
 const assertRegisteredWorktree = vi.hoisted(() => vi.fn())
 const scanState = vi.hoisted(() => ({ opens: 0, beforeOpen: null as (() => Promise<void>) | null }))
+const watchState = vi.hoisted(() => ({ watcher: null as import("chokidar").FSWatcher | null }))
+vi.mock("chokidar", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("chokidar")>()
+  return {
+    ...actual,
+    watch: (...args: Parameters<typeof actual.watch>) => {
+      const watcher = actual.watch(...args)
+      watchState.watcher = watcher
+      return watcher
+    },
+  }
+})
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>()
   return {
@@ -72,6 +84,7 @@ import { filesRouter } from "../src/main/lib/trpc/routers/files"
 import { setBetaFeatureEnabled } from "../src/main/lib/beta-features/settings"
 import type { WorkspaceFileSearchEvent } from "../src/shared/workspace-search"
 import { randomUUID } from "node:crypto"
+import { matchesRootedFileChange, toRootedFileTarget } from "../src/renderer/lib/file-target"
 
 const roots: string[] = []
 const caller = filesRouter.createCaller({ getWindow: () => null })
@@ -106,6 +119,36 @@ afterEach(() => {
 })
 
 describe("files router mutation path safety", () => {
+  it("matches a real native watcher event to the open rooted file", async () => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    mkdirSync(join(root, "nested"))
+    const path = join(root, "nested", "雪.md")
+    writeFileSync(path, "before")
+    const target = toRootedFileTarget(root, path)
+    const events: string[] = []
+    const stream = await caller.watchChanges({ projectPath: root })
+    const subscription = stream.subscribe({ next: (event) => events.push(event.filename) })
+    const watcher = watchState.watcher!
+    try {
+      await new Promise<void>((resolve, reject) => {
+        watcher.once("ready", resolve)
+        watcher.once("error", reject)
+      })
+      writeFileSync(path, "after")
+      await vi.waitFor(() =>
+        expect(events.some((event) => matchesRootedFileChange(target, event))).toBe(true),
+      )
+      expect(
+        await caller.readTextFile({ rootPath: root, relativePath: "nested/雪.md" }),
+      ).toMatchObject({ ok: true, content: "after" })
+    } finally {
+      subscription.unsubscribe()
+      await watcher.close()
+      watchState.watcher = null
+    }
+  })
+
   it("bounds plan reads while preserving valid empty files", async () => {
     const root = state.userDataPath
     state.registeredRoots.add(root)

@@ -34,7 +34,7 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
     id: "diffAnnotations",
     label: "Diff Comments",
     description:
-      "Local diff-bound comments with editing and reversible deletion. Sending feedback to agents is not yet available.",
+      "Diff-bound comments with editing, reversible deletion, and queued feedback to the selected conversation. Sent batches show status and offer cancellation.",
   },
   {
     id: "streamedFileSearch",

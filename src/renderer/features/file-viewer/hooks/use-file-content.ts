@@ -1,6 +1,7 @@
-import { useMemo, useEffect, useRef } from "react"
+import { useMemo } from "react"
 import { trpc } from "../../../lib/trpc"
 import { toRootedFileTarget } from "../../../lib/file-target"
+import { useFileChangeRefresh } from "./use-file-change-refresh"
 
 /**
  * Error reasons for file loading failures
@@ -59,35 +60,7 @@ export function useFileContent(
     },
   )
 
-  const refetchRef = useRef(refetch)
-  useEffect(() => {
-    refetchRef.current = refetch
-  }, [refetch])
-
-  // Compute relative path for matching against file change events
-  const relativePath = useMemo(() => {
-    if (!projectPath || !filePath) return null
-    if (!filePath.startsWith("/")) return filePath
-    const projectPathWithSep = projectPath.endsWith("/") ? projectPath : `${projectPath}/`
-    if (filePath.startsWith(projectPathWithSep)) {
-      return filePath.slice(projectPathWithSep.length)
-    }
-    if (filePath === projectPath) return ""
-    return filePath
-  }, [projectPath, filePath])
-
-  // Subscribe to file changes and refetch when the viewed file changes
-  trpc.files.watchChanges.useSubscription(
-    { projectPath: projectPath || "" },
-    {
-      enabled: !!projectPath && !!relativePath,
-      onData: (change) => {
-        if (change.filename === relativePath) {
-          refetchRef.current()
-        }
-      },
-    },
-  )
+  useFileChangeRefresh(fileTarget, refetch)
 
   return useMemo((): FileContentResult => {
     if (!enabled) {

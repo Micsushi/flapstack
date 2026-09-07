@@ -39,3 +39,15 @@ export function toDurablePlanFileTarget(
   if (subChatId && filePath && isAbsolutePath(filePath)) return { subChatId, filePath }
   return null
 }
+
+/** Match native relative watcher paths without folding POSIX file identity. */
+export function matchesRootedFileChange(
+  target: RootedFileTarget | null,
+  changedPath: string,
+): boolean {
+  if (!target) return false
+  if (isWindowsFilePath(target.rootPath)) {
+    return slash(target.relativePath).toLowerCase() === slash(changedPath).toLowerCase()
+  }
+  return target.relativePath === changedPath
+}

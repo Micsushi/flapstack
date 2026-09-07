@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react"
+import { useState, useMemo, useCallback, useEffect } from "react"
 import Editor from "@monaco-editor/react"
 import { useTheme } from "next-themes"
 import { useAtom } from "jotai"
@@ -40,6 +40,7 @@ const FILE_VIEWER_MODES = [
 import { defaultEditorOptions, getMonacoTheme } from "./monaco-config"
 import { getFileName } from "../utils/file-utils"
 import { toRootedFileTarget } from "../../../lib/file-target"
+import { useFileChangeRefresh } from "../hooks/use-file-change-refresh"
 
 interface MarkdownViewerProps {
   filePath: string
@@ -69,30 +70,7 @@ export function MarkdownViewer({ filePath, projectPath, onClose }: MarkdownViewe
     { enabled: !!fileTarget, staleTime: 30000 },
   )
 
-  const refetchRef = useRef(refetch)
-  useEffect(() => {
-    refetchRef.current = refetch
-  }, [refetch])
-
-  const relativePath = useMemo(() => {
-    if (!filePath.startsWith("/")) return filePath
-    if (filePath.startsWith(projectPath)) {
-      return filePath.slice(projectPath.length + 1)
-    }
-    return filePath
-  }, [projectPath, filePath])
-
-  trpc.files.watchChanges.useSubscription(
-    { projectPath },
-    {
-      enabled: !!projectPath && !!relativePath,
-      onData: (change) => {
-        if (change.filename === relativePath) {
-          refetchRef.current()
-        }
-      },
-    },
-  )
+  useFileChangeRefresh(fileTarget, refetch)
 
   const editorOptions = useMemo(
     () => ({
