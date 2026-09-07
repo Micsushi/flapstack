@@ -4,6 +4,8 @@ The Workspace Editing beta is off by default. Its desktop API currently supports
 UTF-8 text files in a connected chat worktree: read, compare-and-save,
 save-as to a new path, same-directory rename, history and reversal. Editable
 panes and autosave UI are not yet implemented. Existing viewers remain read-only.
+The compare-and-save authority subtask (S7-F4-T1) is accepted independently of
+those unfinished editor surfaces.
 
 Each save requires a project/chat scope, relative path, exact SHA-256 of the
 opened bytes and a fresh operation UUID. The main process checks ownership,
@@ -81,3 +83,13 @@ removed, shared configuration fingerprints stayed unchanged, and Node ABI 127
 was restored after Electron ABI 140 verification. These probes do not constitute
 an Electron app-crash or interactive editor walkthrough. S7-F4 acceptance remains
 open; Linux Electron startup remains blocked by the unconfigured sandbox helper.
+
+The follow-up viewer portability checkpoint `a25a4f9e` passed broad gates on all
+three platforms. Its image-viewer interaction fixture recorded unchanged Windows
+drive/UNC targets and correctly joined relative targets without launching an
+external editor. At narrow width, the editor action retains its accessible name.
+Windows basenames and special-file language detection share the portable path
+classification; literal POSIX backslashes remain filename characters. The macOS
+native-watcher integration test has shown intermittent one-second event failures;
+diagnostic timestamps/raw events are retained on future failures. Two subsequent
+broad runs passed, but the intermittent cause is not claimed repaired.

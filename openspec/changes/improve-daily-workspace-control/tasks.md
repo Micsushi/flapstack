@@ -110,7 +110,7 @@
 
 ### S7-F4-T1: Add compare-and-save file authority
 
-- [ ] Completion: Tier 2 acceptance passed
+- [x] Completion: Tier 2 acceptance passed
 - Parent: Project Flapstack / Stage S7 / Feature S7-F4
 - Outcome: Supported text files can be written through one permissioned, audited, reversible service with external-change protection.
 - Scope: Content digest/version; write/rename/save-as; conflict DTO; atomic replace; undo journal; size/binary/path limits.
