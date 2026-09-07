@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { and, asc, count, eq } from "drizzle-orm"
+import { and, asc, count, eq, inArray } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import * as schema from "../db/schema"
 import { assertRegisteredFilesystemRoot } from "../git/security/path-validation"
@@ -83,10 +83,36 @@ export class DiffAnnotationService {
       .orderBy(asc(schema.diffAnnotations.createdAt), asc(schema.diffAnnotations.id))
       .limit(1000)
       .all()
+    const batchIds = [
+      ...new Set(rows.flatMap((row) => (row.lastFeedbackBatchId ? [row.lastFeedbackBatchId] : []))),
+    ]
+    const batches = batchIds.length
+      ? this.db
+          .select({
+            batchId: schema.diffFeedbackBatches.id,
+            subChatId: schema.diffFeedbackBatches.subChatId,
+            runId: schema.agentRuns.id,
+            status: schema.agentRuns.status,
+          })
+          .from(schema.diffFeedbackBatches)
+          .innerJoin(schema.agentRuns, eq(schema.agentRuns.id, schema.diffFeedbackBatches.runId))
+          .where(
+            and(
+              inArray(schema.diffFeedbackBatches.id, batchIds),
+              eq(schema.diffFeedbackBatches.projectId, input.projectId),
+              eq(schema.diffFeedbackBatches.chatId, input.chatId),
+            ),
+          )
+          .all()
+      : []
+    const feedback = new Map(batches.map((batch) => [batch.batchId, batch]))
     return {
       diffHash: currentHash ?? null,
       error,
-      annotations: rows.map((row) => this.dto(row, currentHash)),
+      annotations: rows.map((row) => ({
+        ...this.dto(row, currentHash),
+        feedback: row.lastFeedbackBatchId ? (feedback.get(row.lastFeedbackBatchId) ?? null) : null,
+      })),
     }
   }
 
@@ -106,6 +132,7 @@ export class DiffAnnotationService {
     const { creationHash: _creationHash, ...value } = row
     return {
       ...value,
+      feedback: null,
       freshness: !currentHash ? "unverified" : row.diffHash === currentHash ? "current" : "stale",
     }
   }

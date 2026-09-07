@@ -2,7 +2,7 @@ import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { randomUUID } from "node:crypto"
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { beforeEach, afterEach, expect, it, vi } from "vitest"
@@ -82,6 +82,12 @@ it("atomically queues one batch and retries the committed identity while offline
   feedback = new DiffFeedbackService(sqlite, readDiff)
   readDiff.mockRejectedValue(new Error("offline"))
   expect(await feedback.queue(input)).toEqual(batch)
+  annotations = new DiffAnnotationService(drizzle(sqlite, { schema }), readDiff)
+  expect((await annotations.list(scope)).annotations[0]).toMatchObject({
+    freshness: "unverified",
+    lastFeedbackVersion: 1,
+    feedback: { status: "pending" },
+  })
   expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 1 })
   expect(sqlite.prepare("SELECT count(*) count FROM diff_feedback_batches").get()).toEqual({
     count: 1,
@@ -176,6 +182,82 @@ it("collapses simultaneous identical requests into one durable batch", async () 
   })
 })
 
+it("rejects a new request identity for an already queued comment version", async () => {
+  const input = await request()
+  await feedback.queue(input)
+  await expect(feedback.queue({ ...input, id: randomUUID() })).rejects.toThrow("already queued")
+  expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 1 })
+})
+
+it("serializes competing request identities for the same version", async () => {
+  const input = await request()
+  const outcomes = await Promise.allSettled([
+    feedback.queue(input),
+    feedback.queue({ ...input, id: randomUUID() }),
+  ])
+  expect(outcomes.filter((result) => result.status === "fulfilled")).toHaveLength(1)
+  expect(outcomes.filter((result) => result.status === "rejected")).toHaveLength(1)
+  expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 1 })
+})
+
+it("projects durable status without editing comment version and allows a revised version", async () => {
+  const input = await request()
+  const batch = await feedback.queue(input)
+  let row = (await annotations.list(scope)).annotations[0]
+  expect(row).toMatchObject({
+    version: 1,
+    lastFeedbackVersion: 1,
+    lastFeedbackBatchId: batch.id,
+    feedback: { batchId: batch.id, subChatId: "sub", runId: batch.runId, status: "pending" },
+  })
+  sqlite.prepare("UPDATE agent_runs SET status='cancelled' WHERE id=?").run(batch.runId)
+  expect((await annotations.list(scope)).annotations[0].feedback?.status).toBe("cancelled")
+  await expect(feedback.queue({ ...input, id: randomUUID() })).rejects.toThrow("already queued")
+  row = await annotations.revise({
+    ...scope,
+    id: row.id,
+    expectedVersion: 1,
+    anchor: row,
+    body: "Revised feedback",
+  })
+  const second = await feedback.queue({
+    ...input,
+    id: randomUUID(),
+    comments: [{ id: row.id, version: 2 }],
+  })
+  expect((await annotations.list(scope)).annotations[0]).toMatchObject({
+    version: 2,
+    lastFeedbackVersion: 2,
+    lastFeedbackBatchId: second.id,
+  })
+  expect(await feedback.queue(input)).toEqual(batch)
+})
+
+it("backfills existing batches and retains duplicate protection if a run is removed", async () => {
+  const input = await request()
+  const batch = await feedback.queue(input)
+  const insertLegacy = sqlite.prepare(
+    "INSERT INTO diff_feedback_batches SELECT ?, project_id, chat_id, sub_chat_id, run_id, request_hash, ?, created_at FROM diff_feedback_batches WHERE id=?",
+  )
+  for (const selection of ["{", '["invalid"]', '{"id":"invalid"}'])
+    insertLegacy.run(randomUUID(), selection, batch.id)
+  sqlite.exec(
+    "ALTER TABLE diff_annotations DROP COLUMN last_feedback_batch_id; ALTER TABLE diff_annotations DROP COLUMN last_feedback_version",
+  )
+  sqlite.exec(readFileSync(resolve("drizzle/0062_feedback_sent_state.sql"), "utf8"))
+  expect((await annotations.list(scope)).annotations[0]).toMatchObject({
+    lastFeedbackBatchId: batch.id,
+    lastFeedbackVersion: 1,
+  })
+  sqlite.prepare("DELETE FROM agent_runs WHERE id=?").run(batch.runId)
+  expect((await annotations.list(scope)).annotations[0]).toMatchObject({
+    lastFeedbackBatchId: null,
+    lastFeedbackVersion: 1,
+    feedback: null,
+  })
+  await expect(feedback.queue({ ...input, id: randomUUID() })).rejects.toThrow("already queued")
+})
+
 it("rechecks a comment deleted while diff inspection is suspended", async () => {
   const input = await request()
   let release!: () => void
@@ -211,6 +293,10 @@ it("rolls back the run and batch when audit insertion fails", async () => {
     "CREATE TRIGGER fail_feedback_audit BEFORE INSERT ON mcp_audit_records WHEN NEW.tool_name = 'diff_feedback_queue' BEGIN SELECT RAISE(ABORT, 'fixture audit failure'); END",
   )
   await expect(feedback.queue(input)).rejects.toThrow("fixture audit failure")
+  expect((await annotations.list(scope)).annotations[0]).toMatchObject({
+    lastFeedbackBatchId: null,
+    lastFeedbackVersion: null,
+  })
   expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
   expect(sqlite.prepare("SELECT count(*) count FROM diff_feedback_batches").get()).toEqual({
     count: 0,

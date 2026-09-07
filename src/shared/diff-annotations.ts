@@ -64,4 +64,7 @@ export type DiffAnnotationDto = DiffAnnotationScope &
     createdAt: number
     updatedAt: number
     freshness: "current" | "stale" | "unverified"
+    lastFeedbackBatchId?: string | null
+    lastFeedbackVersion?: number | null
+    feedback?: { batchId: string; subChatId: string; runId: string; status: string } | null
   }

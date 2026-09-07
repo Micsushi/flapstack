@@ -99,6 +99,10 @@ export class DiffFeedbackService {
             row.projectId !== input.projectId
           )
             throw new Error("Selected comment changed before queueing")
+          if (row.lastFeedbackVersion === row.version)
+            throw new Error(
+              "Selected comment version is already queued; revise it before sending again",
+            )
         }
         const run = queueChatRun(this.sqlite, {
           chatId: input.chatId,
@@ -143,6 +147,12 @@ export class DiffFeedbackService {
           })
           .returning()
           .get()
+        for (const row of selected) {
+          db.update(schema.diffAnnotations)
+            .set({ lastFeedbackBatchId: batch.id, lastFeedbackVersion: row.version })
+            .where(eq(schema.diffAnnotations.id, row.id))
+            .run()
+        }
         appendMcpAuditRecord(db, {
           status: "completed",
           caller: { chatId: input.chatId, projectId: input.projectId },

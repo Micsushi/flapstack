@@ -36,7 +36,7 @@ fail closed rather than overwriting a newer edit. Consecutive local actions shar
 their latest version so Undo/Redo can traverse the local sequence; an independently
 changed version does not gain that authority. Undoing an edit also requires
 its previous diff anchor to remain valid; refresh/re-anchor if the worktree has
-changed. Sending feedback is unavailable, and comments expose no sent state yet.
+changed. Sending feedback remains unavailable in the UI.
 
 A retry of a committed create returns the latest draft without inspecting Git
 or undoing later edits/deletion. Its freshness is unverified until the next list
@@ -67,6 +67,17 @@ audit. It performs no provider dispatch itself. UUID retries return the original
 batch after restart or loss of worktree access; changed selections fail. Each
 batch permits up to 25 comments and a 512 KiB serialized prompt. Comment bodies
 are preserved as JSON-encoded review data, without generation or rewriting.
+
+Migration `0062_feedback_sent_state` records the last queued batch/version on each
+comment without changing its edit version. Existing batches are backfilled by
+highest comment version, then latest batch timestamp/ID. Scoped list reads join
+only referenced batches to live run status; mutation responses require a list
+refresh for status. Saved feedback identity remains readable while Git is offline.
+A new batch UUID cannot queue the same comment version again, even after run
+failure/cancellation or removal. Revise the comment explicitly before sending
+again; there is no automatic provider retry. Original UUID retries still return
+their batch while it exists. Removing a run clears its batch reference but retains
+the sent version. Run, transcript, batch, sent markers and audit roll back together.
 
 Completed direct-runtime feedback answers are projected into their conversation
 from validated activity records. The idempotent assistant fallback inserts the

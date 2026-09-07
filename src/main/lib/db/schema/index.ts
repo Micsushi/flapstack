@@ -3560,6 +3560,10 @@ export const diffAnnotations = sqliteTable(
       .notNull()
       .references(() => chats.id, { onDelete: "cascade" }),
     creationHash: text("creation_hash").notNull(),
+    lastFeedbackBatchId: text("last_feedback_batch_id").references(() => diffFeedbackBatches.id, {
+      onDelete: "set null",
+    }),
+    lastFeedbackVersion: integer("last_feedback_version"),
     diffHash: text("diff_hash").notNull(),
     filePath: text("file_path").notNull(),
     side: text("side", { enum: ["left", "right"] }).notNull(),
