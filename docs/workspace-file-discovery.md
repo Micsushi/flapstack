@@ -23,5 +23,14 @@ centered at narrow viewport widths. Streamed result delivery, ripgrep discovery
 and the unified provider UI remain separate work. No persistent search index is
 introduced.
 
+Recent-file lookup accepts Windows drive and UNC paths with mixed separators and
+casing, without crossing a neighboring root/share boundary. POSIX path casing
+and literal backslashes remain distinct. Matching recent entries appear once;
+removal clears their Windows aliases without deleting a file. The named removal
+button supports keyboard activation without opening the result and participates
+in the shared Undo/Redo history. Undo preserves unrelated files opened meanwhile.
+
 Regression coverage lives in `tests/files-router-path-safety.test.ts`, including
 shared queries, cancellation, invalidation, unreadable roots and depth limits.
+Recent-path and reversible-action checks live in `tests/file-search-paths.test.ts`
+and `tests/file-search-recent-actions.test.tsx`.

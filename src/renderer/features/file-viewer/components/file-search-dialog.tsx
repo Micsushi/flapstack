@@ -2,14 +2,16 @@ import React, { useState, useEffect, useCallback, useRef, useMemo, memo } from "
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { useAtom } from "jotai"
 import { X } from "lucide-react"
-import { cn } from "@/lib/utils"
-import { trpc } from "@/lib/trpc"
-import { Input } from "@/components/ui/input"
-import { SearchIcon } from "@/components/ui/icons"
-import { UnknownFileIcon } from "@/icons/framework-icons"
+import { cn } from "../../../lib/utils"
+import { trpc } from "../../../lib/trpc"
+import { recordAppAction } from "../../../lib/app-action-history"
+import { Input } from "../../../components/ui/input"
+import { SearchIcon } from "../../../components/ui/icons"
+import { UnknownFileIcon } from "../../../icons/framework-icons"
 import { getFileIconByExtension } from "../../agents/mentions/agents-file-mention"
 import { recentlyOpenedFilesAtom } from "../../agents/atoms"
 import { FileSearchFeedback } from "./file-search-feedback"
+import { fileSearchPathKey, joinFileSearchPath, recentFileSearchItems } from "./file-search-paths"
 
 // ============================================================================
 // Highlight helper - splits text into segments with matching parts marked
@@ -96,28 +98,21 @@ export const FileSearchDialog = memo(function FileSearchDialog({
   )
 
   // Build recent file items directly from atom (independent of search results)
-  const recentItems = useMemo(() => {
-    const prefix = projectPath + "/"
-    const items: { id: string; label: string; path: string }[] = []
-    const queryLower = debouncedQuery.toLowerCase()
-    for (const absPath of recentlyOpenedFiles) {
-      if (!absPath.startsWith(prefix)) continue
-      const relPath = absPath.slice(prefix.length)
-      const fileName = relPath.includes("/") ? relPath.slice(relPath.lastIndexOf("/") + 1) : relPath
-      // Filter by query if searching
-      if (queryLower && !relPath.toLowerCase().includes(queryLower)) continue
-      items.push({ id: `recent-${relPath}`, label: fileName, path: relPath })
-    }
-    return items
-  }, [recentlyOpenedFiles, projectPath, debouncedQuery])
+  const recentItems = useMemo(
+    () => recentFileSearchItems(projectPath, recentlyOpenedFiles, debouncedQuery),
+    [recentlyOpenedFiles, projectPath, debouncedQuery],
+  )
 
-  const recentPathsSet = useMemo(() => new Set(recentItems.map((f) => f.path)), [recentItems])
+  const recentPathsSet = useMemo(
+    () => new Set(recentItems.map((f) => fileSearchPathKey(projectPath, f.path))),
+    [recentItems, projectPath],
+  )
 
   // Search results excluding recently opened files
   const otherFiles = useMemo(() => {
     const allFiles = (results ?? []).filter((item) => item.type === "file")
-    return allFiles.filter((file) => !recentPathsSet.has(file.path))
-  }, [results, recentPathsSet])
+    return allFiles.filter((file) => !recentPathsSet.has(fileSearchPathKey(projectPath, file.path)))
+  }, [results, recentPathsSet, projectPath])
 
   // Flat list for keyboard navigation: recent first, then rest
   const allItems = useMemo(() => [...recentItems, ...otherFiles], [recentItems, otherFiles])
@@ -138,7 +133,7 @@ export const FileSearchDialog = memo(function FileSearchDialog({
 
   const handleSelect = useCallback(
     (relativePath: string) => {
-      const absolutePath = projectPath + "/" + relativePath
+      const absolutePath = joinFileSearchPath(projectPath, relativePath)
       onSelectFile(absolutePath)
       onOpenChange(false)
     },
@@ -147,10 +142,38 @@ export const FileSearchDialog = memo(function FileSearchDialog({
 
   const handleRemoveRecent = useCallback(
     (relativePath: string) => {
-      const absolutePath = projectPath + "/" + relativePath
-      setRecentlyOpenedFiles((prev) => prev.filter((p) => p !== absolutePath))
+      const absolutePath = joinFileSearchPath(projectPath, relativePath)
+      const key = fileSearchPathKey(projectPath, absolutePath)
+      const before = recentlyOpenedFiles
+      const after = before.filter((p) => fileSearchPathKey(projectPath, p) !== key)
+      const removed = before.filter((p) => fileSearchPathKey(projectPath, p) === key)
+      if (!removed.length) return
+      setRecentlyOpenedFiles(after)
+      recordAppAction({
+        label: "Remove recent file",
+        undo: () =>
+          setRecentlyOpenedFiles((current) =>
+            current === after
+              ? before
+              : [
+                  ...removed.filter(
+                    (p) =>
+                      !current.some(
+                        (entry) =>
+                          fileSearchPathKey(projectPath, entry) ===
+                          fileSearchPathKey(projectPath, p),
+                      ),
+                  ),
+                  ...current,
+                ].slice(0, 50),
+          ),
+        redo: () =>
+          setRecentlyOpenedFiles((current) =>
+            current.filter((p) => fileSearchPathKey(projectPath, p) !== key),
+          ),
+      })
     },
-    [projectPath, setRecentlyOpenedFiles],
+    [projectPath, recentlyOpenedFiles, setRecentlyOpenedFiles],
   )
 
   const handleKeyDown = useCallback(
@@ -383,6 +406,10 @@ const FileSearchItem = memo(function FileSearchItem({
           <span className="text-xs text-muted-foreground/60">{recentLabel}</span>
           <button
             type="button"
+            aria-label={`Remove ${label} from recent files`}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") event.stopPropagation()
+            }}
             onClick={handleRemove}
             className="h-4 w-4 flex items-center justify-center rounded text-muted-foreground/60 hover:text-foreground transition-colors"
           >

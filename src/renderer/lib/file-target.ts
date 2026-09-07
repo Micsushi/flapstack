@@ -5,6 +5,10 @@ function slash(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "")
 }
 
+export function isWindowsFilePath(path: string): boolean {
+  return /^(?:[A-Za-z]:[\\/]|[/\\]{2})/.test(path)
+}
+
 function isAbsolutePath(path: string): boolean {
   return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || /^[/\\]{2}/.test(path)
 }
@@ -16,9 +20,9 @@ export function toRootedFileTarget(
   if (!rootPath || !filePath) return null
   if (!isAbsolutePath(filePath)) return { rootPath, relativePath: filePath }
 
-  const normalizedRoot = slash(rootPath)
-  const normalizedFile = slash(filePath)
-  const caseInsensitive = /^[A-Za-z]:\//.test(normalizedRoot)
+  const caseInsensitive = isWindowsFilePath(rootPath)
+  const normalizedRoot = caseInsensitive ? slash(rootPath) : rootPath.replace(/\/+$/, "")
+  const normalizedFile = caseInsensitive ? slash(filePath) : filePath.replace(/\/+$/, "")
   const comparableRoot = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot
   const comparableFile = caseInsensitive ? normalizedFile.toLowerCase() : normalizedFile
   if (!comparableFile.startsWith(`${comparableRoot}/`)) return null
