@@ -3524,3 +3524,40 @@ export type UsageBudgetArmState = typeof usageBudgetArmStates.$inferSelect
 export type NewUsageBudgetArmState = typeof usageBudgetArmStates.$inferInsert
 export type UsageDaemonStatus = typeof usageDaemonStatus.$inferSelect
 export type NewUsageDaemonStatus = typeof usageDaemonStatus.$inferInsert
+
+// Draft review comments never mutate Git and retain their exact diff anchor.
+export const diffAnnotations = sqliteTable(
+  "diff_annotations",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    creationHash: text("creation_hash").notNull(),
+    diffHash: text("diff_hash").notNull(),
+    filePath: text("file_path").notNull(),
+    side: text("side", { enum: ["left", "right"] }).notNull(),
+    startLine: integer("start_line").notNull(),
+    endLine: integer("end_line").notNull(),
+    body: text("body").notNull(),
+    version: integer("version").notNull().default(1),
+    deletedAt: integer("deleted_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("diff_annotations_chat_idx").on(table.chatId, table.createdAt),
+    check(
+      "diff_annotations_contract_check",
+      sql`length(${table.diffHash}) = 64
+    and length(${table.creationHash}) = 64 and ${table.side} in ('left', 'right')
+    and ${table.startLine} >= 1 and ${table.endLine} >= ${table.startLine}
+    and ${table.endLine} - ${table.startLine} < 1000 and ${table.endLine} <= 10000000
+    and length(cast(${table.body} as blob)) between 1 and 16384
+    and length(${table.filePath}) between 1 and 4096 and ${table.version} >= 1`,
+    ),
+  ],
+)

@@ -421,6 +421,13 @@
       "when": 1788752656497,
       "tag": "0059_shiny_ogun",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "6",
+      "when": 1788777075798,
+      "tag": "0060_durable_diff_annotations",
+      "breakpoints": true
     }
   ]
 }

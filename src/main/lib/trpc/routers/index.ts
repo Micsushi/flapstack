@@ -55,6 +55,7 @@ import { agentPersonalitiesRouter, createAgentPersonalityStore } from "./agent-p
 import { configureAgentPersonalityResolutionPort } from "../../agent-profiles/personality-resolution"
 import { betaFeaturesRouter } from "./beta-features"
 import { sleepPreventionRouter } from "./sleep-prevention"
+import { diffAnnotationsRouter } from "./diff-annotations"
 import { visualCaptureRouter } from "./visual-capture"
 import { mobileBridgeRouter } from "./mobile-bridge"
 import {
@@ -90,6 +91,7 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
   )
   return router({
     sleepPrevention: sleepPreventionRouter,
+    diffAnnotations: diffAnnotationsRouter,
     agentInput: agentInputRouter,
     projects: projectsRouter,
     tasks: tasksRouter,

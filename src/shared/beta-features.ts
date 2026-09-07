@@ -7,6 +7,7 @@ export const BETA_FEATURE_IDS = [
   "branchesAndWorktrees",
   "terminalRecovery",
   "streamedFileSearch",
+  "diffAnnotations",
 ] as const
 
 export type BetaFeatureId = (typeof BETA_FEATURE_IDS)[number]
@@ -21,6 +22,7 @@ export const DEFAULT_BETA_FEATURE_SETTINGS: BetaFeatureSettings = {
   branchesAndWorktrees: false,
   terminalRecovery: false,
   streamedFileSearch: false,
+  diffAnnotations: false,
 }
 
 export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
@@ -28,6 +30,12 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
   label: string
   description: string
 }> = [
+  {
+    id: "diffAnnotations",
+    label: "Diff Comments",
+    description:
+      "Preview durable, diff-bound review comments. Inline editing and send-to-agent integration are not yet available.",
+  },
   {
     id: "streamedFileSearch",
     label: "Streamed File Search",

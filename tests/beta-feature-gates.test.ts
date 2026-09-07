@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { terminalManager } from "../src/main/lib/terminal/manager"
 import { terminalRouter } from "../src/main/lib/trpc/routers/terminal"
+import { diffAnnotationsRouter } from "../src/main/lib/trpc/routers/diff-annotations"
 import {
   betaFeatureForTrpcPath,
   getBetaFeatureSettings,
@@ -78,6 +79,9 @@ describe("beta service gates", () => {
 
   it("blocks disabled local service procedures", async () => {
     const context = { getWindow: () => null }
+    await expect(
+      diffAnnotationsRouter.createCaller(context).list({ projectId: "project", chatId: "chat" }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })
     await expect(automationsRouter.createCaller(context).getCapabilities()).rejects.toMatchObject({
       code: "PRECONDITION_FAILED",
     })
