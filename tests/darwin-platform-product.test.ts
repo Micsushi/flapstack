@@ -179,32 +179,35 @@ describe("macOS product platform behavior", () => {
     expect(readFileSync(installPath, "utf8")).toBe("third party")
   })
 
-  it("never replaces or removes a foreign app-shaped symlink", async () => {
-    const root = temporaryDirectory("flapstack-mac-cli-foreign-")
-    const source = join(root, "Flapstack.app", "Contents", "Resources", "cli", "flapstack")
-    const foreign = join(root, "Other.app", "Contents", "Resources", "cli", "flapstack")
-    const installPath = join(root, "bin", "flapstack")
-    writeAppLauncher(source)
-    writeAppLauncher(
-      foreign,
-      "com.example.other",
-      "<!-- <key>CFBundleIdentifier</key><string>dev.flapstack.app</string> -->",
-    )
-    mkdirSync(dirname(installPath), { recursive: true })
-    symlinkSync(foreign, installPath)
-    const provider = new TestDarwinProvider(installPath)
+  it.skipIf(process.platform === "win32")(
+    "never replaces or removes a foreign app-shaped symlink",
+    async () => {
+      const root = temporaryDirectory("flapstack-mac-cli-foreign-")
+      const source = join(root, "Flapstack.app", "Contents", "Resources", "cli", "flapstack")
+      const foreign = join(root, "Other.app", "Contents", "Resources", "cli", "flapstack")
+      const installPath = join(root, "bin", "flapstack")
+      writeAppLauncher(source)
+      writeAppLauncher(
+        foreign,
+        "com.example.other",
+        "<!-- <key>CFBundleIdentifier</key><string>dev.flapstack.app</string> -->",
+      )
+      mkdirSync(dirname(installPath), { recursive: true })
+      symlinkSync(foreign, installPath)
+      const provider = new TestDarwinProvider(installPath)
 
-    await expect(provider.installCli(source)).resolves.toEqual(
-      expect.objectContaining({ success: false, error: expect.stringContaining("not owned") }),
-    )
-    await expect(provider.uninstallCli()).resolves.toEqual(
-      expect.objectContaining({ success: false, error: expect.stringContaining("not owned") }),
-    )
-    expect(provider.commands).toHaveLength(0)
-    expect(readFileSync(installPath, "utf8")).toBe("launcher")
-  })
+      await expect(provider.installCli(source)).resolves.toEqual(
+        expect.objectContaining({ success: false, error: expect.stringContaining("not owned") }),
+      )
+      await expect(provider.uninstallCli()).resolves.toEqual(
+        expect.objectContaining({ success: false, error: expect.stringContaining("not owned") }),
+      )
+      expect(provider.commands).toHaveLength(0)
+      expect(readFileSync(installPath, "utf8")).toBe("launcher")
+    },
+  )
 
-  it("recognizes only the exact installed launcher", () => {
+  it.skipIf(process.platform === "win32")("recognizes only the exact installed launcher", () => {
     const root = temporaryDirectory("flapstack-mac-cli-status-")
     const source = join(root, "Flapstack.app", "Contents", "Resources", "cli", "flapstack")
     const installPath = join(root, "bin", "flapstack")
