@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { trpc, trpcClient } from "../../../lib/trpc"
 import { recordAppAction } from "../../../lib/app-action-history"
 import { Button } from "../../../components/ui/button"
@@ -17,11 +17,13 @@ export function DiffComments({
   draft,
   setDraft,
   onBusyChange,
+  displayedDiffHash,
 }: {
   chatId: string
   draft: DiffCommentDraft | null
   setDraft: (draft: DiffCommentDraft | null) => void
   onBusyChange: (busy: boolean) => void
+  displayedDiffHash: string | null
 }) {
   const metadata = trpc.chats.getMetadata.useQuery({ id: chatId })
   const projectId = metadata.data?.projectId ?? ""
@@ -30,8 +32,39 @@ export function DiffComments({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showDeleted, setShowDeleted] = useState(false)
+  const lineages = useRef(new Map<string, { version: number }>())
+  function acceptLocalChange(row: DiffAnnotationDto, previousVersion?: number) {
+    const existing = lineages.current.get(row.id)
+    // Only local successors share authority. Observed external edits start a new
+    // lineage, leaving old undo entries stale rather than silently rebasing them.
+    const lineage =
+      existing && existing.version === previousVersion ? existing : { version: row.version }
+    lineage.version = row.version
+    lineages.current.set(row.id, lineage)
+    return lineage
+  }
   const rows = query.data?.annotations ?? []
-  const stale = !!draft && query.data?.diffHash !== draft.anchor.diffHash
+  const freshness = (row: DiffAnnotationDto) =>
+    !displayedDiffHash ? "unverified" : row.diffHash !== displayedDiffHash ? "stale" : row.freshness
+  const stale =
+    !!draft &&
+    (displayedDiffHash !== draft.anchor.diffHash || query.data?.diffHash !== draft.anchor.diffHash)
+
+  async function refresh() {
+    if (busy) return
+    setBusy(true)
+    onBusyChange(true)
+    setError(null)
+    try {
+      if (!projectId || metadata.error) await metadata.refetch()
+      else await query.refetch()
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Refresh failed. Try again.")
+    } finally {
+      setBusy(false)
+      onBusyChange(false)
+    }
+  }
 
   async function save() {
     if (!draft || busy || !projectId) return
@@ -53,14 +86,16 @@ export function DiffComments({
               ...request,
               expectedVersion: draft.expectedVersion,
             })
-      if (draft.expectedVersion === undefined) {
+      const lineage = acceptLocalChange(current, draft.expectedVersion)
+      if (draft.expectedVersion === undefined && current.version === 1) {
         const apply = async (deleted: boolean) => {
           current = await trpcClient.diffAnnotations.setDeleted.mutate({
             ...scope,
             id: current.id,
-            expectedVersion: current.version,
+            expectedVersion: lineage.version,
             deleted,
           })
+          lineage.version = current.version
           await query.refetch()
         }
         recordAppAction({
@@ -68,7 +103,7 @@ export function DiffComments({
           undo: () => apply(true),
           redo: () => apply(false),
         })
-      } else if (before) {
+      } else if (draft.expectedVersion !== undefined && before) {
         const previousAnchor = {
           diffHash: before.diffHash,
           filePath: before.filePath,
@@ -80,10 +115,11 @@ export function DiffComments({
           current = await trpcClient.diffAnnotations.revise.mutate({
             ...scope,
             id: current.id,
-            expectedVersion: current.version,
+            expectedVersion: lineage.version,
             anchor,
             body: nextBody,
           })
+          lineage.version = current.version
           await query.refetch()
         }
         recordAppAction({
@@ -118,13 +154,15 @@ export function DiffComments({
         expectedVersion: row.version,
         deleted,
       })
+      const lineage = acceptLocalChange(current, row.version)
       const apply = async (next: boolean) => {
         current = await trpcClient.diffAnnotations.setDeleted.mutate({
           ...scope,
           id: row.id,
-          expectedVersion: current.version,
+          expectedVersion: lineage.version,
           deleted: next,
         })
+        lineage.version = current.version
         await query.refetch()
       }
       recordAppAction({
@@ -146,6 +184,7 @@ export function DiffComments({
   return (
     <section
       aria-label="Diff comments"
+      aria-busy={busy}
       className="max-h-[45%] shrink-0 overflow-auto border-t border-border px-3 py-2 text-sm"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -159,12 +198,7 @@ export function DiffComments({
             />
             Deleted
           </label>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={busy || !projectId}
-            onClick={() => void query.refetch()}
-          >
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => void refresh()}>
             Refresh
           </Button>
         </div>
@@ -261,7 +295,7 @@ export function DiffComments({
             <li key={row.id} className="py-2">
               <p className="break-all text-xs text-muted-foreground">
                 {row.filePath} · {row.side === "left" ? "Old" : "New"} {row.startLine}–{row.endLine}
-                {row.freshness !== "current" ? ` · ${row.freshness}` : ""}
+                {freshness(row) !== "current" ? ` · ${freshness(row)}` : ""}
                 {row.deletedAt !== null ? " · deleted" : ""}
               </p>
               <p className="my-1 whitespace-pre-wrap break-words">{row.body}</p>

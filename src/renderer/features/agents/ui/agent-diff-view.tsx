@@ -2078,6 +2078,7 @@ export const AgentDiffView = forwardRef<AgentDiffViewRef, AgentDiffViewProps>(
             draft={commentDraft}
             setDraft={setCommentDraft}
             onBusyChange={setCommentBusy}
+            displayedDiffHash={allFileDiffs[0]?.observedDiffHash ?? null}
           />
         )}
 

@@ -32,7 +32,9 @@ in the existing audit trail commit in one transaction. Comment bodies are not
 copied into audit summaries.
 
 Create, edit, delete and restore register with shared Undo/Redo. Version conflicts
-fail closed rather than overwriting a newer edit. Undoing an edit also requires
+fail closed rather than overwriting a newer edit. Consecutive local actions share
+their latest version so Undo/Redo can traverse the local sequence; an independently
+changed version does not gain that authority. Undoing an edit also requires
 its previous diff anchor to remain valid; refresh/re-anchor if the worktree has
 changed. Sending feedback is unavailable, and comments expose no sent state yet.
 
@@ -43,6 +45,9 @@ refresh. This keeps a lost response recoverable after a diff change or disconnec
 Saved drafts remain readable with unverified freshness when the current diff
 cannot be inspected. Creation and revision still fail closed. Delete/restore
 operate on the scoped draft and do not require an online worktree.
+Displayed diff identity also controls freshness immediately, even while a saved
+comment query is cached. Refresh remains available after a metadata lookup failure
+and retries project resolution before enabling scoped writes.
 
 Limits: 16 KiB UTF-8 per comment, 1,000 consecutive lines per anchor, 1,000 stored
 comments per Chat including deleted drafts, and an 8 MiB collected diff before
