@@ -1,5 +1,9 @@
 import { z } from "zod"
-import { router, publicProcedure } from "../index"
+import { router, publicProcedure, betaProcedure } from "../index"
+import type {
+  WorkspaceFileResult,
+  WorkspaceFileSearchEvent,
+} from "../../../../shared/workspace-search"
 import { realpathSync } from "node:fs"
 import { lstat, opendir, realpath } from "node:fs/promises"
 import { join, relative, basename, extname, isAbsolute, resolve, sep } from "node:path"
@@ -84,6 +88,8 @@ const pendingScans = new Map<
     controller: AbortController
     users: number
     promise: Promise<FileEntry[]>
+    partial: FileEntry[]
+    listeners: Set<(entries: FileEntry[]) => void>
   }
 >()
 
@@ -117,7 +123,10 @@ async function scanDirectory(
   currentPath: string = rootPath,
   depth: number = 0,
   maxDepth: number = 15,
-  budget = { remaining: MAX_SCAN_ENTRIES, signal: AbortSignal.timeout(MAX_SCAN_DURATION_MS) },
+  budget: { remaining: number; signal: AbortSignal; onEntry?: (entry: FileEntry) => void } = {
+    remaining: MAX_SCAN_ENTRIES,
+    signal: AbortSignal.timeout(MAX_SCAN_DURATION_MS),
+  },
 ): Promise<FileEntry[]> {
   budget.signal.throwIfAborted()
   if (depth > maxDepth) throw new Error("File discovery exceeded its directory depth limit")
@@ -143,6 +152,16 @@ async function scanDirectory(
 
   for await (const entry of dirEntries) {
     budget.signal.throwIfAborted()
+    // Partial results must be validated before publication, not only at scan end.
+    const liveDirectory = await lstat(currentPath)
+    if (
+      liveDirectory.isSymbolicLink() ||
+      liveDirectory.dev !== currentInfo.dev ||
+      liveDirectory.ino !== currentInfo.ino ||
+      (await realpath(currentPath)) !== realCurrent
+    )
+      throw new Error("File discovery directory changed during scanning")
+    budget.signal.throwIfAborted()
     if (--budget.remaining < 0) throw new Error("File discovery exceeded its entry limit")
     const fullPath = join(currentPath, entry.name)
     const relativePath = relative(rootPath, fullPath)
@@ -160,6 +179,7 @@ async function scanDirectory(
 
       // Add the folder itself to results
       entries.push({ path: relativePath, type: "folder" })
+      budget.onEntry?.(entries[entries.length - 1])
 
       // Recurse into subdirectory
       const subEntries = await scanDirectory(rootPath, fullPath, depth + 1, maxDepth, budget)
@@ -176,6 +196,7 @@ async function scanDirectory(
       }
 
       entries.push({ path: relativePath, type: "file" })
+      budget.onEntry?.(entries[entries.length - 1])
     }
   }
   if ((await realpath(currentPath)) !== realCurrent)
@@ -188,7 +209,11 @@ async function scanDirectory(
 /**
  * Get cached entry list or scan directory
  */
-async function getEntryList(projectPath: string, signal?: AbortSignal): Promise<FileEntry[]> {
+async function getEntryList(
+  projectPath: string,
+  signal?: AbortSignal,
+  onPartial?: (entries: FileEntry[]) => void,
+): Promise<FileEntry[]> {
   signal?.throwIfAborted()
   const cached = fileListCache.get(projectPath)
   const now = Date.now()
@@ -202,11 +227,25 @@ async function getEntryList(projectPath: string, signal?: AbortSignal): Promise<
     if (pendingScans.size >= MAX_CACHE_ENTRIES)
       throw new Error("Too many file discovery scans are active")
     const controller = new AbortController()
-    const created = { controller, users: 0, promise: Promise.resolve([] as FileEntry[]) }
+    const created = {
+      controller,
+      users: 0,
+      promise: Promise.resolve([] as FileEntry[]),
+      partial: [] as FileEntry[],
+      listeners: new Set<(entries: FileEntry[]) => void>(),
+    }
+    let lastProgressAt = 0
     pendingScans.set(projectPath, created)
     created.promise = scanDirectory(projectPath, projectPath, 0, 15, {
       remaining: MAX_SCAN_ENTRIES,
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(MAX_SCAN_DURATION_MS)]),
+      onEntry: (entry) => {
+        created.partial.push(entry)
+        if (Date.now() - lastProgressAt >= 100) {
+          lastProgressAt = Date.now()
+          for (const listener of created.listeners) listener(created.partial)
+        }
+      },
     })
       .then((entries) => {
         if (pendingScans.get(projectPath) !== created || controller.signal.aborted) return entries
@@ -235,6 +274,10 @@ async function getEntryList(projectPath: string, signal?: AbortSignal): Promise<
   flight.users += 1
   let onAbort: (() => void) | undefined
   try {
+    if (onPartial) {
+      flight.listeners.add(onPartial)
+      if (flight.partial.length) onPartial(flight.partial)
+    }
     return await new Promise<FileEntry[]>((resolve, reject) => {
       onAbort = () => reject(signal?.reason ?? new Error("File discovery cancelled"))
       signal?.addEventListener("abort", onAbort, { once: true })
@@ -243,6 +286,7 @@ async function getEntryList(projectPath: string, signal?: AbortSignal): Promise<
     })
   } finally {
     if (onAbort) signal?.removeEventListener("abort", onAbort)
+    if (onPartial) flight.listeners.delete(onPartial)
     flight.users -= 1
     if (flight.users === 0 && pendingScans.get(projectPath) === flight) {
       pendingScans.delete(projectPath)
@@ -259,7 +303,7 @@ function filterEntries(
   query: string,
   limit: number,
   typeFilter?: "file" | "folder",
-): Array<{ id: string; label: string; path: string; repository: string; type: "file" | "folder" }> {
+): WorkspaceFileResult[] {
   const queryLower = query.toLowerCase()
 
   // Filter entries that match the query and optional type filter
@@ -325,7 +369,80 @@ function filterEntries(
   }))
 }
 
+let activeSearchStreams = 0
+
 export const filesRouter = router({
+  searchStream: betaProcedure("streamedFileSearch")
+    .input(
+      z.object({
+        requestId: z.string().uuid(),
+        projectPath: z.string().min(1),
+        query: z.string().max(512).default(""),
+        limit: z.number().int().min(1).max(500).default(50),
+        typeFilter: z.enum(["file", "folder"]).optional(),
+      }),
+    )
+    .subscription(({ input }) =>
+      observable<WorkspaceFileSearchEvent>((emit) => {
+        const identity = { requestId: input.requestId, provider: "filesystem" as const }
+        if (activeSearchStreams >= 20) {
+          emit.next({
+            ...identity,
+            status: "error",
+            code: "failed",
+            message: "Too many file searches are active. Retry after closing another search.",
+          })
+          emit.complete()
+          return
+        }
+        activeSearchStreams += 1
+        const controller = new AbortController()
+        let disposed = false
+        const publish = (entries: FileEntry[], status: "partial" | "complete") => {
+          if (disposed) return
+          try {
+            assertRegisteredWorktree(input.projectPath)
+            emit.next({
+              ...identity,
+              status,
+              results: filterEntries(entries, input.query, input.limit, input.typeFilter),
+            })
+          } catch (error) {
+            controller.abort(error)
+          }
+        }
+        void (async () => {
+          try {
+            const root = assertRegisteredWorktree(input.projectPath)
+            const entries = await getEntryList(root.canonicalPath, controller.signal, (partial) =>
+              publish(partial, "partial"),
+            )
+            controller.signal.throwIfAborted()
+            publish(entries, "complete")
+            controller.signal.throwIfAborted()
+          } catch (error) {
+            if (!disposed)
+              emit.next({
+                ...identity,
+                status: "error",
+                code:
+                  error instanceof Error && error.name === "AbortError" ? "cancelled" : "failed",
+                message:
+                  error instanceof Error && error.name === "AbortError"
+                    ? "File discovery was cancelled. Retry to start a fresh search."
+                    : "File discovery failed. Check that the folder is readable and connected, then retry.",
+              })
+          } finally {
+            if (!disposed) emit.complete()
+          }
+        })()
+        return () => {
+          disposed = true
+          activeSearchStreams -= 1
+          controller.abort()
+        }
+      }),
+    ),
   /**
    * Search files and folders in a local project directory
    */

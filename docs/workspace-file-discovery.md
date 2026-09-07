@@ -19,9 +19,16 @@ This is the bounded filesystem fallback, not the complete S7 Quick Open feature.
 The file dialog exposes discovery failures with an accessible alert and retry
 action instead of reporting no matches. Loading has a separate status, and old
 query results are not reused while another query loads. The dialog remains
-centered at narrow viewport widths. Streamed result delivery, ripgrep discovery
-and the unified provider UI remain separate work. No persistent search index is
-introduced.
+centered at narrow viewport widths. No persistent search index is introduced.
+
+Enable **Streamed File Search** in Beta Features to receive partial file results
+in the file dialog. It defaults off. Streams share the existing scan/cache with
+ordinary queries, carry a unique request identity, and stop receiving events
+when superseded or closed. One remaining consumer keeps a shared scan alive.
+At most 20 streams are active; progress is rate-limited to ten updates per second
+plus the final result. Directory identity is checked before publishing entries.
+Partial results remain visible with an error if discovery fails; Retry starts
+fresh work. Ripgrep discovery and unified cross-provider Quick Open remain open.
 
 Recent-file lookup accepts Windows drive and UNC paths with mixed separators and
 casing, without crossing a neighboring root/share boundary. POSIX path casing
@@ -34,6 +41,7 @@ Regression coverage lives in `tests/files-router-path-safety.test.ts`, including
 shared queries, cancellation, invalidation, unreadable roots and depth limits.
 Recent-path and reversible-action checks live in `tests/file-search-paths.test.ts`
 and `tests/file-search-recent-actions.test.tsx`.
+Stream identity, retry and disposal are covered by `tests/streamed-file-search.test.tsx`.
 
 ## File read limits
 

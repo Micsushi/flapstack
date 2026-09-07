@@ -12,6 +12,8 @@ import { getFileIconByExtension } from "../../agents/mentions/agents-file-mentio
 import { recentlyOpenedFilesAtom } from "../../agents/atoms"
 import { FileSearchFeedback } from "./file-search-feedback"
 import { fileSearchPathKey, joinFileSearchPath, recentFileSearchItems } from "./file-search-paths"
+import { useBetaFeatures } from "../../settings/use-beta-features"
+import { useStreamedFileSearch } from "./use-streamed-file-search"
 
 // ============================================================================
 // Highlight helper - splits text into segments with matching parts marked
@@ -81,21 +83,26 @@ export const FileSearchDialog = memo(function FileSearchDialog({
     }
   }, [open])
 
-  const {
-    data: results,
-    error,
-    isFetching,
-    refetch,
-  } = trpc.files.search.useQuery(
+  const streamed = useBetaFeatures().streamedFileSearch
+  const legacySearch = trpc.files.search.useQuery(
     {
       projectPath,
       query: debouncedQuery,
       limit: 50,
     },
     {
-      enabled: open && !!projectPath,
+      enabled: open && !!projectPath && !streamed,
     },
   )
+  const streamedSearch = useStreamedFileSearch(
+    projectPath,
+    debouncedQuery,
+    streamed && open && !!projectPath && query === debouncedQuery,
+  )
+  const { data: results, error, refetch } = streamed ? streamedSearch : legacySearch
+  const isFetching = streamed
+    ? streamedSearch.isFetching || query !== debouncedQuery
+    : legacySearch.isFetching
 
   // Build recent file items directly from atom (independent of search results)
   const recentItems = useMemo(

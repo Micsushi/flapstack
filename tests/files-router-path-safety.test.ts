@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -68,9 +69,13 @@ vi.mock("../src/main/lib/git/security/path-validation", () => ({
 }))
 
 import { filesRouter } from "../src/main/lib/trpc/routers/files"
+import { setBetaFeatureEnabled } from "../src/main/lib/beta-features/settings"
+import type { WorkspaceFileSearchEvent } from "../src/shared/workspace-search"
+import { randomUUID } from "node:crypto"
 
 const roots: string[] = []
 const caller = filesRouter.createCaller({ getWindow: () => null })
+let previousConfigDir: string | undefined
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -81,6 +86,8 @@ beforeEach(() => {
   state.registeredRoots.clear()
   state.userDataPath = mkdtempSync(join(tmpdir(), "flapstack-files-router-"))
   roots.push(state.userDataPath)
+  previousConfigDir = process.env.FLAPSTACK_CONFIG_DIR
+  process.env.FLAPSTACK_CONFIG_DIR = join(state.userDataPath, ".config")
   assertRegisteredWorktree.mockImplementation((path: string) => {
     if (!state.registeredRoots.has(path)) throw new Error("unregistered root")
     return {
@@ -93,10 +100,178 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  if (previousConfigDir === undefined) delete process.env.FLAPSTACK_CONFIG_DIR
+  else process.env.FLAPSTACK_CONFIG_DIR = previousConfigDir
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
 describe("files router mutation path safety", () => {
+  it("streams a thousand-file directory within the existing scan budget and reuses its cache", async () => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    setBetaFeatureEnabled("streamedFileSearch", true)
+    for (let index = 0; index < 1000; index += 1) writeFileSync(join(root, `file-${index}.ts`), "")
+    const events: WorkspaceFileSearchEvent[] = []
+    const stream = await caller.searchStream({
+      requestId: randomUUID(),
+      projectPath: root,
+      limit: 500,
+    })
+    await new Promise<void>((resolve, reject) => {
+      stream.subscribe({ next: (event) => events.push(event), complete: resolve, error: reject })
+    })
+    expect(events.at(-1)).toMatchObject({ status: "complete" })
+    expect(events.every((event) => event.status !== "error")).toBe(true)
+    expect(events.filter((event) => event.status === "partial").length).toBeLessThanOrEqual(101)
+    expect(await caller.search({ projectPath: root, query: "file-999" })).toHaveLength(1)
+    expect(scanState.opens).toBe(1)
+  }, 15_000)
+
+  it("never publishes entries from a directory swapped before opening", async () => {
+    const root = state.userDataPath
+    const outside = mkdtempSync(join(tmpdir(), "flapstack-stream-outside-"))
+    roots.push(outside)
+    state.registeredRoots.add(root)
+    setBetaFeatureEnabled("streamedFileSearch", true)
+    mkdirSync(join(root, "nested"))
+    writeFileSync(join(outside, "private-name.txt"), "outside")
+    scanState.beforeOpen = async () => {
+      if (scanState.opens !== 2) return
+      renameSync(join(root, "nested"), join(root, "moved"))
+      symlinkSync(outside, join(root, "nested"), process.platform === "win32" ? "junction" : "dir")
+    }
+    const events: WorkspaceFileSearchEvent[] = []
+    const stream = await caller.searchStream({ requestId: randomUUID(), projectPath: root })
+    const subscription = stream.subscribe({ next: (event) => events.push(event) })
+    try {
+      await vi.waitFor(() => expect(events.at(-1)?.status).toBe("error"))
+      expect(JSON.stringify(events)).not.toContain("private-name")
+    } finally {
+      subscription.unsubscribe()
+    }
+  })
+
+  it("bounds concurrent stream consumers and releases their slots", async () => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    setBetaFeatureEnabled("streamedFileSearch", true)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    scanState.beforeOpen = () => gate
+    const subscriptions: Array<{ unsubscribe: () => void }> = []
+    const errors: WorkspaceFileSearchEvent[] = []
+    try {
+      for (let index = 0; index < 21; index++) {
+        const stream = await caller.searchStream({ requestId: randomUUID(), projectPath: root })
+        subscriptions.push(
+          stream.subscribe({
+            next: (event) => {
+              if (event.status === "error") errors.push(event)
+            },
+          }),
+        )
+      }
+      expect(errors).toHaveLength(1)
+      expect(JSON.stringify(errors)).toContain("Too many")
+    } finally {
+      for (const subscription of subscriptions) subscription.unsubscribe()
+      release()
+    }
+    scanState.beforeOpen = null
+    const events: WorkspaceFileSearchEvent[] = []
+    const stream = await caller.searchStream({ requestId: randomUUID(), projectPath: root })
+    const subscription = stream.subscribe({ next: (event) => events.push(event) })
+    try {
+      await vi.waitFor(() => expect(events.at(-1)?.status).toBe("complete"))
+    } finally {
+      subscription.unsubscribe()
+    }
+  })
+
+  it("keeps streamed discovery disabled until explicitly enabled", async () => {
+    await expect(
+      caller.searchStream({ requestId: randomUUID(), projectPath: state.userDataPath }),
+    ).rejects.toThrow("Enable streamedFileSearch")
+  })
+
+  it("streams partial results before completion while sharing a legacy query scan", async () => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    setBetaFeatureEnabled("streamedFileSearch", true)
+    mkdirSync(join(root, "nested"))
+    writeFileSync(join(root, "nested", "two.ts"), "two")
+    writeFileSync(join(root, "one.ts"), "one")
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    scanState.beforeOpen = () => (scanState.opens === 2 ? gate : Promise.resolve())
+    const events: WorkspaceFileSearchEvent[] = []
+    const requestId = randomUUID()
+    const stream = await caller.searchStream({ requestId, projectPath: root, query: "" })
+    const subscription = stream.subscribe({ next: (event) => events.push(event) })
+    try {
+      await vi.waitFor(() => expect(events.some((event) => event.status === "partial")).toBe(true))
+      expect(events.some((event) => event.status === "complete")).toBe(false)
+      const legacy = caller.search({ projectPath: root, query: ".ts" })
+      release()
+      expect(await legacy).toHaveLength(2)
+      await vi.waitFor(() => expect(events.at(-1)?.status).toBe("complete"))
+      expect(events.every((event) => event.requestId === requestId)).toBe(true)
+      expect(scanState.opens).toBe(2)
+    } finally {
+      release()
+      subscription.unsubscribe()
+    }
+  })
+
+  it("does not report success after a streamed scan fails and permits retry", async () => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    setBetaFeatureEnabled("streamedFileSearch", true)
+    scanState.beforeOpen = async () => {
+      throw new Error("EACCES private path")
+    }
+    const events: WorkspaceFileSearchEvent[] = []
+    const stream = await caller.searchStream({ requestId: randomUUID(), projectPath: root })
+    const subscription = stream.subscribe({ next: (event) => events.push(event) })
+    await vi.waitFor(() => expect(events.at(-1)?.status).toBe("error"))
+    expect(JSON.stringify(events)).not.toContain("private path")
+    expect(events.some((event) => event.status === "complete")).toBe(false)
+    subscription.unsubscribe()
+    scanState.beforeOpen = null
+    expect(await caller.search({ projectPath: root, query: ".ts" })).toEqual([])
+  })
+
+  it("unsubscribes superseded streams without cancelling surviving consumers", async () => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    setBetaFeatureEnabled("streamedFileSearch", true)
+    writeFileSync(join(root, "one.ts"), "one")
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    scanState.beforeOpen = () => gate
+    const events: WorkspaceFileSearchEvent[] = []
+    const stream = await caller.searchStream({ requestId: randomUUID(), projectPath: root })
+    const subscription = stream.subscribe({ next: (event) => events.push(event) })
+    const survivor = caller.search({ projectPath: root, query: ".ts" })
+    try {
+      await vi.waitFor(() => expect(scanState.opens).toBe(1))
+      subscription.unsubscribe()
+      release()
+      expect(await survivor).toHaveLength(1)
+      expect(events).toEqual([])
+      expect(scanState.opens).toBe(1)
+    } finally {
+      release()
+      subscription.unsubscribe()
+    }
+  })
+
   it("reports an unregistered search root instead of a successful empty search", async () => {
     await expect(caller.search({ projectPath: state.userDataPath, query: "" })).rejects.toThrow(
       "unregistered root",

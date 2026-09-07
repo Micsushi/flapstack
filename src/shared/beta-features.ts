@@ -6,6 +6,7 @@ export const BETA_FEATURE_IDS = [
   "planning",
   "branchesAndWorktrees",
   "terminalRecovery",
+  "streamedFileSearch",
 ] as const
 
 export type BetaFeatureId = (typeof BETA_FEATURE_IDS)[number]
@@ -19,6 +20,7 @@ export const DEFAULT_BETA_FEATURE_SETTINGS: BetaFeatureSettings = {
   planning: false,
   branchesAndWorktrees: false,
   terminalRecovery: false,
+  streamedFileSearch: false,
 }
 
 export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
@@ -26,6 +28,12 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
   label: string
   description: string
 }> = [
+  {
+    id: "streamedFileSearch",
+    label: "Streamed File Search",
+    description:
+      "Show partial file discovery results while scanning. Existing search remains available when disabled.",
+  },
   {
     id: "terminalRecovery",
     label: "Terminal Recovery",

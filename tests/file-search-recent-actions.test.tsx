@@ -20,6 +20,9 @@ vi.mock("../src/renderer/features/agents/mentions/agents-file-mention", () => ({
   getFileIconByExtension: () => null,
 }))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
+vi.mock("../src/renderer/features/settings/use-beta-features", () => ({
+  useBetaFeatures: () => ({ streamedFileSearch: false }),
+}))
 
 it("removes Windows recent aliases without opening the file and supports shared undo/redo", async () => {
   clearAppActionHistory()
