@@ -16,6 +16,7 @@
   "desktopName": "flapstack.desktop",
   "main": "out/main/index.js",
   "scripts": {
+    "archify:validate": "node scripts/archify-validate.mjs",
     "preinstall": "node scripts/windows-prerequisites.mjs --if-windows",
     "dev": "node scripts/prepare-stt-sidecar.mjs && node scripts/ensure-native-abi.mjs electron && node scripts/dev.mjs",
     "dev:verify": "node scripts/verify-dev-instance.mjs",
