@@ -10,6 +10,7 @@ import * as schema from "../src/main/lib/db/schema"
 import { bindFilesystemRootIdentity } from "../src/main/lib/git/security/path-validation"
 import { DiffAnnotationService } from "../src/main/lib/diff-annotations/service"
 import { DiffFeedbackService } from "../src/main/lib/diff-annotations/feedback"
+import { buildDiffFeedbackPrompt } from "../src/main/lib/diff-annotations/prompt"
 import { queueChatRun, drainPendingMcpRuns } from "../src/main/lib/run-launch-service"
 vi.mock("../src/main/lib/permissions", () => ({
   getPermissionPreferences: () => ({ globalDefault: "read-only" }),
@@ -146,6 +147,63 @@ it("rejects a conversation worktree override instead of launching against anothe
     .run(join(directory, "other"))
   await expect(feedback.queue(input)).rejects.toThrow("different review worktree")
   expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
+})
+
+it("bounds count and escaped UTF-8 prompt bytes", async () => {
+  const input = await request()
+  await expect(
+    feedback.queue({
+      ...input,
+      comments: Array.from({ length: 26 }, () => ({ id: randomUUID(), version: 1 })),
+    }),
+  ).rejects.toThrow()
+  const row = (await annotations.list(scope)).annotations[0]
+  expect(() =>
+    buildDiffFeedbackPrompt(
+      Array.from({ length: 25 }, () => ({ ...row, body: "\0".repeat(16384) })),
+    ),
+  ).toThrow("byte limit")
+  expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
+})
+
+it("collapses simultaneous identical requests into one durable batch", async () => {
+  const input = await request()
+  const [first, second] = await Promise.all([feedback.queue(input), feedback.queue(input)])
+  expect(first).toEqual(second)
+  expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 1 })
+  expect(sqlite.prepare("SELECT count(*) count FROM diff_feedback_batches").get()).toEqual({
+    count: 1,
+  })
+})
+
+it("rechecks a comment deleted while diff inspection is suspended", async () => {
+  const input = await request()
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  readDiff.mockImplementationOnce(async () => {
+    await gate
+    return { success: true, diff }
+  })
+  const pending = feedback.queue(input)
+  annotations.setDeleted({ ...scope, id: input.comments[0].id, expectedVersion: 1, deleted: true })
+  release()
+  await expect(pending).rejects.toThrow("changed")
+  expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
+})
+
+it("rolls back queue state when the existing transcript is malformed", async () => {
+  const input = await request()
+  sqlite.prepare("UPDATE sub_chats SET messages='{' WHERE id='sub'").run()
+  await expect(feedback.queue(input)).rejects.toThrow()
+  expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
+  expect(sqlite.prepare("SELECT count(*) count FROM diff_feedback_batches").get()).toEqual({
+    count: 0,
+  })
+  expect(sqlite.prepare("SELECT messages FROM sub_chats WHERE id='sub'").get()).toEqual({
+    messages: "{",
+  })
 })
 it("rolls back the run and batch when audit insertion fails", async () => {
   const input = await request()
