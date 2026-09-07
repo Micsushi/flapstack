@@ -4,6 +4,11 @@ import { win32 as windowsPath } from "node:path"
 import { FALLBACK_SHELL, SHELL_CRASH_THRESHOLD_MS } from "./env"
 import { portManager } from "./port-manager"
 import {
+  MAX_TERMINAL_COLS,
+  MAX_TERMINAL_ROWS,
+  type TerminalReplayEvent,
+} from "../../../shared/terminal-replay"
+import {
   captureTerminalPtyOwnedProcesses,
   createSession,
   releaseTerminalPtyResources,
@@ -159,7 +164,10 @@ export class TerminalManager extends EventEmitter {
     // Set up exit handler with fallback logic
     this.setupExitHandler(session, params)
 
+    const previous = this.sessions.get(paneId)
     this.sessions.set(paneId, session)
+    this.emit(`replay:${paneId}`, session)
+    previous?.replay?.dispose()
 
     portManager.registerSession(session, workspaceId || "")
 
@@ -219,6 +227,7 @@ export class TerminalManager extends EventEmitter {
   private finishSessionExit(session: TerminalSession, exitCode: number, signal?: number): void {
     const { paneId } = session
     if (this.sessions.get(paneId) !== session) return
+    session.replay?.finish(exitCode, signal)
     try {
       // Unregister from port manager (also removes detected ports)
       portManager.unregisterSession(paneId)
@@ -227,16 +236,17 @@ export class TerminalManager extends EventEmitter {
 
       // Clean up session after delay
       const timeout = setTimeout(() => {
-        if (this.sessions.get(paneId) === session) this.sessions.delete(paneId)
+        this.removeSession(session)
       }, 5000)
       timeout.unref()
     } catch (error) {
       console.error("[TerminalManager] Failed to finalize terminal exit:", error)
-      if (this.sessions.get(paneId) === session) this.sessions.delete(paneId)
+      this.removeSession(session)
     }
   }
 
   private async releaseUnstoredSession(session: TerminalSession): Promise<void> {
+    session.replay?.dispose()
     this.captureCleanupProcessOwnership(session)
     session.isAlive = false
     try {
@@ -266,7 +276,14 @@ export class TerminalManager extends EventEmitter {
     const { paneId, cols, rows } = params
 
     // Validate geometry: cols and rows must be positive integers
-    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols <= 0 || rows <= 0) {
+    if (
+      !Number.isInteger(cols) ||
+      !Number.isInteger(rows) ||
+      cols <= 0 ||
+      rows <= 0 ||
+      cols > MAX_TERMINAL_COLS ||
+      rows > MAX_TERMINAL_ROWS
+    ) {
       console.warn(
         `[TerminalManager] Invalid resize geometry for ${paneId}: cols=${cols}, rows=${rows}. Must be positive integers.`,
       )
@@ -281,7 +298,9 @@ export class TerminalManager extends EventEmitter {
     }
 
     try {
+      if (session.cols === cols && session.rows === rows) return
       session.pty.resize(cols, rows)
+      session.replay?.resize(cols, rows)
       session.cols = cols
       session.rows = rows
       session.lastActive = Date.now()
@@ -318,7 +337,7 @@ export class TerminalManager extends EventEmitter {
     if (session.isAlive) {
       session.pty.kill()
     } else {
-      this.sessions.delete(paneId)
+      this.removeSession(session)
     }
   }
 
@@ -347,6 +366,7 @@ export class TerminalManager extends EventEmitter {
     }
 
     session.serializedState = ""
+    session.replay?.clear()
     session.lastActive = Date.now()
   }
 
@@ -387,7 +407,7 @@ export class TerminalManager extends EventEmitter {
         this.cleanupOptions?.platform ?? process.platform,
       )
       if (this.sessions.get(paneId) === session) {
-        this.sessions.delete(paneId)
+        this.removeSession(session)
       }
       return true
     }
@@ -413,7 +433,7 @@ export class TerminalManager extends EventEmitter {
             console.error(`Failed to release terminal ${paneId} resources:`, error)
           }
           if (this.sessions.get(paneId) === session) {
-            this.sessions.delete(paneId)
+            this.removeSession(session)
           }
           resolve(success)
         })()
@@ -567,6 +587,7 @@ export class TerminalManager extends EventEmitter {
         releaseTerminalPtyResources(session.pty, this.cleanupOptions?.platform ?? process.platform),
       ),
     )
+    for (const session of this.sessions.values()) session.replay?.dispose()
     this.sessions.clear()
     this.removeAllListeners()
     const ownedProcessIds = [...this.cleanupOwnedProcessIds]
@@ -595,6 +616,43 @@ export class TerminalManager extends EventEmitter {
       ownershipComplete: this.cleanupOwnershipIssues.length === 0,
       ownershipIssues: [...this.cleanupOwnershipIssues],
     }
+  }
+
+  private removeSession(session: TerminalSession): void {
+    if (this.sessions.get(session.paneId) !== session) return
+    session.replay?.dispose()
+    this.sessions.delete(session.paneId)
+  }
+
+  subscribeReplay(
+    paneId: string,
+    observer: {
+      next: (event: TerminalReplayEvent) => void
+      error: (error: Error) => void
+      complete: () => void
+    },
+  ): () => void {
+    let unsubscribe: (() => void) | undefined
+    const attach = (session: TerminalSession) => {
+      unsubscribe?.()
+      unsubscribe = session.replay?.subscribe(observer)
+      if (!session.replay) observer.error(new Error("Terminal recovery is unavailable."))
+    }
+    const session = this.sessions.get(paneId)
+    if (!session) {
+      observer.error(new Error("Terminal session is unavailable."))
+      return () => {}
+    }
+    this.on(`replay:${paneId}`, attach)
+    attach(session)
+    return () => {
+      this.off(`replay:${paneId}`, attach)
+      unsubscribe?.()
+    }
+  }
+
+  acknowledgeReplay(paneId: string, subscriptionId: string, deliveryId: number): void {
+    this.sessions.get(paneId)?.replay?.acknowledge(subscriptionId, deliveryId)
   }
 
   private captureCleanupProcessOwnership(session: TerminalSession): number[] {

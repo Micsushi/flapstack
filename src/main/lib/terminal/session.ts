@@ -4,6 +4,7 @@ import path from "node:path"
 import * as pty from "node-pty"
 import { buildTerminalEnv, FALLBACK_SHELL, getDefaultShell } from "./env"
 import type { InternalCreateSessionParams, TerminalSession } from "./types"
+import { TerminalReplay } from "./replay"
 
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
@@ -529,16 +530,27 @@ export async function createSession(
     rootPath,
   })
 
-  const ptyProcess = spawnPty({
-    shell,
-    cols: terminalCols,
-    rows: terminalRows,
-    cwd: workingDir,
-    env,
-    performanceOwnershipToken,
+  let ptyProcess: pty.IPty
+  const replay = new TerminalReplay(terminalCols, terminalRows, {
+    pause: () => ptyProcess.pause(),
+    resume: () => ptyProcess.resume(),
   })
+  try {
+    ptyProcess = spawnPty({
+      shell,
+      cols: terminalCols,
+      rows: terminalRows,
+      cwd: workingDir,
+      env,
+      performanceOwnershipToken,
+    })
+  } catch (error) {
+    replay.dispose()
+    throw error
+  }
 
   const session: TerminalSession = {
+    replay,
     pty: ptyProcess,
     paneId,
     workspaceId: workspaceId || "",
@@ -555,6 +567,7 @@ export async function createSession(
   }
 
   ptyProcess.onData((data) => {
+    replay.write(data)
     onData(paneId, data)
   })
 

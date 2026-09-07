@@ -9,9 +9,41 @@ Detach accepts an explicitly empty serialized screen. Omitting the snapshot
 preserves the existing value. This distinction prevents cleared terminal state
 from being replaced by an older snapshot on reattach.
 
-These repairs do not provide durable terminal journals or ordered snapshot-plus-
-stream recovery. The current renderer-supplied detach snapshot still cannot
-capture subsequent output while detached. App-restart process restoration,
-acknowledged streaming, bounded journal retention and cold parking remain separate
-S7 terminal work. Existing shutdown ownership and platform teardown checks remain
-in force.
+The current renderer now attaches to main-owned parsed terminal state. Output
+continues to update that state while the view is detached. Each attachment starts
+with an ordered snapshot, followed by acknowledged output. The browser acknowledges
+only after xterm has parsed a delivery. A replacement snapshot waits for previous
+parsing before resetting the screen, preventing old queued output from appearing
+on the replacement terminal. Legacy detach and raw-stream endpoints remain for
+compatibility; the current renderer no longer serializes its own detach screen.
+
+Recovery uses the official MIT-licensed [headless xterm](https://github.com/xtermjs/xterm.js/tree/6.0.0)
+and the existing [serialization addon](https://github.com/xtermjs/xterm.js/blob/6.0.0/addons/addon-serialize/README.md).
+It keeps the existing 10,000-row scrollback policy. Dimensions are bounded to 500
+columns by 200 rows; input parsing has a 4 MiB queue limit, with owned-PTY
+pause/resume above 256 KiB/below 64 KiB. Snapshots are capped at 8 MiB. Exceeding a
+limit produces an explicit recovery failure rather than a false empty screen.
+
+Each terminal permits eight attached views and one unacknowledged delivery per
+view. A slow view receives a fresh snapshot after acknowledging, with at least
+100 ms between recovery scheduling and delivery. It does not accumulate a second
+output log or an unbounded IPC queue. A view that does not acknowledge for 30
+seconds is disconnected; reopening it obtains current state. Exit follows the
+last recovered output. Unsubscribing leaves the PTY and screen state alive.
+The existing five-second exited-session cleanup remains in place. If that cleanup
+closes an unresponsive view before it receives final status, the view reports the
+closure explicitly and offers keyboard reattachment; it does not invent an exit
+code or claim that all trailing output was recovered.
+
+This state is currently in memory, not a durable terminal journal. App-restart
+process restoration, persisted retention/garbage collection, cold parking and
+mobile attachment acceptance remain separate S7 terminal work. No terminal input
+or output is separately indexed or logged by this recovery service. Existing
+shutdown ownership and platform teardown checks remain in force.
+
+Verification includes the real renderer component attached to the production
+recovery service over an isolated local test transport, with detach/reattach,
+ANSI overwrite, Unicode and narrow-layout checks. A windowless Windows Electron
+39.8.10 check also created a real owned fallback PTY, recovered output produced
+before attachment, and verified both owned processes exited. These checks do not
+claim Mac runtime, signed-package or durable app-restart acceptance.

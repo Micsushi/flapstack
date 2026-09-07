@@ -9,6 +9,11 @@ import type { TerminalEvent } from "../../terminal/types"
 import { TRPCError } from "@trpc/server"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import { resolveInsideRoot } from "../../path-safety"
+import {
+  MAX_TERMINAL_COLS,
+  MAX_TERMINAL_ROWS,
+  type TerminalReplayEvent,
+} from "../../../../shared/terminal-replay"
 
 export const terminalRouter = router({
   /**
@@ -22,8 +27,8 @@ export const terminalRouter = router({
         tabId: z.string().optional(),
         workspaceId: z.string().optional(),
         scopeKey: z.string().optional(),
-        cols: z.number().int().positive().optional(),
-        rows: z.number().int().positive().optional(),
+        cols: z.number().int().positive().max(MAX_TERMINAL_COLS).optional(),
+        rows: z.number().int().positive().max(MAX_TERMINAL_ROWS).optional(),
         cwd: z.string().optional(),
         initialCommands: z.array(z.string()).optional(),
       }),
@@ -60,8 +65,8 @@ export const terminalRouter = router({
     .input(
       z.object({
         paneId: z.string().min(1),
-        cols: z.number().int().positive(),
-        rows: z.number().int().positive(),
+        cols: z.number().int().positive().max(MAX_TERMINAL_COLS),
+        rows: z.number().int().positive().max(MAX_TERMINAL_ROWS),
       }),
     )
     .mutation(({ input }) => {
@@ -205,6 +210,26 @@ export const terminalRouter = router({
         }
       }
     }),
+
+  replay: publicProcedure
+    .input(z.object({ paneId: z.string().min(1), view: z.number().int().nonnegative() }))
+    .subscription(({ input }) =>
+      observable<TerminalReplayEvent>((emit) =>
+        terminalManager.subscribeReplay(input.paneId, emit),
+      ),
+    ),
+
+  acknowledgeReplay: publicProcedure
+    .input(
+      z.object({
+        paneId: z.string().min(1),
+        subscriptionId: z.string().uuid(),
+        deliveryId: z.number().int().positive(),
+      }),
+    )
+    .mutation(({ input }) =>
+      terminalManager.acknowledgeReplay(input.paneId, input.subscriptionId, input.deliveryId),
+    ),
 
   stream: publicProcedure.input(z.string().min(1)).subscription(({ input: paneId }) => {
     return observable<TerminalEvent>((emit) => {

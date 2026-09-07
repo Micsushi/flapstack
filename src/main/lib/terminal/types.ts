@@ -1,4 +1,5 @@
 import type * as pty from "node-pty"
+import type { TerminalReplay } from "./replay"
 
 export interface TerminalSession {
   pty: pty.IPty
@@ -11,6 +12,7 @@ export interface TerminalSession {
   rows: number
   lastActive: number
   serializedState?: string
+  replay?: TerminalReplay
   isAlive: boolean
   shell: string
   startTime: number
