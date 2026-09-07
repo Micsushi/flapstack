@@ -1,5 +1,7 @@
 import Database from "better-sqlite3"
-import { readFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import {
   providerAccountSnapshotFromRow,
@@ -12,7 +14,9 @@ vi.mock("../src/main/lib/credential-service", () => ({
 
 describe("provider account provenance", () => {
   it("migrates existing runs and accounts without changing credential ciphertext", () => {
-    const db = new Database(":memory:")
+    const directory = mkdtempSync(join(tmpdir(), "flapstack-provenance-"))
+    const databasePath = join(directory, "migration.db")
+    let db = new Database(databasePath)
     try {
       db.exec(`
         CREATE TABLE agent_runs (id TEXT, harness TEXT);
@@ -23,6 +27,8 @@ describe("provider account provenance", () => {
         INSERT INTO anthropic_settings VALUES ('singleton', 'account-a');
       `)
       db.exec(readFileSync("drizzle/0059_shiny_ogun.sql", "utf8"))
+      db.close()
+      db = new Database(databasePath)
       const historical = db.prepare("SELECT * FROM agent_runs").get() as Record<string, unknown>
       expect(providerAccountSnapshotFromRow(historical)).toMatchObject({
         authMode: "legacy",
@@ -62,6 +68,7 @@ describe("provider account provenance", () => {
       })
     } finally {
       db.close()
+      rmSync(directory, { recursive: true, force: true })
     }
   })
 
@@ -92,5 +99,25 @@ describe("provider account provenance", () => {
     expect(readFileSync("src/main/lib/trpc/routers/anthropic-accounts.ts", "utf8")).not.toMatch(
       /getActiveToken\s*:/,
     )
+  })
+
+  it("distinguishes legacy stored Claude credentials from system credentials", () => {
+    const db = new Database(":memory:")
+    try {
+      db.exec(`CREATE TABLE claude_code_credentials (id TEXT, oauth_token TEXT);
+        INSERT INTO claude_code_credentials VALUES ('default', 'sealed-token');`)
+      expect(resolveProviderAccountSnapshot(db, "claude-code")).toMatchObject({
+        accountId: "legacy-default",
+        authMode: "subscription",
+        credentialRevision: "legacy",
+      })
+      db.exec("DELETE FROM claude_code_credentials")
+      expect(resolveProviderAccountSnapshot(db, "claude-code")).toMatchObject({
+        accountId: "system-default",
+        authMode: "system-default",
+      })
+    } finally {
+      db.close()
+    }
   })
 })

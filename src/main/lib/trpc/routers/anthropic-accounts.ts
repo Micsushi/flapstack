@@ -301,38 +301,61 @@ export const anthropicAccountsRouter = router({
   remove: publicProcedure.input(z.object({ accountId: z.string() })).mutation(({ input }) => {
     const db = getDatabase()
 
-    // Check if this is the active account
-    const settings = db
-      .select()
-      .from(anthropicSettings)
-      .where(eq(anthropicSettings.id, "singleton"))
-      .get()
+    const activeChanged = db.transaction((tx) => {
+      // Selection and the legacy launch credential must change together.
+      const settings = tx
+        .select()
+        .from(anthropicSettings)
+        .where(eq(anthropicSettings.id, "singleton"))
+        .get()
 
-    // Delete the account
-    db.delete(anthropicAccounts).where(eq(anthropicAccounts.id, input.accountId)).run()
+      // Delete the account
+      tx.delete(anthropicAccounts).where(eq(anthropicAccounts.id, input.accountId)).run()
 
-    // If deleted account was active, set another account as active
-    if (settings?.activeAccountId === input.accountId) {
-      const firstRemaining = db.select().from(anthropicAccounts).limit(1).get()
+      // If deleted account was active, set another account as active
+      if (settings?.activeAccountId === input.accountId) {
+        const firstRemaining = tx.select().from(anthropicAccounts).limit(1).get()
 
-      if (firstRemaining) {
-        db.update(anthropicSettings)
-          .set({
-            activeAccountId: firstRemaining.id,
-            updatedAt: new Date(),
+        tx.delete(claudeCodeCredentials).where(eq(claudeCodeCredentials.id, "default")).run()
+
+        if (firstRemaining) {
+          let encryptedToken = firstRemaining.oauthToken
+          decryptToken(encryptedToken, (oauthToken) => {
+            tx.update(anthropicAccounts)
+              .set({ oauthToken })
+              .where(eq(anthropicAccounts.id, firstRemaining.id))
+              .run()
+            encryptedToken = oauthToken
           })
-          .where(eq(anthropicSettings.id, "singleton"))
-          .run()
-      } else {
-        db.update(anthropicSettings)
-          .set({
-            activeAccountId: null,
-            updatedAt: new Date(),
-          })
-          .where(eq(anthropicSettings.id, "singleton"))
-          .run()
+          tx.insert(claudeCodeCredentials)
+            .values({
+              id: "default",
+              oauthToken: encryptedToken,
+              connectedAt: new Date(),
+            })
+            .run()
+          tx.update(anthropicSettings)
+            .set({
+              activeAccountId: firstRemaining.id,
+              updatedAt: new Date(),
+            })
+            .where(eq(anthropicSettings.id, "singleton"))
+            .run()
+        } else {
+          tx.update(anthropicSettings)
+            .set({
+              activeAccountId: null,
+              updatedAt: new Date(),
+            })
+            .where(eq(anthropicSettings.id, "singleton"))
+            .run()
+        }
+        return true
       }
-    }
+      return false
+    })
+
+    if (activeChanged) clearClaudeCaches()
 
     console.log(`[AnthropicAccounts] Removed account: ${input.accountId}`)
     return { success: true }

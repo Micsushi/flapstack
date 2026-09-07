@@ -2,6 +2,7 @@ import Database from "better-sqlite3"
 import {
   providerAccountSnapshotFromRow,
   providerAccountSnapshotColumns,
+  providerAccountSnapshotSqlValues,
   resolveProviderAccountSnapshot,
 } from "../provider-accounts/snapshot"
 import { randomUUID } from "node:crypto"
@@ -442,10 +443,11 @@ export class StandaloneAgentLaunchService {
           priorRun.runtime_protocol_version,
           priorRun.runtime_capability_snapshot,
           priorRun.runtime_control_snapshot,
-          priorRun.provider_account_id,
-          priorRun.provider_auth_mode,
-          priorRun.provider_runtime_target,
-          priorRun.provider_credential_revision,
+          ...providerAccountSnapshotSqlValues(
+            providerAccountSnapshotColumns(
+              resolveProviderAccountSnapshot(db, String(priorRun.harness)),
+            ),
+          ),
           now,
         )
         if (prior.orchestrationTaskId) {

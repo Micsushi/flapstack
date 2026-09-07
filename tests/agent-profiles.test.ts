@@ -1673,6 +1673,9 @@ describe("workflow and standalone Agent Profile launches", () => {
     ).toEqual({ mcp_exposure_enabled: 1 })
 
     sqlite.prepare("UPDATE agent_runs SET status = 'failure' WHERE id = ?").run(first.runId)
+    sqlite.exec(`INSERT INTO anthropic_accounts (id, oauth_token, credential_revision)
+      VALUES ('new-account', 'encrypted-new-token', 2);
+      UPDATE anthropic_settings SET active_account_id = 'new-account';`)
     const followUp = await launches.followUp(
       first.id,
       "request-follow-up",
@@ -1686,7 +1689,7 @@ describe("workflow and standalone Agent Profile launches", () => {
           "SELECT provider_account_id, provider_credential_revision FROM agent_runs WHERE id = ?",
         )
         .get(followUp.runId),
-    ).toEqual({ provider_account_id: "selected-account", provider_credential_revision: "7" })
+    ).toEqual({ provider_account_id: "new-account", provider_credential_revision: "2" })
     expect(
       await launches.followUp(first.id, "request-follow-up", "Check the result.", false),
     ).toEqual(expect.objectContaining({ id: followUp.id }))
@@ -1694,8 +1697,15 @@ describe("workflow and standalone Agent Profile launches", () => {
       launches.followUp(first.id, "request-follow-up", "Different prompt.", false),
     ).rejects.toMatchObject({ code: "request-conflict" })
     sqlite.prepare("UPDATE agent_runs SET status = 'failure' WHERE id = ?").run(followUp.runId)
+    sqlite.exec("UPDATE anthropic_settings SET active_account_id = 'selected-account'")
     const retried = await launches.retry(followUp.id, "request-retry", false)
     expect(retried.snapshotId).toBe(first.snapshotId)
+    expect(
+      sqlite.prepare("SELECT provider_account_id FROM agent_runs WHERE id = ?").get(retried.runId),
+    ).toEqual({ provider_account_id: "selected-account" })
+    expect(
+      sqlite.prepare("SELECT provider_account_id FROM agent_runs WHERE id = ?").get(first.runId),
+    ).toEqual({ provider_account_id: "selected-account" })
     expect(
       new StandaloneAgentLaunchService(databasePath)
         .reconcile()

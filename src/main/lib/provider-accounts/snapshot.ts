@@ -47,6 +47,22 @@ export function resolveProviderAccountSnapshot(
   if (harness === "claude-code") {
     const managed = resolveActiveAnthropicAccount(database)
     if (managed) return managed
+    if (
+      hasTable(database, "claude_code_credentials") &&
+      database
+        .prepare(
+          "SELECT 1 FROM claude_code_credentials WHERE id = 'default' AND length(oauth_token) > 0",
+        )
+        .get()
+    ) {
+      return providerAccountSnapshotSchema.parse({
+        provider: "anthropic",
+        accountId: "legacy-default",
+        authMode: "subscription",
+        runtimeTarget: "local",
+        credentialRevision: "legacy",
+      })
+    }
   }
 
   if (harness === "local") {

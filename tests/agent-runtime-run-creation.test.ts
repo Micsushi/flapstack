@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs"
+import { readFileSync, readdirSync } from "node:fs"
 import { resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import Database from "better-sqlite3"
@@ -49,6 +49,10 @@ describe("Agent Runtime run creation", () => {
       runtimeSnapshotVersion: 1,
       runtimePreferenceSource: "project",
       resolvedRuntime: "flapstack-native",
+      providerAccountId: "system-default",
+      providerAuthMode: "system-default",
+      providerRuntimeTarget: "local",
+      providerCredentialRevision: "system",
     })
   })
 
@@ -178,17 +182,40 @@ describe("Agent Runtime run creation", () => {
       "src/main/lib/mcp-control/mutation-service.ts",
       "src/main/lib/agent-orchestration/service.ts",
       "src/main/lib/automation/execution.ts",
+      "src/main/lib/agent-profiles/standalone-launch.ts",
+      "src/main/lib/agent-runtime/interactive-chat.ts",
+      "src/main/lib/agent-runtime/cross-provider-delegation.ts",
+      "src/main/lib/agent-runtime/dev-activity-fixtures.ts",
+      "src/main/lib/performance/product-adapters.ts",
     ]
     for (const path of rawInsertFiles) {
       const source = read(path)
-      expect(source, path).toContain("constructRuntimeSnapshot")
+      if (
+        !path.endsWith("dev-activity-fixtures.ts") &&
+        !path.endsWith("performance/product-adapters.ts")
+      ) {
+        expect(/constructRuntimeSnapshot|runtimeSnapshotColumns/.test(source), path).toBe(true)
+      }
       const inserts = [...source.matchAll(/INSERT INTO agent_runs[\s\S]*?\) VALUES/g)]
       coveredInsertCount += inserts.length
       for (const insert of inserts) {
         expect(insert[0], path).toContain("runtime_snapshot_version")
+        for (const column of [
+          "provider_account_id",
+          "provider_auth_mode",
+          "provider_runtime_target",
+          "provider_credential_revision",
+        ]) {
+          expect(insert[0], path).toContain(column)
+        }
       }
     }
-    expect(coveredInsertCount).toBe(12)
+    expect(coveredInsertCount).toBe(18)
+    const insertionFiles = readdirSync("src/main", { recursive: true })
+      .filter((path) => String(path).endsWith(".ts"))
+      .map((path) => `src/main/${String(path).replaceAll("\\", "/")}`)
+      .filter((path) => /INSERT INTO agent_runs|\.insert\(agentRuns\)/.test(read(path)))
+    expect(insertionFiles.sort()).toEqual([...drizzleInsertFiles, ...rawInsertFiles].sort())
     expect(read("src/main/lib/main-run-launcher.ts")).not.toContain("INSERT INTO agent_runs")
   })
 })
