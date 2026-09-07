@@ -1,0 +1,1 @@
+ALTER TABLE `workspace_edits` ADD `previous_relative_path` text;

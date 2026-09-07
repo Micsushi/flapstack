@@ -27,7 +27,11 @@ import {
   WorkspaceEditingService,
   WorkspaceEditConflictError,
 } from "../src/main/lib/workspace-editing/service"
-import { removeFileInsideRoot, writeFileInsideRoot } from "../src/main/lib/path-safety"
+import {
+  removeFileInsideRoot,
+  renameFileInsideRoot,
+  writeFileInsideRoot,
+} from "../src/main/lib/path-safety"
 import { disabledCustomPermissions } from "../src/shared/permission-capabilities"
 
 let container: string, root: string, sqlite: Database.Database
@@ -134,6 +138,87 @@ it.each(["", original])(
   },
 )
 
+it("renames exact bytes, replays a lost response and reverses the path across reopen", async () => {
+  const input = {
+    ...scope,
+    id: randomUUID(),
+    relativePath: "file.txt",
+    expectedSha256: hash(original),
+    newName: "renamed 雪.txt",
+  }
+  const renamed = await service.rename(input)
+  expect(renamed).toMatchObject({
+    kind: "rename",
+    state: "applied",
+    previousRelativePath: "file.txt",
+  })
+  expect(existsSync(join(root, "file.txt"))).toBe(false)
+  expect(readFileSync(join(root, input.newName), "utf8")).toBe(original)
+  expect(await service.rename(input)).toEqual(renamed)
+  sqlite.prepare("UPDATE chats SET permission_mode = 'read-only'").run()
+  await expect(service.rename(input)).rejects.toThrow("permit")
+  sqlite.prepare("UPDATE chats SET permission_mode = 'auto-edit-project-only'").run()
+  await expect(service.rename({ ...input, newName: "different.txt" })).rejects.toThrow("reused")
+  sqlite.close()
+  sqlite = new Database(join(container, "test.db"))
+  db = createDb()
+  service = new WorkspaceEditingService(db)
+  const undo = await service.revert({ ...scope, id: randomUUID(), operationId: renamed.id })
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
+  expect(existsSync(join(root, input.newName))).toBe(false)
+  await service.revert({ ...scope, id: randomUUID(), operationId: undo.id })
+  expect(readFileSync(join(root, input.newName), "utf8")).toBe(original)
+})
+
+it("rejects rename collisions, stale bytes and unsafe names", async () => {
+  const input = {
+    ...scope,
+    id: randomUUID(),
+    relativePath: "file.txt",
+    expectedSha256: hash(original),
+    newName: "existing.txt",
+  }
+  writeFileSync(join(root, input.newName), "external")
+  await expect(service.rename(input)).rejects.toBeInstanceOf(WorkspaceEditConflictError)
+  await expect(service.rename({ ...input, newName: "../escape.txt" })).rejects.toThrow()
+  await expect(
+    service.rename({ ...input, newName: "fresh.txt", expectedSha256: hash("stale") }),
+  ).rejects.toBeInstanceOf(WorkspaceEditConflictError)
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
+  expect(readFileSync(join(root, input.newName), "utf8")).toBe("external")
+})
+
+it("rolls rename back on audit failure but never replaces a recreated source", async () => {
+  const input = {
+    ...scope,
+    id: randomUUID(),
+    relativePath: "file.txt",
+    expectedSha256: hash(original),
+    newName: "renamed.txt",
+  }
+  sqlite.exec(
+    "CREATE TRIGGER reject_edit_audit BEFORE INSERT ON mcp_audit_records BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END",
+  )
+  await expect(service.rename(input)).rejects.toThrow("audit unavailable")
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
+  expect(existsSync(join(root, input.newName))).toBe(false)
+  sqlite.exec("DROP TRIGGER reject_edit_audit")
+  expect((await service.rename(input)).state).toBe("failed")
+  service = new WorkspaceEditingService(
+    db,
+    writeFileInsideRoot,
+    removeFileInsideRoot,
+    async (root, path, name, options) => {
+      const result = await renameFileInsideRoot(root, path, name, options)
+      writeFileSync(join(root, path), "external")
+      return result
+    },
+  )
+  await expect(service.rename({ ...input, id: randomUUID() })).rejects.toThrow()
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe("external")
+  expect(readFileSync(join(root, input.newName), "utf8")).toBe(original)
+})
+
 it("never overwrites an existing save-as target or externally changed created file", async () => {
   const input = { ...scope, id: randomUUID(), relativePath: "file.txt", content: "draft" }
   await expect(service.saveAs(input)).rejects.toBeInstanceOf(WorkspaceEditConflictError)
@@ -227,7 +312,7 @@ it("expires old snapshots at the retention limit without losing idempotency or b
   const first = await service.save(input)
   const copy = sqlite.prepare(`INSERT INTO workspace_edits
     SELECT ?, project_id, chat_id, root_path, root_identity, relative_path, request_hash,
-      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1, kind, file_mode
+      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1, kind, file_mode, previous_relative_path
     FROM workspace_edits WHERE id = ?`)
   sqlite.transaction(() => {
     for (let i = 0; i < 999; i++) copy.run(randomUUID(), first.id)
@@ -251,7 +336,7 @@ it.each([false, true])("replays undo after source expiry (interrupted=%s)", asyn
   const saved = await service.save(request())
   const copy = sqlite.prepare(`INSERT INTO workspace_edits
     SELECT ?, project_id, chat_id, root_path, root_identity, relative_path, request_hash,
-      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1, kind, file_mode
+      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1, kind, file_mode, previous_relative_path
     FROM workspace_edits WHERE id = ?`)
   sqlite.transaction(() => {
     for (let i = 0; i < 999; i++) copy.run(randomUUID(), saved.id)
@@ -277,7 +362,7 @@ it("expires enough snapshots for the UTF-8 byte budget independently of record c
   const first = await service.save(request(content))
   const copy = sqlite.prepare(`INSERT INTO workspace_edits
     SELECT ?, project_id, chat_id, root_path, root_identity, relative_path, request_hash,
-      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1, kind, file_mode
+      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1, kind, file_mode, previous_relative_path
     FROM workspace_edits WHERE id = ?`)
   sqlite.transaction(() => {
     for (let i = 0; i < 30; i++) copy.run(randomUUID(), first.id)
@@ -363,7 +448,7 @@ it("recovers a durable write interrupted before metadata completion without rewr
   expect(sqlite.prepare("SELECT count(*) count FROM mcp_audit_records").get()).toEqual({ count: 1 })
 })
 
-it.each(["save", "create", "remove"] as const)(
+it.each(["save", "create", "remove", "rename", "rename-linked"] as const)(
   "recovers an actual child exit after %s commit",
   async (kind) => {
     const created =
@@ -377,8 +462,9 @@ it.each(["save", "create", "remove"] as const)(
         : null
     const input = {
       ...request(),
-      relativePath: kind === "save" ? "file.txt" : "new.txt",
+      relativePath: kind === "save" || kind.startsWith("rename") ? "file.txt" : "new.txt",
       operationId: created?.id,
+      newName: "renamed.txt",
     }
     const evidenceRoot = resolve(".local-evidence")
     mkdirSync(evidenceRoot, { recursive: true })
@@ -417,10 +503,15 @@ it.each(["save", "create", "remove"] as const)(
           ? await service.revert({ ...input, operationId: created!.id })
           : kind === "create"
             ? await service.saveAs(input)
-            : await service.save(input)
-      expect(recovered.state).toBe("applied")
+            : kind.startsWith("rename")
+              ? await service.rename(input)
+              : await service.save(input)
+      expect(recovered.state).toBe(kind === "rename-linked" ? "conflict" : "applied")
       if (kind === "remove") expect(existsSync(join(root, input.relativePath))).toBe(false)
-      else expect(readFileSync(join(root, input.relativePath), "utf8")).toBe(input.content)
+      else if (kind.startsWith("rename")) {
+        expect(existsSync(join(root, input.relativePath))).toBe(kind === "rename-linked")
+        expect(readFileSync(join(root, input.newName), "utf8")).toBe(original)
+      } else expect(readFileSync(join(root, input.relativePath), "utf8")).toBe(input.content)
     } finally {
       rmSync(buildRoot, { recursive: true, force: true })
     }

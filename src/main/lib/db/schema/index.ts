@@ -3609,10 +3609,11 @@ export const workspaceEdits = sqliteTable(
     beforeSha256: text("before_sha256").notNull(),
     afterSha256: text("after_sha256").notNull(),
     revertsId: text("reverts_id"),
-    kind: text("kind", { enum: ["save", "create", "remove"] })
+    kind: text("kind", { enum: ["save", "create", "remove", "rename"] })
       .notNull()
       .default("save"),
     fileMode: integer("file_mode").notNull().default(384),
+    previousRelativePath: text("previous_relative_path"),
     state: text("state", {
       enum: ["prepared", "applied", "failed", "conflict", "expired"],
     }).notNull(),

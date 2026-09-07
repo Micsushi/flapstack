@@ -87,6 +87,16 @@ describe("beta service gates", () => {
     ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })
     expect(betaFeatureForTrpcPath("workspaceEditing.save")).toBe("workspaceEditing")
     await expect(
+      workspaceEditingRouter.createCaller(context).rename({
+        projectId: "project",
+        chatId: "chat",
+        id: "12345678-1234-4234-8234-123456789abc",
+        relativePath: "old.txt",
+        newName: "new.txt",
+        expectedSha256: "a".repeat(64),
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })
+    await expect(
       workspaceEditingRouter.createCaller(context).saveAs({
         projectId: "project",
         chatId: "chat",

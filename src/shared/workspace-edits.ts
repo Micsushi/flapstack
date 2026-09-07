@@ -26,5 +26,14 @@ export const saveAsWorkspaceEditSchema = workspaceEditTargetSchema.extend({
   id: z.string().uuid(),
   content: z.string().max(workspaceEditMaxBytes),
 })
+export const renameWorkspaceEditSchema = workspaceEditTargetSchema.extend({
+  id: z.string().uuid(),
+  expectedSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  newName: z
+    .string()
+    .min(1)
+    .max(255)
+    .refine((value) => value !== "." && value !== ".." && !/[\\/\0]/.test(value)),
+})
 export type WorkspaceEditScope = z.infer<typeof workspaceEditScopeSchema>
 export type SaveWorkspaceEdit = z.infer<typeof saveWorkspaceEditSchema>

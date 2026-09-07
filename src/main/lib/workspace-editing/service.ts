@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { isUtf8 } from "node:buffer"
-import { relative, sep } from "node:path"
+import { basename, dirname, join, relative, sep } from "node:path"
 import { lstat } from "node:fs/promises"
 import { and, asc, desc, eq, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
@@ -10,6 +10,7 @@ import {
   actOnPathInsideRoot,
   readFileInsideRoot,
   removeFileInsideRoot,
+  renameFileInsideRoot,
   resolveInsideRoot,
   writeFileInsideRoot,
 } from "../path-safety"
@@ -22,6 +23,7 @@ import {
   saveWorkspaceEditSchema,
   revertWorkspaceEditSchema,
   saveAsWorkspaceEditSchema,
+  renameWorkspaceEditSchema,
   type WorkspaceEditScope,
   type SaveWorkspaceEdit,
 } from "../../../shared/workspace-edits"
@@ -69,6 +71,7 @@ export class WorkspaceEditingService {
     private readonly db: Database,
     private readonly write = writeFileInsideRoot,
     private readonly remove = removeFileInsideRoot,
+    private readonly renameFile = renameFileInsideRoot,
   ) {}
 
   private scope(input: WorkspaceEditScope) {
@@ -133,6 +136,7 @@ export class WorkspaceEditingService {
       afterSha256: row.afterSha256,
       revertsId: row.revertsId,
       kind: row.kind,
+      previousRelativePath: row.previousRelativePath,
       createdAt: row.createdAt,
     }
   }
@@ -170,16 +174,20 @@ export class WorkspaceEditingService {
     const scope = this.scope(authority)
     if (scope.identity !== row.rootIdentity || scope.root.canonicalPath !== row.rootPath)
       throw new Error("Edit history belongs to a different registered root")
-    let currentHash: string | null | undefined
-    try {
-      currentHash = hash(
-        await readFileInsideRoot(row.rootPath, row.relativePath, {
-          maxBytes: workspaceEditMaxBytes,
-        }),
+    const currentHash = await this.recoveryHash(row.rootPath, row.relativePath)
+    if (row.kind === "rename") {
+      if (!row.previousRelativePath) throw new Error("Rename history has no source path")
+      const previousHash = await this.recoveryHash(row.rootPath, row.previousRelativePath)
+      if (this.scope(authority).identity !== row.rootIdentity)
+        throw new Error("Editor root changed")
+      return this.finish(
+        row,
+        previousHash === null && currentHash === row.afterSha256
+          ? "applied"
+          : previousHash === row.beforeSha256 && currentHash === null
+            ? "failed"
+            : "conflict",
       )
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") currentHash = null
-      // Unreadable bytes remain unknown, distinct from a verified missing target.
     }
     if (this.scope(authority).identity !== row.rootIdentity) throw new Error("Editor root changed")
     // Recovery only reconciles metadata. It never writes historical bytes over disk.
@@ -191,6 +199,16 @@ export class WorkspaceEditingService {
           ? "failed"
           : "conflict",
     )
+  }
+
+  private async recoveryHash(root: string, path: string): Promise<string | null | undefined> {
+    try {
+      return hash(await readFileInsideRoot(root, path, { maxBytes: workspaceEditMaxBytes }))
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
+      // Unreadable bytes remain unknown, distinct from a verified missing target.
+      return undefined
+    }
   }
 
   async history(input: WorkspaceEditScope) {
@@ -256,17 +274,20 @@ export class WorkspaceEditingService {
       if (row.state !== "applied") throw new Error("Only an applied edit can be reversed")
       if (this.scope(value).identity !== row.rootIdentity)
         throw new Error("Edit history belongs to a different registered root")
+      if (row.kind === "rename" && !row.previousRelativePath)
+        throw new Error("Rename history has no source path")
       return this.saveRecord(
         {
           ...value,
-          relativePath: row.relativePath,
+          relativePath: row.kind === "rename" ? row.previousRelativePath! : row.relativePath,
           expectedSha256: row.kind === "remove" ? null : row.afterSha256,
           content: row.beforeContent,
           intent: "save",
         },
         row.id,
-        row.kind === "create" ? "remove" : row.kind === "remove" ? "create" : "save",
+        row.kind === "create" ? "remove" : row.kind === "remove" ? "create" : row.kind,
         row.fileMode,
+        row.kind === "rename" ? row.relativePath : null,
       )
     })
   }
@@ -281,17 +302,40 @@ export class WorkspaceEditingService {
     })
   }
 
+  async rename(input: z.infer<typeof renameWorkspaceEditSchema>) {
+    const value = renameWorkspaceEditSchema.parse(input)
+    const scope = this.writable(value, "save")
+    const from = this.path(scope.root.canonicalPath, value.relativePath)
+    return withRootLock(scope.root.canonicalPath, () => {
+      if (this.writable(value, "save").identity !== scope.identity)
+        throw new Error("Editor root changed")
+      return this.saveRecord(
+        { ...value, relativePath: join(dirname(from), value.newName), content: "", intent: "save" },
+        null,
+        "rename",
+        0o600,
+        from,
+      )
+    })
+  }
+
   private async saveRecord(
     input: EditInput,
     revertsId: string | null,
     kind: Row["kind"] = "save",
     fileMode = 0o600,
+    renameFrom: string | null = null,
   ) {
     const scope = this.writable(input, input.intent)
     const path = this.path(scope.root.canonicalPath, input.relativePath)
-    const bytes = Buffer.from(input.content, "utf8")
+    if (renameFrom !== null) {
+      renameFrom = this.path(scope.root.canonicalPath, renameFrom)
+      if (path === renameFrom || dirname(path) !== dirname(renameFrom))
+        throw new Error("Rename requires a different name in the same directory")
+    }
+    let bytes = Buffer.from(input.content, "utf8")
     if (text(bytes) !== input.content) throw new Error("Draft contains invalid Unicode")
-    const afterSha256 = hash(bytes)
+    const afterSha256 = kind === "rename" ? input.expectedSha256! : hash(bytes)
     const requestHash = hash(
       JSON.stringify([
         input.projectId,
@@ -302,6 +346,7 @@ export class WorkspaceEditingService {
         input.intent,
         revertsId,
         ...(kind === "save" ? [] : [kind]),
+        ...(renameFrom === null ? [] : [renameFrom]),
       ]),
     )
     // All callers hold the canonical-root lock through lookup, recovery and commit.
@@ -331,8 +376,16 @@ export class WorkspaceEditingService {
       .limit(1000)
       .all()
     for (const row of pending) await this.recover(row, input)
-    const before = await this.readForSave({ ...input, relativePath: path }, kind === "create")
+    const before = await this.readForSave(
+      { ...input, relativePath: renameFrom ?? path },
+      kind === "create",
+    )
     if (before.sha256 !== input.expectedSha256) throw new WorkspaceEditConflictError(before.sha256)
+    if (kind === "rename") {
+      const destination = await this.readForSave({ ...input, relativePath: path }, true)
+      if (destination.sha256 !== null) throw new WorkspaceEditConflictError(destination.sha256)
+      bytes = Buffer.from(before.content, "utf8")
+    }
     if (kind === "remove")
       fileMode = await actOnPathInsideRoot(
         scope.root.canonicalPath,
@@ -348,12 +401,13 @@ export class WorkspaceEditingService {
       relativePath: path,
       requestHash,
       beforeContent: before.content,
-      afterContent: input.content,
+      afterContent: kind === "rename" ? before.content : input.content,
       beforeSha256: before.sha256 ?? hash(""),
       afterSha256,
       revertsId,
       kind,
       fileMode,
+      previousRelativePath: renameFrom,
       state: "prepared",
       createdAt: Date.now(),
     }
@@ -389,7 +443,39 @@ export class WorkspaceEditingService {
       tx.insert(schema.workspaceEdits).values(row).run()
     })
     try {
-      if (kind === "remove") {
+      if (kind === "rename") {
+        await this.renameFile(scope.root.canonicalPath, renameFrom!, basename(path), {
+          beforeCommit: async () => {
+            const current = await this.readForSave({ ...input, relativePath: renameFrom! })
+            if (current.sha256 !== before.sha256)
+              throw new WorkspaceEditConflictError(current.sha256)
+            if (this.writable(input, input.intent).identity !== scope.identity)
+              throw new Error("Editor root changed")
+          },
+        })
+        try {
+          if (
+            (await this.recoveryHash(scope.root.canonicalPath, renameFrom!)) !== null ||
+            (await this.recoveryHash(scope.root.canonicalPath, path)) !== afterSha256
+          )
+            throw new WorkspaceEditConflictError(null)
+          if (this.writable(input, input.intent).identity !== scope.identity)
+            throw new Error("Editor root changed")
+          this.finish(row, "applied")
+        } catch (error) {
+          if (this.scope(input).identity !== scope.identity) throw error
+          await renameFileInsideRoot(scope.root.canonicalPath, path, basename(renameFrom!), {
+            beforeCommit: async () => {
+              const current = await this.readForSave({ ...input, relativePath: path })
+              if (current.sha256 !== afterSha256)
+                throw new WorkspaceEditConflictError(current.sha256)
+              if (this.scope(input).identity !== scope.identity)
+                throw new Error("Editor root changed")
+            },
+          })
+          throw error
+        }
+      } else if (kind === "remove") {
         const removed = await this.remove(scope.root.canonicalPath, path, {
           beforeCommit: async () => {
             if (this.writable(input, input.intent).identity !== scope.identity)
@@ -461,7 +547,10 @@ export class WorkspaceEditingService {
         /* Retain durable recovery bytes. */
       }
       try {
-        const current = await this.readForSave({ ...input, relativePath: path }, kind === "create")
+        const current = await this.readForSave(
+          { ...input, relativePath: renameFrom ?? path },
+          kind === "create",
+        )
         if (current.sha256 !== before.sha256) throw new WorkspaceEditConflictError(current.sha256)
       } catch (conflict) {
         if (conflict instanceof WorkspaceEditConflictError) throw conflict

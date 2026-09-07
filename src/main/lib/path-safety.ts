@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto"
 import {
   chmod,
   lstat,
+  link,
   mkdir,
   open,
   readFile,
@@ -323,6 +324,50 @@ export async function readFileInsideRoot(
 }
 
 /** Rename an existing path without allowing the renderer to choose an absolute target. */
+export async function renameFileInsideRoot(
+  rootPath: string,
+  targetRelativePath: string,
+  newName: string,
+  options: RootedMutationOptions & { afterLink?: () => void | Promise<void> } = {},
+): Promise<{ targetPath: string; newPath: string }> {
+  validateSinglePathSegment(newName)
+  const snapshot = await snapshotExistingPath(rootPath, targetRelativePath)
+  const info = await lstat(snapshot.targetPath)
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error("Rename target must be a real file")
+  const newPath = resolveInsideRoot(snapshot.parentPath, newName)
+  if (newPath === snapshot.targetPath) throw new Error("Rename requires a different name")
+  await options.beforeCommit?.(snapshot.targetPath)
+  await validateExistingSnapshot(snapshot)
+  // Exclusive hard-link creation cannot replace a destination appearing concurrently.
+  // A crash between link and unlink leaves both names for journal reconciliation.
+  await link(snapshot.targetPath, newPath)
+  try {
+    await options.afterLink?.()
+    await validateRootAndParent(
+      snapshot.lexicalRoot,
+      snapshot.realRoot,
+      snapshot.rootIdentity,
+      snapshot.parentPath,
+      snapshot.parentIdentity,
+    )
+    await validateTargetIdentity(newPath, snapshot.targetIdentity)
+    await validateExistingSnapshot(snapshot)
+    await rm(snapshot.targetPath)
+  } catch (error) {
+    // Drop the new alias only while the original name still preserves this same inode.
+    try {
+      await validateExistingSnapshot(snapshot)
+      await validateTargetIdentity(newPath, snapshot.targetIdentity)
+      await rm(newPath)
+    } catch {
+      /* Preserve both names when ownership is uncertain. */
+    }
+    throw error
+  }
+  return { targetPath: snapshot.targetPath, newPath }
+}
+
+/** Rename a generic existing path; text-edit journal callers use renameFileInsideRoot. */
 export async function renamePathInsideRoot(
   rootPath: string,
   targetRelativePath: string,
@@ -333,6 +378,10 @@ export async function renamePathInsideRoot(
   const snapshot = await snapshotExistingPath(rootPath, targetRelativePath)
   const newPath = resolveInsideRoot(snapshot.parentPath, newName)
   if (dirname(newPath) !== snapshot.parentPath) throw new Error("Rename target must stay in parent")
+
+  const targetInfo = await lstat(snapshot.targetPath)
+  if (newPath !== snapshot.targetPath && targetInfo.isFile())
+    return renameFileInsideRoot(rootPath, targetRelativePath, newName, options)
 
   await options.beforeCommit?.(snapshot.targetPath)
   await validateExistingSnapshot(snapshot)

@@ -2,8 +2,8 @@
 
 The Workspace Editing beta is off by default. Its desktop API currently supports
 UTF-8 text files in a connected chat worktree: read, compare-and-save,
-save-as to a new path, history and reversal. Editable panes, autosave UI and rename are not yet
-implemented. Existing text and Markdown viewers remain read-only.
+save-as to a new path, same-directory rename, history and reversal. Editable
+panes and autosave UI are not yet implemented. Existing viewers remain read-only.
 
 Each save requires a project/chat scope, relative path, exact SHA-256 of the
 opened bytes and a fresh operation UUID. The main process checks ownership,
@@ -44,12 +44,24 @@ into that still-missing path. External recreations and root changes are preserve
 This inverse API is not a general-purpose delete endpoint. Filesystem ACLs and
 extended metadata are not journaled; new files use private permission bits.
 
+Migration 0065 records both rename paths. Text renames exclusively create a
+same-inode destination link before unlinking the verified source, so a concurrent
+destination cannot be overwritten. Both names can briefly exist. An interruption
+in that interval leaves an explicit conflict and preserves both names; recovery
+does not guess which to remove. Finalized renames reverse only while source and
+destination checks still hold. Filesystems without hard-link support fail without
+an overwriting fallback. Case-only renames on case-insensitive filesystems remain
+unsupported. Generic file-tree directory renames are outside this beta authority.
+Ordinary file-tree regular-file renames share the exclusive-link helper;
+symlink and directory moves retain their existing platform implementation and
+are not covered by the new no-overwrite guarantee.
+
 History reserves at most 1,000 retained snapshots and 64 MiB of before/after text
 per profile. Reserving a new operation expires oldest finalized snapshots as
 needed, even if that new operation later fails. Prepared recovery records are
 never expired automatically. Expired records retain identities, hashes and an
-explicit expired state for retry safety, but no source text, and cannot be undone. Metadata and
-audit retention are separate from this snapshot-byte limit. The latest reversal
+explicit expired state for retry safety, but no source text, and cannot be undone.
+Metadata and audit retention are separate from this snapshot-byte limit. The latest reversal
 can reserve space by expiring older snapshots rather than failing solely because
 ordinary history is full.
 
@@ -57,5 +69,6 @@ Focused coverage is in `tests/workspace-editing.test.ts` and
 `tests/beta-feature-gates.test.ts`. Database-close tests model interrupted writes;
 an isolated Node child also exits after the file commit and before journal
 completion, then the reopened service recovers the prepared operation. The
-fixture passed on Windows, Linux and macOS. This is not an Electron app-crash or interactive
-editor walkthrough. S7-F4 acceptance remains open.
+save/create/remove fixtures passed on Windows, Linux and macOS; rename crash
+coverage is being verified separately. This is not an Electron app-crash or
+interactive editor walkthrough. S7-F4 acceptance remains open.
