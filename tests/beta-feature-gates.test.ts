@@ -110,6 +110,14 @@ describe("beta service gates", () => {
       workspaceEditingRouter.createCaller(context).releaseDraft(draftTarget),
     ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })
     await expect(
+      workspaceEditingRouter.createCaller(context).saveDraft({
+        ...draftTarget,
+        id: "12345678-1234-4234-8234-123456789abe",
+        expectedRevision: 0,
+        intent: "save",
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })
+    await expect(
       workspaceEditingRouter.createCaller(context).rename({
         projectId: "project",
         chatId: "chat",

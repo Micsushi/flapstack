@@ -1,0 +1,1 @@
+ALTER TABLE `workspace_drafts` ADD `pending_save` text;

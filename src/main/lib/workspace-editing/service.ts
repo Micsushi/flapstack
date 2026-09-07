@@ -27,6 +27,8 @@ import {
   renameWorkspaceEditSchema,
   updateWorkspaceDraftSchema,
   releaseWorkspaceDraftSchema,
+  saveWorkspaceDraftSchema,
+  pendingWorkspaceDraftSaveSchema,
   type WorkspaceEditScope,
   type SaveWorkspaceEdit,
 } from "../../../shared/workspace-edits"
@@ -34,6 +36,7 @@ import type { z } from "zod"
 
 type Database = BetterSQLite3Database<typeof schema>
 type Row = typeof schema.workspaceEdits.$inferSelect
+type Draft = typeof schema.workspaceDrafts.$inferSelect
 type EditInput = Omit<SaveWorkspaceEdit, "expectedSha256"> & { expectedSha256: string | null }
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex")
 const locks = new Map<string, Promise<void>>()
@@ -45,6 +48,7 @@ const draftOwners = new Map<
     token: string
     canonicalPath: string
     fileIdentity: string
+    saving?: boolean
   }
 >()
 const fileIdentity = (path: string) => {
@@ -67,6 +71,7 @@ function text(bytes: Buffer) {
 
 // One authority per canonical root in this main process; external edits still require CAS.
 async function withRootLock<T>(root: string, action: () => Promise<T>): Promise<T> {
+  root = realpathSync.native(root)
   const previous = locks.get(root) ?? Promise.resolve()
   let release!: () => void
   const current = new Promise<void>((resolve) => {
@@ -193,6 +198,142 @@ export class WorkspaceEditingService {
     return lease
   }
 
+  private draftSaveHash(
+    row: Pick<Draft, "id" | "projectId" | "chatId">,
+    pending: z.infer<typeof pendingWorkspaceDraftSaveSchema>,
+  ) {
+    return hash(
+      JSON.stringify([
+        "draft-save-v1",
+        row.projectId,
+        row.chatId,
+        row.id,
+        pending.id,
+        pending.revision,
+        pending.intent,
+      ]),
+    )
+  }
+
+  /** Reconcile only metadata; reopening a draft never resumes a file write. */
+  private async reconcileDraftSave(row: Draft, authority: WorkspaceEditScope) {
+    if (!row.pendingSave) return row
+    const pending = pendingWorkspaceDraftSaveSchema.parse(JSON.parse(row.pendingSave))
+    let operation = this.db
+      .select()
+      .from(schema.workspaceEdits)
+      .where(eq(schema.workspaceEdits.id, pending.id))
+      .get()
+    if (operation) {
+      if (
+        operation.requestHash !== this.draftSaveHash(row, pending) ||
+        operation.rootIdentity !== this.scope(authority).identity
+      )
+        throw new Error("Pending draft save identity changed; buffer preserved")
+      if (operation.state === "prepared") operation = await this.recover(operation, authority)
+      // Expiry no longer proves whether the original operation applied or failed.
+      if (operation.state === "expired") return row
+    }
+    const baseSha256 =
+      operation?.state === "applied" && row.baseSha256 === operation.beforeSha256
+        ? operation.afterSha256
+        : row.baseSha256
+    const updated = this.db
+      .update(schema.workspaceDrafts)
+      .set({
+        pendingSave: null,
+        baseSha256,
+        revision: row.revision + (baseSha256 !== row.baseSha256 ? 1 : 0),
+        updatedAt: Date.now(),
+      })
+      .where(
+        and(
+          eq(schema.workspaceDrafts.id, row.id),
+          eq(schema.workspaceDrafts.revision, row.revision),
+        ),
+      )
+      .returning()
+      .get()
+    if (!updated) throw new Error("Draft revision changed during save recovery")
+    return updated
+  }
+
+  async saveDraft(input: z.infer<typeof saveWorkspaceDraftSchema>, owner: WorkspaceDraftOwner) {
+    const value = saveWorkspaceDraftSchema.parse(input)
+    this.writable(value, value.intent)
+    const root = this.draftRoot(value)
+    return withRootLock(root.path, async () => {
+      let draft = this.draft(value, value.draftId)
+      this.draftLease(draft.id, value.leaseToken, owner)
+      this.writable(value, value.intent)
+      const pending = { id: value.id, revision: value.expectedRevision, intent: value.intent }
+      const requestHash = this.draftSaveHash(draft, pending)
+      let previous = this.db
+        .select()
+        .from(schema.workspaceEdits)
+        .where(eq(schema.workspaceEdits.id, value.id))
+        .get()
+      if (previous) {
+        if (
+          previous.requestHash !== requestHash ||
+          previous.rootIdentity !== this.scope(value).identity
+        )
+          throw new Error("Edit id was reused for a different draft save")
+        if (previous.state === "prepared") previous = await this.recover(previous, value)
+        draft = await this.reconcileDraftSave(draft, value)
+        return { operation: this.dto(previous), draft }
+      }
+      draft = await this.reconcileDraftSave(draft, value)
+      if (draft.pendingSave) throw new Error("An expired draft save requires explicit recovery")
+      if (draft.revision !== value.expectedRevision)
+        throw new Error("Draft revision changed; keep the local buffer")
+      const lease = this.draftLease(draft.id, value.leaseToken, owner)
+      try {
+        if (
+          realpathSync.native(resolveInsideRoot(root.path, draft.relativePath)) !==
+          draft.canonicalPath
+        )
+          throw new Error("Draft file path changed; reopen it before saving")
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT")
+          throw new WorkspaceEditConflictError(null)
+        throw error
+      }
+      const pendingDraft = this.db
+        .update(schema.workspaceDrafts)
+        .set({ pendingSave: JSON.stringify(pending) })
+        .where(eq(schema.workspaceDrafts.id, draft.id))
+        .returning()
+        .get()!
+      lease.saving = true
+      try {
+        const operation = await this.saveRecord(
+          {
+            ...value,
+            relativePath: draft.relativePath,
+            expectedSha256: draft.baseSha256,
+            content: draft.content,
+          },
+          null,
+          "save",
+          0o600,
+          null,
+          requestHash,
+        )
+        return { operation, draft: await this.reconcileDraftSave(pendingDraft, value) }
+      } catch (error) {
+        try {
+          await this.reconcileDraftSave(pendingDraft, value)
+        } catch {
+          /* Preserve pending recovery metadata. */
+        }
+        throw error
+      } finally {
+        lease.saving = false
+      }
+    })
+  }
+
   /** Called only with a main-process window identity, never a renderer-supplied id. */
   async openDraft(input: z.infer<typeof workspaceEditTargetSchema>, owner: WorkspaceDraftOwner) {
     const value = workspaceEditTargetSchema.parse(input)
@@ -203,34 +344,39 @@ export class WorkspaceEditingService {
       const path = this.path(root.path, value.relativePath)
       const target = resolveInsideRoot(root.path, path)
       const before = fileIdentity(target)
-      const disk = await this.read(value)
+      let disk = await this.read(value)
       const canonicalPath = realpathSync.native(target)
       this.path(root.path, relative(root.path, canonicalPath))
       if (before !== fileIdentity(target) || this.draftRoot(value).identity !== root.identity)
         throw new Error("Editor target changed while opening")
       if (!owner.isAlive(owner.windowId)) throw new Error("Editor window closed while opening")
-      const replacedLeases: string[] = []
-      for (const [id, lease] of draftOwners) {
-        if (!owner.isAlive(lease.windowId)) {
-          replacedLeases.push(id)
-          continue
+      const inspectOwners = () => {
+        const replacedLeases: string[] = []
+        for (const [id, lease] of draftOwners) {
+          if (!owner.isAlive(lease.windowId) && !lease.saving) {
+            replacedLeases.push(id)
+            continue
+          }
+          let currentIdentity = lease.fileIdentity
+          try {
+            currentIdentity = fileIdentity(lease.canonicalPath)
+          } catch {
+            /* Keep the original alias reserved. */
+          }
+          if (
+            lease.canonicalPath === canonicalPath ||
+            lease.fileIdentity === before ||
+            currentIdentity === before
+          ) {
+            if (lease.saving) throw new Error("A save is in progress; reopen after it finishes")
+            if (lease.windowId !== owner.windowId)
+              throw new Error("This file is already editable in another window")
+            replacedLeases.push(id)
+          }
         }
-        let currentIdentity = lease.fileIdentity
-        try {
-          currentIdentity = fileIdentity(lease.canonicalPath)
-        } catch {
-          /* Keep the original alias reserved. */
-        }
-        if (
-          lease.canonicalPath === canonicalPath ||
-          lease.fileIdentity === before ||
-          currentIdentity === before
-        ) {
-          if (lease.windowId !== owner.windowId)
-            throw new Error("This file is already editable in another window")
-          replacedLeases.push(id)
-        }
+        return replacedLeases
       }
+      let replacedLeases = inspectOwners()
       let row = this.db
         .select()
         .from(schema.workspaceDrafts)
@@ -270,8 +416,19 @@ export class WorkspaceEditingService {
             .get()
         })
       }
-      const draft = row!
+      let draft = row!
       if (draft.projectId !== value.projectId) throw new Error("Draft project changed")
+      if (draft.pendingSave) {
+        draft = await this.reconcileDraftSave(draft, value)
+        disk = await this.read(value)
+        if (
+          before !== fileIdentity(target) ||
+          this.draftRoot(value).identity !== root.identity ||
+          !owner.isAlive(owner.windowId)
+        )
+          throw new Error("Editor target or window changed during recovery")
+        replacedLeases = inspectOwners()
+      }
       if (!draftOwners.has(draft.id) && draftOwners.size - replacedLeases.length >= 64)
         throw new Error("Too many active editors; close an editor before opening another")
       // A fresh token fences delayed updates/releases from an earlier pane mount.
@@ -287,7 +444,7 @@ export class WorkspaceEditingService {
         draft,
         leaseToken: token,
         diskSha256: disk.sha256,
-        conflict: disk.sha256 !== draft.baseSha256,
+        conflict: !!draft.pendingSave || disk.sha256 !== draft.baseSha256,
       }
     })
   }
@@ -300,8 +457,10 @@ export class WorkspaceEditingService {
     return withRootLock(root.path, async () => {
       const row = this.draft(value, value.draftId)
       this.draftLease(row.id, value.leaseToken, owner)
-      if (row.revision !== value.expectedRevision)
+      if (row.revision !== value.expectedRevision) {
+        if (row.revision === value.expectedRevision + 1 && row.content === value.content) return row
         throw new Error("Draft revision changed; keep the local buffer")
+      }
       return this.db.transaction((tx) => {
         const usage = tx
           .select({
@@ -333,7 +492,7 @@ export class WorkspaceEditingService {
     const value = releaseWorkspaceDraftSchema.parse(input)
     const lease = draftOwners.get(value.draftId)
     // A stale unmount cannot release a newer mount's token. No buffer is deleted.
-    if (lease?.windowId === owner.windowId && lease.token === value.leaseToken)
+    if (lease?.windowId === owner.windowId && lease.token === value.leaseToken && !lease.saving)
       draftOwners.delete(value.draftId)
     return { released: !draftOwners.has(value.draftId) }
   }
@@ -535,6 +694,7 @@ export class WorkspaceEditingService {
     kind: Row["kind"] = "save",
     fileMode = 0o600,
     renameFrom: string | null = null,
+    draftRequestHash?: string,
   ) {
     const scope = this.writable(input, input.intent)
     const path = this.path(scope.root.canonicalPath, input.relativePath)
@@ -547,19 +707,21 @@ export class WorkspaceEditingService {
     let bytes = Buffer.from(input.content, "utf8")
     if (text(bytes) !== input.content) throw new Error("Draft contains invalid Unicode")
     const afterSha256 = kind === "rename" ? input.expectedSha256! : hash(bytes)
-    const requestHash = hash(
-      JSON.stringify([
-        input.projectId,
-        input.chatId,
-        path,
-        input.expectedSha256,
-        afterSha256,
-        input.intent,
-        revertsId,
-        ...(kind === "save" ? [] : [kind]),
-        ...(renameFrom === null ? [] : [renameFrom]),
-      ]),
-    )
+    const requestHash =
+      draftRequestHash ??
+      hash(
+        JSON.stringify([
+          input.projectId,
+          input.chatId,
+          path,
+          input.expectedSha256,
+          afterSha256,
+          input.intent,
+          revertsId,
+          ...(kind === "save" ? [] : [kind]),
+          ...(renameFrom === null ? [] : [renameFrom]),
+        ]),
+      )
     // All callers hold the canonical-root lock through lookup, recovery and commit.
     if (this.writable(input, input.intent).identity !== scope.identity)
       throw new Error("Editor root changed")

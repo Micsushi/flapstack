@@ -470,6 +470,13 @@
       "when": 1788809119729,
       "tag": "0066_third_black_bird",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "6",
+      "when": 1788811112612,
+      "tag": "0067_chemical_machine_man",
+      "breakpoints": true
     }
   ]
 }

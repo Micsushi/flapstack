@@ -48,3 +48,13 @@ export const releaseWorkspaceDraftSchema = workspaceEditScopeSchema.extend({
   draftId: z.string().uuid(),
   leaseToken: z.string().uuid(),
 })
+export const pendingWorkspaceDraftSaveSchema = z.object({
+  id: z.string().uuid(),
+  revision: z.number().int().nonnegative(),
+  intent: z.enum(["save", "autosave"]),
+})
+export const saveWorkspaceDraftSchema = releaseWorkspaceDraftSchema.extend({
+  id: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+  intent: z.enum(["save", "autosave"]),
+})

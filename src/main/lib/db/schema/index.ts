@@ -3604,6 +3604,7 @@ export const workspaceDrafts = sqliteTable(
     canonicalPath: text("canonical_path").notNull(),
     relativePath: text("relative_path").notNull(),
     baseSha256: text("base_sha256").notNull(),
+    pendingSave: text("pending_save"),
     content: text("content").notNull(),
     revision: integer("revision").notNull().default(0),
     updatedAt: integer("updated_at").notNull(),

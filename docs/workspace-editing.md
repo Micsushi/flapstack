@@ -12,8 +12,22 @@ Migration 0066 adds the draft API foundation: `openDraft`, `updateDraft` and
 from the file-write journal. Opening or updating a draft never writes the file.
 Reopening an existing file preserves unsaved text and reports a changed disk
 digest as a conflict. A mounted owner may persist its buffer after the file is
-removed, but missing-file reopen/export, draft discard, save-from-draft and
+removed, but missing-file reopen/export, draft discard and
 renderer recovery controls are not implemented yet.
+
+Migration 0067 adds `saveDraft` and pending-save recovery metadata. Saving requires
+the live lease, exact draft revision, operation UUID and current permission.
+It uses the same audited compare-and-save journal as ordinary saves. Successful
+saves advance the buffer's base digest without discarding its text. Repeating a
+save UUID returns its recorded outcome without rewriting the file; repeating an
+acknowledged buffer update likewise does not increment its revision again.
+
+After interruption, reopening reconciles pending metadata against the journal
+and disk, never replays a file write. External changes stay conflicts and retain
+the buffer. If the journal outcome has expired, recovery does not guess whether
+the save applied: pending metadata remains and another save is blocked until
+explicit recovery is available. A saving lease cannot be released or replaced,
+even if its window closes, until the in-flight operation finishes.
 
 The main process derives window identity from trusted IPC context. It permits
 one live editable lease per file across windows, including case and hard-link

@@ -12,7 +12,10 @@ const database = new Database(process.argv[2])
 const service = new WorkspaceEditingService(
   drizzle(database, { schema }),
   async (root, path, source, options) => {
-    await writeFileInsideRoot(root, path, source, { ...options, afterCommit: undefined })
+    await writeFileInsideRoot(root, path, source, {
+      ...options,
+      afterCommit: process.argv[4]?.startsWith("draft-ack") ? options?.afterCommit : undefined,
+    })
     // Terminate the isolated child at the durable-file / unfinished-journal boundary.
     process.exit(73)
   },
@@ -34,7 +37,28 @@ const service = new WorkspaceEditingService(
   },
 )
 const input = JSON.parse(process.argv[3])
-if (process.argv[4] === "create") await service.saveAs(input)
+if (process.argv[4]?.startsWith("draft-")) {
+  const owner = { windowId: 1, isAlive: () => true }
+  const opened = await service.openDraft(input, owner)
+  const buffer = await service.updateDraft(
+    {
+      ...input,
+      draftId: opened.draft.id,
+      leaseToken: opened.leaseToken,
+      expectedRevision: opened.draft.revision,
+    },
+    owner,
+  )
+  await service.saveDraft(
+    {
+      ...input,
+      draftId: opened.draft.id,
+      leaseToken: opened.leaseToken,
+      expectedRevision: buffer.revision,
+    },
+    owner,
+  )
+} else if (process.argv[4] === "create") await service.saveAs(input)
 else if (process.argv[4] === "remove") await service.revert(input)
 else if (process.argv[4]?.startsWith("rename")) await service.rename(input)
 else await service.save(input)

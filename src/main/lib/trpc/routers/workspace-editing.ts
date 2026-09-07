@@ -15,6 +15,7 @@ import {
   renameWorkspaceEditSchema,
   updateWorkspaceDraftSchema,
   releaseWorkspaceDraftSchema,
+  saveWorkspaceDraftSchema,
 } from "../../../../shared/workspace-edits"
 
 const procedure = betaProcedure("workspaceEditing")
@@ -43,6 +44,18 @@ async function mutation(action: () => ReturnType<WorkspaceEditingService["save"]
   }
 }
 export const workspaceEditingRouter = router({
+  saveDraft: procedure.input(saveWorkspaceDraftSchema).mutation(async ({ input, ctx }) => {
+    try {
+      const result = await service().saveDraft(input, draftOwner(ctx))
+      return result.operation.state === "applied"
+        ? { ok: true as const, ...result }
+        : { ok: false as const, reason: result.operation.state, ...result }
+    } catch (error) {
+      if (error instanceof WorkspaceEditConflictError)
+        return { ok: false as const, reason: "conflict" as const, diskSha256: error.diskSha256 }
+      throw error
+    }
+  }),
   openDraft: procedure
     .input(workspaceEditTargetSchema)
     .mutation(({ input, ctx }) => service().openDraft(input, draftOwner(ctx))),

@@ -68,6 +68,18 @@ const draftUpdate = (
   content,
 })
 
+const draftSave = (
+  opened: Awaited<ReturnType<WorkspaceEditingService["openDraft"]>>,
+  revision: number,
+) => ({
+  ...scope,
+  draftId: opened.draft.id,
+  leaseToken: opened.leaseToken,
+  expectedRevision: revision,
+  id: randomUUID(),
+  intent: "save" as const,
+})
+
 beforeEach(() => {
   container = mkdtempSync(join(tmpdir(), "flapstack-workspace-edit-"))
   root = join(container, "repo")
@@ -113,6 +125,202 @@ it("persists unsaved buffers across database reopen without touching disk", asyn
   const reopened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
   expect(reopened.draft).toMatchObject({ id: opened.draft.id, revision: 1, content: saved.content })
   expect(reopened.conflict).toBe(false)
+})
+
+it("retries a lost draft-update reply without incrementing or replacing its buffer", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  const input = draftUpdate(opened)
+  const first = await service.updateDraft(input, owner)
+  expect(await service.updateDraft(input, owner)).toEqual(first)
+})
+
+it("saves the owned draft through the existing journal and replays old save ids safely", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  const buffer = await service.updateDraft(draftUpdate(opened), owner)
+  const input = draftSave(opened, buffer.revision)
+  const saved = await service.saveDraft(input, owner)
+  expect(saved).toMatchObject({
+    operation: { id: input.id, state: "applied" },
+    draft: {
+      baseSha256: hash(buffer.content),
+      content: buffer.content,
+      pendingSave: null,
+      revision: 2,
+    },
+  })
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(buffer.content)
+  expect(await service.saveDraft(input, owner)).toEqual(saved)
+  await expect(service.saveDraft({ ...input, expectedRevision: 2 }, owner)).rejects.toThrow(
+    /reused/,
+  )
+  const edited = await service.updateDraft(
+    { ...draftUpdate(opened, "later typing"), expectedRevision: 2 },
+    owner,
+  )
+  const replay = await service.saveDraft(input, owner)
+  expect(replay.draft.content).toBe(edited.content)
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(buffer.content)
+  await service.revert({ ...scope, id: randomUUID(), operationId: input.id })
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
+})
+
+it("keeps stale disk bytes and the draft when save conflicts", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  const buffer = await service.updateDraft(draftUpdate(opened), owner)
+  writeFileSync(join(root, "file.txt"), "external")
+  await expect(service.saveDraft(draftSave(opened, buffer.revision), owner)).rejects.toBeInstanceOf(
+    WorkspaceEditConflictError,
+  )
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe("external")
+  expect(db.select().from(schema.workspaceDrafts).get()).toMatchObject({
+    content: buffer.content,
+    baseSha256: hash(original),
+    pendingSave: null,
+  })
+})
+
+it("requires explicit file saves in ask-before-edits mode", async () => {
+  const owner = draftOwner()
+  db.update(schema.chats).set({ permissionMode: "ask-before-edits" }).run()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  const buffer = await service.updateDraft(draftUpdate(opened), owner)
+  await expect(
+    service.saveDraft({ ...draftSave(opened, buffer.revision), intent: "autosave" }, owner),
+  ).rejects.toThrow(/explicit Save/)
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
+  expect((await service.saveDraft(draftSave(opened, buffer.revision), owner)).operation.state).toBe(
+    "applied",
+  )
+})
+
+it("does not resume a write when a pending save never reached its journal", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  const buffer = await service.updateDraft(draftUpdate(opened), owner)
+  db.update(schema.workspaceDrafts)
+    .set({
+      pendingSave: JSON.stringify({
+        id: randomUUID(),
+        revision: buffer.revision,
+        intent: "save",
+      }),
+    })
+    .run()
+  const reopened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  expect(reopened.draft).toMatchObject({
+    content: buffer.content,
+    baseSha256: hash(original),
+    pendingSave: null,
+  })
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
+  expect(db.select().from(schema.workspaceEdits).all()).toEqual([])
+})
+
+it("preserves the draft when save audit persistence fails", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  const buffer = await service.updateDraft(draftUpdate(opened), owner)
+  const input = draftSave(opened, buffer.revision)
+  sqlite.exec(
+    "CREATE TRIGGER reject_edit_audit BEFORE INSERT ON mcp_audit_records BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END",
+  )
+  await expect(service.saveDraft(input, owner)).rejects.toThrow("audit unavailable")
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
+  expect(db.select().from(schema.workspaceDrafts).get()).toMatchObject({
+    content: buffer.content,
+    baseSha256: hash(original),
+    revision: buffer.revision,
+    pendingSave: JSON.stringify({ id: input.id, revision: buffer.revision, intent: "save" }),
+  })
+  sqlite.exec("DROP TRIGGER reject_edit_audit")
+  expect((await service.saveDraft(input, owner)).operation.state).toBe("failed")
+  expect(db.select().from(schema.workspaceDrafts).get()!.pendingSave).toBeNull()
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
+})
+
+it("holds its lease through a save even after its window closes", async () => {
+  const ids = [++draftWindowId, ++draftWindowId]
+  const alive = new Set(ids)
+  const firstOwner = { windowId: ids[0]!, isAlive: (id: number) => alive.has(id) }
+  const secondOwner = { ...firstOwner, windowId: ids[1]! }
+  const otherRoot = join(container, "other-root")
+  mkdirSync(otherRoot)
+  linkSync(join(root, "file.txt"), join(otherRoot, "alias.txt"))
+  db.insert(schema.chats)
+    .values({
+      id: "other-chat",
+      projectId: scope.projectId,
+      worktreePath: otherRoot,
+      permissionMode: "auto-edit-project-only",
+    })
+    .run()
+  bindFilesystemRootIdentity(otherRoot, db)
+  let entered!: () => void, release!: () => void
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const resume = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  service = new WorkspaceEditingService(db, async (...args) => {
+    entered()
+    await resume
+    return writeFileInsideRoot(...args)
+  })
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, firstOwner)
+  const buffer = await service.updateDraft(draftUpdate(opened), firstOwner)
+  const saving = service.saveDraft(draftSave(opened, buffer.revision), firstOwner)
+  await waiting
+  try {
+    expect(service.releaseDraft(draftUpdate(opened), firstOwner)).toEqual({ released: false })
+    alive.delete(firstOwner.windowId)
+    await expect(
+      service.openDraft({ ...scope, chatId: "other-chat", relativePath: "alias.txt" }, secondOwner),
+    ).rejects.toThrow(/save is in progress/)
+  } finally {
+    release()
+  }
+  expect((await saving).operation.state).toBe("applied")
+  expect(
+    (
+      await service.openDraft(
+        { ...scope, chatId: "other-chat", relativePath: "alias.txt" },
+        secondOwner,
+      )
+    ).draft.content,
+  ).toBe(original)
+})
+
+it("does not guess the outcome of an expired pending save", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  const buffer = await service.updateDraft(draftUpdate(opened), owner)
+  const input = draftSave(opened, buffer.revision)
+  await service.saveDraft(input, owner)
+  db.update(schema.workspaceEdits)
+    .set({ state: "expired", beforeContent: "", afterContent: "" })
+    .run()
+  db.update(schema.workspaceDrafts)
+    .set({
+      baseSha256: hash(original),
+      revision: buffer.revision,
+      pendingSave: JSON.stringify({
+        id: input.id,
+        revision: input.expectedRevision,
+        intent: input.intent,
+      }),
+    })
+    .run()
+  const recovered = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  expect(recovered.conflict).toBe(true)
+  expect(recovered.draft.pendingSave).not.toBeNull()
+  await expect(
+    service.saveDraft(draftSave(recovered, recovered.draft.revision), owner),
+  ).rejects.toThrow(/expired draft save/)
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(buffer.content)
 })
 
 it("fences stale pane updates/releases and rejects stale draft revisions", async () => {
@@ -715,7 +923,18 @@ it("recovers a durable write interrupted before metadata completion without rewr
   expect(sqlite.prepare("SELECT count(*) count FROM mcp_audit_records").get()).toEqual({ count: 1 })
 })
 
-it.each(["save", "create", "remove", "rename", "rename-linked", "rename-case"] as const)(
+it.each([
+  "save",
+  "create",
+  "remove",
+  "rename",
+  "rename-linked",
+  "rename-case",
+  "draft-save",
+  "draft-ack",
+  "draft-external",
+  "draft-ack-external",
+] as const)(
   "recovers an actual child exit after %s commit",
   async (kind) => {
     const created =
@@ -729,7 +948,10 @@ it.each(["save", "create", "remove", "rename", "rename-linked", "rename-case"] a
         : null
     const input = {
       ...request(),
-      relativePath: kind === "save" || kind.startsWith("rename") ? "file.txt" : "new.txt",
+      relativePath:
+        kind === "save" || kind.startsWith("rename") || kind.startsWith("draft-")
+          ? "file.txt"
+          : "new.txt",
       operationId: created?.id,
       newName: kind === "rename-case" ? "FILE.TXT" : "renamed.txt",
     }
@@ -764,6 +986,36 @@ it.each(["save", "create", "remove", "rename", "rename-linked", "rename-case"] a
       sqlite = new Database(join(container, "test.db"))
       db = createDb()
       service = new WorkspaceEditingService(db)
+      if (kind.startsWith("draft-")) {
+        expect((await service.history(scope))[0].state).toBe(
+          kind.startsWith("draft-ack") ? "applied" : "prepared",
+        )
+        const external = kind.endsWith("external")
+        const applied = !external || kind.startsWith("draft-ack")
+        if (external) writeFileSync(join(root, "file.txt"), "external after interruption")
+        const owner = draftOwner()
+        const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+        expect(opened).toMatchObject({
+          conflict: external,
+          draft: {
+            pendingSave: null,
+            baseSha256: applied ? hash(input.content) : hash(original),
+            content: input.content,
+            revision: applied ? 2 : 1,
+          },
+        })
+        const beforeReplay = statSync(join(root, "file.txt")).ino
+        const replay = await service.saveDraft({ ...draftSave(opened, 1), id: input.id }, owner)
+        expect(replay.operation.state).toBe(applied ? "applied" : "conflict")
+        expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(
+          external ? "external after interruption" : input.content,
+        )
+        expect(statSync(join(root, "file.txt")).ino).toBe(beforeReplay)
+        expect(sqlite.prepare("SELECT count(*) count FROM mcp_audit_records").get()).toEqual({
+          count: 1,
+        })
+        return
+      }
       expect((await service.history(scope))[0].state).toBe("prepared")
       const recovered =
         kind === "remove"
