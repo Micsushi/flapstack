@@ -1,6 +1,14 @@
-import { appendFileSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import {
+  appendFileSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { createHash } from "node:crypto"
 import { afterEach, expect, it, vi } from "vitest"
 
 const state = vi.hoisted(() => ({ growPath: "", closed: false, readBytes: 0 }))
@@ -34,7 +42,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   }
 })
 
-import { readFileInsideRoot, RootedReadTooLargeError } from "../src/main/lib/path-safety"
+import {
+  readFileInsideRoot,
+  writeFileInsideRoot,
+  RootedReadTooLargeError,
+} from "../src/main/lib/path-safety"
 
 const roots: string[] = []
 afterEach(() => {
@@ -71,6 +83,25 @@ it("reads exact limits, empty files and multiple chunks without truncation", asy
   }
 })
 
+it("bounds the old-content read used by a conditional overwrite after handle growth", async () => {
+  const root = fixture("abc")
+  state.growPath = join(root, "file.txt")
+  await expect(
+    writeFileInsideRoot(
+      root,
+      "file.txt",
+      { data: "next" },
+      {
+        overwrite: true,
+        maxExistingBytes: 8,
+        expectedSha256: createHash("sha256").update("abc").digest("hex"),
+      },
+    ),
+  ).rejects.toBeInstanceOf(RootedReadTooLargeError)
+  expect(state.closed).toBe(true)
+  expect(state.readBytes).toBe(9)
+})
+
 it("rejects oversized files and invalid limits", async () => {
   const root = fixture("abc")
   await expect(readFileInsideRoot(root, "file.txt", { maxBytes: 2 })).rejects.toBeInstanceOf(
@@ -78,5 +109,53 @@ it("rejects oversized files and invalid limits", async () => {
   )
   for (const maxBytes of [-1, NaN, Infinity, 1.5]) {
     await expect(readFileInsideRoot(root, "file.txt", { maxBytes })).rejects.toThrow()
+    await expect(
+      writeFileInsideRoot(
+        root,
+        "file.txt",
+        { data: "next" },
+        { overwrite: true, maxExistingBytes: maxBytes },
+      ),
+    ).rejects.toBeInstanceOf(RangeError)
   }
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe("abc")
+})
+
+it("rechecks the existing byte limit without a content-hash expectation", async () => {
+  const root = fixture("abc")
+  await expect(
+    writeFileInsideRoot(
+      root,
+      "file.txt",
+      { data: "next" },
+      {
+        overwrite: true,
+        maxExistingBytes: 3,
+        beforeCommit: async (path) => {
+          appendFileSync(path, "d")
+        },
+      },
+    ),
+  ).rejects.toBeInstanceOf(RootedReadTooLargeError)
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe("abcd")
+})
+
+it("rejects an existing target expected to be missing before reading its content", async () => {
+  const root = fixture("abc")
+  state.growPath = join(root, "file.txt")
+  await expect(
+    writeFileInsideRoot(
+      root,
+      "file.txt",
+      { data: "next" },
+      {
+        overwrite: true,
+        expectedSha256: null,
+        maxExistingBytes: 3,
+      },
+    ),
+  ).rejects.toThrow()
+  expect(state.readBytes).toBe(0)
+  expect(state.closed).toBe(false)
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe("abc")
 })

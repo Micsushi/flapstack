@@ -27,6 +27,32 @@ afterEach(() => {
 })
 
 describe("local model project-write tools", () => {
+  it.each(["approval", "commit"])(
+    "keeps its byte limit when a file grows during %s",
+    async (phase) => {
+      const root = fixture()
+      const grown = "x".repeat(1025)
+      const writer = executor(root, {
+        maxFileBytes: 1024,
+        permissionMode: "ask-before-edits",
+        requestApproval: async () => {
+          if (phase === "approval") writeFileSync(join(root, "README.md"), grown)
+          return "approved"
+        },
+        beforeCommit: () => {
+          if (phase === "commit") writeFileSync(join(root, "README.md"), grown)
+        },
+      })
+      await expect(
+        execute(writer, "write_file", {
+          path: "README.md",
+          content: "next\n",
+          expected_sha256: hash("before\n"),
+        }),
+      ).resolves.toMatchObject({ ok: false, errorCode: "file-too-large" })
+      expect(readFileSync(join(root, "README.md"), "utf8")).toBe(grown)
+    },
+  )
   it("publishes exact edit, write, and patch schemas", () => {
     expect(LOCAL_MODEL_WRITE_TOOL_SCHEMAS.map((tool) => tool.function.name)).toEqual([
       "edit_file",

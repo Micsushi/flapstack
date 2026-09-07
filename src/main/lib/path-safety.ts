@@ -1,6 +1,17 @@
 import { constants } from "node:fs"
 import { createHash, randomUUID } from "node:crypto"
-import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, rmdir } from "node:fs/promises"
+import {
+  chmod,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  type FileHandle,
+} from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
 type FileIdentity = { dev: number | bigint; ino: number | bigint; fileType: number }
@@ -13,6 +24,8 @@ export type RootedWriteOptions = {
   mode?: number
   /** Undefined skips content CAS, null requires a missing target, and a hash requires exact content. */
   expectedSha256?: string | null
+  /** Bound rollback capture and every pre-commit content recheck. */
+  maxExistingBytes?: number
   /** Test seam for deterministic parent/final swap attacks. */
   beforeCommit?: (targetPath: string) => void | Promise<void>
   /** Runs after the atomic rename; failure restores the exact prior file state. */
@@ -123,6 +136,11 @@ export async function writeFileInsideRoot(
   source: RootedWriteSource,
   options: RootedWriteOptions = {},
 ): Promise<{ targetPath: string; byteLength: number }> {
+  if (
+    options.maxExistingBytes !== undefined &&
+    (!Number.isSafeInteger(options.maxExistingBytes) || options.maxExistingBytes < 0)
+  )
+    throw new RangeError("Read limit must be a non-negative safe integer")
   const lexicalRoot = resolve(rootPath)
   const lexicalTarget = resolveInsideRoot(lexicalRoot, targetRelativePath)
   const rootInfo = await lstat(lexicalRoot)
@@ -143,10 +161,15 @@ export async function writeFileInsideRoot(
   if (initialTarget && !options.overwrite) throw existsError()
   const initialIdentity = initialTarget ? identity(initialTarget) : null
   const initialMode = initialTarget?.mode ?? options.mode ?? 0o600
-  const initialContent = initialTarget
-    ? await readExpectedFile(targetPath, initialIdentity!, options.expectedSha256)
-    : null
   validateMissingExpectation(initialTarget, options.expectedSha256)
+  const initialContent = initialTarget
+    ? await readExpectedFile(
+        targetPath,
+        initialIdentity!,
+        options.expectedSha256,
+        options.maxExistingBytes,
+      )
+    : null
 
   if (!options.overwrite) {
     await options.beforeCommit?.(targetPath)
@@ -184,7 +207,12 @@ export async function writeFileInsideRoot(
   await options.beforeCommit?.(targetPath)
   await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
   await validateExpectedTarget(targetPath, initialIdentity)
-  await validateExpectedContent(targetPath, initialIdentity, options.expectedSha256)
+  await validateExpectedContent(
+    targetPath,
+    initialIdentity,
+    options.expectedSha256,
+    options.maxExistingBytes,
+  )
 
   const temporaryPath = join(parentPath, `.flapstack-${randomUUID()}.tmp`)
   const handle = await openNoFollowExclusive(temporaryPath, initialMode & 0o777)
@@ -198,7 +226,12 @@ export async function writeFileInsideRoot(
     await chmod(temporaryPath, initialMode & 0o777)
     await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
     await validateExpectedTarget(targetPath, initialIdentity)
-    await validateExpectedContent(targetPath, initialIdentity, options.expectedSha256)
+    await validateExpectedContent(
+      targetPath,
+      initialIdentity,
+      options.expectedSha256,
+      options.maxExistingBytes,
+    )
     await rename(temporaryPath, targetPath)
     committed = true
     await validateCommittedTarget(
@@ -273,18 +306,7 @@ export async function readFileInsideRoot(
       throw new RootedReadTooLargeError(opened.size)
     }
     await validateExistingSnapshot(snapshot)
-    if (maxBytes === undefined) return await handle.readFile()
-    // A file may grow after stat. Read at most the limit plus one sentinel byte.
-    const chunks: Buffer[] = []
-    let total = 0
-    while (true) {
-      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes - total + 1))
-      const { bytesRead } = await handle.read(chunk, 0, chunk.length, total)
-      if (bytesRead === 0) return Buffer.concat(chunks, total)
-      total += bytesRead
-      if (total > maxBytes) throw new RootedReadTooLargeError(total)
-      chunks.push(chunk.subarray(0, bytesRead))
-    }
+    return await readHandleContent(handle, maxBytes)
   } finally {
     await handle.close().catch(() => undefined)
   }
@@ -402,6 +424,7 @@ async function readExpectedFile(
   targetPath: string,
   expectedIdentity: FileIdentity,
   expectedSha256: string | null | undefined,
+  maxBytes?: number,
 ): Promise<Buffer> {
   const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0
   const handle = await open(targetPath, constants.O_RDONLY | noFollow)
@@ -410,13 +433,30 @@ async function readExpectedFile(
     if (!opened.isFile() || !sameIdentity(identity(opened), expectedIdentity)) {
       throw new Error("Write target changed during content validation")
     }
-    const content = await handle.readFile()
+    if (maxBytes !== undefined && opened.size > maxBytes)
+      throw new RootedReadTooLargeError(opened.size)
+    const content = await readHandleContent(handle, maxBytes)
     if (typeof expectedSha256 === "string" && sha256(content) !== expectedSha256) {
       throw new Error("Write target content is stale")
     }
     return content
   } finally {
     await handle.close().catch(() => undefined)
+  }
+}
+
+async function readHandleContent(handle: FileHandle, maxBytes?: number): Promise<Buffer> {
+  if (maxBytes === undefined) return handle.readFile()
+  // A file may grow after stat. Read at most the limit plus one sentinel byte.
+  const chunks: Buffer[] = []
+  let total = 0
+  while (true) {
+    const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes - total + 1))
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, total)
+    if (bytesRead === 0) return Buffer.concat(chunks, total)
+    total += bytesRead
+    if (total > maxBytes) throw new RootedReadTooLargeError(total)
+    chunks.push(chunk.subarray(0, bytesRead))
   }
 }
 
@@ -434,14 +474,18 @@ async function validateExpectedContent(
   targetPath: string,
   expectedIdentity: FileIdentity | null,
   expectedSha256: string | null | undefined,
+  maxBytes?: number,
 ): Promise<void> {
-  if (expectedSha256 === undefined) return
+  if (expectedSha256 === undefined && maxBytes === undefined) return
   if (expectedSha256 === null) {
     if (await lstatOrNull(targetPath)) throw new Error("Write target content is stale")
     return
   }
-  if (!expectedIdentity) throw new Error("Write target content is stale")
-  await readExpectedFile(targetPath, expectedIdentity, expectedSha256)
+  if (!expectedIdentity) {
+    if (typeof expectedSha256 === "string") throw new Error("Write target content is stale")
+    return
+  }
+  await readExpectedFile(targetPath, expectedIdentity, expectedSha256, maxBytes)
 }
 
 async function rollbackCommittedWrite(input: {

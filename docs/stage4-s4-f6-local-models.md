@@ -68,11 +68,14 @@ normal local chat. Resetting selects the ready fixture and its chat-only model;
 testers then use the normal catalog refresh and chat UI without database or
 filesystem injection.
 
-## Stabilization backlog
+## Write safety
 
-- P2: `assembleLocalModelMessages` currently inserts each selected transcript
-  message twice. This wastes context and repeats prior chat content in provider
-  requests. It predates this fixture packet and is deferred to stabilization.
+Project writes apply the configured existing-file byte limit to planning,
+rollback capture, and both pre-commit content checks. A file that grows while
+approval is pending fails with `file-too-large` without replacing the changed
+content. Descriptor reads stop at the limit plus one detection byte, including
+when a file grows after its size check. Content-hash and rooted-path checks
+remain separate requirements; a size limit is not an operating-system sandbox.
 
 ## Headless verification
 

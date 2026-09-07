@@ -203,6 +203,7 @@ export class ProjectVaultCustomNotes {
         {
           overwrite: true,
           expectedSha256: input.expectedHash,
+          maxExistingBytes: MAX_NOTE_BYTES,
         },
       )
       const nextVersion = input.expectedVersion + 1

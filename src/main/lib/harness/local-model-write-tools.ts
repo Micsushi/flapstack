@@ -152,6 +152,7 @@ export function createProjectLocalModelWriteToolExecutor(
             createParents: false,
             mode: 0o644,
             expectedSha256: plan.expectedSha256,
+            maxExistingBytes: maxFileBytes,
             beforeCommit: async (targetPath) => {
               await options.beforeCommit?.(targetPath)
               const finalRoot = await verifiedRoot(options.rootPath, verifyRoot)

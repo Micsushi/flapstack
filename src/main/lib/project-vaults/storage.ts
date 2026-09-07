@@ -327,7 +327,7 @@ export async function writeProjectVaultSection(
       root.canonicalPath,
       backupRelativePath,
       { data: previous },
-      { overwrite: true },
+      { overwrite: true, maxExistingBytes: MAX_VAULT_SECTION_BYTES },
     )
 
     let contentWritten = false
@@ -339,6 +339,7 @@ export async function writeProjectVaultSection(
         {
           overwrite: true,
           expectedSha256: previousHash,
+          maxExistingBytes: MAX_VAULT_SECTION_BYTES,
           beforeCommit: hooks.beforeContentCommit,
         },
       )
@@ -375,7 +376,11 @@ export async function writeProjectVaultSection(
             root.canonicalPath,
             section.relativePath,
             { data: previous },
-            { overwrite: true, expectedSha256: nextHash },
+            {
+              overwrite: true,
+              expectedSha256: nextHash,
+              maxExistingBytes: MAX_VAULT_SECTION_BYTES,
+            },
           )
         } catch (rollbackError) {
           throw new AggregateError(
