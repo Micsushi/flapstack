@@ -122,7 +122,7 @@ export class TerminalManager extends EventEmitter {
     try {
       return await creationPromise
     } finally {
-      this.pendingSessions.delete(paneId)
+      if (this.pendingSessions.get(paneId) === creationPromise) this.pendingSessions.delete(paneId)
     }
   }
 
@@ -170,12 +170,10 @@ export class TerminalManager extends EventEmitter {
   }
 
   private setupExitHandler(session: TerminalSession, params: InternalCreateSessionParams): void {
-    const { paneId } = params
-
     session.pty.onExit(({ exitCode, signal }) => {
       void this.handleSessionExit(session, params, exitCode, signal).catch((error) => {
         console.error("[TerminalManager] Terminal exit handling failed:", error)
-        this.finishSessionExit(paneId, exitCode, signal)
+        this.finishSessionExit(session, exitCode, signal)
       })
     })
   }
@@ -189,6 +187,8 @@ export class TerminalManager extends EventEmitter {
     const { paneId } = params
     session.isAlive = false
     void releaseTerminalPtyResources(session.pty, this.cleanupOptions?.platform ?? process.platform)
+    // A late exit belongs to this PTY instance, never its replacement in the same pane.
+    if (this.sessions.get(paneId) !== session) return
 
     // Check if shell crashed quickly - try fallback
     const sessionDuration = Date.now() - session.startTime
@@ -199,25 +199,26 @@ export class TerminalManager extends EventEmitter {
         `[TerminalManager] Shell "${session.shell}" exited with code ${exitCode} after ${sessionDuration}ms, retrying with fallback shell "${FALLBACK_SHELL}"`,
       )
 
-      this.sessions.delete(paneId)
-
+      const fallback = this.doCreateSession({ ...params, useFallbackShell: true })
+      this.pendingSessions.set(paneId, fallback)
       try {
-        await this.doCreateSession({
-          ...params,
-          useFallbackShell: true,
-        })
+        await fallback
         if (!this.shuttingDown) return // Recovered - don't emit exit
       } catch (fallbackError) {
         if (!this.shuttingDown) {
           console.error("[TerminalManager] Fallback shell also failed:", fallbackError)
         }
+      } finally {
+        if (this.pendingSessions.get(paneId) === fallback) this.pendingSessions.delete(paneId)
       }
     }
 
-    this.finishSessionExit(paneId, exitCode, signal)
+    this.finishSessionExit(session, exitCode, signal)
   }
 
-  private finishSessionExit(paneId: string, exitCode: number, signal?: number): void {
+  private finishSessionExit(session: TerminalSession, exitCode: number, signal?: number): void {
+    const { paneId } = session
+    if (this.sessions.get(paneId) !== session) return
     try {
       // Unregister from port manager (also removes detected ports)
       portManager.unregisterSession(paneId)
@@ -226,12 +227,12 @@ export class TerminalManager extends EventEmitter {
 
       // Clean up session after delay
       const timeout = setTimeout(() => {
-        this.sessions.delete(paneId)
+        if (this.sessions.get(paneId) === session) this.sessions.delete(paneId)
       }, 5000)
       timeout.unref()
     } catch (error) {
       console.error("[TerminalManager] Failed to finalize terminal exit:", error)
-      this.sessions.delete(paneId)
+      if (this.sessions.get(paneId) === session) this.sessions.delete(paneId)
     }
   }
 
@@ -330,7 +331,7 @@ export class TerminalManager extends EventEmitter {
       return
     }
 
-    if (serializedState) {
+    if (serializedState !== undefined) {
       session.serializedState = serializedState
     }
     session.lastActive = Date.now()
