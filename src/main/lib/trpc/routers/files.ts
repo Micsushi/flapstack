@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { router, publicProcedure } from "../index"
 import { realpathSync } from "node:fs"
-import { lstat, readdir, realpath } from "node:fs/promises"
+import { lstat, opendir, realpath } from "node:fs/promises"
 import { join, relative, basename, extname, isAbsolute, resolve, sep } from "node:path"
 import { app, shell } from "electron"
 import { watch as watchFiles } from "chokidar"
@@ -76,6 +76,16 @@ interface FileEntry {
 const MAX_CACHE_ENTRIES = 20
 const fileListCache = new Map<string, { entries: FileEntry[]; timestamp: number }>()
 const CACHE_TTL = 5000 // 5 seconds
+const MAX_SCAN_ENTRIES = 20_000
+const MAX_SCAN_DURATION_MS = 10_000
+const pendingScans = new Map<
+  string,
+  {
+    controller: AbortController
+    users: number
+    promise: Promise<FileEntry[]>
+  }
+>()
 
 const rootedFileInput = z.object({
   rootPath: z.string().min(1),
@@ -107,66 +117,70 @@ async function scanDirectory(
   currentPath: string = rootPath,
   depth: number = 0,
   maxDepth: number = 15,
+  budget = { remaining: MAX_SCAN_ENTRIES, signal: AbortSignal.timeout(MAX_SCAN_DURATION_MS) },
 ): Promise<FileEntry[]> {
-  if (depth > maxDepth) return []
+  budget.signal.throwIfAborted()
+  if (depth > maxDepth) throw new Error("File discovery exceeded its directory depth limit")
 
   const entries: FileEntry[] = []
 
-  try {
-    const currentInfo = await lstat(currentPath)
-    if (currentInfo.isSymbolicLink() || !currentInfo.isDirectory()) return []
-    const realRoot = await realpath(rootPath)
-    const realCurrent = await realpath(currentPath)
-    const relativeCurrent = relative(realRoot, realCurrent)
-    if (
-      relativeCurrent === ".." ||
-      relativeCurrent.startsWith(`..${sep}`) ||
-      isAbsolute(relativeCurrent)
-    ) {
-      return []
-    }
-    const dirEntries = await readdir(currentPath, { withFileTypes: true })
-
-    for (const entry of dirEntries) {
-      const fullPath = join(currentPath, entry.name)
-      const relativePath = relative(rootPath, fullPath)
-
-      if (entry.isDirectory()) {
-        // Skip ignored directories
-        if (IGNORED_DIRS.has(entry.name)) continue
-        // Skip hidden directories (except .github, .vscode, etc.)
-        if (
-          entry.name.startsWith(".") &&
-          !entry.name.startsWith(".github") &&
-          !entry.name.startsWith(".vscode")
-        )
-          continue
-
-        // Add the folder itself to results
-        entries.push({ path: relativePath, type: "folder" })
-
-        // Recurse into subdirectory
-        const subEntries = await scanDirectory(rootPath, fullPath, depth + 1, maxDepth)
-        entries.push(...subEntries)
-      } else if (entry.isFile()) {
-        // Skip ignored files
-        if (IGNORED_FILES.has(entry.name)) continue
-
-        // Check extension
-        const ext = entry.name.includes(".") ? "." + entry.name.split(".").pop()?.toLowerCase() : ""
-        if (IGNORED_EXTENSIONS.has(ext)) {
-          // Allow specific lock files
-          if (!ALLOWED_LOCK_FILES.has(entry.name)) continue
-        }
-
-        entries.push({ path: relativePath, type: "file" })
-      }
-    }
-    if ((await realpath(currentPath)) !== realCurrent) return []
-  } catch (error) {
-    // Silently skip directories we can't read
-    console.warn(`[files] Could not read directory: ${currentPath}`, error)
+  const currentInfo = await lstat(currentPath)
+  budget.signal.throwIfAborted()
+  if (currentInfo.isSymbolicLink() || !currentInfo.isDirectory())
+    throw new Error("File discovery root changed during scanning")
+  const realRoot = await realpath(rootPath)
+  const realCurrent = await realpath(currentPath)
+  const relativeCurrent = relative(realRoot, realCurrent)
+  if (
+    relativeCurrent === ".." ||
+    relativeCurrent.startsWith(`..${sep}`) ||
+    isAbsolute(relativeCurrent)
+  ) {
+    throw new Error("File discovery escaped its registered root")
   }
+  budget.signal.throwIfAborted()
+  const dirEntries = await opendir(currentPath)
+
+  for await (const entry of dirEntries) {
+    budget.signal.throwIfAborted()
+    if (--budget.remaining < 0) throw new Error("File discovery exceeded its entry limit")
+    const fullPath = join(currentPath, entry.name)
+    const relativePath = relative(rootPath, fullPath)
+
+    if (entry.isDirectory()) {
+      // Skip ignored directories
+      if (IGNORED_DIRS.has(entry.name)) continue
+      // Skip hidden directories (except .github, .vscode, etc.)
+      if (
+        entry.name.startsWith(".") &&
+        !entry.name.startsWith(".github") &&
+        !entry.name.startsWith(".vscode")
+      )
+        continue
+
+      // Add the folder itself to results
+      entries.push({ path: relativePath, type: "folder" })
+
+      // Recurse into subdirectory
+      const subEntries = await scanDirectory(rootPath, fullPath, depth + 1, maxDepth, budget)
+      entries.push(...subEntries)
+    } else if (entry.isFile()) {
+      // Skip ignored files
+      if (IGNORED_FILES.has(entry.name)) continue
+
+      // Check extension
+      const ext = entry.name.includes(".") ? "." + entry.name.split(".").pop()?.toLowerCase() : ""
+      if (IGNORED_EXTENSIONS.has(ext)) {
+        // Allow specific lock files
+        if (!ALLOWED_LOCK_FILES.has(entry.name)) continue
+      }
+
+      entries.push({ path: relativePath, type: "file" })
+    }
+  }
+  if ((await realpath(currentPath)) !== realCurrent)
+    throw new Error("File discovery root changed during scanning")
+  budget.signal.throwIfAborted()
 
   return entries
 }
@@ -174,7 +188,8 @@ async function scanDirectory(
 /**
  * Get cached entry list or scan directory
  */
-async function getEntryList(projectPath: string): Promise<FileEntry[]> {
+async function getEntryList(projectPath: string, signal?: AbortSignal): Promise<FileEntry[]> {
+  signal?.throwIfAborted()
   const cached = fileListCache.get(projectPath)
   const now = Date.now()
 
@@ -182,23 +197,58 @@ async function getEntryList(projectPath: string): Promise<FileEntry[]> {
     return cached.entries
   }
 
-  const entries = await scanDirectory(projectPath)
+  let flight = pendingScans.get(projectPath)
+  if (!flight) {
+    if (pendingScans.size >= MAX_CACHE_ENTRIES)
+      throw new Error("Too many file discovery scans are active")
+    const controller = new AbortController()
+    const created = { controller, users: 0, promise: Promise.resolve([] as FileEntry[]) }
+    pendingScans.set(projectPath, created)
+    created.promise = scanDirectory(projectPath, projectPath, 0, 15, {
+      remaining: MAX_SCAN_ENTRIES,
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(MAX_SCAN_DURATION_MS)]),
+    })
+      .then((entries) => {
+        if (pendingScans.get(projectPath) !== created || controller.signal.aborted) return entries
 
-  // Evict oldest entries if cache is full
-  if (fileListCache.size >= MAX_CACHE_ENTRIES) {
-    let oldest: string | null = null
-    let oldestTime = Infinity
-    for (const [key, val] of fileListCache) {
-      if (val.timestamp < oldestTime) {
-        oldestTime = val.timestamp
-        oldest = key
-      }
-    }
-    if (oldest) fileListCache.delete(oldest)
+        // Evict oldest entries if cache is full
+        if (fileListCache.size >= MAX_CACHE_ENTRIES) {
+          let oldest: string | null = null
+          let oldestTime = Infinity
+          for (const [key, val] of fileListCache) {
+            if (val.timestamp < oldestTime) {
+              oldestTime = val.timestamp
+              oldest = key
+            }
+          }
+          if (oldest) fileListCache.delete(oldest)
+        }
+
+        fileListCache.set(projectPath, { entries, timestamp: Date.now() })
+        return entries
+      })
+      .finally(() => {
+        if (pendingScans.get(projectPath) === created) pendingScans.delete(projectPath)
+      })
+    flight = created
   }
-
-  fileListCache.set(projectPath, { entries, timestamp: now })
-  return entries
+  flight.users += 1
+  let onAbort: (() => void) | undefined
+  try {
+    return await new Promise<FileEntry[]>((resolve, reject) => {
+      onAbort = () => reject(signal?.reason ?? new Error("File discovery cancelled"))
+      signal?.addEventListener("abort", onAbort, { once: true })
+      flight.promise.then(resolve, reject)
+      if (signal?.aborted) onAbort()
+    })
+  } finally {
+    if (onAbort) signal?.removeEventListener("abort", onAbort)
+    flight.users -= 1
+    if (flight.users === 0 && pendingScans.get(projectPath) === flight) {
+      pendingScans.delete(projectPath)
+      flight.controller.abort()
+    }
+  }
 }
 
 /**
@@ -213,7 +263,7 @@ function filterEntries(
   const queryLower = query.toLowerCase()
 
   // Filter entries that match the query and optional type filter
-  let filtered = entries
+  let filtered = [...entries]
   if (typeFilter) {
     filtered = filtered.filter((entry) => entry.type === typeFilter)
   }
@@ -288,7 +338,7 @@ export const filesRouter = router({
         typeFilter: z.enum(["file", "folder"]).optional(),
       }),
     )
-    .query(async ({ input }) => {
+    .query(async ({ input, signal }) => {
       const { projectPath, query, limit, typeFilter } = input
 
       if (!projectPath) {
@@ -299,14 +349,14 @@ export const filesRouter = router({
         const registeredRoot = assertRegisteredWorktree(projectPath)
 
         // Get entry list (cached or fresh scan)
-        const entries = await getEntryList(registeredRoot.canonicalPath)
+        const entries = await getEntryList(registeredRoot.canonicalPath, signal)
         assertRegisteredWorktree(projectPath)
 
         // Filter and sort by query
         return filterEntries(entries, query, limit, typeFilter)
       } catch (error) {
-        console.error(`[files] Error searching files:`, error)
-        return []
+        if (!signal?.aborted) console.error(`[files] Error searching files:`, error)
+        throw error
       }
     }),
 
@@ -316,6 +366,8 @@ export const filesRouter = router({
   clearCache: publicProcedure.input(z.object({ projectPath: z.string() })).mutation(({ input }) => {
     const registeredRoot = assertRegisteredWorktree(input.projectPath)
     fileListCache.delete(registeredRoot.canonicalPath)
+    pendingScans.get(registeredRoot.canonicalPath)?.controller.abort()
+    pendingScans.delete(registeredRoot.canonicalPath)
     return { success: true }
   }),
 

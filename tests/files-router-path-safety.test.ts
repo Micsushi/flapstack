@@ -22,6 +22,18 @@ const state = vi.hoisted(() => ({
 }))
 
 const assertRegisteredWorktree = vi.hoisted(() => vi.fn())
+const scanState = vi.hoisted(() => ({ opens: 0, beforeOpen: null as (() => Promise<void>) | null }))
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>()
+  return {
+    ...actual,
+    opendir: async (...args: Parameters<typeof actual.opendir>) => {
+      scanState.opens += 1
+      await scanState.beforeOpen?.()
+      return actual.opendir(...args)
+    },
+  }
+})
 
 vi.mock("electron", () => ({
   app: { getPath: () => state.userDataPath },
@@ -62,6 +74,8 @@ const caller = filesRouter.createCaller({ getWindow: () => null })
 
 beforeEach(() => {
   vi.clearAllMocks()
+  scanState.opens = 0
+  scanState.beforeOpen = null
   state.trashed = []
   state.subChatId = null
   state.registeredRoots.clear()
@@ -83,6 +97,101 @@ afterEach(() => {
 })
 
 describe("files router mutation path safety", () => {
+  it("reports an unregistered search root instead of a successful empty search", async () => {
+    await expect(caller.search({ projectPath: state.userDataPath, query: "" })).rejects.toThrow(
+      "unregistered root",
+    )
+  })
+
+  it("shares one scan across concurrent queries and invalidates cached results", async () => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    writeFileSync(join(root, "one.ts"), "one")
+    const results = await Promise.all([
+      caller.search({ projectPath: root, query: "one" }),
+      caller.search({ projectPath: root, query: ".ts" }),
+    ])
+    expect(results.map((result) => result[0].label)).toEqual(["one.ts", "one.ts"])
+    expect(scanState.opens).toBe(1)
+    writeFileSync(join(root, "two.ts"), "two")
+    await caller.clearCache({ projectPath: root })
+    expect(await caller.search({ projectPath: root, query: "two" })).toHaveLength(1)
+    expect(scanState.opens).toBe(2)
+  })
+
+  it("cancels one query without cancelling a shared scan still needed by another", async () => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    writeFileSync(join(root, "one.ts"), "one")
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    scanState.beforeOpen = () => gate
+    const controller = new AbortController()
+    const cancelledCaller = filesRouter.createCaller(
+      { getWindow: () => null },
+      { signal: controller.signal },
+    )
+    const cancelled = cancelledCaller.search({ projectPath: root, query: "" })
+    const rejected = expect(cancelled).rejects.toThrow()
+    const survivor = caller.search({ projectPath: root, query: "" })
+    await vi.waitFor(() => expect(scanState.opens).toBe(1))
+    controller.abort()
+    await rejected
+    release()
+    expect(await survivor).toHaveLength(1)
+    expect(scanState.opens).toBe(1)
+  })
+
+  it("reports excessive depth rather than caching incomplete results", async () => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    mkdirSync(join(root, ...Array.from({ length: 17 }, () => "d")), { recursive: true })
+    await expect(caller.search({ projectPath: root, query: "" })).rejects.toThrow("depth limit")
+  })
+
+  it("does not cache a failed scan and permits a fresh retry", async () => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    writeFileSync(join(root, "one.ts"), "one")
+    scanState.beforeOpen = async () => {
+      throw new Error("EACCES: unreadable directory")
+    }
+    await expect(caller.search({ projectPath: root, query: "" })).rejects.toThrow("EACCES")
+    scanState.beforeOpen = null
+    expect(await caller.search({ projectPath: root, query: "" })).toHaveLength(1)
+    expect(scanState.opens).toBe(2)
+  })
+
+  it("releases a cancelled scan so a new query starts fresh", async () => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    writeFileSync(join(root, "one.ts"), "one")
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    scanState.beforeOpen = () => gate
+    const controller = new AbortController()
+    const cancelledCaller = filesRouter.createCaller(
+      { getWindow: () => null },
+      { signal: controller.signal },
+    )
+    const cancelled = expect(
+      cancelledCaller.search({ projectPath: root, query: "" }),
+    ).rejects.toThrow()
+    try {
+      await vi.waitFor(() => expect(scanState.opens).toBe(1))
+      controller.abort()
+      await cancelled
+    } finally {
+      release()
+      scanState.beforeOpen = null
+    }
+    expect(await caller.search({ projectPath: root, query: "" })).toHaveLength(1)
+    expect(scanState.opens).toBe(2)
+  })
   it("requires a durable, single-segment sub-chat identity before writing pasted text", async () => {
     await expect(caller.writePastedText({ subChatId: "missing", text: "blocked" })).rejects.toThrow(
       "Sub-chat not found",
