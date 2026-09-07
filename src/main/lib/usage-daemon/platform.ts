@@ -46,7 +46,7 @@ function commandExitStatus(error: unknown): number | null {
   return typeof status === "number" ? status : null
 }
 
-function isLaunchctlServiceNotFound(error: unknown): boolean {
+export function isLaunchctlServiceNotFound(error: unknown): boolean {
   return commandExitStatus(error) === 113
 }
 

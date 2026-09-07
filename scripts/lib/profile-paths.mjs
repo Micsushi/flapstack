@@ -1,5 +1,11 @@
 import { homedir } from "node:os"
-import { posix, win32 } from "node:path"
+import { randomUUID } from "node:crypto"
+import { join, posix, win32 } from "node:path"
+
+// launchd service identity is derived from the profile basename, not its parent.
+export function usageDaemonSmokeProfilePath(tempRoot) {
+  return join(tempRoot, `Flapstack Preview Usage Exit Smoke ${randomUUID()}`)
+}
 
 function pathForPlatform(platform) {
   return platform === "win32" ? win32 : posix

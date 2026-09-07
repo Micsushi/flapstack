@@ -47,3 +47,18 @@ the package security report SHA-256 is
 The lifecycle test uses a temporary launch-agent fixture, not a real persistent
 service. Packaged usage-daemon operation and native Intel verification remain
 separate checks.
+
+## Packaged usage-daemon smoke isolation
+
+The Mac packaged daemon smoke gives each invocation a UUID-bearing profile
+basename, because launchd service identity comes from that basename, not the
+temporary parent directory. It refuses an existing plist or loaded service before
+installation, including dangling plist symlinks. Failed service inspection is
+not treated as absence. The ordinary smoke leaves provider polling and alerts
+disabled; credentialed provider checks remain explicit options.
+
+Cleanup only uninstalls a service whose installation this invocation attempted.
+If service cleanup fails, the smoke fails and retains its temporary recovery
+directory rather than deleting files still referenced by launchd. Stop that exact
+reported service before removing its recovery directory. Failure diagnostics
+report launchd availability without dumping its environment.

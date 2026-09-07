@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process"
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,6 +14,7 @@ import { basename, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { DatabaseSync } from "node:sqlite"
 import { build } from "esbuild"
+import { usageDaemonSmokeProfilePath } from "./lib/profile-paths.mjs"
 
 if (process.platform !== "darwin") {
   throw new Error("Packaged usage daemon lifecycle smoke requires macOS")
@@ -53,7 +55,7 @@ if (!existsSync(executable) || !existsSync(join(appPath, "Contents", "Resources"
 }
 
 const temp = mkdtempSync(join(tmpdir(), "flapstack-packaged-usage-daemon-"))
-const profileDir = join(temp, "Flapstack Preview Usage Exit Smoke")
+const profileDir = usageDaemonSmokeProfilePath(temp)
 const configDir = join(profileDir, "data")
 const dbPath = join(configDir, "agents.db")
 const settingsPath = join(configDir, "usage-settings.json")
@@ -62,6 +64,8 @@ const secretNamespace = "package-usage-daemon-smoke"
 let platformHelpers
 let serviceId
 let plistPath
+let installationAttempted = false
+const failures = []
 
 try {
   await build({
@@ -116,7 +120,9 @@ try {
     }),
   )
 
-  const install = () =>
+  const install = () => {
+    assertLaunchAgentRemoved(serviceId, plistPath)
+    installationAttempted = true
     platformHelpers.installUsageDaemon({
       nodePath: executable,
       daemonEntryPath: daemonEntry,
@@ -125,6 +131,7 @@ try {
       cadenceSeconds: 30,
       secretNamespace,
     })
+  }
 
   install()
   const first = await waitForRunning(dbPath, null, serviceId)
@@ -135,6 +142,7 @@ try {
   platformHelpers.uninstallUsageDaemon(configDir)
   await waitForStopped(first.pid)
   assertLaunchAgentRemoved(serviceId, plistPath)
+  installationAttempted = false
 
   install()
   const restarted = await waitForRunning(dbPath, first.pid, serviceId)
@@ -147,18 +155,37 @@ try {
   platformHelpers.uninstallUsageDaemon(configDir)
   await waitForStopped(restarted.pid)
   assertLaunchAgentRemoved(serviceId, plistPath)
-
-  console.log(
-    `packaged usage daemon smoke passed (closed-app launch, poll${expectedProvider ? `, ${expectedProvider} sample` : ""}${expectAlert ? ", persisted Discord alert" : ""}, stop, restart, cleanup): ${serviceId}`,
-  )
+  installationAttempted = false
+} catch (error) {
+  failures.push(error)
 } finally {
-  if (platformHelpers && serviceId) {
+  let serviceCleanupFailed = false
+  if (installationAttempted) {
     try {
       platformHelpers.uninstallUsageDaemon(configDir)
-    } catch {}
+      assertLaunchAgentRemoved(serviceId, plistPath)
+    } catch (error) {
+      serviceCleanupFailed = true
+      failures.push(
+        new Error(`Smoke service cleanup failed; recovery files retained at ${temp}`, {
+          cause: error,
+        }),
+      )
+    }
   }
-  rmSync(temp, { recursive: true, force: true })
+  if (!serviceCleanupFailed) {
+    try {
+      rmSync(temp, { recursive: true, force: true })
+    } catch (error) {
+      failures.push(error)
+    }
+  }
 }
+if (failures.length === 1) throw failures[0]
+if (failures.length > 1) throw new AggregateError(failures, "Packaged usage daemon smoke failed")
+console.log(
+  `packaged usage daemon smoke passed (closed-app launch, poll${expectedProvider ? `, ${expectedProvider} sample` : ""}${expectAlert ? ", persisted Discord alert" : ""}, stop, restart, cleanup): ${serviceId}`,
+)
 
 function readStatus(dbPath) {
   const db = new DatabaseSync(dbPath, { readOnly: true })
@@ -248,12 +275,17 @@ async function waitForRunning(dbPath, previousPid, serviceId) {
     const status = readStatus(dbPath)
     let launchAgent = "unavailable"
     try {
-      launchAgent = execFileSync(
+      execFileSync(
         "launchctl",
         ["print", `gui/${process.getuid()}/dev.flapstack.usage-daemon.${serviceId}`],
-        { encoding: "utf8" },
+        { stdio: "ignore" },
       )
-    } catch {}
+      launchAgent = "loaded"
+    } catch (inspectionError) {
+      launchAgent = platformHelpers.isLaunchctlServiceNotFound(inspectionError)
+        ? "not-loaded"
+        : "inspection-failed"
+    }
     throw new Error(
       `${error.message}; daemon status: ${JSON.stringify(status ?? null)}; launchd: ${launchAgent}`,
     )
@@ -287,14 +319,16 @@ function assertLaunchAgent(serviceId, plistPath, executable, daemonEntry, secret
 }
 
 function assertLaunchAgentRemoved(serviceId, plistPath) {
-  if (existsSync(plistPath)) throw new Error(`LaunchAgent plist survived cleanup: ${plistPath}`)
+  if (lstatSync(plistPath, { throwIfNoEntry: false }))
+    throw new Error(`LaunchAgent plist already exists or survived cleanup: ${plistPath}`)
   try {
     execFileSync(
       "launchctl",
       ["print", `gui/${process.getuid()}/dev.flapstack.usage-daemon.${serviceId}`],
       { stdio: "ignore" },
     )
-  } catch {
+  } catch (error) {
+    if (!platformHelpers.isLaunchctlServiceNotFound(error)) throw error
     return
   }
   throw new Error(`LaunchAgent survived cleanup: ${serviceId}`)
