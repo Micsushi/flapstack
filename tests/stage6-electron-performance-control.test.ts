@@ -255,6 +255,7 @@ describe("Stage 6 Electron performance control", () => {
     expect(orchestrator).toContain("rmSync(target")
     expect(orchestrator).toContain("relative(appDataRoot, target)")
     expect(orchestrator).toContain("cleanupAllOwned")
+    expect(orchestrator).toContain("if (!existsSync(profilePath)) return")
     expect(orchestrator).toContain("buildIdentities")
     expect(orchestrator).toContain("paneCount")
     expect(orchestrator).toContain("messageCount: fixture.messageCount")

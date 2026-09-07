@@ -474,6 +474,8 @@ async function cleanupAllOwned() {
 }
 
 async function removeIsolatedProfile() {
+  // A failed launch may exit before Electron creates any profile directory.
+  if (!existsSync(profilePath)) return
   const appDataRoot = realpathSync(resolve(electronAppDataRoot()))
   const target = resolve(profilePath)
   const relationship = relative(appDataRoot, target)
