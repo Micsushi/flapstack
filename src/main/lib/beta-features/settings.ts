@@ -81,6 +81,7 @@ export function subscribeBetaFeatureSettings(
 
 export function betaFeatureForTrpcPath(path: string): BetaFeatureId | null {
   const [router, procedure] = path.split(".")
+  if (router === "workspaceEditing") return "workspaceEditing"
   if (router === "projectVaults") return "projectMemory"
   if (router === "orchestrationOperations" || router === "coordinationEngines") {
     return "orchestration"

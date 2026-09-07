@@ -3588,3 +3588,44 @@ export const diffAnnotations = sqliteTable(
     ),
   ],
 )
+
+// Durable byte snapshots for conflict-safe workspace saves and their inverse writes.
+export const workspaceEdits = sqliteTable(
+  "workspace_edits",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    rootPath: text("root_path").notNull(),
+    rootIdentity: text("root_identity").notNull(),
+    relativePath: text("relative_path").notNull(),
+    requestHash: text("request_hash").notNull(),
+    beforeContent: text("before_content").notNull(),
+    afterContent: text("after_content").notNull(),
+    beforeSha256: text("before_sha256").notNull(),
+    afterSha256: text("after_sha256").notNull(),
+    revertsId: text("reverts_id"),
+    state: text("state", {
+      enum: ["prepared", "applied", "failed", "conflict", "expired"],
+    }).notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("workspace_edits_root_idx").on(table.rootPath, table.state),
+    index("workspace_edits_chat_idx").on(table.chatId, table.createdAt),
+    check(
+      "workspace_edits_contract_check",
+      sql`
+    ${table.state} in ('prepared', 'applied', 'failed', 'conflict', 'expired')
+    and length(${table.requestHash}) = 64 and length(${table.beforeSha256}) = 64
+    and length(${table.afterSha256}) = 64
+    and length(cast(${table.beforeContent} as blob)) <= 2097152
+    and length(cast(${table.afterContent} as blob)) <= 2097152
+    and length(${table.relativePath}) between 1 and 4096`,
+    ),
+  ],
+)

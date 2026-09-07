@@ -8,6 +8,7 @@ export const BETA_FEATURE_IDS = [
   "terminalRecovery",
   "streamedFileSearch",
   "diffAnnotations",
+  "workspaceEditing",
 ] as const
 
 export type BetaFeatureId = (typeof BETA_FEATURE_IDS)[number]
@@ -23,6 +24,7 @@ export const DEFAULT_BETA_FEATURE_SETTINGS: BetaFeatureSettings = {
   terminalRecovery: false,
   streamedFileSearch: false,
   diffAnnotations: false,
+  workspaceEditing: false,
 }
 
 export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
@@ -30,6 +32,12 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
   label: string
   description: string
 }> = [
+  {
+    id: "workspaceEditing",
+    label: "Workspace Editing",
+    description:
+      "Conflict-checked text save and undo APIs for connected chat worktrees. Editable panes are not yet available.",
+  },
   {
     id: "diffAnnotations",
     label: "Diff Comments",

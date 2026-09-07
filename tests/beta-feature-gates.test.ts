@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { terminalManager } from "../src/main/lib/terminal/manager"
 import { terminalRouter } from "../src/main/lib/trpc/routers/terminal"
 import { diffAnnotationsRouter } from "../src/main/lib/trpc/routers/diff-annotations"
+import { workspaceEditingRouter } from "../src/main/lib/trpc/routers/workspace-editing"
 import {
   betaFeatureForTrpcPath,
   getBetaFeatureSettings,
@@ -79,6 +80,12 @@ describe("beta service gates", () => {
 
   it("blocks disabled local service procedures", async () => {
     const context = { getWindow: () => null }
+    await expect(
+      workspaceEditingRouter
+        .createCaller(context)
+        .history({ projectId: "project", chatId: "chat" }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })
+    expect(betaFeatureForTrpcPath("workspaceEditing.save")).toBe("workspaceEditing")
     await expect(
       diffAnnotationsRouter.createCaller(context).list({ projectId: "project", chatId: "chat" }),
     ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })
