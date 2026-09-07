@@ -36,7 +36,7 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
     id: "workspaceEditing",
     label: "Workspace Editing",
     description:
-      "Conflict-checked text save and undo APIs for connected chat worktrees. Editable panes are not yet available.",
+      "Edit connected chat text files with durable drafts, explicit conflict-checked Save, disk review and undo. Autosave and full conflict recovery are not yet available.",
   },
   {
     id: "diffAnnotations",

@@ -34,7 +34,11 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { ViewerErrorBoundary } from "@/components/ui/error-boundary"
 import { trpc } from "@/lib/trpc"
-import { isAbsolutePath } from "@/lib/file-target"
+import { isAbsolutePath, toRootedFileTarget } from "@/lib/file-target"
+import type { WorkspaceEditScope } from "../../../../shared/workspace-edits"
+import { useWorkspaceDraft } from "../hooks/use-workspace-draft"
+import { useFileChangeRefresh } from "../hooks/use-file-change-refresh"
+import { useBetaFeatures } from "../../settings/use-beta-features"
 import { preferredEditorAtom } from "@/lib/atoms"
 import { useResolvedHotkeyDisplay } from "@/lib/hotkeys"
 import { APP_META } from "../../../../shared/external-apps"
@@ -59,6 +63,7 @@ interface FileViewerSidebarProps {
   filePath: string
   projectPath: string
   onClose: () => void
+  workspaceScope?: WorkspaceEditScope
 }
 
 function FileIcon({ filePath }: { filePath: string }) {
@@ -89,6 +94,7 @@ function FileViewerModeSwitcher({
           variant="ghost"
           size="sm"
           className="h-6 w-6 p-0 flex-shrink-0 hover:bg-foreground/10"
+          aria-label="Change file viewer layout"
         >
           <CurrentIcon className="size-4 text-muted-foreground" />
         </Button>
@@ -208,6 +214,7 @@ function CodeViewerHeader({
           size="sm"
           className="h-6 w-6 p-0 flex-shrink-0 hover:bg-foreground/10"
           onClick={onClose}
+          aria-label="Close file viewer"
         >
           {displayMode === "side-peek" ? (
             <IconCloseSidebarRight className="size-4 text-muted-foreground" />
@@ -272,6 +279,7 @@ function CodeViewerHeader({
             <Button
               variant="ghost"
               size="icon"
+              aria-label="File viewer options"
               className="h-6 w-6 p-0 hover:bg-foreground/10 text-muted-foreground hover:text-foreground"
             >
               <MoreHorizontal className="h-4 w-4" />
@@ -309,7 +317,12 @@ function CodeViewerHeader({
 /**
  * FileViewerSidebar - Routes to appropriate viewer based on file type
  */
-export function FileViewerSidebar({ filePath, projectPath, onClose }: FileViewerSidebarProps) {
+export function FileViewerSidebar({
+  filePath,
+  projectPath,
+  onClose,
+  workspaceScope,
+}: FileViewerSidebarProps) {
   const viewerType = getFileViewerType(filePath)
 
   switch (viewerType) {
@@ -330,7 +343,12 @@ export function FileViewerSidebar({ filePath, projectPath, onClose }: FileViewer
     default:
       return (
         <ViewerErrorBoundary viewerType="file" onReset={onClose}>
-          <CodeViewer filePath={filePath} projectPath={projectPath} onClose={onClose} />
+          <CodeViewer
+            filePath={filePath}
+            projectPath={projectPath}
+            onClose={onClose}
+            workspaceScope={workspaceScope}
+          />
         </ViewerErrorBoundary>
       )
   }
@@ -460,10 +478,12 @@ function CodeViewer({
   filePath,
   projectPath,
   onClose,
+  workspaceScope,
 }: {
   filePath: string
   projectPath: string
   onClose: () => void
+  workspaceScope?: WorkspaceEditScope
 }) {
   const fileName = getFileName(filePath)
   const language = getMonacoLanguage(filePath)
@@ -483,6 +503,28 @@ function CodeViewer({
   const containerRef = useRef<HTMLDivElement>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [hasSelection, setHasSelection] = useState(false)
+  const restoringInput = useRef(false)
+  const [reviewDisk, setReviewDisk] = useState(false)
+  const editingEnabled = useBetaFeatures().workspaceEditing
+  const fileTarget = useMemo(
+    () => toRootedFileTarget(projectPath, filePath),
+    [projectPath, filePath],
+  )
+  const binding = useWorkspaceDraft(
+    editingEnabled && workspaceScope && fileTarget ? { ...workspaceScope, ...fileTarget } : null,
+  )
+  const editable = !!binding.session && binding.state.phase === "ready"
+  useFileChangeRefresh(editingEnabled && workspaceScope ? fileTarget : null, () =>
+    binding.session?.refreshDisk(),
+  )
+  const close = useCallback(async () => {
+    if (binding.session && binding.state.phase === "ready" && !(await binding.session.flush()))
+      return
+    onClose()
+  }, [binding.session, binding.state.phase, onClose])
+  useEffect(() => {
+    setReviewDisk(false)
+  }, [filePath, projectPath, workspaceScope?.chatId])
 
   // Handle ⌘⇧O hotkey to open current file in external editor
   useEffect(() => {
@@ -512,7 +554,10 @@ function CodeViewer({
     }
   }, [currentTheme])
 
-  const { content, isLoading, error } = useFileContent(projectPath, filePath)
+  const preview = useFileContent(projectPath, filePath)
+  const content = binding.state.draft ? binding.state.content : preview.content
+  const isLoading = !binding.state.draft && preview.isLoading
+  const error = binding.state.draft ? null : preview.error
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -526,12 +571,12 @@ function CodeViewer({
         if (findWidget) return
 
         e.preventDefault()
-        onClose()
+        void close()
       }
     }
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [onClose, contextMenu])
+  }, [close, contextMenu])
 
   // Custom context menu handler for Monaco
   useEffect(() => {
@@ -603,6 +648,7 @@ function CodeViewer({
           attributes: true,
           attributeFilter: ["title", "class"],
         })
+        monacoEditor.onDidDispose(() => obs.disconnect())
       }
 
       // Track selection state for context menu
@@ -671,11 +717,12 @@ function CodeViewer({
   const editorOptions = useMemo(
     () => ({
       ...defaultEditorOptions,
+      readOnly: !editable,
       wordWrap: wordWrap ? ("on" as const) : ("off" as const),
       minimap: { enabled: minimap },
       lineNumbers: lineNumbers ? ("on" as const) : ("off" as const),
     }),
-    [wordWrap, minimap, lineNumbers],
+    [wordWrap, minimap, lineNumbers, editable],
   )
 
   if (isLoading) {
@@ -685,7 +732,7 @@ function CodeViewer({
           fileName={fileName}
           filePath={filePath}
 
-          onClose={onClose}
+          onClose={close}
         />
         <LoadingSpinner />
       </div>
@@ -699,7 +746,7 @@ function CodeViewer({
           fileName={fileName}
           filePath={filePath}
 
-          onClose={onClose}
+          onClose={close}
         />
         <ErrorDisplay error={getErrorMessage(error)} />
       </div>
@@ -881,15 +928,123 @@ function CodeViewer({
         fileName={fileName}
         filePath={filePath}
 
-        onClose={onClose}
+        onClose={close}
         content={content}
       />
+      {editingEnabled && workspaceScope && (
+        <div
+          className="flex flex-wrap items-center gap-2 border-b border-border/50 px-3 py-2 text-sm"
+          aria-busy={binding.state.busy}
+        >
+          <span className="min-w-0 flex-1 text-muted-foreground">
+            {!fileTarget
+              ? "Read-only: file is outside this worktree."
+              : binding.state.phase === "opening"
+                ? "Opening editor…"
+                : binding.state.phase !== "ready"
+                  ? "Read-only"
+                  : binding.state.conflict
+                    ? "Conflict · draft preserved"
+                    : binding.session?.needsRetry()
+                      ? "Draft needs retry"
+                      : binding.state.interruptedSave
+                        ? "Saving file…"
+                        : binding.session?.hasUnpersistedText()
+                          ? "Saving draft…"
+                          : binding.state.disk?.content === binding.state.content
+                            ? "Saved to file"
+                            : "Draft saved locally"}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7"
+            disabled={
+              !editable ||
+              binding.state.busy ||
+              binding.state.conflict ||
+              binding.session?.needsRetry() ||
+              binding.state.disk?.content === binding.state.content
+            }
+            onClick={() => void binding.session?.save()}
+            title="Save file (Ctrl/Cmd+S)"
+          >
+            Save
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7"
+            disabled={!binding.session || binding.state.busy}
+            aria-expanded={reviewDisk}
+            onClick={() =>
+              void binding.session?.refreshDisk().then(() => setReviewDisk((value) => !value))
+            }
+          >
+            Review disk
+          </Button>
+          {binding.state.error && binding.session && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7"
+              disabled={binding.state.busy}
+              onClick={() =>
+                void (binding.state.phase === "ready"
+                  ? binding.session?.retry()
+                  : binding.session?.open())
+              }
+            >
+              {binding.state.interruptedSave ? "Retry save" : "Retry editor"}
+            </Button>
+          )}
+          {binding.state.error && (
+            <p role="alert" className="w-full break-words text-destructive">
+              {binding.state.error}
+            </p>
+          )}
+        </div>
+      )}
+      {reviewDisk && binding.session && (
+        <section
+          aria-label="Current disk content"
+          className="shrink-0 border-b border-border/50 px-3 py-2"
+        >
+          <h3 className="mb-1 text-sm font-medium">Current disk content</h3>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">
+            {binding.state.disk?.content ??
+              "Disk contents unavailable. Your draft below is preserved."}
+          </pre>
+        </section>
+      )}
       <div
         ref={containerRef}
         className="flex-1 min-h-0 allow-text-selection"
         data-file-viewer-path={filePath}
+        onKeyDown={(event) => {
+          if (
+            editable &&
+            (event.ctrlKey || event.metaKey) &&
+            !event.altKey &&
+            !event.shiftKey &&
+            event.key.toLowerCase() === "s"
+          ) {
+            event.preventDefault()
+            event.stopPropagation()
+            void binding.session?.save()
+          }
+        }}
       >
         <Editor
+          // Monaco's read-only setValue can emit the previous onChange callback.
+          // A new model fences preview/mode/target changes from the old draft.
+          key={JSON.stringify([
+            projectPath,
+            filePath,
+            workspaceScope?.projectId,
+            workspaceScope?.chatId,
+            editable,
+          ])}
           height="100%"
           language={language}
           value={content || ""}
@@ -897,6 +1052,30 @@ function CodeViewer({
           options={editorOptions}
           loading={<LoadingSpinner />}
           onMount={handleEditorMount}
+          onChange={(value) => {
+            const session = binding.session
+            if (!editable || !session || restoringInput.current || value === binding.state.content)
+              return
+            if (!session.setContent(value ?? "")) {
+              restoringInput.current = true
+              try {
+                const ed = editorRef.current
+                const previous = session.getSnapshot().content
+                ed?.trigger("draft-validation", "undo", null)
+                const model = ed?.getModel()
+                // Undo can include earlier valid typing in the same Monaco group.
+                // Keep the visible editor equal to the durable session buffer.
+                if (ed && model && ed.getValue() !== previous) {
+                  ed.executeEdits("draft-validation", [
+                    { range: model.getFullModelRange(), text: previous, forceMoveMarkers: true },
+                  ])
+                  ed.pushUndoStop()
+                }
+              } finally {
+                restoringInput.current = false
+              }
+            }
+          }}
         />
       </div>
       {contextMenu && (

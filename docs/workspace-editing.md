@@ -2,8 +2,10 @@
 
 The Workspace Editing beta is off by default. Its desktop API currently supports
 UTF-8 text files in a connected chat worktree: read, compare-and-save,
-save-as to a new path, same-directory rename, history and reversal. Editable
-panes and autosave UI are not yet implemented. Existing viewers remain read-only.
+save-as to a new path, same-directory rename, history and reversal. Connected
+chat text viewers now support durable drafts, explicit Save, disk review and
+shared file undo/redo. Unbound viewers, Markdown/image previews and beta-disabled
+viewers remain read-only. Autosave and full conflict recovery UI are not yet implemented.
 The compare-and-save authority subtask (S7-F4-T1) is accepted independently of
 those unfinished editor surfaces.
 
@@ -13,7 +15,7 @@ from the file-write journal. Opening or updating a draft never writes the file.
 Reopening an existing file preserves unsaved text and reports a changed disk
 digest as a conflict. A mounted owner may persist its buffer after the file is
 removed, but missing-file reopen/export, draft discard and
-renderer recovery controls are not implemented yet.
+missing-file recovery controls are not implemented yet.
 
 `listDrafts` exposes a bounded metadata-only recovery list; `readDraft` retrieves
 one stored buffer. These read-only APIs work after source-file deletion or edit
@@ -56,8 +58,37 @@ rounded-equal replacement cannot be mistaken for an owned lock or snapshot.
 Each buffer is limited to 2 MiB of strict UTF-8. Draft storage separately allows
 at most 1,000 buffers and 64 MiB of text, with at most 64 live leases. Reaching a
 limit fails visibly without expiring saved buffers. Releasing a lease does not
-delete its buffer. These APIs remain behind the off-by-default beta and are not
-yet connected to editable Monaco panes or autosave.
+delete its buffer. These APIs and the editable Monaco panes remain behind the
+off-by-default beta. No autosave timer writes files.
+
+## Text pane behavior
+
+Typing persists the buffer separately from disk. Save (or Ctrl/Cmd+S) flushes
+pending text before requesting a conflict-checked file write. Acknowledgements
+never replace newer typing. Interrupted requests retry the same revision and
+operation UUID. A failed buffer update prevents the pane's Close action; an
+unacknowledged buffer also requests the browser's unload confirmation.
+
+Panes for the same chat/root/path share one renderer session. Navigation releases
+the lease after persistence; reopening restores the durable buffer, not a fresh
+disk preview. Failed persistence retains the in-memory session for retry. File,
+chat and editable/read-only transitions use separate Monaco models so preview
+replacement cannot fire an old draft callback. Local editor undo history does
+not survive those model transitions; durable text does.
+
+Watcher events refresh disk evidence without replacing text. Changed or missing
+disk content disables Save and offers a separate disk review. This first surface
+does not yet offer reload/rebase, Save As, draft discard, missing-file export or
+ownership reacquisition after another window takes a lease. Shared file undo/redo
+uses the audited reversal API and refreshes disk evidence; it never discards a draft.
+
+Renderer verification covers delayed/lost acknowledgements, coalesced typing,
+shared pane lifetimes, unload protection, retry-safe undo/redo and Monaco's stale
+read-only callback transition. An explicitly headless local browser fixture
+exercised actual Monaco typing, Save, external-write conflicts, pane reopening,
+beta toggles and NUL rejection at desktop and 390px widths. Its IPC/disk seam is
+simulated, not evidence of full Electron IPC or native-device integration. Rapid
+model disposal emitted one Monaco cancellation diagnostic; draft assertions passed.
 
 Each save requires a project/chat scope, relative path, exact SHA-256 of the
 opened bytes and a fresh operation UUID. The main process checks ownership,

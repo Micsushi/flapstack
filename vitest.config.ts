@@ -1,8 +1,10 @@
 import { defineConfig } from "vitest/config"
+import { fileURLToPath } from "node:url"
 
 const boundedHost = ["win32", "darwin"].includes(process.platform)
 
 export default defineConfig({
+  resolve: { alias: { "@": fileURLToPath(new URL("./src/renderer", import.meta.url)) } },
   plugins: [
     {
       name: "strip-node-shebang-on-windows",

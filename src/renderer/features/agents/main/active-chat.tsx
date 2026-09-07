@@ -9049,6 +9049,9 @@ Make sure to preserve all functionality from both branches when resolving confli
                   <FileViewerSidebar
                     filePath={fileViewerPath}
                     projectPath={worktreePath}
+                    workspaceScope={
+                      agentChat?.projectId ? { projectId: agentChat.projectId, chatId } : undefined
+                    }
                     onClose={() => setFileViewerPath(null)}
                   />
                 </ResizableSidebar>
@@ -9061,6 +9064,9 @@ Make sure to preserve all functionality from both branches when resolving confli
                 <FileViewerSidebar
                   filePath={fileViewerPath}
                   projectPath={worktreePath}
+                  workspaceScope={
+                    agentChat?.projectId ? { projectId: agentChat.projectId, chatId } : undefined
+                  }
                   onClose={() => setFileViewerPath(null)}
                 />
               </DiffCenterPeekDialog>
@@ -9070,6 +9076,9 @@ Make sure to preserve all functionality from both branches when resolving confli
                 <FileViewerSidebar
                   filePath={fileViewerPath}
                   projectPath={worktreePath}
+                  workspaceScope={
+                    agentChat?.projectId ? { projectId: agentChat.projectId, chatId } : undefined
+                  }
                   onClose={() => setFileViewerPath(null)}
                 />
               </DiffFullPageView>
