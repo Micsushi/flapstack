@@ -4,7 +4,21 @@ import {
   joinFileSearchPath,
   recentFileSearchItems,
 } from "../src/renderer/features/file-viewer/components/file-search-paths"
-import { toRootedFileTarget } from "../src/renderer/lib/file-target"
+import { isAbsolutePath, toRootedFileTarget } from "../src/renderer/lib/file-target"
+
+it.each([
+  ["/repo/file.ts", true],
+  ["C:\\repo\\file.ts", true],
+  ["C:/repo/file.ts", true],
+  ["\\\\server\\share\\file.ts", true],
+  ["//server/share/file.ts", true],
+  ["src/file.ts", false],
+  ["C:file.ts", false],
+  ["\\file.ts", false],
+  ["", false],
+])("recognizes fully qualified viewer target %s", (path, expected) => {
+  expect(isAbsolutePath(path)).toBe(expected)
+})
 
 it("preserves literal POSIX backslashes in file names and roots", () => {
   expect(recentFileSearchItems("/repo", ["/repo/a\\b.ts"], "")[0]).toMatchObject({

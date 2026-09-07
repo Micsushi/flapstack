@@ -9,7 +9,7 @@ export function isWindowsFilePath(path: string): boolean {
   return /^(?:[A-Za-z]:[\\/]|[/\\]{2})/.test(path)
 }
 
-function isAbsolutePath(path: string): boolean {
+export function isAbsolutePath(path: string): boolean {
   return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || /^[/\\]{2}/.test(path)
 }
 

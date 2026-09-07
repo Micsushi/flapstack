@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { ViewerErrorBoundary } from "@/components/ui/error-boundary"
 import { trpc } from "@/lib/trpc"
+import { isAbsolutePath } from "@/lib/file-target"
 import { preferredEditorAtom } from "@/lib/atoms"
 import { useResolvedHotkeyDisplay } from "@/lib/hotkeys"
 import { APP_META } from "../../../../shared/external-apps"
@@ -192,7 +193,7 @@ function CodeViewerHeader({
   const openInEditorHotkey = useResolvedHotkeyDisplay("open-file-in-editor")
 
   const handleOpenInEditor = useCallback(() => {
-    const absolutePath = filePath.startsWith("/") ? filePath : undefined
+    const absolutePath = isAbsolutePath(filePath) ? filePath : undefined
     if (absolutePath) {
       openInAppMutation.mutate({ path: absolutePath, app: preferredEditor })
     }
@@ -485,7 +486,7 @@ function CodeViewer({
   // Handle ⌘⇧O hotkey to open current file in external editor
   useEffect(() => {
     const handler = () => {
-      const absolutePath = filePath.startsWith("/") ? filePath : undefined
+      const absolutePath = isAbsolutePath(filePath) ? filePath : undefined
       if (absolutePath) {
         openInAppMutation.mutate({ path: absolutePath, app: preferredEditor })
       }

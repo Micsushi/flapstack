@@ -39,7 +39,7 @@ const FILE_VIEWER_MODES = [
 ]
 import { defaultEditorOptions, getMonacoTheme } from "./monaco-config"
 import { getFileName } from "../utils/file-utils"
-import { toRootedFileTarget } from "../../../lib/file-target"
+import { isAbsolutePath, toRootedFileTarget } from "../../../lib/file-target"
 import { useFileChangeRefresh } from "../hooks/use-file-change-refresh"
 import { getErrorMessage } from "../hooks/use-file-content"
 
@@ -199,7 +199,7 @@ function Header({
   const openInEditorHotkey = useResolvedHotkeyDisplay("open-in-editor")
 
   const handleOpenInEditor = useCallback(() => {
-    const absolutePath = filePath.startsWith("/") ? filePath : undefined
+    const absolutePath = isAbsolutePath(filePath) ? filePath : undefined
     if (absolutePath) {
       openInAppMutation.mutate({ path: absolutePath, app: preferredEditor })
     }
