@@ -1,3 +1,11 @@
+import { z } from "zod"
+import { requestOllamaJson } from "./request-json"
+
+const discoverySchema = z.object({
+  models: z.array(z.object({ name: z.string().min(1).max(512) })).max(10_000),
+  version: z.string().optional(),
+})
+
 /**
  * Ollama detector and status checker
  */
@@ -14,22 +22,10 @@ export interface OllamaStatus {
  */
 export async function checkOllamaStatus(): Promise<OllamaStatus> {
   try {
-    // Check if Ollama server is running
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 2000)
-
-    const response = await fetch("http://localhost:11434/api/tags", {
-      signal: controller.signal,
-    })
-
-    clearTimeout(timeoutId)
-
-    if (!response.ok) {
-      return { available: false, models: [] }
-    }
-
-    const data = await response.json()
-    const models = data.models?.map((m: any) => m.name) || []
+    const data = discoverySchema.parse(
+      await requestOllamaJson("/api/tags", { timeoutMs: 2_000, maxBytes: 2 * 1024 * 1024 }),
+    )
+    const models = data.models.map((model) => model.name)
 
     // Recommended coding models (in order of preference)
     // Check for exact matches first, then check for any qwen/deepseek/codestral variant

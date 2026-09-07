@@ -46,6 +46,7 @@ import { splitUnifiedDiffByFile } from "../../git/diff-parser"
 import { execWithShellEnv } from "../../git/shell-env"
 import { applyRollbackStash } from "../../git/stash"
 import { checkInternetConnection, checkOllamaStatus } from "../../ollama"
+import { generateChatMetadataWithOllama } from "../../ollama/chat-metadata"
 import { terminalManager } from "../../terminal/manager"
 import {
   getDetachedChatCheckoutPath,
@@ -80,13 +81,9 @@ import {
 } from "../../../../shared/agent-profiles"
 import { AgentProfileChatBindingService } from "../../agent-profiles/chat-binding"
 import {
-  buildChatMetadataPrompt,
   CHAT_TITLE_STYLES,
   fallbackChatMetadata,
   inferHighConfidenceChatTags,
-  parseGeneratedChatMetadata,
-  type ChatTitleStyle,
-  type GeneratedChatMetadata,
 } from "../../../../shared/chat-metadata"
 
 const newChatPermissionModeSchema = z.enum([
@@ -284,59 +281,6 @@ function sendWorktreeSetupFailure(
   for (const window of targets) {
     if (window.isDestroyed()) continue
     window.webContents.send("worktree:setup-failed", payload)
-  }
-}
-
-/**
- * Generate provider-neutral chat metadata with the local model when available.
- * This never consumes the active chat provider's context or quota.
- */
-async function generateChatMetadataWithOllama(input: {
-  userMessage: string
-  titleStyle: ChatTitleStyle
-  includeTags: boolean
-  model?: string | null
-}): Promise<GeneratedChatMetadata | null> {
-  try {
-    const ollamaStatus = await checkOllamaStatus()
-    if (!ollamaStatus.available) {
-      return null
-    }
-
-    // Use provided model, or recommended, or first available
-    const modelToUse = input.model || ollamaStatus.recommendedModel || ollamaStatus.models[0]
-    if (!modelToUse) {
-      console.error("[Ollama] No model available")
-      return null
-    }
-
-    const response = await fetch("http://localhost:11434/api/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: modelToUse,
-        prompt: buildChatMetadataPrompt(input),
-        format: "json",
-        stream: false,
-        options: {
-          temperature: 0.2,
-          num_predict: 180,
-        },
-      }),
-    })
-
-    if (!response.ok) {
-      console.error("[Ollama] Generate chat metadata failed:", response.status)
-      return null
-    }
-
-    const data = await response.json()
-    return typeof data.response === "string"
-      ? parseGeneratedChatMetadata(data.response, input.titleStyle)
-      : null
-  } catch (error) {
-    console.error("[Ollama] Generate chat metadata error:", error)
-    return null
   }
 }
 

@@ -1,5 +1,4 @@
 import { sleep } from "../../../../shared/sleep"
-// Helper to sleep for a given duration
 
 interface AutoRenameParams {
   subChatId: string
@@ -29,21 +28,11 @@ export async function autoRenameAgentChat({
   updateSubChatName,
   updateChatName,
 }: AutoRenameParams) {
-  console.log("[auto-rename] Called with:", {
-    subChatId,
-    parentChatId,
-    userMessage: userMessage.slice(0, 50),
-    isFirstSubChat,
-  })
-
   try {
     // 1. Generate name from LLM via tRPC
-    console.log("[auto-rename] Calling generateName...")
     const { name } = await generateName(userMessage)
-    console.log("[auto-rename] Generated name:", name)
 
     if (!name || name.toLocaleLowerCase() === "new chat") {
-      console.log("[auto-rename] Skipping - generic name")
       return // Don't rename if we got a generic name
     }
 
@@ -74,7 +63,7 @@ export async function autoRenameAgentChat({
         }
       }
     }
-  } catch (error) {
-    console.error("[auto-rename] Auto-rename failed:", error)
+  } catch {
+    console.error("[auto-rename] Auto-rename failed")
   }
 }
