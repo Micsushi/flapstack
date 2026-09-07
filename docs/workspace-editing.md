@@ -7,6 +7,28 @@ panes and autosave UI are not yet implemented. Existing viewers remain read-only
 The compare-and-save authority subtask (S7-F4-T1) is accepted independently of
 those unfinished editor surfaces.
 
+Migration 0066 adds the draft API foundation: `openDraft`, `updateDraft` and
+`releaseDraft`. Buffers are stored per chat and canonical file path, separately
+from the file-write journal. Opening or updating a draft never writes the file.
+Reopening an existing file preserves unsaved text and reports a changed disk
+digest as a conflict. A mounted owner may persist its buffer after the file is
+removed, but missing-file reopen/export, draft discard, save-from-draft and
+renderer recovery controls are not implemented yet.
+
+The main process derives window identity from trusted IPC context. It permits
+one live editable lease per file across windows, including case and hard-link
+aliases. A new mount in the same window gets a fresh token; delayed updates and
+releases from an older mount cannot affect the new lease. Closed windows are
+pruned when another editor opens. Draft revisions reject stale updates, and
+permissions plus registered root identity are rechecked before persistence.
+Leases are process-local and do not survive application restart; buffers do.
+
+Each buffer is limited to 2 MiB of strict UTF-8. Draft storage separately allows
+at most 1,000 buffers and 64 MiB of text, with at most 64 live leases. Reaching a
+limit fails visibly without expiring saved buffers. Releasing a lease does not
+delete its buffer. These APIs remain behind the off-by-default beta and are not
+yet connected to editable Monaco panes or autosave.
+
 Each save requires a project/chat scope, relative path, exact SHA-256 of the
 opened bytes and a fresh operation UUID. The main process checks ownership,
 archival, registered root identity and chat permissions before writing and again

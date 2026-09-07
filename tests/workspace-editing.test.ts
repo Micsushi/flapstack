@@ -8,6 +8,7 @@ import {
   mkdirSync,
   existsSync,
   chmodSync,
+  linkSync,
   statSync,
   mkdtempSync,
   readFileSync,
@@ -51,6 +52,22 @@ const request = (content = "updated 雪\r\n") => ({
   intent: "save" as const,
 })
 
+let draftWindowId = 1000
+const draftOwner = () => {
+  const windowId = ++draftWindowId
+  return { windowId, isAlive: (id: number) => id === windowId }
+}
+const draftUpdate = (
+  opened: Awaited<ReturnType<WorkspaceEditingService["openDraft"]>>,
+  content = "unsaved 雪\r\n",
+) => ({
+  ...scope,
+  draftId: opened.draft.id,
+  leaseToken: opened.leaseToken,
+  expectedRevision: opened.draft.revision,
+  content,
+})
+
 beforeEach(() => {
   container = mkdtempSync(join(tmpdir(), "flapstack-workspace-edit-"))
   root = join(container, "repo")
@@ -76,6 +93,220 @@ afterEach(() => {
   vi.restoreAllMocks()
   if (sqlite.open) sqlite.close()
   rmSync(container, { recursive: true, force: true })
+})
+
+it("persists unsaved buffers across database reopen without touching disk", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  const saved = await service.updateDraft(draftUpdate(opened), owner)
+  expect(saved).toMatchObject({
+    content: "unsaved 雪\r\n",
+    revision: 1,
+    baseSha256: hash(original),
+  })
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
+  service.releaseDraft(draftUpdate(opened), owner)
+  sqlite.close()
+  sqlite = new Database(join(container, "test.db"))
+  db = createDb()
+  service = new WorkspaceEditingService(db)
+  const reopened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  expect(reopened.draft).toMatchObject({ id: opened.draft.id, revision: 1, content: saved.content })
+  expect(reopened.conflict).toBe(false)
+})
+
+it("fences stale pane updates/releases and rejects stale draft revisions", async () => {
+  const owner = draftOwner()
+  const first = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  const second = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  expect(second.leaseToken).not.toBe(first.leaseToken)
+  await expect(service.updateDraft(draftUpdate(first), owner)).rejects.toThrow(/not owned/)
+  expect(service.releaseDraft(draftUpdate(first), owner)).toEqual({ released: false })
+  await service.updateDraft(draftUpdate(second), owner)
+  await expect(service.updateDraft(draftUpdate(second, "stale"), owner)).rejects.toThrow(/revision/)
+  expect(db.select().from(schema.workspaceDrafts).get()?.content).toBe("unsaved 雪\r\n")
+})
+
+it("keeps a single live window owner across hard links and allows closed-window recovery", async () => {
+  const alive = new Set([++draftWindowId, ++draftWindowId])
+  const [firstId, secondId] = [...alive]
+  const firstOwner = { windowId: firstId!, isAlive: (id: number) => alive.has(id) }
+  const secondOwner = { ...firstOwner, windowId: secondId! }
+  linkSync(join(root, "file.txt"), join(root, "alias.txt"))
+  await service.openDraft({ ...scope, relativePath: "file.txt" }, firstOwner)
+  await expect(
+    service.openDraft({ ...scope, relativePath: "alias.txt" }, secondOwner),
+  ).rejects.toThrow(/another window/)
+  alive.delete(firstId!)
+  expect(
+    (await service.openDraft({ ...scope, relativePath: "alias.txt" }, secondOwner)).draft.content,
+  ).toBe(original)
+})
+
+it("shares case aliases only when the filesystem identifies the same file", async () => {
+  const ids = [++draftWindowId, ++draftWindowId]
+  const firstOwner = { windowId: ids[0]!, isAlive: (id: number) => ids.includes(id) }
+  const secondOwner = { ...firstOwner, windowId: ids[1]! }
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, firstOwner)
+  if (existsSync(join(root, "FILE.TXT"))) {
+    await expect(
+      service.openDraft({ ...scope, relativePath: "FILE.TXT" }, secondOwner),
+    ).rejects.toThrow(/another window/)
+    const remounted = await service.openDraft({ ...scope, relativePath: "FILE.TXT" }, firstOwner)
+    expect(remounted.draft.id).toBe(opened.draft.id)
+  } else {
+    writeFileSync(join(root, "FILE.TXT"), "distinct")
+    const other = await service.openDraft({ ...scope, relativePath: "FILE.TXT" }, secondOwner)
+    expect(other.draft.id).not.toBe(opened.draft.id)
+    expect(other.draft.content).toBe("distinct")
+  }
+})
+
+it("bounds live editors and frees capacity without deleting buffers", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  for (let index = 1; index <= 64; index++) {
+    writeFileSync(join(root, `pane-${index}.txt`), "text")
+    const action = service.openDraft({ ...scope, relativePath: `pane-${index}.txt` }, owner)
+    if (index < 64) await action
+    else await expect(action).rejects.toThrow(/Too many active editors/)
+  }
+  service.releaseDraft(draftUpdate(opened), owner)
+  expect(
+    (await service.openDraft({ ...scope, relativePath: "pane-64.txt" }, owner)).draft.content,
+  ).toBe("text")
+  expect(db.select().from(schema.workspaceDrafts).all()).toHaveLength(65)
+})
+
+it("preserves a draft and its base when the disk changes or disappears", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  await service.updateDraft(draftUpdate(opened), owner)
+  writeFileSync(join(root, "file.txt"), "external")
+  const reopened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  expect(reopened).toMatchObject({
+    conflict: true,
+    diskSha256: hash("external"),
+    draft: { content: "unsaved 雪\r\n", baseSha256: hash(original) },
+  })
+  rmSync(join(root, "file.txt"))
+  await service.updateDraft(draftUpdate(reopened, "still recoverable"), owner)
+  expect(existsSync(join(root, "file.txt"))).toBe(false)
+  expect(db.select().from(schema.workspaceDrafts).get()?.content).toBe("still recoverable")
+})
+
+it("denies draft persistence after permission revocation or root replacement", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  db.update(schema.chats).set({ permissionMode: "read-only" }).run()
+  await expect(service.updateDraft(draftUpdate(opened), owner)).rejects.toThrow(/permit/)
+  db.update(schema.chats).set({ permissionMode: "auto-edit-project-only" }).run()
+  renameSync(root, `${root}-old`)
+  mkdirSync(root)
+  writeFileSync(join(root, "file.txt"), original)
+  await expect(service.updateDraft(draftUpdate(opened), owner)).rejects.toThrow(/identity|root/i)
+  expect(db.select().from(schema.workspaceDrafts).get()?.content).toBe(original)
+})
+
+it("bounds draft text and requires a real desktop caller", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  for (const content of ["\ud800", "a\0b", "雪".repeat(800_000)])
+    await expect(service.updateDraft(draftUpdate(opened, content), owner)).rejects.toThrow()
+  vi.spyOn(appDatabase, "getDatabase").mockImplementation(() => db)
+  const caller = workspaceEditingRouter.createCaller({ getWindow: () => null })
+  await expect(caller.openDraft({ ...scope, relativePath: "file.txt" })).rejects.toThrow(
+    /desktop window/,
+  )
+  expect(db.select().from(schema.workspaceDrafts).get()?.content).toBe(original)
+})
+
+it("takes draft window identity from trusted context rather than renderer input", async () => {
+  vi.spyOn(appDatabase, "getDatabase").mockImplementation(() => db)
+  const open = vi
+    .spyOn(WorkspaceEditingService.prototype, "openDraft")
+    .mockRejectedValue(new Error("authority captured"))
+  const caller = workspaceEditingRouter.createCaller({
+    getWindow: () =>
+      ({
+        id: 42,
+        isDestroyed: () => false,
+      }) as never,
+  })
+  await expect(
+    caller.openDraft({ ...scope, relativePath: "file.txt", windowId: 999 } as never),
+  ).rejects.toThrow("authority captured")
+  expect(open).toHaveBeenCalledWith(
+    { ...scope, relativePath: "file.txt" },
+    expect.objectContaining({ windowId: 42 }),
+  )
+})
+
+it("does not grant a lease when its window closes during the asynchronous read", async () => {
+  const owner = draftOwner()
+  let checks = 0
+  owner.isAlive = () => ++checks === 1
+  await expect(service.openDraft({ ...scope, relativePath: "file.txt" }, owner)).rejects.toThrow(
+    /window closed/,
+  )
+  expect(db.select().from(schema.workspaceDrafts).all()).toEqual([])
+})
+
+it("refuses a full draft store without invalidating the existing pane lease", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  db.transaction((tx) => {
+    for (let index = 1; index < 1000; index++)
+      tx.insert(schema.workspaceDrafts)
+        .values({
+          ...opened.draft,
+          id: randomUUID(),
+          canonicalPath: join(root, `retained-${index}`),
+          content: "",
+        })
+        .run()
+  })
+  db.insert(schema.chats)
+    .values({
+      id: "other-chat",
+      projectId: scope.projectId,
+      worktreePath: root,
+      permissionMode: "auto-edit-project-only",
+    })
+    .run()
+  await expect(
+    service.openDraft({ ...scope, chatId: "other-chat", relativePath: "file.txt" }, owner),
+  ).rejects.toThrow(/storage is full/)
+  expect((await service.updateDraft(draftUpdate(opened), owner)).content).toBe("unsaved 雪\r\n")
+  expect(db.select().from(schema.workspaceDrafts).all()).toHaveLength(1000)
+})
+
+it("enforces the aggregate draft byte budget without dropping retained text", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  const chunk = "a".repeat(2 * 1024 * 1024)
+  db.transaction((tx) => {
+    for (let index = 0; index < 32; index++)
+      tx.insert(schema.workspaceDrafts)
+        .values({
+          ...opened.draft,
+          id: randomUUID(),
+          canonicalPath: join(root, `retained-${index}`),
+          content: index === 31 ? chunk.slice(Buffer.byteLength(original)) : chunk,
+        })
+        .run()
+  })
+  await expect(service.updateDraft(draftUpdate(opened, `${original}雪`), owner)).rejects.toThrow(
+    /storage is full/,
+  )
+  expect(
+    db
+      .select()
+      .from(schema.workspaceDrafts)
+      .all()
+      .reduce((total, row) => total + Buffer.byteLength(row.content), 0),
+  ).toBe(64 * 1024 * 1024)
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
 })
 
 it("exposes successful saves and structured stale-target conflicts through the beta API", async () => {

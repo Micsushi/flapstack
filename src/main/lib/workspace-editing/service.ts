@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
+import { lstatSync, realpathSync } from "node:fs"
 import { isUtf8 } from "node:buffer"
 import { basename, dirname, join, relative, sep } from "node:path"
 import { lstat } from "node:fs/promises"
@@ -24,6 +25,8 @@ import {
   revertWorkspaceEditSchema,
   saveAsWorkspaceEditSchema,
   renameWorkspaceEditSchema,
+  updateWorkspaceDraftSchema,
+  releaseWorkspaceDraftSchema,
   type WorkspaceEditScope,
   type SaveWorkspaceEdit,
 } from "../../../shared/workspace-edits"
@@ -34,6 +37,20 @@ type Row = typeof schema.workspaceEdits.$inferSelect
 type EditInput = Omit<SaveWorkspaceEdit, "expectedSha256"> & { expectedSha256: string | null }
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex")
 const locks = new Map<string, Promise<void>>()
+export type WorkspaceDraftOwner = { windowId: number; isAlive: (id: number) => boolean }
+const draftOwners = new Map<
+  string,
+  {
+    windowId: number
+    token: string
+    canonicalPath: string
+    fileIdentity: string
+  }
+>()
+const fileIdentity = (path: string) => {
+  const info = lstatSync(path)
+  return JSON.stringify([info.dev, info.ino])
+}
 
 export class WorkspaceEditConflictError extends Error {
   constructor(public readonly diskSha256: string | null) {
@@ -140,6 +157,185 @@ export class WorkspaceEditingService {
       previousRelativePath: row.previousRelativePath,
       createdAt: row.createdAt,
     }
+  }
+
+  private draftRoot(input: WorkspaceEditScope) {
+    const scope = this.writable(input, "save")
+    const path = realpathSync.native(scope.root.canonicalPath)
+    return { path, identity: JSON.stringify([path, scope.root.deviceId, scope.root.inodeId]) }
+  }
+
+  private draft(input: WorkspaceEditScope, id: string) {
+    const root = this.draftRoot(input)
+    const row = this.db
+      .select()
+      .from(schema.workspaceDrafts)
+      .where(eq(schema.workspaceDrafts.id, id))
+      .get()
+    if (
+      !row ||
+      row.projectId !== input.projectId ||
+      row.chatId !== input.chatId ||
+      row.rootIdentity !== root.identity
+    )
+      throw new Error("Draft scope or root changed")
+    return row
+  }
+
+  private draftLease(id: string, token: string, owner: WorkspaceDraftOwner) {
+    const lease = draftOwners.get(id)
+    if (
+      !owner.isAlive(owner.windowId) ||
+      lease?.windowId !== owner.windowId ||
+      lease.token !== token
+    )
+      throw new Error("Draft is not owned by this editor. Reopen it to recover the buffer.")
+    return lease
+  }
+
+  /** Called only with a main-process window identity, never a renderer-supplied id. */
+  async openDraft(input: z.infer<typeof workspaceEditTargetSchema>, owner: WorkspaceDraftOwner) {
+    const value = workspaceEditTargetSchema.parse(input)
+    if (!owner.isAlive(owner.windowId)) throw new Error("An active desktop window is required")
+    const root = this.draftRoot(value)
+    return withRootLock(root.path, async () => {
+      if (this.draftRoot(value).identity !== root.identity) throw new Error("Editor root changed")
+      const path = this.path(root.path, value.relativePath)
+      const target = resolveInsideRoot(root.path, path)
+      const before = fileIdentity(target)
+      const disk = await this.read(value)
+      const canonicalPath = realpathSync.native(target)
+      this.path(root.path, relative(root.path, canonicalPath))
+      if (before !== fileIdentity(target) || this.draftRoot(value).identity !== root.identity)
+        throw new Error("Editor target changed while opening")
+      if (!owner.isAlive(owner.windowId)) throw new Error("Editor window closed while opening")
+      const replacedLeases: string[] = []
+      for (const [id, lease] of draftOwners) {
+        if (!owner.isAlive(lease.windowId)) {
+          replacedLeases.push(id)
+          continue
+        }
+        let currentIdentity = lease.fileIdentity
+        try {
+          currentIdentity = fileIdentity(lease.canonicalPath)
+        } catch {
+          /* Keep the original alias reserved. */
+        }
+        if (
+          lease.canonicalPath === canonicalPath ||
+          lease.fileIdentity === before ||
+          currentIdentity === before
+        ) {
+          if (lease.windowId !== owner.windowId)
+            throw new Error("This file is already editable in another window")
+          replacedLeases.push(id)
+        }
+      }
+      let row = this.db
+        .select()
+        .from(schema.workspaceDrafts)
+        .where(
+          and(
+            eq(schema.workspaceDrafts.chatId, value.chatId),
+            eq(schema.workspaceDrafts.rootIdentity, root.identity),
+            eq(schema.workspaceDrafts.canonicalPath, canonicalPath),
+          ),
+        )
+        .get()
+      if (!row) {
+        this.db.transaction((tx) => {
+          const usage = tx
+            .select({
+              count: sql<number>`count(*)`,
+              bytes: sql<number>`coalesce(sum(length(cast(${schema.workspaceDrafts.content} as blob))), 0)`,
+            })
+            .from(schema.workspaceDrafts)
+            .get()!
+          if (usage.count >= 1000 || usage.bytes + disk.byteLength > 64 * 1024 * 1024)
+            throw new Error("Draft storage is full; existing buffers were preserved")
+          row = tx
+            .insert(schema.workspaceDrafts)
+            .values({
+              id: randomUUID(),
+              ...value,
+              relativePath: relative(root.path, canonicalPath),
+              rootIdentity: root.identity,
+              canonicalPath,
+              baseSha256: disk.sha256,
+              content: disk.content,
+              revision: 0,
+              updatedAt: Date.now(),
+            })
+            .returning()
+            .get()
+        })
+      }
+      const draft = row!
+      if (draft.projectId !== value.projectId) throw new Error("Draft project changed")
+      if (!draftOwners.has(draft.id) && draftOwners.size - replacedLeases.length >= 64)
+        throw new Error("Too many active editors; close an editor before opening another")
+      // A fresh token fences delayed updates/releases from an earlier pane mount.
+      const token = randomUUID()
+      for (const id of replacedLeases) draftOwners.delete(id)
+      draftOwners.set(draft.id, {
+        windowId: owner.windowId,
+        token,
+        canonicalPath,
+        fileIdentity: before,
+      })
+      return {
+        draft,
+        leaseToken: token,
+        diskSha256: disk.sha256,
+        conflict: disk.sha256 !== draft.baseSha256,
+      }
+    })
+  }
+
+  async updateDraft(input: z.infer<typeof updateWorkspaceDraftSchema>, owner: WorkspaceDraftOwner) {
+    const value = updateWorkspaceDraftSchema.parse(input)
+    if (text(Buffer.from(value.content)) !== value.content)
+      throw new Error("Draft contains invalid Unicode")
+    const root = this.draftRoot(value)
+    return withRootLock(root.path, async () => {
+      const row = this.draft(value, value.draftId)
+      this.draftLease(row.id, value.leaseToken, owner)
+      if (row.revision !== value.expectedRevision)
+        throw new Error("Draft revision changed; keep the local buffer")
+      return this.db.transaction((tx) => {
+        const usage = tx
+          .select({
+            bytes: sql<number>`coalesce(sum(length(cast(${schema.workspaceDrafts.content} as blob))), 0)`,
+          })
+          .from(schema.workspaceDrafts)
+          .get()!
+        if (
+          usage.bytes - Buffer.byteLength(row.content) + Buffer.byteLength(value.content) >
+          64 * 1024 * 1024
+        )
+          throw new Error("Draft storage is full; existing buffers were preserved")
+        return tx
+          .update(schema.workspaceDrafts)
+          .set({ content: value.content, revision: row.revision + 1, updatedAt: Date.now() })
+          .where(
+            and(
+              eq(schema.workspaceDrafts.id, row.id),
+              eq(schema.workspaceDrafts.revision, row.revision),
+            ),
+          )
+          .returning()
+          .get()!
+      })
+    })
+  }
+
+  releaseDraft(input: z.infer<typeof releaseWorkspaceDraftSchema>, owner: WorkspaceDraftOwner) {
+    const value = releaseWorkspaceDraftSchema.parse(input)
+    const lease = draftOwners.get(value.draftId)
+    // A stale unmount cannot release a newer mount's token. No buffer is deleted.
+    if (lease?.windowId === owner.windowId && lease.token === value.leaseToken)
+      draftOwners.delete(value.draftId)
+    return { released: !draftOwners.has(value.draftId) }
   }
 
   private finish(row: Row, state: "applied" | "failed" | "conflict") {

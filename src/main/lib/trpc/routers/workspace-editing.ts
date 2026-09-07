@@ -1,4 +1,6 @@
 import { betaProcedure, router } from "../index"
+import { BrowserWindow } from "electron"
+import type { Context } from "../index"
 import { getDatabase } from "../../db"
 import {
   WorkspaceEditingService,
@@ -11,10 +13,23 @@ import {
   revertWorkspaceEditSchema,
   saveAsWorkspaceEditSchema,
   renameWorkspaceEditSchema,
+  updateWorkspaceDraftSchema,
+  releaseWorkspaceDraftSchema,
 } from "../../../../shared/workspace-edits"
 
 const procedure = betaProcedure("workspaceEditing")
 const service = () => new WorkspaceEditingService(getDatabase())
+function draftOwner(ctx: Context) {
+  const window = ctx.getWindow()
+  if (!window || window.isDestroyed()) throw new Error("An active desktop window is required")
+  return {
+    windowId: window.id,
+    isAlive: (id: number) => {
+      const candidate = BrowserWindow.fromId(id)
+      return !!candidate && !candidate.isDestroyed()
+    },
+  }
+}
 async function mutation(action: () => ReturnType<WorkspaceEditingService["save"]>) {
   try {
     const operation = await action()
@@ -28,6 +43,15 @@ async function mutation(action: () => ReturnType<WorkspaceEditingService["save"]
   }
 }
 export const workspaceEditingRouter = router({
+  openDraft: procedure
+    .input(workspaceEditTargetSchema)
+    .mutation(({ input, ctx }) => service().openDraft(input, draftOwner(ctx))),
+  updateDraft: procedure
+    .input(updateWorkspaceDraftSchema)
+    .mutation(({ input, ctx }) => service().updateDraft(input, draftOwner(ctx))),
+  releaseDraft: procedure
+    .input(releaseWorkspaceDraftSchema)
+    .mutation(({ input, ctx }) => service().releaseDraft(input, draftOwner(ctx))),
   read: procedure.input(workspaceEditTargetSchema).query(({ input }) => service().read(input)),
   history: procedure.input(workspaceEditScopeSchema).query(({ input }) => service().history(input)),
   save: procedure

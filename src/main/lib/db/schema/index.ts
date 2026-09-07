@@ -3589,6 +3589,41 @@ export const diffAnnotations = sqliteTable(
   ],
 )
 
+// Recoverable editor buffers; live window leases remain main-process memory only.
+export const workspaceDrafts = sqliteTable(
+  "workspace_drafts",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    rootIdentity: text("root_identity").notNull(),
+    canonicalPath: text("canonical_path").notNull(),
+    relativePath: text("relative_path").notNull(),
+    baseSha256: text("base_sha256").notNull(),
+    content: text("content").notNull(),
+    revision: integer("revision").notNull().default(0),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("workspace_drafts_target_idx").on(
+      table.chatId,
+      table.rootIdentity,
+      table.canonicalPath,
+    ),
+    check(
+      "workspace_drafts_contract_check",
+      sql`
+      length(${table.baseSha256}) = 64 and ${table.revision} >= 0
+      and length(cast(${table.content} as blob)) <= 2097152
+      and length(${table.relativePath}) between 1 and 4096`,
+    ),
+  ],
+)
+
 // Durable byte snapshots for conflict-safe workspace saves and their inverse writes.
 export const workspaceEdits = sqliteTable(
   "workspace_edits",

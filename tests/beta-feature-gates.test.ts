@@ -87,6 +87,29 @@ describe("beta service gates", () => {
     ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })
     expect(betaFeatureForTrpcPath("workspaceEditing.save")).toBe("workspaceEditing")
     await expect(
+      workspaceEditingRouter.createCaller(context).openDraft({
+        projectId: "project",
+        chatId: "chat",
+        relativePath: "file.txt",
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })
+    const draftTarget = {
+      projectId: "project",
+      chatId: "chat",
+      draftId: "12345678-1234-4234-8234-123456789abc",
+      leaseToken: "12345678-1234-4234-8234-123456789abd",
+    }
+    await expect(
+      workspaceEditingRouter.createCaller(context).updateDraft({
+        ...draftTarget,
+        expectedRevision: 0,
+        content: "draft",
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })
+    await expect(
+      workspaceEditingRouter.createCaller(context).releaseDraft(draftTarget),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })
+    await expect(
       workspaceEditingRouter.createCaller(context).rename({
         projectId: "project",
         chatId: "chat",
