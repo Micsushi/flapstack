@@ -7,6 +7,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  statSync,
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
@@ -174,14 +175,26 @@ describe("files router mutation path safety", () => {
     const stream = await caller.watchChanges({ projectPath: root })
     const subscription = stream.subscribe({ next: (event) => events.push(event.filename) })
     const watcher = watchState.watcher!
+    const rawEvents: string[] = []
+    watcher.on("raw", (event, path) => rawEvents.push(`${event}:${path}`))
     try {
       await new Promise<void>((resolve, reject) => {
         watcher.once("ready", resolve)
         watcher.once("error", reject)
       })
+      const before = statSync(path)
       writeFileSync(path, "after")
+      const after = statSync(path)
       await vi.waitFor(() =>
-        expect(events.some((event) => matchesRootedFileChange(target, event))).toBe(true),
+        expect(
+          events.some((event) => matchesRootedFileChange(target, event)),
+          JSON.stringify({
+            events,
+            rawEvents,
+            before: { size: before.size, mtimeMs: before.mtimeMs, atimeMs: before.atimeMs },
+            after: { size: after.size, mtimeMs: after.mtimeMs, atimeMs: after.atimeMs },
+          }),
+        ).toBe(true),
       )
       expect(
         await caller.readTextFile({ rootPath: root, relativePath: "nested/雪.md" }),
