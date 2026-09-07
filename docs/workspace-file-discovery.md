@@ -57,6 +57,11 @@ The router suite also changes an isolated real file, receives its native watcher
 event, matches the rooted identity, and reloads the updated bytes.
 
 The text preview accepts up to 2 MiB and the binary preview up to 20 MiB.
+Text and plan previews validate every bounded byte before decoding. Null bytes
+anywhere reject binary content; malformed UTF-8 reports an unsupported encoding
+instead of silently replacing bytes. Valid UTF-8 BOMs, replacement characters,
+Unicode and line endings remain unchanged. Text and Markdown show the same
+encoding error with an external-editor recovery hint. No conversion or save occurs.
 Rooted reads enforce the caller's byte cap while reading, not just when checking
 the initial file size. A file that grows beyond its cap is rejected after at
 most one additional byte; it is not loaded fully or silently truncated. Reads

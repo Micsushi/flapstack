@@ -119,6 +119,49 @@ afterEach(() => {
 })
 
 describe("files router mutation path safety", () => {
+  it.each([
+    ["late null", Buffer.concat([Buffer.alloc(8192, 65), Buffer.from([0])]), "binary"],
+    ["invalid continuation", Buffer.from([0x66, 0x80]), "unsupported-encoding"],
+    ["truncated character", Buffer.from([0xe9, 0x9b]), "unsupported-encoding"],
+    ["UTF-16 BOM", Buffer.from([0xff, 0xfe, 0x41, 0x01]), "unsupported-encoding"],
+    [
+      "late invalid byte",
+      Buffer.concat([Buffer.alloc(8192, 65), Buffer.from([0xff])]),
+      "unsupported-encoding",
+    ],
+  ])("rejects %s without lossy text or plan content", async (_name, bytes, reason) => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    writeFileSync(join(root, "content.md"), bytes)
+    const target = { rootPath: root, relativePath: "content.md" }
+    expect(await caller.readTextFile(target)).toEqual({
+      ok: false,
+      reason,
+      byteLength: bytes.length,
+    })
+    await expect(caller.readFile(target)).rejects.toThrow(/binary|UTF-8/)
+    expect(readFileSync(join(root, "content.md"))).toEqual(bytes)
+  })
+
+  it.each([
+    "",
+    "\ufeff# 雪\r\n\r\n",
+    "valid replacement character: \ufffd",
+    "a".repeat(2 * 1024 * 1024),
+  ])("preserves valid UTF-8 bytes for text and plan reads (%#)", async (content) => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    const bytes = Buffer.from(content)
+    writeFileSync(join(root, "content.md"), bytes)
+    const target = { rootPath: root, relativePath: "content.md" }
+    expect(await caller.readTextFile(target)).toEqual({
+      ok: true,
+      content,
+      byteLength: bytes.length,
+    })
+    expect(Buffer.from(await caller.readFile(target))).toEqual(bytes)
+  })
+
   it("matches a real native watcher event to the open rooted file", async () => {
     const root = state.userDataPath
     state.registeredRoots.add(root)

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { isUtf8 } from "node:buffer"
 import { router, publicProcedure, betaProcedure } from "../index"
 import type {
   WorkspaceFileResult,
@@ -43,6 +44,15 @@ const IGNORED_DIRS = new Set([
   ".svelte-kit",
   ".astro",
 ])
+
+function decodeTextPreview(buffer: Buffer) {
+  const byteLength = buffer.byteLength
+  if (buffer.includes(0)) return { ok: false as const, reason: "binary" as const, byteLength }
+  if (!isUtf8(buffer))
+    return { ok: false as const, reason: "unsupported-encoding" as const, byteLength }
+  // Buffer preserves UTF-8 BOMs and line endings after validation.
+  return { ok: true as const, content: buffer.toString("utf8"), byteLength }
+}
 
 // Files to ignore
 const IGNORED_FILES = new Set([".DS_Store", "Thumbs.db", ".gitkeep"])
@@ -498,7 +508,12 @@ export const filesRouter = router({
         maxBytes: 2 * 1024 * 1024,
       })
       target.verifyAfterRead()
-      return content.toString("utf-8")
+      const decoded = decodeTextPreview(content)
+      if (!decoded.ok)
+        throw new Error(
+          decoded.reason === "binary" ? "Cannot display binary file" : "File is not valid UTF-8",
+        )
+      return decoded.content
     } catch (error) {
       if (error instanceof RootedReadTooLargeError)
         throw new Error("Plan exceeds the 2 MiB preview limit.")
@@ -526,14 +541,7 @@ export const filesRouter = router({
         return { ok: false as const, reason: "too-large" as const, byteLength: buffer.byteLength }
       }
 
-      // Check if binary by looking for null bytes in first 8KB
-      const sample = buffer.subarray(0, 8192)
-      if (sample.includes(0)) {
-        return { ok: false as const, reason: "binary" as const, byteLength: buffer.byteLength }
-      }
-
-      const content = buffer.toString("utf-8")
-      return { ok: true as const, content, byteLength: buffer.byteLength }
+      return decodeTextPreview(buffer)
     } catch (error) {
       if (error instanceof RootedReadTooLargeError) {
         return { ok: false as const, reason: "too-large" as const, byteLength: error.byteLength }

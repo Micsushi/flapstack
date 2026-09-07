@@ -41,6 +41,7 @@ import { defaultEditorOptions, getMonacoTheme } from "./monaco-config"
 import { getFileName } from "../utils/file-utils"
 import { toRootedFileTarget } from "../../../lib/file-target"
 import { useFileChangeRefresh } from "../hooks/use-file-change-refresh"
+import { getErrorMessage } from "../hooks/use-file-content"
 
 interface MarkdownViewerProps {
   filePath: string
@@ -114,12 +115,7 @@ export function MarkdownViewer({ filePath, projectPath, onClose }: MarkdownViewe
   if (error || (data && !data.ok)) {
     let errorMessage = "Failed to load file"
     if (data && !data.ok) {
-      errorMessage =
-        data.reason === "too-large"
-          ? "File too large"
-          : data.reason === "binary"
-            ? "Binary file"
-            : "File not found"
+      errorMessage = getErrorMessage(data.reason)
     }
 
     return (

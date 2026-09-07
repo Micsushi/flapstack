@@ -4,6 +4,9 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, expect, it, vi } from "vitest"
 
 const state = vi.hoisted(() => ({
+  data: { ok: true, content: "text", byteLength: 4 } as
+    | { ok: true; content: string; byteLength: number }
+    | { ok: false; reason: "unsupported-encoding"; byteLength: number },
   refetch: vi.fn(),
   subscription: null as null | {
     enabled: boolean
@@ -15,7 +18,7 @@ vi.mock("../src/renderer/lib/trpc", () => ({
     files: {
       readTextFile: {
         useQuery: () => ({
-          data: { ok: true, content: "text", byteLength: 4 },
+          data: state.data,
           isLoading: false,
           refetch: state.refetch,
         }),
@@ -28,7 +31,10 @@ vi.mock("../src/renderer/lib/trpc", () => ({
     },
   },
 }))
-import { useFileContent } from "../src/renderer/features/file-viewer/hooks/use-file-content"
+import {
+  getErrorMessage,
+  useFileContent,
+} from "../src/renderer/features/file-viewer/hooks/use-file-content"
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 let root: Root | undefined
@@ -39,10 +45,15 @@ afterEach(async () => {
   root = undefined
   state.refetch = vi.fn()
   state.subscription = null
+  state.data = { ok: true, content: "text", byteLength: 4 }
 })
 function Fixture({ projectPath, filePath }: { projectPath: string; filePath: string }) {
-  useFileContent(projectPath, filePath)
-  return null
+  const result = useFileContent(projectPath, filePath)
+  return result.error ? (
+    <p role="alert">{getErrorMessage(result.error)}</p>
+  ) : (
+    <pre>{result.content}</pre>
+  )
 }
 async function render(projectPath: string, filePath: string) {
   if (!root) {
@@ -84,4 +95,13 @@ it("disables watchers outside the selected root and follows navigation", async (
   expect(state.refetch).not.toHaveBeenCalled()
   state.subscription!.onData({ filename: "new.ts", eventType: "add" })
   expect(state.refetch).toHaveBeenCalledOnce()
+})
+
+it("shows an encoding recovery hint rather than missing-file or lossy content", async () => {
+  state.data = { ok: false, reason: "unsupported-encoding", byteLength: 2 }
+  await render("/repo", "/repo/a.md")
+  expect(container!.querySelector('[role="alert"]')?.textContent).toBe(
+    "This preview requires UTF-8. Open the file in an external editor.",
+  )
+  expect(container!.querySelector("pre")).toBeNull()
 })

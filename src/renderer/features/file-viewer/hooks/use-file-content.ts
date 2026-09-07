@@ -6,7 +6,8 @@ import { useFileChangeRefresh } from "./use-file-change-refresh"
 /**
  * Error reasons for file loading failures
  */
-export type FileLoadError = "not-found" | "too-large" | "binary" | "unknown"
+export type FileLoadError =
+  "not-found" | "too-large" | "binary" | "unsupported-encoding" | "unknown"
 
 /**
  * Result of file content loading
@@ -30,6 +31,8 @@ export function getErrorMessage(error: FileLoadError): string {
       return "File is too large to display (max 2 MB)"
     case "binary":
       return "Cannot display binary file"
+    case "unsupported-encoding":
+      return "This preview requires UTF-8. Open the file in an external editor."
     case "unknown":
     default:
       return "Failed to load file"
@@ -103,7 +106,7 @@ export function useFileContent(
     return {
       content: null,
       isLoading: false,
-      error: data.reason as FileLoadError,
+      error: data.reason,
       byteLength: null,
       refetch,
     }
