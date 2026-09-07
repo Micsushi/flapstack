@@ -139,6 +139,12 @@
       "copyright": "Copyright (c) 2017-2019, The xterm.js authors (https://github.com/xtermjs/xterm.js); Copyright (c) 2014-2016, SourceLair Private Company (https://www.sourcelair.com); Copyright (c) 2012-2013, Christopher Jeffrey (https://github.com/chjj/)",
       "source": "https://github.com/xtermjs/xterm.js/blob/master/LICENSE"
     },
+    "@xterm/headless@6.0.0": {
+      "declaredLicense": "MIT",
+      "template": "MIT",
+      "copyright": "Copyright (c) 2017-2019, The xterm.js authors (https://github.com/xtermjs/xterm.js); Copyright (c) 2014-2016, SourceLair Private Company (https://www.sourcelair.com); Copyright (c) 2012-2013, Christopher Jeffrey (https://github.com/chjj/)",
+      "source": "https://github.com/xtermjs/xterm.js/blob/6.0.0/LICENSE"
+    },
     "cssesc@3.0.0": {
       "declaredLicense": "MIT",
       "template": "MIT",
