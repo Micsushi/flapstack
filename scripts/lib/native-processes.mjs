@@ -5,6 +5,10 @@ import {
   windowsTaskkillArgs,
 } from "./windows-processes.mjs"
 
+export function nativeChildHasExited(child) {
+  return child.exitCode != null || child.signalCode != null
+}
+
 function normalized(value) {
   return String(value ?? "")
     .replaceAll("\\", "/")

@@ -5,6 +5,7 @@ import {
   findStage6IsolatedNativeProcessIds,
   findStage6SupervisorOwnedNativeProcesses,
   killNativeProcess,
+  nativeChildHasExited,
   parseDarwinProcessList,
   parsePosixProcessList,
   processDescendsFromNative,
@@ -21,6 +22,13 @@ const started = "Wed Aug 26 12:00:00 2026"
 const startedChild = "Wed Aug 26 12:00:01 2026"
 
 describe("native Flapstack process ownership", () => {
+  it("recognizes signal termination without requiring a numeric exit code", () => {
+    expect(nativeChildHasExited({ exitCode: null, signalCode: null })).toBe(false)
+    expect(nativeChildHasExited({ exitCode: 0, signalCode: null })).toBe(true)
+    expect(nativeChildHasExited({ exitCode: 1, signalCode: null })).toBe(true)
+    expect(nativeChildHasExited({ exitCode: null, signalCode: "SIGTRAP" })).toBe(true)
+    expect(nativeChildHasExited({ exitCode: null, signalCode: "SIGTERM" })).toBe(true)
+  })
   it("disables only an unavailable Linux development SUID sandbox", () => {
     expect(
       linuxDevNeedsNoSandbox({

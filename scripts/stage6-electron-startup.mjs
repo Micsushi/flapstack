@@ -8,6 +8,7 @@ import {
   drainOwnedProcessIds,
   findStage6IsolatedNativeProcessIds,
   killNativeProcess,
+  nativeChildHasExited,
   processDescendsFromNative,
   queryNativeProcesses,
 } from "./lib/native-processes.mjs"
@@ -225,7 +226,7 @@ async function waitForDescriptor(child, launchedAtEpoch, readChildOutput) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     let hasOwnedDescendant = false
-    if (child.exitCode !== null) {
+    if (nativeChildHasExited(child)) {
       const processes = queryNativeProcesses()
       hasOwnedDescendant = processes.some(
         (entry) =>
@@ -233,7 +234,7 @@ async function waitForDescriptor(child, launchedAtEpoch, readChildOutput) {
           processDescendsFromNative(processes, Number(entry.ProcessId), child.pid),
       )
     }
-    if (child.exitCode !== null && !hasOwnedDescendant) {
+    if (nativeChildHasExited(child) && !hasOwnedDescendant) {
       const output = readChildOutput()
       throw new Error(
         `Stage 6 Electron process exited before readiness${output ? `:\n${output}` : "."}`,
@@ -452,7 +453,7 @@ function findRemainingOwnedProcesses(launched) {
     runToken,
     launchedAtEpoch: launched.launchedAtEpoch,
     launcherPid: launched.child.pid,
-    launcherExited: launched.child.exitCode !== null,
+    launcherExited: nativeChildHasExited(launched.child),
     descriptorPid: launched.descriptor?.pid,
     descriptorCreationDate: launched.descriptorCreationDate,
   })

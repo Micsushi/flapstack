@@ -395,7 +395,7 @@ describe("Stage 6 Electron performance control", () => {
     )
     expect(descriptorWait).toContain("hasOwnedDescendant")
     expect(descriptorWait).toContain("processDescendsFrom")
-    expect(descriptorWait).toContain("child.exitCode !== null && !hasOwnedDescendant")
+    expect(descriptorWait).toContain("nativeChildHasExited(child) && !hasOwnedDescendant")
     expect(orchestrator).not.toContain("electron-vite/bin/electron-vite.js")
     expect(orchestrator).toContain('"out/main/index.js"')
     expect(orchestrator).toContain('"out/preload/index.js"')
