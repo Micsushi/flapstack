@@ -84,6 +84,11 @@ from validated activity records. The idempotent assistant fallback inserts the
 answer before a later user turn instead of appending it after queued feedback.
 Native routers keep their existing transcript persistence.
 
+Local-model feedback is currently rejected before queueing or consuming the
+selected comment version. Its native persistence does not yet adopt claimed runs
+with durable prompt identity and frozen launch settings. Existing batch retries
+and cancellation remain available; this guard is not local queue compatibility.
+
 Desktop Send feedback binds to the active conversation in the view's scoped store.
 The target and selected count remain visible. Only current, undeleted, unsent
 versions are selectable. Before sending, the renderer stores the exact UUID,

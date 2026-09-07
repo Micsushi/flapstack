@@ -126,6 +126,15 @@ export class DiffFeedbackService {
               "Selected comment version is already queued; revise it before sending again",
             )
         }
+        const conversation = db
+          .select()
+          .from(schema.subChats)
+          .where(eq(schema.subChats.id, input.subChatId))
+          .get()!
+        // Local persistence cannot yet adopt a claimed run and its durable prompt.
+        // Fail before consuming this comment version, not after queue dispatch.
+        if ((conversation.harness ?? latestChat.harness) === "local")
+          throw new Error("Local-model feedback is not yet supported; the comment remains unsent")
         const run = queueChatRun(this.sqlite, {
           chatId: input.chatId,
           subChatId: input.subChatId,
@@ -135,11 +144,6 @@ export class DiffFeedbackService {
         if (!run.ok) throw new Error(run.message)
         if (!run.created)
           throw new Error("Feedback run exists without its batch; recovery is required")
-        const conversation = db
-          .select()
-          .from(schema.subChats)
-          .where(eq(schema.subChats.id, input.subChatId))
-          .get()!
         const messages: unknown = JSON.parse(conversation.messages)
         if (!Array.isArray(messages)) throw new Error("Conversation transcript requires recovery")
         const promptMessageId = `mcp-diff-feedback-${input.id}`

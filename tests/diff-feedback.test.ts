@@ -73,6 +73,41 @@ async function request() {
     comments: [{ id: row.id, version: row.version }],
   }
 }
+it("rejects local feedback before consuming the comment or queueing work", async () => {
+  const input = await request()
+  sqlite.prepare("UPDATE sub_chats SET harness='local', model='fixture-local' WHERE id='sub'").run()
+  await expect(feedback.queue(input)).rejects.toThrow(/local-model feedback.*not yet supported/i)
+  expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
+  expect(sqlite.prepare("SELECT count(*) count FROM diff_feedback_batches").get()).toEqual({
+    count: 0,
+  })
+  expect(sqlite.prepare("SELECT messages FROM sub_chats WHERE id='sub'").get()).toEqual({
+    messages: "[]",
+  })
+  expect((await annotations.list(scope)).annotations[0]).toMatchObject({
+    version: 1,
+    lastFeedbackBatchId: null,
+    lastFeedbackVersion: null,
+  })
+})
+
+it("rechecks local eligibility after diff collection but preserves committed retries", async () => {
+  const input = await request()
+  readDiff.mockImplementationOnce(async () => {
+    sqlite
+      .prepare("UPDATE sub_chats SET harness='local', model='fixture-local' WHERE id='sub'")
+      .run()
+    return { success: true, diff }
+  })
+  await expect(feedback.queue(input)).rejects.toThrow(/local-model feedback/i)
+  sqlite.prepare("UPDATE sub_chats SET harness='codex' WHERE id='sub'").run()
+  const batch = await feedback.queue(input)
+  sqlite.prepare("UPDATE sub_chats SET harness='local' WHERE id='sub'").run()
+  readDiff.mockRejectedValue(new Error("offline"))
+  expect(await feedback.queue(input)).toEqual(batch)
+  expect(feedback.getBatchRun(input)).toEqual({ runId: batch.runId, chatId: "chat" })
+})
+
 it("atomically queues one batch and retries the committed identity while offline", async () => {
   const input = await request()
   const batch = await feedback.queue(input)
