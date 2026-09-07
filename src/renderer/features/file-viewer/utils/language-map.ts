@@ -1,3 +1,5 @@
+import { getFileName } from "./file-utils"
+
 /**
  * Map file extensions to Monaco Editor language IDs
  */
@@ -191,7 +193,7 @@ const filenameToMonacoLanguage: Record<string, string> = {
  * Get Monaco Editor language ID from file path
  */
 export function getMonacoLanguage(filePath: string): string {
-  const filename = filePath.split("/").pop() || filePath
+  const filename = getFileName(filePath)
 
   if (filenameToMonacoLanguage[filename]) {
     return filenameToMonacoLanguage[filename]

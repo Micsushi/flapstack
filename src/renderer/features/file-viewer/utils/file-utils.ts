@@ -1,8 +1,10 @@
+import { isWindowsFilePath } from "../../../lib/file-target"
+
 /**
  * Get file name from path
  */
 export function getFileName(filePath: string): string {
-  const parts = filePath.split("/")
+  const parts = filePath.split(isWindowsFilePath(filePath) ? /[\\/]/ : /\//)
   return parts[parts.length - 1] || filePath
 }
 

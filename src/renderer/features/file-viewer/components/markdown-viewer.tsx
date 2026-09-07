@@ -265,6 +265,7 @@ function Header({
             <button
               type="button"
               onClick={handleOpenInEditor}
+              aria-label={`Open in ${editorMeta.label}`}
               className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer rounded-md px-1.5 py-1 hover:bg-accent hover:text-accent-foreground transition-colors"
             >
               <span className="hidden @[400px]:inline">Open in</span>
