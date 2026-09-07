@@ -44,9 +44,8 @@ The package `app.asar` SHA-256 is
 `225ccbf8fbf3d21e30dac665f2dbc01dec30ef1f5a1b0d837aa2c9e82524c4db`;
 the package security report SHA-256 is
 `8d2e05ad8fa6008300e00a1e88328cc6f654a0927d2b12c1391ed61d54d04eb5`.
-The lifecycle test uses a temporary launch-agent fixture, not a real persistent
-service. Packaged usage-daemon operation and native Intel verification remain
-separate checks.
+The package lifecycle test uses a temporary launch-agent fixture, not a real
+persistent service. Native Intel verification remains a separate check.
 
 ## Packaged usage-daemon smoke isolation
 
@@ -62,3 +61,9 @@ If service cleanup fails, the smoke fails and retains its temporary recovery
 directory rather than deleting files still referenced by launchd. Stop that exact
 reported service before removing its recovery directory. Failure diagnostics
 report launchd availability without dumping its environment.
+
+Two real launchd smoke runs passed on the same arm64 Mac using harness
+`2155daf2` against the unchanged `d579aff8` package: closed-app launch, poll,
+stop, restart and cleanup. The runs used distinct UUID service identities and
+left no smoke plist or process. Provider samples and alerts were not enabled;
+this evidence does not claim credentialed provider or Discord delivery coverage.

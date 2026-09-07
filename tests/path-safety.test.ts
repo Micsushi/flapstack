@@ -29,6 +29,61 @@ afterEach(() => {
 })
 
 describe("attachment write path safety", () => {
+  it.each(
+    [
+      { overwrite: true, existing: true },
+      { overwrite: true, existing: false },
+      { overwrite: false, existing: false },
+    ].flatMap((options) =>
+      ["other", "", "external edit"].map((external) => ({ ...options, external })),
+    ),
+  )("preserves in-place external edits during failed write cleanup: %j", async (options) => {
+    const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
+    roots.push(root)
+    const target = join(root, "file.txt")
+    if (options.existing) writeFileSync(target, "original")
+    await expect(
+      writeFileInsideRoot(
+        root,
+        "file.txt",
+        { data: "owned" },
+        {
+          overwrite: options.overwrite,
+          afterCommit: () => {
+            writeFileSync(target, options.external)
+            throw new Error("injected audit failure")
+          },
+        },
+      ),
+    ).rejects.toThrow()
+    expect(readFileSync(target, "utf8")).toBe(options.external)
+    expect(readdirSync(root)).toEqual(["file.txt"])
+  })
+
+  it("restores a failed Unicode source-file replacement when committed bytes are unchanged", async () => {
+    const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
+    roots.push(root)
+    const target = join(root, "file.txt")
+    const sourcePath = join(root, "source.txt")
+    writeFileSync(target, "original")
+    writeFileSync(sourcePath, "\uFEFF日本語\r\n")
+    await expect(
+      writeFileInsideRoot(
+        root,
+        "file.txt",
+        { sourcePath },
+        {
+          overwrite: true,
+          afterCommit: () => {
+            throw new Error("injected audit failure")
+          },
+        },
+      ),
+    ).rejects.toThrow("injected audit failure")
+    expect(readFileSync(target, "utf8")).toBe("original")
+    expect(readdirSync(root).sort()).toEqual(["file.txt", "source.txt"])
+  })
+
   it("rejects lexical traversal and symlinked parent escapes", async () => {
     const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
     const outside = mkdtempSync(join(tmpdir(), "flapstack-safe-outside-"))

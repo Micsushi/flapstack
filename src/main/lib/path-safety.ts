@@ -15,6 +15,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
 type FileIdentity = { dev: number | bigint; ino: number | bigint; fileType: number }
+type WrittenContent = { sha256: string; byteLength: number }
 
 export type RootedWriteSource = { data: string | Uint8Array } | { sourcePath: string }
 
@@ -176,9 +177,10 @@ export async function writeFileInsideRoot(
     await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
     const handle = await openNoFollowExclusive(targetPath, 0o600)
     const createdIdentity = identity(await handle.stat())
+    let writtenContent: WrittenContent | undefined
     try {
       await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
-      await writeSource(handle, source)
+      writtenContent = await writeSource(handle, source)
       await handle.sync()
       const size = (await handle.stat()).size
       await handle.close()
@@ -196,7 +198,13 @@ export async function writeFileInsideRoot(
     } catch (error) {
       await handle.close().catch(() => undefined)
       await options.beforeFailureCleanup?.(targetPath)
-      await removeIfStillOwned(targetPath, parentPath, parentIdentity, createdIdentity)
+      await removeIfStillOwned(
+        targetPath,
+        parentPath,
+        parentIdentity,
+        createdIdentity,
+        writtenContent,
+      )
       throw error
     }
   }
@@ -218,8 +226,9 @@ export async function writeFileInsideRoot(
   const handle = await openNoFollowExclusive(temporaryPath, initialMode & 0o777)
   const temporaryIdentity = identity(await handle.stat())
   let committed = false
+  let writtenContent: WrittenContent | undefined
   try {
-    await writeSource(handle, source)
+    writtenContent = await writeSource(handle, source)
     await handle.sync()
     const size = (await handle.stat()).size
     await handle.close()
@@ -260,6 +269,7 @@ export async function writeFileInsideRoot(
           parentIdentity,
           targetPath,
           committedIdentity: temporaryIdentity,
+          writtenContent: writtenContent!,
           initialContent,
           initialMode,
         })
@@ -496,6 +506,7 @@ async function rollbackCommittedWrite(input: {
   parentIdentity: FileIdentity
   targetPath: string
   committedIdentity: FileIdentity
+  writtenContent: WrittenContent
   initialContent: Buffer | null
   initialMode: number
 }): Promise<void> {
@@ -507,12 +518,19 @@ async function rollbackCommittedWrite(input: {
     input.parentIdentity,
   )
   await validateTargetIdentity(input.targetPath, input.committedIdentity)
+  await readExpectedFile(
+    input.targetPath,
+    input.committedIdentity,
+    input.writtenContent.sha256,
+    input.writtenContent.byteLength,
+  )
   if (input.initialContent === null) {
     await removeIfStillOwned(
       input.targetPath,
       input.parentPath,
       input.parentIdentity,
       input.committedIdentity,
+      input.writtenContent,
     )
     if (await lstatOrNull(input.targetPath)) throw new Error("Created target rollback failed")
     return
@@ -535,6 +553,12 @@ async function rollbackCommittedWrite(input: {
       input.parentIdentity,
     )
     await validateTargetIdentity(input.targetPath, input.committedIdentity)
+    await readExpectedFile(
+      input.targetPath,
+      input.committedIdentity,
+      input.writtenContent.sha256,
+      input.writtenContent.byteLength,
+    )
     await rename(rollbackPath, input.targetPath)
     renamed = true
     await validateCommittedTarget(
@@ -566,9 +590,12 @@ function sha256(value: Uint8Array): string {
 async function writeSource(
   handle: Awaited<ReturnType<typeof open>>,
   source: RootedWriteSource,
-): Promise<void> {
-  const data = "sourcePath" in source ? await readFile(source.sourcePath) : source.data
+): Promise<WrittenContent> {
+  // Snapshot caller-owned bytes before yielding so rollback compares our payload.
+  const data = "sourcePath" in source ? await readFile(source.sourcePath) : Buffer.from(source.data)
+  const writtenContent = { sha256: sha256(data), byteLength: data.byteLength }
   await handle.writeFile(data)
+  return writtenContent
 }
 
 async function validateRootAndParent(
@@ -712,6 +739,7 @@ async function removeIfStillOwned(
   parentPath: string,
   parentIdentity: FileIdentity,
   expected: FileIdentity,
+  writtenContent?: WrittenContent,
 ): Promise<void> {
   try {
     const parent = await lstat(parentPath)
@@ -722,6 +750,8 @@ async function removeIfStillOwned(
       !item.isSymbolicLink() &&
       sameIdentity(identity(item), expected)
     ) {
+      if (writtenContent)
+        await readExpectedFile(path, expected, writtenContent.sha256, writtenContent.byteLength)
       await rm(path)
     }
   } catch {

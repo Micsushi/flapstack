@@ -68,6 +68,13 @@ most one additional byte; it is not loaded fully or silently truncated. Reads
 without an explicit cap retain their existing behavior. Growth and exact-boundary
 regressions are covered by `tests/rooted-read-bounds.test.ts`.
 
+Failed rooted writes restore prior content only while the committed inode and
+bytes still belong to that write. In-place external edits, truncation and growth
+are preserved instead of overwritten or deleted during rollback. Cleanup reads
+are bounded by the written payload size. An unsafe rollback reports failure;
+this portable guard is not an operating-system sandbox against continuous
+namespace races. Regression cases live in `tests/path-safety.test.ts`.
+
 Plan-file reads also enforce the 2 MiB text limit while reading, including files
 that grow after their initial size check. A successful empty plan replaces the
 cached text; it is not treated as a missing response. Both details-sidebar plan
