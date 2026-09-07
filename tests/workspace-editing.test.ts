@@ -6,6 +6,9 @@ import { spawnSync } from "node:child_process"
 import { build } from "esbuild"
 import {
   mkdirSync,
+  existsSync,
+  chmodSync,
+  statSync,
   mkdtempSync,
   readFileSync,
   renameSync,
@@ -24,7 +27,7 @@ import {
   WorkspaceEditingService,
   WorkspaceEditConflictError,
 } from "../src/main/lib/workspace-editing/service"
-import { writeFileInsideRoot } from "../src/main/lib/path-safety"
+import { removeFileInsideRoot, writeFileInsideRoot } from "../src/main/lib/path-safety"
 import { disabledCustomPermissions } from "../src/shared/permission-capabilities"
 
 let container: string, root: string, sqlite: Database.Database
@@ -78,6 +81,14 @@ it("exposes successful saves and structured stale-target conflicts through the b
   })
   expect(await caller.save(request())).toMatchObject({ ok: true, operation: { state: "applied" } })
   expect(await caller.save(request("stale"))).toMatchObject({ ok: false, reason: "conflict" })
+  expect(
+    await caller.saveAs({
+      ...scope,
+      id: randomUUID(),
+      relativePath: "copy.txt",
+      content: original,
+    }),
+  ).toMatchObject({ ok: true, operation: { kind: "create" } })
 })
 
 it("saves exact bytes and reverses both save and undo across a database reopen", async () => {
@@ -101,6 +112,103 @@ it("saves exact bytes and reverses both save and undo across a database reopen",
   expect(await service.history(scope)).toHaveLength(3)
 })
 
+it.each(["", original])(
+  "saves a new file and reverses creation and removal (%#)",
+  async (content) => {
+    const input = { ...scope, id: randomUUID(), relativePath: "created.txt", content }
+    const created = await service.saveAs(input)
+    expect(created).toMatchObject({ state: "applied", kind: "create" })
+    expect(readFileSync(join(root, input.relativePath), "utf8")).toBe(content)
+    const undo = { ...scope, id: randomUUID(), operationId: created.id }
+    const removed = await service.revert(undo)
+    expect(removed).toMatchObject({ state: "applied", kind: "remove" })
+    expect(existsSync(join(root, input.relativePath))).toBe(false)
+    expect(await service.revert(undo)).toEqual(removed)
+    sqlite.close()
+    sqlite = new Database(join(container, "test.db"))
+    db = createDb()
+    service = new WorkspaceEditingService(db)
+    await service.revert({ ...scope, id: randomUUID(), operationId: removed.id })
+    expect(readFileSync(join(root, input.relativePath), "utf8")).toBe(content)
+    expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
+  },
+)
+
+it("never overwrites an existing save-as target or externally changed created file", async () => {
+  const input = { ...scope, id: randomUUID(), relativePath: "file.txt", content: "draft" }
+  await expect(service.saveAs(input)).rejects.toBeInstanceOf(WorkspaceEditConflictError)
+  const created = await service.saveAs({ ...input, relativePath: "new.txt" })
+  writeFileSync(join(root, "new.txt"), "external")
+  await expect(
+    service.revert({ ...scope, id: randomUUID(), operationId: created.id }),
+  ).rejects.toBeInstanceOf(WorkspaceEditConflictError)
+  expect(readFileSync(join(root, "new.txt"), "utf8")).toBe("external")
+  expect(await service.saveAs({ ...input, relativePath: "new.txt" })).toEqual(created)
+  await expect(service.saveAs({ ...input, relativePath: "different.txt" })).rejects.toThrow(
+    "reused",
+  )
+})
+
+it.skipIf(process.platform === "win32")(
+  "restores file permission bits when redoing creation",
+  async () => {
+    const created = await service.saveAs({
+      ...scope,
+      id: randomUUID(),
+      relativePath: "new.txt",
+      content: original,
+    })
+    chmodSync(join(root, "new.txt"), 0o751)
+    const removed = await service.revert({ ...scope, id: randomUUID(), operationId: created.id })
+    await service.revert({ ...scope, id: randomUUID(), operationId: removed.id })
+    expect(statSync(join(root, "new.txt")).mode & 0o777).toBe(0o751)
+  },
+)
+
+it("rejects a late save-as target and applies existing path and permission guards", async () => {
+  const input = { ...scope, id: randomUUID(), relativePath: "new.txt", content: original }
+  await expect(service.saveAs({ ...input, relativePath: "../escape.txt" })).rejects.toThrow()
+  sqlite.prepare("UPDATE chats SET permission_mode = 'read-only'").run()
+  await expect(service.saveAs(input)).rejects.toThrow("permit")
+  sqlite.prepare("UPDATE chats SET permission_mode = 'auto-edit-project-only'").run()
+  service = new WorkspaceEditingService(db, async (root, path, source, options) => {
+    writeFileSync(join(root, path), "external")
+    return writeFileInsideRoot(root, path, source, options)
+  })
+  await expect(service.saveAs(input)).rejects.toBeInstanceOf(WorkspaceEditConflictError)
+  expect(readFileSync(join(root, "new.txt"), "utf8")).toBe("external")
+})
+
+it.each([false, true])(
+  "handles removal audit failure without overwriting external recreation (%s)",
+  async (external) => {
+    const created = await service.saveAs({
+      ...scope,
+      id: randomUUID(),
+      relativePath: "new.txt",
+      content: original,
+    })
+    sqlite.exec(
+      "CREATE TRIGGER reject_edit_audit BEFORE INSERT ON mcp_audit_records BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END",
+    )
+    const undo = { ...scope, id: randomUUID(), operationId: created.id }
+    if (external)
+      service = new WorkspaceEditingService(
+        db,
+        writeFileInsideRoot,
+        async (root, path, options) => {
+          const result = await removeFileInsideRoot(root, path, options)
+          writeFileSync(join(root, path), "external")
+          return result
+        },
+      )
+    await expect(service.revert(undo)).rejects.toThrow()
+    expect(readFileSync(join(root, "new.txt"), "utf8")).toBe(external ? "external" : original)
+    sqlite.exec("DROP TRIGGER reject_edit_audit")
+    expect((await service.revert(undo)).state).toBe(external ? "conflict" : "failed")
+  },
+)
+
 it("replays a lost response without another write or duplicate audit, even after external edits", async () => {
   const input = request()
   const saved = await service.save(input)
@@ -119,7 +227,7 @@ it("expires old snapshots at the retention limit without losing idempotency or b
   const first = await service.save(input)
   const copy = sqlite.prepare(`INSERT INTO workspace_edits
     SELECT ?, project_id, chat_id, root_path, root_identity, relative_path, request_hash,
-      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1
+      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1, kind, file_mode
     FROM workspace_edits WHERE id = ?`)
   sqlite.transaction(() => {
     for (let i = 0; i < 999; i++) copy.run(randomUUID(), first.id)
@@ -143,7 +251,7 @@ it.each([false, true])("replays undo after source expiry (interrupted=%s)", asyn
   const saved = await service.save(request())
   const copy = sqlite.prepare(`INSERT INTO workspace_edits
     SELECT ?, project_id, chat_id, root_path, root_identity, relative_path, request_hash,
-      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1
+      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1, kind, file_mode
     FROM workspace_edits WHERE id = ?`)
   sqlite.transaction(() => {
     for (let i = 0; i < 999; i++) copy.run(randomUUID(), saved.id)
@@ -169,7 +277,7 @@ it("expires enough snapshots for the UTF-8 byte budget independently of record c
   const first = await service.save(request(content))
   const copy = sqlite.prepare(`INSERT INTO workspace_edits
     SELECT ?, project_id, chat_id, root_path, root_identity, relative_path, request_hash,
-      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1
+      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1, kind, file_mode
     FROM workspace_edits WHERE id = ?`)
   sqlite.transaction(() => {
     for (let i = 0; i < 30; i++) copy.run(randomUUID(), first.id)
@@ -255,46 +363,70 @@ it("recovers a durable write interrupted before metadata completion without rewr
   expect(sqlite.prepare("SELECT count(*) count FROM mcp_audit_records").get()).toEqual({ count: 1 })
 })
 
-it("recovers an actual child process exit after the file commit", async () => {
-  const input = request()
-  const evidenceRoot = resolve(".local-evidence")
-  mkdirSync(evidenceRoot, { recursive: true })
-  const buildRoot = mkdtempSync(join(evidenceRoot, "workspace-edit-crash-"))
-  try {
-    const worker = join(buildRoot, "worker.mjs")
-    await build({
-      entryPoints: [resolve("tests/fixtures/workspace-edit-crash-worker.ts")],
-      outfile: worker,
-      bundle: true,
-      packages: "external",
-      platform: "node",
-      format: "esm",
-      target: "node22",
-    })
-    const exited = spawnSync(
-      process.execPath,
-      [worker, join(container, "test.db"), JSON.stringify(input)],
-      {
-        encoding: "utf8",
-        windowsHide: true,
-        timeout: 10_000,
-        maxBuffer: 1024 * 1024,
-      },
-    )
-    expect({ status: exited.status, stderr: exited.stderr, error: exited.error }).toMatchObject({
-      status: 73,
-    })
-    sqlite.close()
-    sqlite = new Database(join(container, "test.db"))
-    db = createDb()
-    service = new WorkspaceEditingService(db)
-    expect((await service.history(scope))[0].state).toBe("prepared")
-    expect((await service.save(input)).state).toBe("applied")
-    expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(input.content)
-  } finally {
-    rmSync(buildRoot, { recursive: true, force: true })
-  }
-}, 20_000)
+it.each(["save", "create", "remove"] as const)(
+  "recovers an actual child exit after %s commit",
+  async (kind) => {
+    const created =
+      kind === "remove"
+        ? await service.saveAs({
+            ...scope,
+            id: randomUUID(),
+            relativePath: "new.txt",
+            content: original,
+          })
+        : null
+    const input = {
+      ...request(),
+      relativePath: kind === "save" ? "file.txt" : "new.txt",
+      operationId: created?.id,
+    }
+    const evidenceRoot = resolve(".local-evidence")
+    mkdirSync(evidenceRoot, { recursive: true })
+    const buildRoot = mkdtempSync(join(evidenceRoot, "workspace-edit-crash-"))
+    try {
+      const worker = join(buildRoot, "worker.mjs")
+      await build({
+        entryPoints: [resolve("tests/fixtures/workspace-edit-crash-worker.ts")],
+        outfile: worker,
+        bundle: true,
+        packages: "external",
+        platform: "node",
+        format: "esm",
+        target: "node22",
+      })
+      const exited = spawnSync(
+        process.execPath,
+        [worker, join(container, "test.db"), JSON.stringify(input), kind],
+        {
+          encoding: "utf8",
+          windowsHide: true,
+          timeout: 10_000,
+          maxBuffer: 1024 * 1024,
+        },
+      )
+      expect({ status: exited.status, stderr: exited.stderr, error: exited.error }).toMatchObject({
+        status: 73,
+      })
+      sqlite.close()
+      sqlite = new Database(join(container, "test.db"))
+      db = createDb()
+      service = new WorkspaceEditingService(db)
+      expect((await service.history(scope))[0].state).toBe("prepared")
+      const recovered =
+        kind === "remove"
+          ? await service.revert({ ...input, operationId: created!.id })
+          : kind === "create"
+            ? await service.saveAs(input)
+            : await service.save(input)
+      expect(recovered.state).toBe("applied")
+      if (kind === "remove") expect(existsSync(join(root, input.relativePath))).toBe(false)
+      else expect(readFileSync(join(root, input.relativePath), "utf8")).toBe(input.content)
+    } finally {
+      rmSync(buildRoot, { recursive: true, force: true })
+    }
+  },
+  20_000,
+)
 
 it.each([false, true])(
   "keeps interrupted recovery truthful after external changes (missing=%s)",

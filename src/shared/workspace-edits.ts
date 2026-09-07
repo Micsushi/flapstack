@@ -22,5 +22,9 @@ export const revertWorkspaceEditSchema = workspaceEditScopeSchema.extend({
   id: z.string().uuid(),
   operationId: z.string().uuid(),
 })
+export const saveAsWorkspaceEditSchema = workspaceEditTargetSchema.extend({
+  id: z.string().uuid(),
+  content: z.string().max(workspaceEditMaxBytes),
+})
 export type WorkspaceEditScope = z.infer<typeof workspaceEditScopeSchema>
 export type SaveWorkspaceEdit = z.infer<typeof saveWorkspaceEditSchema>

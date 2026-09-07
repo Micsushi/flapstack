@@ -1,8 +1,8 @@
 # Workspace editing authority
 
 The Workspace Editing beta is off by default. Its desktop API currently supports
-existing UTF-8 text files in a connected chat worktree: read, compare-and-save,
-history and reversal. Editable panes, autosave UI, rename and save-as are not yet
+UTF-8 text files in a connected chat worktree: read, compare-and-save,
+save-as to a new path, history and reversal. Editable panes, autosave UI and rename are not yet
 implemented. Existing text and Markdown viewers remain read-only.
 
 Each save requires a project/chat scope, relative path, exact SHA-256 of the
@@ -35,11 +35,20 @@ An undo retry resolves its own operation before consulting retained source text,
 including interrupted inverses whose source snapshot has since expired. Duplicate
 requests share the root lock through recovery and finalization.
 
+Save-as requires a missing destination in an existing directory. It never
+overwrites an existing target or creates parent directories. Migration 0064
+distinguishes file creation/removal from an empty file and preserves permission
+bits for redo. Undo of creation removes only matching text; redo requires the
+path to remain missing. Failed removal finalization attempts restoration only
+into that still-missing path. External recreations and root changes are preserved.
+This inverse API is not a general-purpose delete endpoint. Filesystem ACLs and
+extended metadata are not journaled; new files use private permission bits.
+
 History reserves at most 1,000 retained snapshots and 64 MiB of before/after text
 per profile. Reserving a new operation expires oldest finalized snapshots as
 needed, even if that new operation later fails. Prepared recovery records are
-never expired automatically. Expired records retain identities, hashes and
-outcomes for retry safety, but no source text, and cannot be undone. Metadata and
+never expired automatically. Expired records retain identities, hashes and an
+explicit expired state for retry safety, but no source text, and cannot be undone. Metadata and
 audit retention are separate from this snapshot-byte limit. The latest reversal
 can reserve space by expiring older snapshots rather than failing solely because
 ordinary history is full.

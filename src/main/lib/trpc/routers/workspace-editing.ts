@@ -9,6 +9,7 @@ import {
   workspaceEditTargetSchema,
   saveWorkspaceEditSchema,
   revertWorkspaceEditSchema,
+  saveAsWorkspaceEditSchema,
 } from "../../../../shared/workspace-edits"
 
 const procedure = betaProcedure("workspaceEditing")
@@ -34,4 +35,7 @@ export const workspaceEditingRouter = router({
   revert: procedure
     .input(revertWorkspaceEditSchema)
     .mutation(({ input }) => mutation(() => service().revert(input))),
+  saveAs: procedure
+    .input(saveAsWorkspaceEditSchema)
+    .mutation(({ input }) => mutation(() => service().saveAs(input))),
 })

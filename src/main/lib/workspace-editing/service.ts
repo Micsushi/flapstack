@@ -1,11 +1,18 @@
 import { createHash } from "node:crypto"
 import { isUtf8 } from "node:buffer"
 import { relative, sep } from "node:path"
+import { lstat } from "node:fs/promises"
 import { and, asc, desc, eq, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import * as schema from "../db/schema"
 import { assertRegisteredFilesystemRoot } from "../git/security/path-validation"
-import { readFileInsideRoot, resolveInsideRoot, writeFileInsideRoot } from "../path-safety"
+import {
+  actOnPathInsideRoot,
+  readFileInsideRoot,
+  removeFileInsideRoot,
+  resolveInsideRoot,
+  writeFileInsideRoot,
+} from "../path-safety"
 import { parseCustomPermissionToggles, parsePermissionMode } from "../permissions"
 import { appendMcpAuditRecord } from "../mcp-control/audit-storage"
 import {
@@ -14,6 +21,7 @@ import {
   workspaceEditTargetSchema,
   saveWorkspaceEditSchema,
   revertWorkspaceEditSchema,
+  saveAsWorkspaceEditSchema,
   type WorkspaceEditScope,
   type SaveWorkspaceEdit,
 } from "../../../shared/workspace-edits"
@@ -21,6 +29,7 @@ import type { z } from "zod"
 
 type Database = BetterSQLite3Database<typeof schema>
 type Row = typeof schema.workspaceEdits.$inferSelect
+type EditInput = Omit<SaveWorkspaceEdit, "expectedSha256"> & { expectedSha256: string | null }
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex")
 const locks = new Map<string, Promise<void>>()
 
@@ -59,6 +68,7 @@ export class WorkspaceEditingService {
   constructor(
     private readonly db: Database,
     private readonly write = writeFileInsideRoot,
+    private readonly remove = removeFileInsideRoot,
   ) {}
 
   private scope(input: WorkspaceEditScope) {
@@ -122,6 +132,7 @@ export class WorkspaceEditingService {
       beforeSha256: row.beforeSha256,
       afterSha256: row.afterSha256,
       revertsId: row.revertsId,
+      kind: row.kind,
       createdAt: row.createdAt,
     }
   }
@@ -144,7 +155,12 @@ export class WorkspaceEditingService {
         tier: 2,
         status: state === "applied" ? "completed" : state === "conflict" ? "stale" : "failed",
         input: { id: row.id, sha256: row.beforeSha256 },
-        result: { sha256: row.afterSha256, byteLength: Buffer.byteLength(row.afterContent), state },
+        result: {
+          sha256: row.afterSha256,
+          byteLength: Buffer.byteLength(row.afterContent),
+          kind: row.kind,
+          state,
+        },
       })
       return updated
     })
@@ -154,23 +170,24 @@ export class WorkspaceEditingService {
     const scope = this.scope(authority)
     if (scope.identity !== row.rootIdentity || scope.root.canonicalPath !== row.rootPath)
       throw new Error("Edit history belongs to a different registered root")
-    let currentHash: string | null = null
+    let currentHash: string | null | undefined
     try {
       currentHash = hash(
         await readFileInsideRoot(row.rootPath, row.relativePath, {
           maxBytes: workspaceEditMaxBytes,
         }),
       )
-    } catch {
-      /* Unreadable or missing bytes cannot establish the interrupted outcome. */
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") currentHash = null
+      // Unreadable bytes remain unknown, distinct from a verified missing target.
     }
     if (this.scope(authority).identity !== row.rootIdentity) throw new Error("Editor root changed")
     // Recovery only reconciles metadata. It never writes historical bytes over disk.
     return this.finish(
       row,
-      currentHash === row.afterSha256
+      currentHash === (row.kind === "remove" ? null : row.afterSha256)
         ? "applied"
-        : currentHash === row.beforeSha256
+        : currentHash === (row.kind === "create" ? null : row.beforeSha256)
           ? "failed"
           : "conflict",
     )
@@ -243,16 +260,33 @@ export class WorkspaceEditingService {
         {
           ...value,
           relativePath: row.relativePath,
-          expectedSha256: row.afterSha256,
+          expectedSha256: row.kind === "remove" ? null : row.afterSha256,
           content: row.beforeContent,
           intent: "save",
         },
         row.id,
+        row.kind === "create" ? "remove" : row.kind === "remove" ? "create" : "save",
+        row.fileMode,
       )
     })
   }
 
-  private async saveRecord(input: SaveWorkspaceEdit, revertsId: string | null) {
+  async saveAs(input: z.infer<typeof saveAsWorkspaceEditSchema>) {
+    const value = saveAsWorkspaceEditSchema.parse(input)
+    const scope = this.writable(value, "save")
+    return withRootLock(scope.root.canonicalPath, () => {
+      if (this.writable(value, "save").identity !== scope.identity)
+        throw new Error("Editor root changed")
+      return this.saveRecord({ ...value, expectedSha256: null, intent: "save" }, null, "create")
+    })
+  }
+
+  private async saveRecord(
+    input: EditInput,
+    revertsId: string | null,
+    kind: Row["kind"] = "save",
+    fileMode = 0o600,
+  ) {
     const scope = this.writable(input, input.intent)
     const path = this.path(scope.root.canonicalPath, input.relativePath)
     const bytes = Buffer.from(input.content, "utf8")
@@ -267,9 +301,10 @@ export class WorkspaceEditingService {
         afterSha256,
         input.intent,
         revertsId,
+        ...(kind === "save" ? [] : [kind]),
       ]),
     )
-    // Both callers hold the canonical-root lock through lookup, recovery and commit.
+    // All callers hold the canonical-root lock through lookup, recovery and commit.
     if (this.writable(input, input.intent).identity !== scope.identity)
       throw new Error("Editor root changed")
     const existing = this.db
@@ -296,8 +331,14 @@ export class WorkspaceEditingService {
       .limit(1000)
       .all()
     for (const row of pending) await this.recover(row, input)
-    const before = await this.readForSave({ ...input, relativePath: path })
+    const before = await this.readForSave({ ...input, relativePath: path }, kind === "create")
     if (before.sha256 !== input.expectedSha256) throw new WorkspaceEditConflictError(before.sha256)
+    if (kind === "remove")
+      fileMode = await actOnPathInsideRoot(
+        scope.root.canonicalPath,
+        path,
+        async (target) => (await lstat(target)).mode & 0o777,
+      )
     const row: Row = {
       id: input.id,
       projectId: input.projectId,
@@ -308,9 +349,11 @@ export class WorkspaceEditingService {
       requestHash,
       beforeContent: before.content,
       afterContent: input.content,
-      beforeSha256: before.sha256,
+      beforeSha256: before.sha256 ?? hash(""),
       afterSha256,
       revertsId,
+      kind,
+      fileMode,
       state: "prepared",
       createdAt: Date.now(),
     }
@@ -346,26 +389,68 @@ export class WorkspaceEditingService {
       tx.insert(schema.workspaceEdits).values(row).run()
     })
     try {
-      await this.write(
-        scope.root.canonicalPath,
-        path,
-        { data: bytes },
-        {
-          overwrite: true,
-          createParents: false,
-          expectedSha256: before.sha256,
-          maxExistingBytes: workspaceEditMaxBytes,
-          beforeCommit: () => {
+      if (kind === "remove") {
+        const removed = await this.remove(scope.root.canonicalPath, path, {
+          beforeCommit: async () => {
+            if (this.writable(input, input.intent).identity !== scope.identity)
+              throw new Error("Editor root changed")
+            const current = await this.readForSave({ ...input, relativePath: path })
+            if (current.sha256 !== before.sha256)
+              throw new WorkspaceEditConflictError(current.sha256)
             if (this.writable(input, input.intent).identity !== scope.identity)
               throw new Error("Editor root changed")
           },
-          afterCommit: () => {
-            if (this.writable(input, input.intent).identity !== scope.identity)
-              throw new Error("Editor root changed")
-            this.finish(row, "applied")
+        })
+        if (!removed.removed) throw new WorkspaceEditConflictError(null)
+        try {
+          const current = await this.readForSave({ ...input, relativePath: path }, true)
+          if (current.sha256 !== null) throw new WorkspaceEditConflictError(current.sha256)
+          if (this.writable(input, input.intent).identity !== scope.identity)
+            throw new Error("Editor root changed")
+          this.finish(row, "applied")
+        } catch (error) {
+          // Restore only into the still-authorized missing path, never over external bytes.
+          if (this.scope(input).identity !== scope.identity) throw error
+          await writeFileInsideRoot(
+            scope.root.canonicalPath,
+            path,
+            { data: before.content },
+            {
+              overwrite: true,
+              createParents: false,
+              expectedSha256: null,
+              mode: fileMode,
+              beforeCommit: () => {
+                if (this.scope(input).identity !== scope.identity)
+                  throw new Error("Editor root changed")
+              },
+            },
+          )
+          throw error
+        }
+      } else {
+        await this.write(
+          scope.root.canonicalPath,
+          path,
+          { data: bytes },
+          {
+            overwrite: true,
+            createParents: false,
+            expectedSha256: before.sha256,
+            mode: fileMode,
+            maxExistingBytes: workspaceEditMaxBytes,
+            beforeCommit: () => {
+              if (this.writable(input, input.intent).identity !== scope.identity)
+                throw new Error("Editor root changed")
+            },
+            afterCommit: () => {
+              if (this.writable(input, input.intent).identity !== scope.identity)
+                throw new Error("Editor root changed")
+              this.finish(row, "applied")
+            },
           },
-        },
-      )
+        )
+      }
       return this.dto({ ...row, state: "applied" })
     } catch (error) {
       // If metadata is unavailable, keep the prepared record for a later retry/restart.
@@ -376,7 +461,7 @@ export class WorkspaceEditingService {
         /* Retain durable recovery bytes. */
       }
       try {
-        const current = await this.readForSave({ ...input, relativePath: path })
+        const current = await this.readForSave({ ...input, relativePath: path }, kind === "create")
         if (current.sha256 !== before.sha256) throw new WorkspaceEditConflictError(current.sha256)
       } catch (conflict) {
         if (conflict instanceof WorkspaceEditConflictError) throw conflict
@@ -385,12 +470,17 @@ export class WorkspaceEditingService {
     }
   }
 
-  private async readForSave(input: z.infer<typeof workspaceEditTargetSchema>) {
+  private async readForSave(
+    input: z.infer<typeof workspaceEditTargetSchema>,
+    allowMissing = false,
+  ) {
     try {
       return await this.read(input)
     } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT")
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        if (allowMissing) return { content: "", sha256: null, byteLength: 0 }
         throw new WorkspaceEditConflictError(null)
+      }
       throw error
     }
   }
