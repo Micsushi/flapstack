@@ -47,15 +47,17 @@ describe("interactive Runtime launch bridge", () => {
       reasoningEnabled: true,
     })
     const store = createAgentActivityStore(database)
-    for (let index = 0; index < 501; index++)
-      store.append("paged-output", {
+    store.appendBatch(
+      "paged-output",
+      Array.from({ length: 501 }, (_, index) => ({
         provider: "openai",
         kind: "agent-text",
         phase: "completed",
         displayClass: "summary",
         privacyClass: "public",
         payload: { text: `${index},` },
-      })
+      })),
+    )
     expect(loadInteractiveRuntimeAssistantText(database, "paged-output")).toBe(
       Array.from({ length: 501 }, (_, index) => `${index},`).join(""),
     )
