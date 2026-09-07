@@ -38,6 +38,9 @@ export const renameWorkspaceEditSchema = workspaceEditTargetSchema.extend({
 export type WorkspaceEditScope = z.infer<typeof workspaceEditScopeSchema>
 export type SaveWorkspaceEdit = z.infer<typeof saveWorkspaceEditSchema>
 
+export const readWorkspaceDraftSchema = workspaceEditScopeSchema.extend({
+  draftId: z.string().uuid(),
+})
 export const updateWorkspaceDraftSchema = workspaceEditScopeSchema.extend({
   draftId: z.string().uuid(),
   leaseToken: z.string().uuid(),

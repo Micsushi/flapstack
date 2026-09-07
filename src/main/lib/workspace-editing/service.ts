@@ -29,6 +29,7 @@ import {
   releaseWorkspaceDraftSchema,
   saveWorkspaceDraftSchema,
   pendingWorkspaceDraftSaveSchema,
+  readWorkspaceDraftSchema,
   type WorkspaceEditScope,
   type SaveWorkspaceEdit,
 } from "../../../shared/workspace-edits"
@@ -52,8 +53,8 @@ const draftOwners = new Map<
   }
 >()
 const fileIdentity = (path: string) => {
-  const info = lstatSync(path)
-  return JSON.stringify([info.dev, info.ino])
+  const info = lstatSync(path, { bigint: true })
+  return JSON.stringify([info.dev.toString(), info.ino.toString()])
 }
 
 export class WorkspaceEditConflictError extends Error {
@@ -164,27 +165,63 @@ export class WorkspaceEditingService {
     }
   }
 
-  private draftRoot(input: WorkspaceEditScope) {
-    const scope = this.writable(input, "save")
+  private draftRecoveryScope(input: WorkspaceEditScope) {
+    const scope = this.scope(input)
     const path = realpathSync.native(scope.root.canonicalPath)
     return { path, identity: JSON.stringify([path, scope.root.deviceId, scope.root.inodeId]) }
   }
 
-  private draft(input: WorkspaceEditScope, id: string) {
-    const root = this.draftRoot(input)
-    const row = this.db
+  private draftRoot(input: WorkspaceEditScope) {
+    this.writable(input, "save")
+    return this.draftRecoveryScope(input)
+  }
+
+  listDrafts(input: WorkspaceEditScope) {
+    const value = workspaceEditScopeSchema.parse(input)
+    const root = this.draftRecoveryScope(value)
+    return this.db
+      .select({
+        id: schema.workspaceDrafts.id,
+        relativePath: schema.workspaceDrafts.relativePath,
+        revision: schema.workspaceDrafts.revision,
+        updatedAt: schema.workspaceDrafts.updatedAt,
+        byteLength: sql<number>`length(CAST(${schema.workspaceDrafts.content} AS BLOB))`,
+      })
+      .from(schema.workspaceDrafts)
+      .where(
+        and(
+          eq(schema.workspaceDrafts.projectId, value.projectId),
+          eq(schema.workspaceDrafts.chatId, value.chatId),
+          eq(schema.workspaceDrafts.rootIdentity, root.identity),
+        ),
+      )
+      .orderBy(desc(schema.workspaceDrafts.updatedAt), schema.workspaceDrafts.id)
+      .limit(1000)
+      .all()
+  }
+
+  readDraft(input: z.infer<typeof readWorkspaceDraftSchema>) {
+    const value = readWorkspaceDraftSchema.parse(input)
+    const root = this.draftRecoveryScope(value)
+    const draft = this.db
       .select()
       .from(schema.workspaceDrafts)
-      .where(eq(schema.workspaceDrafts.id, id))
+      .where(
+        and(
+          eq(schema.workspaceDrafts.id, value.draftId),
+          eq(schema.workspaceDrafts.projectId, value.projectId),
+          eq(schema.workspaceDrafts.chatId, value.chatId),
+          eq(schema.workspaceDrafts.rootIdentity, root.identity),
+        ),
+      )
       .get()
-    if (
-      !row ||
-      row.projectId !== input.projectId ||
-      row.chatId !== input.chatId ||
-      row.rootIdentity !== root.identity
-    )
-      throw new Error("Draft scope or root changed")
-    return row
+    if (!draft) throw new Error("Draft scope or root changed")
+    return draft
+  }
+
+  private draft(input: WorkspaceEditScope, id: string) {
+    this.writable(input, "save")
+    return this.readDraft({ ...input, draftId: id })
   }
 
   private draftLease(id: string, token: string, owner: WorkspaceDraftOwner) {

@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { randomUUID, createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
+import * as fs from "node:fs"
 import { build } from "esbuild"
 import {
   mkdirSync,
@@ -21,6 +22,9 @@ import {
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
+}))
 import * as appDatabase from "../src/main/lib/db"
 import { workspaceEditingRouter } from "../src/main/lib/trpc/routers/workspace-editing"
 import * as schema from "../src/main/lib/db/schema"
@@ -105,6 +109,92 @@ afterEach(() => {
   vi.restoreAllMocks()
   if (sqlite.open) sqlite.close()
   rmSync(container, { recursive: true, force: true })
+})
+
+it("reads recovery buffers after deletion and permission revocation without an edit lease", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  const buffer = await service.updateDraft(draftUpdate(opened), owner)
+  service.releaseDraft(draftUpdate(opened), owner)
+  rmSync(join(root, "file.txt"))
+  db.update(schema.chats).set({ permissionMode: "read-only" }).run()
+  expect(service.listDrafts(scope)).toEqual([
+    {
+      id: buffer.id,
+      relativePath: "file.txt",
+      revision: buffer.revision,
+      updatedAt: buffer.updatedAt,
+      byteLength: Buffer.byteLength(buffer.content),
+    },
+  ])
+  expect(service.readDraft({ ...scope, draftId: buffer.id })).toEqual(buffer)
+  expect(existsSync(join(root, "file.txt"))).toBe(false)
+  expect(db.select().from(schema.workspaceEdits).all()).toEqual([])
+  await expect(
+    service.updateDraft({ ...draftUpdate(opened), expectedRevision: buffer.revision }, owner),
+  ).rejects.toThrow("does not permit")
+})
+
+it("keeps recovery reads scoped to the registered chat and original root", async () => {
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, draftOwner())
+  db.insert(schema.chats)
+    .values({ id: "other-chat", projectId: scope.projectId, worktreePath: root })
+    .run()
+  expect(service.listDrafts({ ...scope, chatId: "other-chat" })).toEqual([])
+  expect(() =>
+    service.readDraft({ ...scope, chatId: "other-chat", draftId: opened.draft.id }),
+  ).toThrow("scope or root")
+  expect(() =>
+    service.readDraft({ ...scope, projectId: "other-project", draftId: opened.draft.id }),
+  ).toThrow("scope")
+  renameSync(root, join(container, "old-root"))
+  mkdirSync(root)
+  expect(() => service.listDrafts(scope)).toThrow()
+  expect(() => service.readDraft({ ...scope, draftId: opened.draft.id })).toThrow()
+  expect(db.select().from(schema.workspaceDrafts).get()!.content).toBe(original)
+})
+
+it("allows desktop recovery queries without changing the editable owner", async () => {
+  const first = ++draftWindowId,
+    second = ++draftWindowId
+  const owner = { windowId: first, isAlive: (id: number) => id === first || id === second }
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  vi.spyOn(appDatabase, "getDatabase").mockImplementation(() => db)
+  const caller = workspaceEditingRouter.createCaller({ getWindow: () => null })
+  await expect(caller.readDraft({ ...scope, draftId: opened.draft.id })).resolves.toEqual(
+    opened.draft,
+  )
+  expect((await caller.listDrafts(scope))[0]).not.toHaveProperty("content")
+  await expect(
+    service.openDraft({ ...scope, relativePath: "file.txt" }, { ...owner, windowId: second }),
+  ).rejects.toThrow("another window")
+  expect((await service.updateDraft(draftUpdate(opened), owner)).content).toBe("unsaved 雪\r\n")
+})
+
+it("keeps adjacent file identities above Number.MAX_SAFE_INTEGER distinct", async () => {
+  const firstPath = join(root, "file.txt"),
+    secondPath = join(root, "second.txt")
+  writeFileSync(secondPath, "second")
+  const nativeLstat = fs.lstatSync
+  vi.spyOn(fs, "lstatSync").mockImplementation(((
+    path: fs.PathLike,
+    options?: { bigint?: boolean },
+  ) => {
+    const info = nativeLstat(path, options as never)
+    if (String(path) !== firstPath && String(path) !== secondPath) return info
+    const ino = String(path) === firstPath ? 9007199254740992n : 9007199254740993n
+    return Object.assign(Object.create(Object.getPrototypeOf(info)), info, {
+      dev: options?.bigint ? 1n : 1,
+      ino: options?.bigint ? ino : Number(ino),
+    })
+  }) as typeof fs.lstatSync)
+  const first = ++draftWindowId,
+    second = ++draftWindowId
+  const owner = { windowId: first, isAlive: (id: number) => id === first || id === second }
+  await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  await expect(
+    service.openDraft({ ...scope, relativePath: "second.txt" }, { ...owner, windowId: second }),
+  ).resolves.toMatchObject({ draft: { content: "second" } })
 })
 
 it("persists unsaved buffers across database reopen without touching disk", async () => {

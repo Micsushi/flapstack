@@ -20,8 +20,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const handle = await actual.open(...args)
       if (String(args[0]) === state.growPath) {
         const stat = handle.stat.bind(handle)
-        vi.spyOn(handle, "stat").mockImplementationOnce(async () => {
-          const snapshot = await stat()
+        vi.spyOn(handle, "stat").mockImplementationOnce(async (options) => {
+          const snapshot = await stat(options)
           appendFileSync(state.growPath, Buffer.alloc(1024 * 1024, 97))
           return snapshot
         })

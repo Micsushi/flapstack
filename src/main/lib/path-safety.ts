@@ -2,7 +2,7 @@ import { constants } from "node:fs"
 import { createHash, randomUUID } from "node:crypto"
 import {
   chmod,
-  lstat,
+  lstat as nativeLstat,
   link,
   mkdir,
   open,
@@ -16,7 +16,9 @@ import {
 } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
-type FileIdentity = { dev: number | bigint; ino: number | bigint; fileType: number }
+type FileIdentity = { dev: bigint; ino: bigint; fileType: bigint }
+// NTFS inode values routinely exceed Number.MAX_SAFE_INTEGER.
+const lstat = (path: string) => nativeLstat(path, { bigint: true })
 type WrittenContent = { sha256: string; byteLength: number }
 
 export type RootedWriteSource = { data: string | Uint8Array } | { sourcePath: string }
@@ -165,7 +167,7 @@ export async function writeFileInsideRoot(
   if (initialTarget && !initialTarget.isFile()) throw new Error("Attachment target must be a file")
   if (initialTarget && !options.overwrite) throw existsError()
   const initialIdentity = initialTarget ? identity(initialTarget) : null
-  const initialMode = initialTarget?.mode ?? options.mode ?? 0o600
+  const initialMode = Number(initialTarget?.mode ?? options.mode ?? 0o600)
   validateMissingExpectation(initialTarget, options.expectedSha256)
   const initialContent = initialTarget
     ? await readExpectedFile(
@@ -180,7 +182,7 @@ export async function writeFileInsideRoot(
     await options.beforeCommit?.(targetPath)
     await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
     const handle = await openNoFollowExclusive(targetPath, 0o600)
-    const createdIdentity = identity(await handle.stat())
+    const createdIdentity = identity(await handle.stat({ bigint: true }))
     let writtenContent: WrittenContent | undefined
     try {
       await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
@@ -228,7 +230,7 @@ export async function writeFileInsideRoot(
 
   const temporaryPath = join(parentPath, `.flapstack-${randomUUID()}.tmp`)
   const handle = await openNoFollowExclusive(temporaryPath, initialMode & 0o777)
-  const temporaryIdentity = identity(await handle.stat())
+  const temporaryIdentity = identity(await handle.stat({ bigint: true }))
   let committed = false
   let writtenContent: WrittenContent | undefined
   try {
@@ -317,12 +319,12 @@ export async function readFileInsideRoot(
   const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0
   const handle = await open(snapshot.targetPath, constants.O_RDONLY | noFollow)
   try {
-    const opened = await handle.stat()
+    const opened = await handle.stat({ bigint: true })
     if (!opened.isFile() || !sameIdentity(identity(opened), snapshot.targetIdentity)) {
       throw new Error("Read target inode changed during open")
     }
     if (maxBytes !== undefined && opened.size > maxBytes) {
-      throw new RootedReadTooLargeError(opened.size)
+      throw new RootedReadTooLargeError(Number(opened.size))
     }
     await validateExistingSnapshot(snapshot)
     return await readHandleContent(handle, maxBytes)
@@ -523,12 +525,12 @@ async function readExpectedFile(
   const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0
   const handle = await open(targetPath, constants.O_RDONLY | noFollow)
   try {
-    const opened = await handle.stat()
+    const opened = await handle.stat({ bigint: true })
     if (!opened.isFile() || !sameIdentity(identity(opened), expectedIdentity)) {
       throw new Error("Write target changed during content validation")
     }
     if (maxBytes !== undefined && opened.size > maxBytes)
-      throw new RootedReadTooLargeError(opened.size)
+      throw new RootedReadTooLargeError(Number(opened.size))
     const content = await readHandleContent(handle, maxBytes)
     if (typeof expectedSha256 === "string" && sha256(content) !== expectedSha256) {
       throw new Error("Write target content is stale")
@@ -622,7 +624,7 @@ async function rollbackCommittedWrite(input: {
 
   const rollbackPath = join(input.parentPath, `.flapstack-rollback-${randomUUID()}.tmp`)
   const handle = await openNoFollowExclusive(rollbackPath, input.initialMode & 0o777)
-  const rollbackIdentity = identity(await handle.stat())
+  const rollbackIdentity = identity(await handle.stat({ bigint: true }))
   let renamed = false
   try {
     await handle.writeFile(input.initialContent)
@@ -863,12 +865,8 @@ async function exactFileNameExists(parent: string, name: string): Promise<boolea
   return false
 }
 
-function identity(info: {
-  dev: number | bigint
-  ino: number | bigint
-  mode: number
-}): FileIdentity {
-  return { dev: info.dev, ino: info.ino, fileType: info.mode & constants.S_IFMT }
+function identity(info: { dev: bigint; ino: bigint; mode: bigint }): FileIdentity {
+  return { dev: info.dev, ino: info.ino, fileType: info.mode & BigInt(constants.S_IFMT) }
 }
 
 function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {

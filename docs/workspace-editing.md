@@ -15,6 +15,13 @@ digest as a conflict. A mounted owner may persist its buffer after the file is
 removed, but missing-file reopen/export, draft discard and
 renderer recovery controls are not implemented yet.
 
+`listDrafts` exposes a bounded metadata-only recovery list; `readDraft` retrieves
+one stored buffer. These read-only APIs work after source-file deletion or edit
+permission revocation, without acquiring or releasing an editable lease. They
+still require the original active project/chat and registered root identity.
+Root replacement and archival remain explicit access failures; stored buffers
+are not deleted. These APIs do not reconcile pending saves or modify disk.
+
 Migration 0067 adds `saveDraft` and pending-save recovery metadata. Saving requires
 the live lease, exact draft revision, operation UUID and current permission.
 It uses the same audited compare-and-save journal as ordinary saves. Successful
@@ -36,6 +43,12 @@ releases from an older mount cannot affect the new lease. Closed windows are
 pruned when another editor opens. Draft revisions reject stale updates, and
 permissions plus registered root identity are rechecked before persistence.
 Leases are process-local and do not survive application restart; buffers do.
+File identities use bigint device/inode values serialized as decimal strings;
+Windows inode values above the safe-integer range must not merge distinct leases.
+The shared rooted-file authority also keeps bigint identities through root,
+parent, target, descriptor and rollback checks. Synthetic adjacent 64-bit identity
+races exercise all supported file actions, independently of the host filesystem's
+current inode allocation.
 
 Each buffer is limited to 2 MiB of strict UTF-8. Draft storage separately allows
 at most 1,000 buffers and 64 MiB of text, with at most 64 live leases. Reaching a
@@ -129,3 +142,9 @@ classification; literal POSIX backslashes remain filename characters. The macOS
 native-watcher integration test has shown intermittent one-second event failures;
 diagnostic timestamps/raw events are retained on future failures. Two subsequent
 broad runs passed, but the intermittent cause is not claimed repaired.
+
+Save/recovery checkpoint `0c2f4697` passed Windows and Linux broad gates, including
+4,158 Windows main tests plus 11 platform tests and 4,166 Linux tests. Both
+production builds passed. Mac SSH became unreachable before that checkpoint's
+verification could start; its last complete broad/native evidence remains at
+`6084d5e7`. No current interactive editor walkthrough is claimed.

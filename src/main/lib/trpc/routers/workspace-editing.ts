@@ -16,6 +16,7 @@ import {
   updateWorkspaceDraftSchema,
   releaseWorkspaceDraftSchema,
   saveWorkspaceDraftSchema,
+  readWorkspaceDraftSchema,
 } from "../../../../shared/workspace-edits"
 
 const procedure = betaProcedure("workspaceEditing")
@@ -44,6 +45,12 @@ async function mutation(action: () => ReturnType<WorkspaceEditingService["save"]
   }
 }
 export const workspaceEditingRouter = router({
+  listDrafts: procedure
+    .input(workspaceEditScopeSchema)
+    .query(({ input }) => service().listDrafts(input)),
+  readDraft: procedure
+    .input(readWorkspaceDraftSchema)
+    .query(({ input }) => service().readDraft(input)),
   saveDraft: procedure.input(saveWorkspaceDraftSchema).mutation(async ({ input, ctx }) => {
     try {
       const result = await service().saveDraft(input, draftOwner(ctx))

@@ -100,6 +100,12 @@ describe("beta service gates", () => {
       leaseToken: "12345678-1234-4234-8234-123456789abd",
     }
     await expect(
+      workspaceEditingRouter.createCaller(context).listDrafts(draftTarget),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })
+    await expect(
+      workspaceEditingRouter.createCaller(context).readDraft(draftTarget),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" })
+    await expect(
       workspaceEditingRouter.createCaller(context).updateDraft({
         ...draftTarget,
         expectedRevision: 0,
