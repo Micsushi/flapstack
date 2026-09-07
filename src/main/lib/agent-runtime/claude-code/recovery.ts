@@ -40,8 +40,9 @@ export function reconcileClaudeRuntimeUncertainty(input: {
   turnStarted: boolean
   terminal: boolean
   cancelled: boolean
-}): "running" | "completed" | "uncertain" {
-  if (input.terminal || input.cancelled) return "completed"
+}): "running" | "completed" | "cancelled" | "uncertain" {
+  if (input.cancelled) return "cancelled"
+  if (input.terminal) return "completed"
   if (!input.turnStarted) return "completed"
   if (!input.session.providerSessionId) return "uncertain"
   return "uncertain"

@@ -39,7 +39,7 @@ export type ClaudeRuntimeProbeInput = {
   unavailableReason?: string | null
 }
 
-export type ClaudeRuntimeRecoveryStatus = "running" | "completed" | "uncertain"
+export type ClaudeRuntimeRecoveryStatus = "running" | "completed" | "cancelled" | "uncertain"
 
 export type ClaudeRuntimeDependencies = {
   query(input: ClaudeRuntimeQueryInput): AsyncIterable<SDKMessage>

@@ -13,6 +13,32 @@ import type {
 } from "../src/shared/agent-runtime"
 
 describe("Runtime launch coordinator", () => {
+  it("preserves provider interruption as cancelled without publishing success", async () => {
+    const value = adapter("codex", [])
+    value.complete = async () => {
+      throw new Error("Turn was interrupted")
+    }
+    value.reconcile = async () => "cancelled"
+    const lifecycle: string[] = []
+    const coordinator = new RuntimeLaunchCoordinator(
+      createAgentRuntimeRegistry([{ runtime: "codex", factory: () => value }]),
+      { persistIntent: vi.fn(), onLifecycle: (_request, state) => lifecycle.push(state) },
+    )
+    const request = {
+      runId: "interrupted",
+      chatId: "chat",
+      subChatId: "sub",
+      launch: launch("codex", "codex"),
+      prompt: "Once.",
+    }
+    await expect(coordinator.launch(request)).rejects.toThrow("interrupted")
+    expect(lifecycle.at(-1)).toBe("cancelled")
+    expect(lifecycle).not.toContain("completed")
+    await expect(coordinator.reconcile(request)).resolves.toBe("cancelled")
+    await expect(coordinator.cancelPersisted(request, "stop")).resolves.toBe(false)
+    expect(lifecycle.at(-1)).toBe("cancelled")
+  })
+
   it.each([
     ["codex", "codex"],
     ["claude-code", "claude-code"],

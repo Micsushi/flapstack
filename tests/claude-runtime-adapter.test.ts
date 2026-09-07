@@ -229,7 +229,7 @@ describe("Claude Code Runtime adapter", () => {
     await expect(collect(adapter.streamActivity(context, session, turn))).resolves.toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: "lifecycle", phase: "failed" })]),
     )
-    expect(await adapter.reconcile(context)).toBe("completed")
+    expect(await adapter.reconcile(context)).toBe("uncertain")
     await expect(adapter.complete(context)).rejects.toBeInstanceOf(ClaudeRuntimeFailedError)
   })
 })

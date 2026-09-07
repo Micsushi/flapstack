@@ -225,8 +225,8 @@ describe("Flapstack Native Runtime", () => {
       const providerInput = { requestId: "input-1", answers: ["A"] }
       expect(await adapter.requestInput(runContext, providerInput)).toBe(providerInput)
       await adapter.cancel(runContext, "user-cancelled")
-      expect(await adapter.reconcile(runContext)).toBe("completed")
-      await adapter.complete(runContext)
+      expect(await adapter.reconcile(runContext)).toBe("cancelled")
+      await expect(adapter.complete(runContext)).rejects.toThrow("cancelled")
       await adapter.cleanup(runContext)
 
       expect(fake.calls.map((call) => call.name)).toEqual([
@@ -237,8 +237,6 @@ describe("Flapstack Native Runtime", () => {
         "requestPermission",
         "requestInput",
         "cancel",
-        "reconcile",
-        "complete",
         "cleanup",
       ])
     },

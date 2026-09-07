@@ -339,7 +339,9 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
     await this.dependencies.complete?.(context)
   }
 
-  async reconcile(context: RuntimeAdapterContext): Promise<"running" | "completed" | "uncertain"> {
+  async reconcile(
+    context: RuntimeAdapterContext,
+  ): Promise<"running" | "completed" | "cancelled" | "uncertain"> {
     const state = this.runs.get(context.runId)
     if (!state) {
       try {
@@ -353,7 +355,9 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
       }
     }
     if (state.uncertain) return "uncertain"
-    if (state.terminal || state.cancelled) return "completed"
+    if (state.cancelled) return "cancelled"
+    if (state.failed) return "uncertain"
+    if (state.terminal) return "completed"
     if (this.dependencies.reconcile) {
       try {
         return await this.dependencies.reconcile(context, state.session)

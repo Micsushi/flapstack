@@ -249,7 +249,11 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       const state = intentPersisted ? await safeReconcile(adapter, context) : null
       await this.hooks.onLifecycle?.(
         request,
-        state === "uncertain" || state === "running" ? "uncertain" : "failed",
+        state === "cancelled"
+          ? "cancelled"
+          : state === "uncertain" || state === "running"
+            ? "uncertain"
+            : "failed",
         safeMessage(error),
       )
       throw error
@@ -370,7 +374,7 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
     if (reconciled !== "running") {
       await this.hooks.onLifecycle?.(
         request,
-        reconciled === "completed" ? "completed" : "uncertain",
+        reconciled,
         reconciled === "uncertain"
           ? "Persisted Runtime cancellation could not establish provider authority."
           : null,
@@ -421,7 +425,9 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
     return this.active.get(runId)?.state ?? (this.reserved.has(runId) ? "starting" : null)
   }
 
-  async reconcile(request: RuntimeLaunchRequest): Promise<"running" | "completed" | "uncertain"> {
+  async reconcile(
+    request: RuntimeLaunchRequest,
+  ): Promise<"running" | "completed" | "cancelled" | "uncertain"> {
     validateRequest(request)
     const ownedState = this.runState(request.runId)
     if (ownedState) return reconciliationStateForOwned(ownedState)
@@ -461,9 +467,9 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
 
 function reconciliationStateForOwned(
   state: RuntimeCoordinatorRunState,
-): "running" | "completed" | "uncertain" {
+): "running" | "completed" | "cancelled" | "uncertain" {
   if (state === "starting" || state === "running" || state === "paused") return "running"
-  if (state === "completed") return "completed"
+  if (state === "completed" || state === "cancelled") return state
   return "uncertain"
 }
 
@@ -513,7 +519,7 @@ function assertProbeMatchesSnapshot(
 async function safeReconcile<TActivity>(
   adapter: HarnessAdapter<TActivity>,
   context: RuntimeAdapterContext,
-): Promise<"running" | "completed" | "uncertain"> {
+): Promise<"running" | "completed" | "cancelled" | "uncertain"> {
   try {
     return await adapter.reconcile(context)
   } catch {

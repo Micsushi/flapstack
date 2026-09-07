@@ -324,6 +324,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
         ) {
           const turn = record(notification.params.turn)
           state.terminal = true
+          state.cancelled ||= turn.status === "interrupted"
           state.turnId = null
           if (turn.status === "failed") {
             state.terminalFailure = codexTurnFailureMessage(turn.error)
@@ -410,6 +411,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
 
   async complete(context: RuntimeAdapterContext): Promise<void> {
     const state = this.requiredState(context.runId)
+    if (state.cancelled) throw new Error("[codex-runtime] Turn was interrupted.")
     if (state.terminalFailure) throw new Error(state.terminalFailure)
     if (!state.terminal || state.uncertain) {
       throw new Error("[codex-runtime] Cannot complete before a certain terminal turn event.")
@@ -417,10 +419,13 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     await this.archiveHiddenThread(state)
   }
 
-  async reconcile(context: RuntimeAdapterContext): Promise<"running" | "completed" | "uncertain"> {
+  async reconcile(
+    context: RuntimeAdapterContext,
+  ): Promise<"running" | "completed" | "cancelled" | "uncertain"> {
     const existing = this.states.get(context.runId)
     if (existing) {
       if (existing.uncertain) return "uncertain"
+      if (existing.cancelled) return "cancelled"
       if (existing.terminalFailure) return "uncertain"
       if (existing.terminal) return "completed"
       if (existing.client.isAlive() && existing.turnId) return "running"
@@ -433,7 +438,9 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       client = await this.createClient({ cwd: process.cwd() })
       await initialize(client)
       const response = record(await client.request("thread/read", { threadId, includeTurns: true }))
-      return reconcileThread(record(response.thread))
+      const turn = await this.options.resolvePersistedTurn?.(context)
+      if (this.options.resolvePersistedTurn && !turn?.providerTurnId) return "uncertain"
+      return reconcileThread(record(response.thread), turn?.providerTurnId)
     } catch (error) {
       return "uncertain"
     } finally {
@@ -790,14 +797,18 @@ function sessionFromState(state: CodexRunState): RuntimeAdapterSession {
   return { providerSessionId: state.sessionId, providerThreadId: state.threadId }
 }
 
-function reconcileThread(thread: Record<string, unknown>): "running" | "completed" | "uncertain" {
+function reconcileThread(
+  thread: Record<string, unknown>,
+  turnId?: string | null,
+): "running" | "completed" | "cancelled" | "uncertain" {
   const status = record(thread.status)
-  if (status.type === "active") return "running"
+  if (!turnId && status.type === "active") return "running"
   if (status.type === "systemError" || status.type === "notLoaded") return "uncertain"
   const turns = array(thread.turns)
-  const last = record(turns.at(-1))
+  const last = record(turnId ? turns.find((turn) => record(turn).id === turnId) : turns.at(-1))
   if (last.status === "inProgress") return "running"
-  if (["completed", "interrupted"].includes(String(last.status))) return "completed"
+  if (last.status === "interrupted") return "cancelled"
+  if (last.status === "completed") return "completed"
   if (last.status === "failed") return "uncertain"
   return "uncertain"
 }

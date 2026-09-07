@@ -14,3 +14,12 @@ is introduced by presentation logic.
 Local executable permission failures retain their platform-specific diagnostic.
 Unknown provider failures remain visible instead of being converted to quota
 errors. This is error presentation, not an account-aware quota polling system.
+
+Recovery preserves cancellation separately from successful completion. Codex
+interrupted turns and acknowledged Claude cancellation reconcile as `cancelled`
+through direct, translated and native runtime adapters. A failed Claude result
+cannot reconcile as success. Unknown provider state remains `uncertain`; recovery
+does not replay the prompt to find out what happened. The coordinator and durable
+run projection keep cancellation out of successful outcomes.
+When a persisted Codex turn ID is available, recovery inspects that turn rather
+than the thread's latest turn. A missing expected turn stays uncertain.

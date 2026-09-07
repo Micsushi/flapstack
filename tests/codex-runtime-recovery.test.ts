@@ -7,6 +7,70 @@ import {
 } from "./codex-runtime-test-helpers"
 
 describe("direct Codex Runtime recovery", () => {
+  it.each(["interrupted", "missing", "missing-identity"])(
+    "does not borrow a later turn's success when the persisted turn is %s",
+    async (status) => {
+      const client = new FakeCodexProtocolClient()
+      client.responses.set("thread/read", {
+        thread: {
+          id: "thread-1",
+          status: { type: "idle" },
+          turns: [
+            ...(status === "missing" ? [] : [{ id: "owned-turn", status }]),
+            { id: "later-turn", status: "completed" },
+          ],
+        },
+      })
+      const adapter = createCodexRuntimeAdapterFactory({
+        appendActivity: collectActivity().append,
+        resolveThreadParams: () => ({ cwd: "/worktree" }),
+        resolvePersistedSession: () => ({
+          providerSessionId: "session-1",
+          providerThreadId: "thread-1",
+        }),
+        resolvePersistedTurn: () =>
+          status === "missing-identity" ? null : { providerTurnId: "owned-turn" },
+        resolveCommand: () => "/fake/codex",
+        getBinaryVersion: async () => "0.144.1",
+        createClient: () => client,
+      })()
+      expect(await adapter.reconcile(runtimeContext())).toBe(
+        status === "interrupted" ? "cancelled" : "uncertain",
+      )
+      expect(client.requests.map((request) => request.method)).toEqual([
+        "initialize",
+        "thread/read",
+      ])
+    },
+  )
+
+  it.each(["interrupted", "failed", "unknown"])(
+    "does not report a recovered %s turn as successful completion",
+    async (status) => {
+      const client = new FakeCodexProtocolClient()
+      client.responses.set("thread/read", {
+        thread: { id: "thread-1", status: { type: "idle" }, turns: [{ id: "turn-1", status }] },
+      })
+      const adapter = createCodexRuntimeAdapterFactory({
+        appendActivity: collectActivity().append,
+        resolveThreadParams: () => ({ cwd: "/worktree" }),
+        resolvePersistedSession: () => ({
+          providerSessionId: "session-1",
+          providerThreadId: "thread-1",
+        }),
+        resolveCommand: () => "/fake/codex",
+        getBinaryVersion: async () => "0.144.1",
+        createClient: () => client,
+      })()
+      expect(await adapter.reconcile(runtimeContext())).toBe(
+        status === "interrupted" ? "cancelled" : "uncertain",
+      )
+      expect(
+        client.requests.some((call) => ["turn/start", "thread/resume"].includes(call.method)),
+      ).toBe(false)
+    },
+  )
+
   it("resumes, forks, archives, cancels, and cleans up exact provider identity", async () => {
     const clients: FakeCodexProtocolClient[] = []
     const adapter = createCodexRuntimeAdapterFactory({
@@ -39,7 +103,8 @@ describe("direct Codex Runtime recovery", () => {
     for await (const _event of adapter.streamActivity(context, resumed, turn)) {
       // drain terminal event
     }
-    await adapter.complete(context)
+    expect(await adapter.reconcile(context)).toBe("cancelled")
+    await expect(adapter.complete(context)).rejects.toThrow("interrupted")
     await adapter.archiveSession(context, resumed)
     await adapter.cleanup(context)
     expect(clients[0].closed).toBe(true)

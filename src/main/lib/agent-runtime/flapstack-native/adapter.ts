@@ -45,7 +45,9 @@ export interface FlapstackNativeProviderDelegation<TChunk = unknown> {
   requestInput(context: RuntimeAdapterContext, request: unknown): Promise<unknown>
   cancel(context: RuntimeAdapterContext, reason: string): Promise<void>
   complete(context: RuntimeAdapterContext): Promise<void>
-  reconcile(context: RuntimeAdapterContext): Promise<"running" | "completed" | "uncertain">
+  reconcile(
+    context: RuntimeAdapterContext,
+  ): Promise<"running" | "completed" | "cancelled" | "uncertain">
   cleanup(context: RuntimeAdapterContext): Promise<void>
   projectActivity?(
     context: RuntimeAdapterContext,
@@ -324,12 +326,15 @@ class FlapstackNativeAdapter<TChunk> implements FlapstackNativeHarnessAdapter<TC
 
   async complete(context: RuntimeAdapterContext): Promise<void> {
     const state = this.requiredState(context)
+    if (state.cancelled) throw new Error("Cannot complete a cancelled runtime turn.")
     await state.delegation.complete(context)
     state.terminal = true
     state.uncertain = false
   }
 
-  async reconcile(context: RuntimeAdapterContext): Promise<"running" | "completed" | "uncertain"> {
+  async reconcile(
+    context: RuntimeAdapterContext,
+  ): Promise<"running" | "completed" | "cancelled" | "uncertain"> {
     const state = this.states.get(context.runId)
     if (!state) {
       // Ask the persisted provider authority directly. Never start/resume/replay.
@@ -339,9 +344,11 @@ class FlapstackNativeAdapter<TChunk> implements FlapstackNativeHarnessAdapter<TC
         return "uncertain"
       }
     }
+    if (state.cancelled && !state.uncertain) return "cancelled"
     try {
       const result = await state.delegation.reconcile(context)
-      state.terminal = result === "completed"
+      state.cancelled ||= result === "cancelled"
+      state.terminal = result === "completed" || result === "cancelled"
       state.uncertain = result === "uncertain"
       return result
     } catch {

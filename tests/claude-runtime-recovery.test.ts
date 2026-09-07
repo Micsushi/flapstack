@@ -125,7 +125,7 @@ describe("Claude Runtime session and restart recovery", () => {
     await adapter.startSession(context)
     await adapter.cancel(context, "user-cancelled")
     expect(cancel).toHaveBeenCalledWith(context, "user-cancelled")
-    expect(await adapter.reconcile(context)).toBe("completed")
+    expect(await adapter.reconcile(context)).toBe("cancelled")
     await expect(
       adapter.startTurn(context, { providerSessionId: null, providerThreadId: null }, "again"),
     ).rejects.toThrow("after dispatch")
@@ -262,7 +262,7 @@ describe("Claude Runtime session and restart recovery", () => {
         expect.objectContaining({ kind: "lifecycle", phase: "cancelled" }),
       ),
     )
-    expect(await adapter.reconcile(context)).toBe("completed")
+    expect(await adapter.reconcile(context)).toBe("cancelled")
   })
 
   it("aborts provider work even when cancellation activity persistence fails", async () => {
@@ -280,7 +280,7 @@ describe("Claude Runtime session and restart recovery", () => {
     await adapter.startSession(context)
     await expect(adapter.cancel(context, "user-stop")).resolves.toBeUndefined()
     expect(cancel).toHaveBeenCalledOnce()
-    expect(await adapter.reconcile(context)).toBe("completed")
+    expect(await adapter.reconcile(context)).toBe("cancelled")
     error.mockRestore()
   })
 

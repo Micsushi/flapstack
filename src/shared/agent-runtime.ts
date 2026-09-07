@@ -194,7 +194,9 @@ export interface HarnessAdapter<TActivity = unknown> {
   requestInput(context: RuntimeAdapterContext, request: unknown): Promise<unknown>
   cancel(context: RuntimeAdapterContext, reason: string): Promise<void>
   complete(context: RuntimeAdapterContext): Promise<void>
-  reconcile(context: RuntimeAdapterContext): Promise<"running" | "completed" | "uncertain">
+  reconcile(
+    context: RuntimeAdapterContext,
+  ): Promise<"running" | "completed" | "cancelled" | "uncertain">
   cleanup(context: RuntimeAdapterContext): Promise<void>
 }
 

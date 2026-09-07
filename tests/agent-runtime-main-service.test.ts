@@ -983,33 +983,36 @@ describe("process-wide Runtime launch service", () => {
     ).toEqual({ count: 0 })
   })
 
-  it("exposes provider-neutral reconciliation by persisted run identity", async () => {
-    seedDirectRun("reconcile-by-id")
-    createAgentActivityStore(sqlite).append("reconcile-by-id", {
-      provider: "openai",
-      kind: "lifecycle",
-      phase: "started",
-      displayClass: "status",
-      privacyClass: "public",
-      providerSessionId: "session-reconcile-by-id",
-      providerThreadId: "thread-reconcile-by-id",
-      providerTurnId: "turn-reconcile-by-id",
-      payload: { state: "turn-started", detail: null },
-      dedupKey: "reconcile-by-id-identity",
-    })
-    const value = directAdapter()
-    value.reconcile = vi.fn(async () => "completed")
-    const service = getMainRuntimeLaunchService(path, {
-      codexFactory: () => value,
-      enableCodex: false,
-    })
+  it.each(["completed", "cancelled"] as const)(
+    "projects recovered %s by persisted run identity",
+    async (outcome) => {
+      seedDirectRun("reconcile-by-id")
+      createAgentActivityStore(sqlite).append("reconcile-by-id", {
+        provider: "openai",
+        kind: "lifecycle",
+        phase: "started",
+        displayClass: "status",
+        privacyClass: "public",
+        providerSessionId: "session-reconcile-by-id",
+        providerThreadId: "thread-reconcile-by-id",
+        providerTurnId: "turn-reconcile-by-id",
+        payload: { state: "turn-started", detail: null },
+        dedupKey: "reconcile-by-id-identity",
+      })
+      const value = directAdapter()
+      value.reconcile = vi.fn(async () => outcome)
+      const service = getMainRuntimeLaunchService(path, {
+        codexFactory: () => value,
+        enableCodex: false,
+      })
 
-    await expect(service.reconcileRun("reconcile-by-id")).resolves.toBe("completed")
-    expect(value.reconcile).toHaveBeenCalledTimes(1)
-    expect(
-      sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'reconcile-by-id'").get(),
-    ).toEqual({ status: "success" })
-  })
+      await expect(service.reconcileRun("reconcile-by-id")).resolves.toBe(outcome)
+      expect(value.reconcile).toHaveBeenCalledTimes(1)
+      expect(
+        sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'reconcile-by-id'").get(),
+      ).toEqual({ status: outcome === "completed" ? "success" : "cancelled" })
+    },
+  )
 
   it("reconciles an active stream from coordinator state without a second provider authority", async () => {
     seedDirectRun("active-reconcile")

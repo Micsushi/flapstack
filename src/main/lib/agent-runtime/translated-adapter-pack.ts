@@ -360,7 +360,9 @@ class TranslatedRuntimeAdapterPack<TActivity> implements HarnessAdapter<TActivit
     )
   }
 
-  async reconcile(context: RuntimeAdapterContext): Promise<"running" | "completed" | "uncertain"> {
+  async reconcile(
+    context: RuntimeAdapterContext,
+  ): Promise<"running" | "completed" | "cancelled" | "uncertain"> {
     return await this.call("reconcile", () =>
       this.provider.reconcile(providerContext(context, this.descriptor)),
     )
