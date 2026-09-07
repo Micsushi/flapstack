@@ -7,8 +7,11 @@ on 2026-08-31.
 
 Checked 2026-09-07 UTC (2026-09-06 MDT): upstream `main` is
 `d53cbed43f48179313d40811aa9b3330a44f0a46`. Its README and recursive source tree,
-account selection, notification cooldown and Quick Open documentation were
-rechecked. This is a targeted refresh, not a new full upstream acceptance audit.
+account selection, notification cooldown and all 13 changed documentation pages
+were rechecked against the baseline. Both recursive trees were untruncated;
+3,544 added file paths were inventoried, with no added documentation pages or
+mobile app routes found. This is a source inventory and documentation refresh,
+not a full audit of every changed implementation or upstream acceptance.
 The family dispositions below remain the planning baseline; an unchecked task
 must still be compared with implementation before pickup.
 
@@ -28,6 +31,27 @@ copied for Flapstack's independent per-task delivery fix. Source references:
 [Quick Open](https://github.com/stablyai/orca/blob/d53cbed43f48179313d40811aa9b3330a44f0a46/docs/site/content/docs/model/quick-open.mdx),
 [notification cooldown](https://github.com/stablyai/orca/blob/d53cbed43f48179313d40811aa9b3330a44f0a46/src/main/ipc/notification-burst-cooldown.ts),
 [account selection](https://github.com/stablyai/orca/blob/d53cbed43f48179313d40811aa9b3330a44f0a46/src/main/codex-accounts/codex-account-selection.ts).
+
+The changed documentation adds acceptance details within existing families:
+
+| Documented change                                                                                                                                                 | Existing owner and required comparison                                                                                                                            |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browser profiles default to Electron identity, with a Google sign-in exception and an explicit native-identity override                                           | S8-F2-T4: evaluate compatibility per supported site; a user-agent rule alone is not browser parity                                                                |
+| CLI host rows expose platform and connection state; bulk terminal close durably removes workspace resume state and reports unverified process shutdown as failure | S8-F3-T1 through S8-F3-T3 and S9-F2: preserve exact workspace scope and distinguish disconnection from confirmed termination                                      |
+| CLI question output uses the standard JSON envelope; skill guides support listing and loading individual references                                               | S8-F3-T4 through S8-F3-T5: include response contracts and selective reference loading in operator acceptance                                                      |
+| Remote terminals persist until explicit reset by default, with optional bounded disconnect timeout                                                                | S9-F2-T2 through S9-F2-T3: decide and expose Flapstack's retention policy, preserve reconnect state, and never infer termination from lost contact                |
+| Linux AppImage self-update differs from manual deb/rpm installation and distro-managed updates; upstream avoids the GNOME screen-reader command collision         | S10-F4 and platform release services: test package-specific update behavior and Flapstack command resolution; do not inherit Orca's product-specific command name |
+| Jump palette filters reseed from sidebar host/repository scope on every open                                                                                      | S7-F2-T2: test temporary filter changes, hidden workspaces and reopening scope                                                                                    |
+
+The mobile page only advances its APK link; review and remote-run pages also add
+illustrations. These changes do not introduce a new product family. Sources at
+the same pinned revision:
+[browser profiles](https://github.com/stablyai/orca/blob/d53cbed43f48179313d40811aa9b3330a44f0a46/docs/site/content/docs/browser/profiles.mdx),
+[CLI reference](https://github.com/stablyai/orca/blob/d53cbed43f48179313d40811aa9b3330a44f0a46/docs/site/content/docs/cli/reference.mdx),
+[CLI orchestration](https://github.com/stablyai/orca/blob/d53cbed43f48179313d40811aa9b3330a44f0a46/docs/site/content/docs/cli/orchestration.mdx),
+[skill guides](https://github.com/stablyai/orca/blob/d53cbed43f48179313d40811aa9b3330a44f0a46/docs/site/content/docs/cli/skills.mdx),
+[SSH](https://github.com/stablyai/orca/blob/d53cbed43f48179313d40811aa9b3330a44f0a46/docs/site/content/docs/ssh.mdx),
+[Linux installation](https://github.com/stablyai/orca/blob/d53cbed43f48179313d40811aa9b3330a44f0a46/docs/site/content/docs/install.mdx).
 
 This ledger classifies current user-facing feature families from Orca's README,
 desktop component/service trees, CLI specs, mobile routes, and remote/relay
