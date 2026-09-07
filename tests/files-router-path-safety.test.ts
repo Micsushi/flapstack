@@ -140,7 +140,7 @@ describe("files router mutation path safety", () => {
       byteLength: bytes.length,
     })
     await expect(caller.readFile(target)).rejects.toThrow(/binary|UTF-8/)
-    expect(readFileSync(join(root, "content.md"))).toEqual(bytes)
+    expect(readFileSync(join(root, "content.md")).equals(bytes)).toBe(true)
   })
 
   it.each([
@@ -159,7 +159,8 @@ describe("files router mutation path safety", () => {
       content,
       byteLength: bytes.length,
     })
-    expect(Buffer.from(await caller.readFile(target))).toEqual(bytes)
+    // Deep matcher traversal of a 2 MiB Buffer can consume the whole test timeout.
+    expect(Buffer.from(await caller.readFile(target)).equals(bytes)).toBe(true)
   })
 
   it("matches a real native watcher event to the open rooted file", async () => {
