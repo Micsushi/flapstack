@@ -16,8 +16,12 @@ successful empty results. A failed or cancelled scan can be retried immediately.
 Existing dependency/build-directory and file-extension exclusions still apply.
 
 This is the bounded filesystem fallback, not the complete S7 Quick Open feature.
-Streamed result delivery, ripgrep discovery and the unified provider/error UI
-remain separate work. No persistent search index is introduced.
+The file dialog exposes discovery failures with an accessible alert and retry
+action instead of reporting no matches. Loading has a separate status, and old
+query results are not reused while another query loads. The dialog remains
+centered at narrow viewport widths. Streamed result delivery, ripgrep discovery
+and the unified provider UI remain separate work. No persistent search index is
+introduced.
 
 Regression coverage lives in `tests/files-router-path-safety.test.ts`, including
 shared queries, cancellation, invalidation, unreadable roots and depth limits.

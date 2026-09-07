@@ -9,6 +9,7 @@ import { SearchIcon } from "@/components/ui/icons"
 import { UnknownFileIcon } from "@/icons/framework-icons"
 import { getFileIconByExtension } from "../../agents/mentions/agents-file-mention"
 import { recentlyOpenedFilesAtom } from "../../agents/atoms"
+import { FileSearchFeedback } from "./file-search-feedback"
 
 // ============================================================================
 // Highlight helper - splits text into segments with matching parts marked
@@ -78,7 +79,12 @@ export const FileSearchDialog = memo(function FileSearchDialog({
     }
   }, [open])
 
-  const { data: results } = trpc.files.search.useQuery(
+  const {
+    data: results,
+    error,
+    isFetching,
+    refetch,
+  } = trpc.files.search.useQuery(
     {
       projectPath,
       query: debouncedQuery,
@@ -86,7 +92,6 @@ export const FileSearchDialog = memo(function FileSearchDialog({
     },
     {
       enabled: open && !!projectPath,
-      placeholderData: (prev) => prev,
     },
   )
 
@@ -184,8 +189,9 @@ export const FileSearchDialog = memo(function FileSearchDialog({
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
         <DialogPrimitive.Content
+          aria-describedby={undefined}
           className={cn(
-            "fixed left-[50%] top-3 z-50 ml-[-300px]",
+            "fixed left-1/2 top-3 z-50 -translate-x-1/2",
             "w-[600px] max-w-[calc(100vw-32px)]",
             "rounded-[10px] border border-border bg-popover shadow-lg",
             "p-0 flex flex-col overflow-hidden",
@@ -195,6 +201,7 @@ export const FileSearchDialog = memo(function FileSearchDialog({
           onOpenAutoFocus={(e) => e.preventDefault()}
           onKeyDown={handleKeyDown}
         >
+          <DialogPrimitive.Title className="sr-only">Go to file</DialogPrimitive.Title>
           {/* Search */}
           <div className="mx-1 my-1">
             <div className="relative flex items-center gap-1.5 h-7 px-1.5 rounded-md bg-muted/50">
@@ -202,6 +209,7 @@ export const FileSearchDialog = memo(function FileSearchDialog({
               <Input
                 ref={searchInputRef}
                 placeholder="Go to file..."
+                aria-label="Search workspace files"
                 value={query}
                 onChange={handleSearchChange}
                 className="h-auto p-0 border-0 rounded-none bg-transparent text-sm placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
@@ -211,7 +219,14 @@ export const FileSearchDialog = memo(function FileSearchDialog({
 
           {/* File List */}
           <div className="flex-1 overflow-y-auto py-1 max-h-[400px] border-t scrollbar-hide">
-            {allItems.length === 0 && debouncedQuery ? (
+            <FileSearchFeedback
+              error={error?.message}
+              busy={isFetching}
+              onRetry={() => {
+                void refetch()
+              }}
+            />
+            {allItems.length === 0 && debouncedQuery && !error && !isFetching ? (
               <div className="min-h-[32px] py-[5px] px-1.5 mx-1 flex items-center text-sm text-muted-foreground">
                 No files found
               </div>
