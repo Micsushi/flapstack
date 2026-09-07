@@ -189,6 +189,17 @@ it("rejects a new request identity for an already queued comment version", async
   expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 1 })
 })
 
+it("resolves cancellation only through the owned batch and permits stopping archived work", async () => {
+  const input = await request()
+  const batch = await feedback.queue(input)
+  expect(feedback.getBatchRun(input)).toEqual({ runId: batch.runId, chatId: input.chatId })
+  expect(() => feedback.getBatchRun({ ...input, chatId: "foreign" })).toThrow("scope")
+  expect(() => feedback.getBatchRun({ ...input, projectId: "foreign" })).toThrow("scope")
+  expect(() => feedback.getBatchRun({ ...input, id: randomUUID() })).toThrow("scope")
+  sqlite.prepare("UPDATE chats SET archived_at=1 WHERE id='chat'").run()
+  expect(feedback.getBatchRun(input).runId).toBe(batch.runId)
+})
+
 it("serializes competing request identities for the same version", async () => {
   const input = await request()
   const outcomes = await Promise.allSettled([

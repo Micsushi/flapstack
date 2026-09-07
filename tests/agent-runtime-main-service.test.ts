@@ -31,12 +31,17 @@ import { updateProjectVaultContextSelection } from "../src/main/lib/project-vaul
 vi.mock("../src/main/lib/trpc/routers", () => ({
   createAppRouter: () => ({ createCaller: () => ({}) }),
 }))
+const invalidation = vi.hoisted(() => vi.fn())
+vi.mock("../src/main/lib/mcp-control/invalidation-bridge", () => ({
+  publishLocalProductInvalidation: invalidation,
+}))
 
 let directory = ""
 let path = ""
 let sqlite: Database.Database
 
 beforeEach(() => {
+  invalidation.mockReset()
   resetMainRuntimeLaunchServicesForTests()
   directory = mkdtempSync(join(tmpdir(), "flapstack-runtime-main-service-"))
   path = join(directory, "agents.db")
@@ -90,6 +95,13 @@ describe("process-wide Runtime launch service", () => {
     )
     expect(messages.map((message: any) => message.role)).toEqual(["user", "assistant"])
     expect(messages[1].parts).toEqual([{ type: "text", text: "Feedback answer" }])
+    expect(invalidation).toHaveBeenCalledWith({
+      version: 1,
+      source: "product-mcp",
+      domains: ["runs", "chats"],
+      chatIds: [`chat-${runId}`],
+      runIds: [runId],
+    })
   })
 
   it("grants requested Codex permission profiles only after approval", () => {

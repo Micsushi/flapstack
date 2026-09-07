@@ -1,10 +1,10 @@
 # Diff comment authority
 
 Diff Comments is a default-off beta contract. It stores draft comments in the
-existing app database, scoped to one project and Chat. It does not stage, commit,
-write repository files, or send an agent message. Desktop diff views provide
-comment entry, editing, deletion and restoration. Remote-mobile authorization
-and send-to-agent integration remain separate work.
+existing app database, scoped to one project and Chat. Saving drafts does not
+stage, commit, write repository files, or send an agent message. Desktop diff
+views provide comment editing, restoration and selected feedback sending.
+Remote-mobile authorization remains separate work.
 
 An anchor contains the full SHA-256 of the observed uncommitted diff, relative
 file path, old/new side, and inclusive line range. Creation and revision inspect
@@ -36,7 +36,7 @@ fail closed rather than overwriting a newer edit. Consecutive local actions shar
 their latest version so Undo/Redo can traverse the local sequence; an independently
 changed version does not gain that authority. Undoing an edit also requires
 its previous diff anchor to remain valid; refresh/re-anchor if the worktree has
-changed. Sending feedback remains unavailable in the UI.
+changed. Sending feedback is not an Undo action; cancellation does not revert edits.
 
 A retry of a committed create returns the latest draft without inspecting Git
 or undoing later edits/deletion. Its freshness is unverified until the next list
@@ -84,6 +84,23 @@ from validated activity records. The idempotent assistant fallback inserts the
 answer before a later user turn instead of appending it after queued feedback.
 Native routers keep their existing transcript persistence.
 
-This foundation has no public send route or UI yet. Full provider ordering evidence,
-sent-state presentation, cancellation, mobile authorization and end-to-end send
-acceptance remain required before enabling that surface.
+Desktop Send feedback binds to the active conversation in the view's scoped store.
+The target and selected count remain visible. Only current, undeleted, unsent
+versions are selectable. Before sending, the renderer stores the exact UUID,
+scope, target and selected versions in local storage (no bodies). A failed response
+keeps that request across remount/reload; Retry uses the original target even if
+navigation changed the current conversation. Storage failure blocks sending.
+Clear retry discards only local retry metadata and does not cancel queued work.
+
+The default-off beta applies to both send and cancellation routes. Cancellation
+resolves a run from the owned batch rather than accepting a run ID from the UI;
+archived work can still be stopped. Existing runtime authority handles the stop.
+The UI shows queued version and live run status, and warns that target permissions
+may permit file edits and cancellation cannot undo them. Committed mutations and
+terminal runtime events refresh split metadata/transcript/review queries.
+
+Focused tests cover real database transactions, main/runtime and native provider
+fixtures, disabled-beta routes, scoped cancellation, UI retry/remount and storage
+failure. Isolated Chromium checks cover desktop and narrow layouts using a mocked
+transport. Live provider, remote-mobile authorization and full end-to-end acceptance
+remain open; these changes do not complete S7-F3-T2 or promote its Tier 2 checkbox.

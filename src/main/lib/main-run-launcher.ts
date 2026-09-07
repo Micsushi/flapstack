@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3"
 import { existsSync } from "node:fs"
 import { randomUUID } from "node:crypto"
 import { createAppRouter } from "./trpc/routers"
+import { publishLocalProductInvalidation } from "./mcp-control/invalidation-bridge"
 import {
   loadAgentRunReconciliationState,
   loadRunningAgentRun,
@@ -893,9 +894,11 @@ export class MainRuntimeLaunchService {
     detail?: string | null,
   ): Promise<void> {
     const db = this.open()
+    let chatId: string | undefined
     try {
       db.transaction(() => {
         const run = this.requireRunRow(db, runId)
+        chatId = run.chat_id
         const now = nowEpochSeconds()
         const terminal = terminalStatus(lifecycle)
         if (terminal) {
@@ -938,6 +941,17 @@ export class MainRuntimeLaunchService {
       }).immediate()
     } finally {
       db.close()
+    }
+    // Native routers may already have committed terminal state. Their transcript
+    // still needs the same post-commit refresh as direct-runtime projection.
+    if (chatId && terminalStatus(lifecycle)) {
+      publishLocalProductInvalidation({
+        version: 1,
+        source: "product-mcp",
+        domains: ["runs", "chats"],
+        chatIds: [chatId],
+        runIds: [runId],
+      })
     }
   }
 
@@ -1202,11 +1216,12 @@ export class MainRuntimeLaunchService {
   private requireRunRow(db: Database.Database, runId: string) {
     const row = db
       .prepare(
-        "SELECT id, sub_chat_id, resolved_runtime, prompt_message_id FROM agent_runs WHERE id = ?",
+        "SELECT id, chat_id, sub_chat_id, resolved_runtime, prompt_message_id FROM agent_runs WHERE id = ?",
       )
       .get(runId) as
       | {
           id: string
+          chat_id: string
           sub_chat_id: string | null
           resolved_runtime: string
           prompt_message_id: string | null

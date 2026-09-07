@@ -41,6 +41,9 @@ export const changeDiffAnnotationSchema = diffAnnotationScopeSchema.extend({
   expectedVersion: z.number().int().positive(),
 })
 export const diffFeedbackLimits = { comments: 25, promptBytes: 512 * 1024 } as const
+export const diffFeedbackBatchScopeSchema = diffAnnotationScopeSchema.extend({
+  id: z.string().uuid(),
+})
 export const sendDiffFeedbackSchema = diffAnnotationScopeSchema.extend({
   id: z.string().uuid(),
   subChatId: z.string().min(1).max(200),

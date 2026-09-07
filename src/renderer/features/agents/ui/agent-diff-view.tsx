@@ -30,6 +30,7 @@ import { APP_META } from "../../../../shared/external-apps"
 import { PatchDiff, FileDiff } from "@pierre/diffs/react"
 import { parseDiffFromFile, type SelectedLineRange } from "@pierre/diffs"
 import { DiffComments, type DiffCommentDraft } from "./diff-comments"
+import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import { useBetaFeatures } from "../../settings/use-beta-features"
 import { diffAnnotationAnchorSchema } from "../../../../shared/diff-annotations"
 import { applyPatch, reversePatch, parsePatch } from "diff"
@@ -950,6 +951,11 @@ export const AgentDiffView = forwardRef<AgentDiffViewRef, AgentDiffViewProps>(
     const { resolvedTheme } = useTheme()
     const beta = useBetaFeatures()
     const commentsEnabled = beta.diffAnnotations && !!worktreePath && !!chatId
+    const feedbackTarget = useAgentSubChatStore((state) =>
+      state.chatId === chatId
+        ? state.allSubChats.find((chat) => chat.id === state.activeSubChatId)
+        : undefined,
+    )
     const [commentState, setCommentState] = useState<Record<string, DiffCommentDraft | null>>({})
     const commentDraft = commentState[chatId] ?? null
     const setCommentDraft = useCallback(
@@ -2079,6 +2085,7 @@ export const AgentDiffView = forwardRef<AgentDiffViewRef, AgentDiffViewProps>(
             setDraft={setCommentDraft}
             onBusyChange={setCommentBusy}
             displayedDiffHash={allFileDiffs[0]?.observedDiffHash ?? null}
+            feedbackTarget={feedbackTarget}
           />
         )}
 

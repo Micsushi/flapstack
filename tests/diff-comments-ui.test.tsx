@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
   remove: vi.fn(),
   refresh: vi.fn(),
   metadataRefresh: vi.fn(),
+  send: vi.fn(),
+  cancelFeedback: vi.fn(),
   projectAvailable: true,
   rows: [] as any[],
 }))
@@ -46,6 +48,8 @@ vi.mock("../src/renderer/lib/trpc", () => ({
       create: { mutate: state.create },
       revise: { mutate: state.revise },
       setDeleted: { mutate: state.remove },
+      send: { mutate: state.send },
+      cancelFeedback: { mutate: state.cancelFeedback },
     },
   },
 }))
@@ -66,6 +70,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   state.rows = []
   state.projectAvailable = true
+  window.localStorage.clear()
   clearAppActionHistory()
   container = document.createElement("div")
   document.body.append(container)
@@ -78,9 +83,11 @@ afterEach(async () => {
 function Harness({
   draft = initial,
   displayedDiffHash = "a".repeat(64),
+  feedbackTarget = { id: "sub", name: "Current conversation" },
 }: {
   draft?: DiffCommentDraft | null
   displayedDiffHash?: string | null
+  feedbackTarget?: { id: string; name: string } | null
 }) {
   const [value, setValue] = useState(draft)
   return (
@@ -90,6 +97,7 @@ function Harness({
       setDraft={setValue}
       onBusyChange={() => {}}
       displayedDiffHash={displayedDiffHash}
+      feedbackTarget={feedbackTarget}
     />
   )
 }
@@ -100,6 +108,95 @@ async function click(label: string) {
   expect(button).toBeTruthy()
   await act(async () => button!.click())
 }
+function savedRow() {
+  return {
+    ...initial.anchor,
+    id: initial.id,
+    body: initial.body,
+    version: 1,
+    deletedAt: null,
+    projectId: "project",
+    chatId: "chat",
+    createdAt: 1,
+    updatedAt: 1,
+    freshness: "current",
+  }
+}
+async function selectFeedback() {
+  const checkbox = container.querySelector<HTMLInputElement>('input[aria-label^="Select feedback"]')
+  expect(checkbox).toBeTruthy()
+  await act(async () => checkbox!.click())
+}
+it("restores a failed send identity after remount and shows durable sent status", async () => {
+  state.rows = [savedRow()]
+  state.send
+    .mockRejectedValueOnce(new Error("response lost"))
+    .mockImplementationOnce(async (input) => {
+      state.rows = [
+        {
+          ...savedRow(),
+          lastFeedbackVersion: 1,
+          lastFeedbackBatchId: input.id,
+          feedback: { batchId: input.id, runId: "run", subChatId: "sub", status: "pending" },
+        },
+      ]
+      return { id: input.id }
+    })
+  await act(async () => root.render(<Harness draft={null} />))
+  await selectFeedback()
+  await click("Send feedback")
+  const first = state.send.mock.calls[0][0]
+  expect(first.subChatId).toBe("sub")
+  expect(container.textContent).toContain("response lost")
+  await act(async () => root.render(null))
+  await act(async () =>
+    root.render(
+      <Harness draft={null} feedbackTarget={{ id: "other", name: "Other conversation" }} />,
+    ),
+  )
+  expect(container.textContent).toContain("Send to sub")
+  await click("Retry feedback")
+  expect(state.send.mock.calls[1][0]).toEqual(first)
+  expect(container.textContent).toContain("Feedback v1 · pending")
+  expect(
+    container.querySelector<HTMLInputElement>('input[aria-label^="Select feedback"]')?.disabled,
+  ).toBe(true)
+  expect(window.localStorage.length).toBe(0)
+})
+it("does not send if durable retry storage refuses the write", async () => {
+  state.rows = [savedRow()]
+  await act(async () => root.render(<Harness draft={null} />))
+  await selectFeedback()
+  const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("storage quota")
+  })
+  try {
+    await click("Send feedback")
+    expect(state.send).not.toHaveBeenCalled()
+    expect(container.textContent).toContain("storage quota")
+  } finally {
+    write.mockRestore()
+  }
+})
+it("cancels using scoped batch identity and explains cancellation is not undo", async () => {
+  state.rows = [
+    {
+      ...savedRow(),
+      lastFeedbackVersion: 1,
+      lastFeedbackBatchId: initial.id,
+      feedback: { batchId: initial.id, runId: "run", subChatId: "sub", status: "running" },
+    },
+  ]
+  state.cancelFeedback.mockResolvedValue({ cancelled: true })
+  await act(async () => root.render(<Harness draft={null} />))
+  expect(container.textContent).toContain("Cancellation does not undo changes")
+  await click("Cancel feedback run")
+  expect(state.cancelFeedback).toHaveBeenCalledWith({
+    id: initial.id,
+    chatId: "chat",
+    projectId: "project",
+  })
+})
 it("keeps the body and request identity after a failed create and retries once with shared undo", async () => {
   const row = { ...initial.anchor, id: initial.id, body: initial.body, version: 1, deletedAt: null }
   state.create.mockRejectedValueOnce(new Error("offline")).mockResolvedValue(row)

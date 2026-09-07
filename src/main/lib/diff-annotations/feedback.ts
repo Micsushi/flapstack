@@ -9,14 +9,36 @@ import { queueChatRun } from "../run-launch-service"
 import { appendMcpAuditRecord } from "../mcp-control/audit-storage"
 import { assertRegisteredFilesystemRoot } from "../git/security/path-validation"
 import { getWorktreeDiff } from "../git/worktree"
-import { sendDiffFeedbackSchema } from "../../../shared/diff-annotations"
+import {
+  diffFeedbackBatchScopeSchema,
+  sendDiffFeedbackSchema,
+} from "../../../shared/diff-annotations"
 
-/** Internal foundation; no renderer/mobile send authority until transcript integration. */
+/** Durable feedback uses the existing run queue and never dispatches a provider itself. */
 export class DiffFeedbackService {
   constructor(
     private readonly sqlite: Database.Database,
     private readonly readDiff = getWorktreeDiff,
   ) {}
+
+  /** Resolve cancellation authority from a scoped batch, never a renderer-supplied run ID.
+   * Archived chats may still cancel already queued/running work. */
+  getBatchRun(value: unknown) {
+    const input = diffFeedbackBatchScopeSchema.parse(value)
+    const row = this.sqlite
+      .prepare(
+        `
+      SELECT r.id runId, b.chat_id chatId FROM diff_feedback_batches b
+      JOIN chats c ON c.id=b.chat_id AND c.project_id=b.project_id
+      JOIN sub_chats s ON s.id=b.sub_chat_id AND s.chat_id=c.id
+      JOIN agent_runs r ON r.id=b.run_id AND r.chat_id=c.id AND r.sub_chat_id=s.id
+      WHERE b.id=? AND b.chat_id=? AND b.project_id=?
+    `,
+      )
+      .get(input.id, input.chatId, input.projectId) as { runId: string; chatId: string } | undefined
+    if (!row) throw new Error("Feedback batch is unavailable in this review scope")
+    return row
+  }
 
   async queue(value: unknown) {
     const input = sendDiffFeedbackSchema.parse(value)

@@ -19,7 +19,13 @@ export function McpExternalMutationRefreshBridge() {
       task: (id) => utils.tasks.get.invalidate({ id }),
       chatsList: () => utils.chats.list.invalidate(),
       chatsArchived: () => utils.chats.listArchived.invalidate(),
-      chat: (id) => utils.chats.get.invalidate({ id }),
+      chat: (id) =>
+        Promise.all([
+          utils.chats.get.invalidate({ id }),
+          utils.chats.getMetadata.invalidate({ id }),
+          utils.chats.getTranscript.invalidate({ chatId: id }),
+          utils.diffAnnotations.list.invalidate({ chatId: id }),
+        ]),
       runsForChat: (chatId) => utils.runs.listByChat.invalidate({ chatId }),
       run: (runId) => utils.runs.get.invalidate({ runId }),
       attachmentsForChat: (chatId) => utils.attachments.listByChat.invalidate({ chatId }),
