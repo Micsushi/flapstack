@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { appendFileSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
@@ -46,7 +46,7 @@ afterEach(() => {
 })
 
 function fixture(content: string | Buffer) {
-  const root = mkdtempSync(join(tmpdir(), "flapstack-read-limit-"))
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "flapstack-read-limit-")))
   roots.push(root)
   writeFileSync(join(root, "file.txt"), content)
   return root
