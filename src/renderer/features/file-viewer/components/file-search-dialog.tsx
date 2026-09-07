@@ -58,7 +58,8 @@ export const FileSearchDialog = memo(function FileSearchDialog({
 }: FileSearchDialogProps) {
   const [query, setQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
-  const [selectedIndex, setSelectedIndex] = useState(0)
+  const [selection, setSelection] = useState<{ scope: string; path: string } | null>(null)
+  const selectionScope = JSON.stringify([projectPath, query])
   const searchInputRef = useRef<HTMLInputElement>(null)
   const itemRefs = useRef<(HTMLDivElement | null)[]>([])
   const [recentlyOpenedFiles, setRecentlyOpenedFiles] = useAtom(recentlyOpenedFilesAtom)
@@ -76,7 +77,7 @@ export const FileSearchDialog = memo(function FileSearchDialog({
     if (open) {
       setQuery("")
       setDebouncedQuery("")
-      setSelectedIndex(0)
+      setSelection(null)
       setTimeout(() => {
         searchInputRef.current?.focus()
       }, 0)
@@ -123,10 +124,21 @@ export const FileSearchDialog = memo(function FileSearchDialog({
 
   // Flat list for keyboard navigation: recent first, then rest
   const allItems = useMemo(() => [...recentItems, ...otherFiles], [recentItems, otherFiles])
+  const matchingIndex =
+    selection?.scope === selectionScope
+      ? allItems.findIndex((item) => fileSearchPathKey(projectPath, item.path) === selection.path)
+      : -1
+  const selectedIndex = Math.max(0, matchingIndex)
+
+  // A streamed batch may reorder rows. Keep explicit keyboard choice by identity.
+  // If it leaves the capped results, fall back to the first row without reviving it later.
+  useEffect(() => {
+    if (selection && matchingIndex < 0) setSelection(null)
+  }, [selection, matchingIndex])
 
   // Reset selection when results change
   useEffect(() => {
-    setSelectedIndex(0)
+    setSelection(null)
     itemRefs.current = []
   }, [debouncedQuery])
 
@@ -189,10 +201,22 @@ export const FileSearchDialog = memo(function FileSearchDialog({
 
       if (e.key === "ArrowDown") {
         e.preventDefault()
-        setSelectedIndex((prev) => (prev + 1) % allItems.length)
+        setSelection({
+          scope: selectionScope,
+          path: fileSearchPathKey(
+            projectPath,
+            allItems[(selectedIndex + 1) % allItems.length].path,
+          ),
+        })
       } else if (e.key === "ArrowUp") {
         e.preventDefault()
-        setSelectedIndex((prev) => (prev - 1 + allItems.length) % allItems.length)
+        setSelection({
+          scope: selectionScope,
+          path: fileSearchPathKey(
+            projectPath,
+            allItems[(selectedIndex - 1 + allItems.length) % allItems.length].path,
+          ),
+        })
       } else if (e.key === "Enter") {
         e.preventDefault()
         const file = allItems[selectedIndex]
@@ -201,7 +225,7 @@ export const FileSearchDialog = memo(function FileSearchDialog({
         }
       }
     },
-    [allItems, selectedIndex, handleSelect],
+    [allItems, selectedIndex, handleSelect, selectionScope, projectPath],
   )
 
   const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {

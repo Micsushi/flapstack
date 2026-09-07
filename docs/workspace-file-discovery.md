@@ -42,6 +42,9 @@ shared queries, cancellation, invalidation, unreadable roots and depth limits.
 Recent-path and reversible-action checks live in `tests/file-search-paths.test.ts`
 and `tests/file-search-recent-actions.test.tsx`.
 Stream identity, retry and disposal are covered by `tests/streamed-file-search.test.tsx`.
+Keyboard selection follows file identity when partial batches rerank results.
+If a selected file leaves the capped results, selection returns to the first row.
+`tests/file-search-stream-selection.test.tsx` exercises both cases through the dialog.
 
 ## File read limits
 
