@@ -2,10 +2,10 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef } from "react"
 import { useAtom } from "jotai"
-import { IconSpinner, PlanIcon } from "@/components/ui/icons"
-import { ChatMarkdownRenderer } from "@/components/chat-markdown-renderer"
-import { trpc } from "@/lib/trpc"
-import { toDurablePlanFileTarget } from "@/lib/file-target"
+import { IconSpinner, PlanIcon } from "../../../components/ui/icons"
+import { ChatMarkdownRenderer } from "../../../components/chat-markdown-renderer"
+import { trpc } from "../../../lib/trpc"
+import { toDurablePlanFileTarget } from "../../../lib/file-target"
 import { planContentCacheAtomFamily } from "../atoms"
 
 interface PlanSectionProps {
@@ -53,7 +53,7 @@ export const PlanSection = memo(function PlanSection({
 
   // Update cache when content loads successfully
   useEffect(() => {
-    if (planContent && planPath) {
+    if (planContent !== undefined && planPath) {
       setPlanCache({
         content: planContent,
         planPath,
@@ -61,14 +61,6 @@ export const PlanSection = memo(function PlanSection({
       })
     }
   }, [planContent, planPath, setPlanCache])
-
-  // Clear cache when plan path changes to a different file
-  useEffect(() => {
-    if (planPath && planCache && planCache.planPath !== planPath) {
-      // Don't clear immediately - let new content load first
-      // This prevents flashing empty state
-    }
-  }, [planPath, planCache])
 
   // Refetch when trigger changes
   useEffect(() => {
@@ -116,7 +108,7 @@ export const PlanSection = memo(function PlanSection({
   // Show cached content if: loading new content OR error occurred but we have cache
   const displayContent = useMemo(() => {
     // If we have fresh content, use it
-    if (planContent) return planContent
+    if (planContent !== undefined) return planContent
     // If loading or error, use cached content (same plan path)
     if (planCache?.isReady && planCache.planPath === planPath) {
       return planCache.content
@@ -125,10 +117,10 @@ export const PlanSection = memo(function PlanSection({
   }, [planContent, planCache, planPath])
 
   // Only show loading if we have no content to display at all
-  const showLoading = isLoading && !displayContent
+  const showLoading = isLoading && displayContent === null
 
   // Only show error if we have no content to display at all
-  const showError = error && !displayContent
+  const showError = error && displayContent === null
 
   // Extract plan title from markdown (first H1)
   const planTitle = useMemo(() => {

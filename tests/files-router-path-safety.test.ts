@@ -106,6 +106,16 @@ afterEach(() => {
 })
 
 describe("files router mutation path safety", () => {
+  it("bounds plan reads while preserving valid empty files", async () => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    writeFileSync(join(root, "plan.md"), Buffer.alloc(2 * 1024 * 1024 + 1, 65))
+    await expect(caller.readFile({ rootPath: root, relativePath: "plan.md" })).rejects.toThrow(
+      "2 MiB",
+    )
+    writeFileSync(join(root, "plan.md"), "")
+    await expect(caller.readFile({ rootPath: root, relativePath: "plan.md" })).resolves.toBe("")
+  })
   it("streams a thousand-file directory within the existing scan budget and reuses its cache", async () => {
     const root = state.userDataPath
     state.registeredRoots.add(root)

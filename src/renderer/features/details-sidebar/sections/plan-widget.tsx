@@ -2,13 +2,13 @@
 
 import { memo, useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { useAtom } from "jotai"
-import { Button } from "@/components/ui/button"
-import { Kbd } from "@/components/ui/kbd"
-import { cn } from "@/lib/utils"
-import { PlanIcon, ExpandIcon, CollapseIcon, IconSpinner } from "@/components/ui/icons"
-import { ChatMarkdownRenderer } from "@/components/chat-markdown-renderer"
-import { trpc } from "@/lib/trpc"
-import { toDurablePlanFileTarget } from "@/lib/file-target"
+import { Button } from "../../../components/ui/button"
+import { Kbd } from "../../../components/ui/kbd"
+import { cn } from "../../../lib/utils"
+import { PlanIcon, ExpandIcon, CollapseIcon, IconSpinner } from "../../../components/ui/icons"
+import { ChatMarkdownRenderer } from "../../../components/chat-markdown-renderer"
+import { trpc } from "../../../lib/trpc"
+import { toDurablePlanFileTarget } from "../../../lib/file-target"
 import { planContentCacheAtomFamily } from "../atoms"
 import type { AgentMode } from "../../agents/atoms"
 
@@ -76,7 +76,7 @@ export const PlanWidget = memo(function PlanWidget({
 
   // Update cache when content loads successfully
   useEffect(() => {
-    if (planContent && planPath) {
+    if (planContent !== undefined && planPath) {
       setPlanCache({
         content: planContent,
         planPath,
@@ -94,7 +94,7 @@ export const PlanWidget = memo(function PlanWidget({
 
   // Use cached content while loading new content to prevent flashing
   const displayContent = useMemo(() => {
-    if (planContent) return planContent
+    if (planContent !== undefined) return planContent
     if (planCache?.isReady && planCache.planPath === planPath) {
       return planCache.content
     }
@@ -102,10 +102,10 @@ export const PlanWidget = memo(function PlanWidget({
   }, [planContent, planCache, planPath])
 
   // Only show loading if we have no content to display
-  const showLoading = isLoading && !displayContent
+  const showLoading = isLoading && displayContent === null
 
   // Only show error if we have no content to display
-  const showError = error && !displayContent
+  const showError = error && displayContent === null
 
   // Toggle expand state
   const handleToggleExpand = useCallback((e: React.MouseEvent) => {

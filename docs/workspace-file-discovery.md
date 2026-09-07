@@ -54,3 +54,8 @@ the initial file size. A file that grows beyond its cap is rejected after at
 most one additional byte; it is not loaded fully or silently truncated. Reads
 without an explicit cap retain their existing behavior. Growth and exact-boundary
 regressions are covered by `tests/rooted-read-bounds.test.ts`.
+
+Plan-file reads also enforce the 2 MiB text limit while reading, including files
+that grow after their initial size check. A successful empty plan replaces the
+cached text; it is not treated as a missing response. Both details-sidebar plan
+views cover that transition in `tests/plan-content-cache.test.tsx`.

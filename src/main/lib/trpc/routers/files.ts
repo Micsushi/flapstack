@@ -494,10 +494,14 @@ export const filesRouter = router({
   readFile: publicProcedure.input(fileTargetInput).query(async ({ input }) => {
     try {
       const target = resolveDurableFileTarget(input)
-      const content = await readFileInsideRoot(target.rootPath, target.relativePath)
+      const content = await readFileInsideRoot(target.rootPath, target.relativePath, {
+        maxBytes: 2 * 1024 * 1024,
+      })
       target.verifyAfterRead()
       return content.toString("utf-8")
     } catch (error) {
+      if (error instanceof RootedReadTooLargeError)
+        throw new Error("Plan exceeds the 2 MiB preview limit.")
       console.error("[files] Error reading rooted file:", error)
       throw new Error(
         `Failed to read file: ${error instanceof Error ? error.message : "Unknown error"}`,
