@@ -34,7 +34,7 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
     id: "diffAnnotations",
     label: "Diff Comments",
     description:
-      "Preview durable, diff-bound review comments. Inline editing and send-to-agent integration are not yet available.",
+      "Local diff-bound comments with editing and reversible deletion. Sending feedback to agents is not yet available.",
   },
   {
     id: "streamedFileSearch",

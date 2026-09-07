@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm"
+import { createHash } from "node:crypto"
 import { app, BrowserWindow, dialog } from "electron"
 import * as fs from "fs/promises"
 import * as path from "path"
@@ -43,7 +44,7 @@ import {
 } from "../../git/security/path-validation"
 import { readFileInsideRoot } from "../../path-safety"
 import type { WorktreeSetupResult } from "../../git/worktree-config"
-import { computeContentHash, gitCache } from "../../git/cache"
+import { gitCache } from "../../git/cache"
 import { splitUnifiedDiffByFile } from "../../git/diff-parser"
 import { execWithShellEnv } from "../../git/shell-env"
 import { applyRollbackStash } from "../../git/stash"
@@ -2216,7 +2217,9 @@ export const chatsRouter = router({
       }
 
       // 2. Check cache using diff hash
-      const diffHash = computeContentHash(result.diff || "")
+      const diffHash = createHash("sha256")
+        .update(result.diff || "")
+        .digest("hex")
       type ParsedDiffResponse = {
         files: ReturnType<typeof splitUnifiedDiffByFile>
         totalAdditions: number
@@ -2260,7 +2263,10 @@ export const chatsRouter = router({
       }
 
       // 3. Parse diff into files
-      const files = splitUnifiedDiffByFile(result.diff || "")
+      const files = splitUnifiedDiffByFile(result.diff || "").map((file) => ({
+        ...file,
+        observedDiffHash: diffHash,
+      }))
 
       // 4. Calculate totals
       const totalAdditions = files.reduce((sum, f) => sum + f.additions, 0)

@@ -3,6 +3,8 @@ import { atomWithStorage } from "jotai/utils"
 export type DiffViewMode = "unified" | "split"
 
 export type ParsedDiffFile = {
+  /** Absent for unverified/remote patch parsing; never synthesize from a newer query. */
+  observedDiffHash?: string
   key: string
   oldPath: string
   newPath: string

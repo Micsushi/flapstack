@@ -28,7 +28,10 @@ import {
 import { preferredEditorAtom } from "../../../lib/atoms"
 import { APP_META } from "../../../../shared/external-apps"
 import { PatchDiff, FileDiff } from "@pierre/diffs/react"
-import { parseDiffFromFile } from "@pierre/diffs"
+import { parseDiffFromFile, type SelectedLineRange } from "@pierre/diffs"
+import { DiffComments, type DiffCommentDraft } from "./diff-comments"
+import { useBetaFeatures } from "../../settings/use-beta-features"
+import { diffAnnotationAnchorSchema } from "../../../../shared/diff-annotations"
 import { applyPatch, reversePatch, parsePatch } from "diff"
 import { useCodeTheme } from "../../../lib/hooks/use-code-theme"
 import { getShikiTheme } from "../../../lib/themes/diff-view-highlighter"
@@ -301,6 +304,7 @@ const PIERRE_DIFFS_THEME_CSS = `
 `
 
 interface FileDiffCardProps {
+  onComment?: (file: ParsedDiffFile, range: SelectedLineRange) => void
   file: ParsedDiffFile
   isLight: boolean
   isCollapsed: boolean
@@ -334,6 +338,8 @@ const fileDiffCardAreEqual = (prev: FileDiffCardProps, next: FileDiffCardProps):
   if (prev.file.key !== next.file.key) return false
   // Diff content changes should re-render even when the file key is stable.
   if (prev.file.diffText !== next.file.diffText) return false
+  if (prev.file.observedDiffHash !== next.file.observedDiffHash) return false
+  if (prev.onComment !== next.onComment) return false
   // State that affects rendering
   if (prev.isCollapsed !== next.isCollapsed) return false
   if (prev.isFullExpanded !== next.isFullExpanded) return false
@@ -354,6 +360,7 @@ const fileDiffCardAreEqual = (prev: FileDiffCardProps, next: FileDiffCardProps):
 }
 
 const FileDiffCard = memo(function FileDiffCard({
+  onComment,
   file,
   isLight,
   isCollapsed,
@@ -373,6 +380,37 @@ const FileDiffCard = memo(function FileDiffCard({
   chatId,
 }: FileDiffCardProps) {
   const diffCardRef = useRef<HTMLDivElement>(null)
+  const commentSelection = useRef<{
+    hash: string | undefined
+    range: SelectedLineRange | null
+  } | null>(null)
+  const rememberCommentSelection = (range: SelectedLineRange | null) => {
+    commentSelection.current = { hash: file.observedDiffHash, range }
+  }
+  const renderCommentControl = onComment
+    ? (getHovered: () => { lineNumber: number; side: "deletions" | "additions" } | undefined) => (
+        <button
+          type="button"
+          aria-label="Comment on selected lines"
+          onClick={() => {
+            const hovered = getHovered()
+            const selected =
+              commentSelection.current && commentSelection.current.hash === file.observedDiffHash
+                ? commentSelection.current.range
+                : null
+            if (selected) onComment(file, selected)
+            else if (hovered)
+              onComment(file, {
+                start: hovered.lineNumber,
+                end: hovered.lineNumber,
+                side: hovered.side,
+              })
+          }}
+        >
+          <IconChatBubble className="size-3.5" />
+        </button>
+      )
+    : undefined
   const isLargeDiff = file.additions + file.deletions >= LARGE_DIFF_LINE_THRESHOLD
 
   // Build FileDiffMetadata from file content (enables clickable "N unmodified lines" sections)
@@ -635,6 +673,22 @@ const FileDiffCard = memo(function FileDiffCard({
           </div>
         )}
 
+        {onComment && file.isValid && !file.isBinary && !isLargeDiff && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={(event) => {
+              event.stopPropagation()
+              const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/m.exec(file.diffText)
+              if (!hunk) return
+              const side = file.isDeletedFile ? "deletions" : "additions"
+              const line = Number(hunk[side === "deletions" ? 1 : 2])
+              onComment(file, { start: line, end: line, side })
+            }}
+          >
+            Comment
+          </Button>
+        )}
         {/* Viewed checkbox with label - GitHub style (hidden for sandboxes) */}
         {showViewed && (
           <Tooltip>
@@ -775,6 +829,7 @@ const FileDiffCard = memo(function FileDiffCard({
             <DiffErrorBoundary fileName={file.newPath || file.oldPath} rawDiff={file.diffText}>
               {fileDiffMeta ? (
                 <FileDiff
+                  renderGutterUtility={renderCommentControl}
                   fileDiff={fileDiffMeta}
                   options={{
                     diffStyle: diffMode,
@@ -785,10 +840,14 @@ const FileDiffCard = memo(function FileDiffCard({
                     expandUnchanged: isFullExpanded,
                     theme: shikiTheme,
                     unsafeCSS: PIERRE_DIFFS_THEME_CSS,
+                    enableLineSelection: !!onComment,
+                    enableGutterUtility: !!onComment,
+                    onLineSelectionEnd: rememberCommentSelection,
                   }}
                 />
               ) : (
                 <PatchDiff
+                  renderGutterUtility={renderCommentControl}
                   patch={file.diffText}
                   options={{
                     diffStyle: diffMode,
@@ -798,6 +857,9 @@ const FileDiffCard = memo(function FileDiffCard({
                     disableFileHeader: true,
                     theme: shikiTheme,
                     unsafeCSS: PIERRE_DIFFS_THEME_CSS,
+                    enableLineSelection: !!onComment,
+                    enableGutterUtility: !!onComment,
+                    onLineSelectionEnd: rememberCommentSelection,
                   }}
                 />
               )}
@@ -886,6 +948,54 @@ export const AgentDiffView = forwardRef<AgentDiffViewRef, AgentDiffViewProps>(
     ref,
   ) {
     const { resolvedTheme } = useTheme()
+    const beta = useBetaFeatures()
+    const commentsEnabled = beta.diffAnnotations && !!worktreePath && !!chatId
+    const [commentState, setCommentState] = useState<Record<string, DiffCommentDraft | null>>({})
+    const commentDraft = commentState[chatId] ?? null
+    const setCommentDraft = useCallback(
+      (draft: DiffCommentDraft | null) =>
+        setCommentState((current) => ({ ...current, [chatId]: draft })),
+      [chatId],
+    )
+    const commentBusy = useRef(new Set<string>())
+    const setCommentBusy = useCallback(
+      (busy: boolean) => {
+        if (busy) commentBusy.current.add(chatId)
+        else commentBusy.current.delete(chatId)
+      },
+      [chatId],
+    )
+    const handleComment = useCallback(
+      (file: ParsedDiffFile, range: SelectedLineRange) => {
+        if (commentBusy.current.has(chatId)) {
+          toast.error("Wait for the comment operation to finish.")
+          return
+        }
+        if (range.endSide && range.endSide !== range.side) {
+          toast.error("Select lines on one side of the diff.")
+          return
+        }
+        const side = range.side === "deletions" ? "left" : "right"
+        const anchor = diffAnnotationAnchorSchema.safeParse({
+          diffHash: file.observedDiffHash,
+          filePath: side === "left" ? file.oldPath : file.newPath,
+          side,
+          startLine: Math.min(range.start, range.end),
+          endLine: Math.max(range.start, range.end),
+        })
+        if (!anchor.success) {
+          toast.error("Refresh this diff and select up to 1,000 loaded lines.")
+          return
+        }
+        setCommentState((current) => ({
+          ...current,
+          [chatId]: current[chatId]
+            ? { ...current[chatId], anchor: anchor.data }
+            : { id: crypto.randomUUID(), anchor: anchor.data, body: "" },
+        }))
+      },
+      [chatId],
+    )
     const isHydrated = useIsHydrated()
 
     const [diff, setDiff] = useState<string | null>(initialDiff ?? null)
@@ -1928,6 +2038,9 @@ export const AgentDiffView = forwardRef<AgentDiffViewRef, AgentDiffViewProps>(
                   >
                     <div className="pb-2">
                       <FileDiffCard
+                        onComment={
+                          commentsEnabled && file.observedDiffHash ? handleComment : undefined
+                        }
                         file={file}
                         isLight={isLight}
                         isCollapsed={!!collapsedByFileKey[file.key]}
@@ -1957,6 +2070,16 @@ export const AgentDiffView = forwardRef<AgentDiffViewRef, AgentDiffViewProps>(
             </div>
           )}
         </div>
+
+        {commentsEnabled && (
+          <DiffComments
+            key={chatId}
+            chatId={chatId}
+            draft={commentDraft}
+            setDraft={setCommentDraft}
+            onBusyChange={setCommentBusy}
+          />
+        )}
 
         {/* Discard confirmation dialog */}
         <AlertDialog

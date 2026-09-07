@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, renameSync } from "node:fs"
 import { tmpdir } from "node:os"
+import { createHash } from "node:crypto"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
@@ -112,10 +113,14 @@ it("checks root identity again after Git collection even for an unchanged respon
 it("keeps unchanged responses and contents-free summaries small", async () => {
   writeFileSync(join(root, "file.ts"), "new")
   const initial = await caller.getParsedDiff({ chatId: "chat" })
+  const expectedHash = createHash("sha256").update(state.diff).digest("hex")
+  expect(initial.diffHash).toBe(expectedHash)
+  expect("files" in initial && initial.files[0].observedDiffHash).toBe(expectedHash)
   expect(await caller.getParsedDiff({ chatId: "chat", knownDiffHash: initial.diffHash })).toEqual({
     unchanged: true,
     diffHash: initial.diffHash,
   })
   const summary = await caller.getParsedDiff({ chatId: "chat", includeContents: false })
   expect("fileContents" in summary && summary.fileContents).toEqual({})
+  expect("files" in summary && summary.files[0].observedDiffHash).toBe(expectedHash)
 })

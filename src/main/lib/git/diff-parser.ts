@@ -8,6 +8,8 @@
  */
 
 export interface ParsedDiffFile {
+  /** Full identity of the main-owned diff that supplied this displayed file. */
+  observedDiffHash?: string
   key: string
   oldPath: string
   newPath: string
