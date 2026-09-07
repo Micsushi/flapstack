@@ -72,6 +72,12 @@ Focused coverage is in `tests/workspace-editing.test.ts` and
 `tests/beta-feature-gates.test.ts`. Database-close tests model interrupted writes;
 an isolated Node child also exits after the file commit and before journal
 completion, then the reopened service recovers the prepared operation. The
-save/create/remove fixtures passed on Windows, Linux and macOS; rename crash
-coverage is being verified separately. This is not an Electron app-crash or
-interactive editor walkthrough. S7-F4 acceptance remains open.
+save/create/remove and rename fixtures, including interrupted link/unlink and
+case-only rename, passed on Windows, Linux and macOS at `f3382bdf`. The broad
+automated gates passed on all three systems. Isolated hidden Electron startup,
+long-chat, search and four-pane probes also passed on Windows and macOS using
+that exact candidate. Their temporary profiles and renderer processes were
+removed, shared configuration fingerprints stayed unchanged, and Node ABI 127
+was restored after Electron ABI 140 verification. These probes do not constitute
+an Electron app-crash or interactive editor walkthrough. S7-F4 acceptance remains
+open; Linux Electron startup remains blocked by the unconfigured sandbox helper.
