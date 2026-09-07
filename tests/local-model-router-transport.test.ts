@@ -111,6 +111,113 @@ afterAll(() => {
 })
 
 describe("local model router bridge", () => {
+  it.skipIf(
+    !process.env.FLAPSTACK_LIVE_OLLAMA_ENDPOINT || !process.env.FLAPSTACK_LIVE_OLLAMA_MODEL,
+  )(
+    "runs an opt-in installed Ollama model through a durable queue claim and records real usage",
+    async () => {
+      const liveEndpoint = process.env.FLAPSTACK_LIVE_OLLAMA_ENDPOINT!
+      const liveModel = process.env.FLAPSTACK_LIVE_OLLAMA_MODEL!
+      const actual = await vi.importActual<
+        typeof import("../src/main/lib/harness/local-model-catalog")
+      >("../src/main/lib/harness/local-model-catalog")
+      catalogMocks.probe.mockImplementation(actual.probeLocalModelCatalog)
+      seedChat("live-queued", { chatPermission: "read-only", model: liveModel })
+      const queued = queueChatRun(getSqliteDatabase(), {
+        chatId: "chat-live-queued",
+        subChatId: "sub-live-queued",
+        initialPrompt: "Reply with just the word ready.",
+        idempotencyKey: "live-queued",
+      })
+      if (!queued.ok) throw new Error(queued.message)
+      let output = ""
+      expect(
+        await drainPendingMcpRuns(
+          databasePath,
+          async (run) => {
+            const chunks = await collectLive(
+              await caller.chat(
+                input("live-queued", {
+                  runId: run.runId,
+                  model: run.model!,
+                  endpoint: liveEndpoint,
+                  prompt: run.prompt,
+                }),
+              ),
+            )
+            expect(chunks.filter((chunk) => chunk.type === "error")).toEqual([])
+            output = chunks
+              .filter((chunk) => chunk.type === "text-delta")
+              .map((chunk) => chunk.delta)
+              .join("")
+          },
+          { waitForCompletion: true },
+        ),
+      ).toBe(1)
+      expect(output.trim().length).toBeGreaterThan(0)
+      expect(readRun(queued.runId)).toMatchObject({
+        status: "success",
+        model: liveModel,
+        permissionMode: "read-only",
+      })
+      const usage = getDatabase()
+        .select()
+        .from(usageSamples)
+        .where(eq(usageSamples.runId, queued.runId))
+        .get()!
+      expect(usage).toMatchObject({ providerId: "local", costUsd: 0, costQuality: "exact" })
+      expect(usage.inputTokens).toBeGreaterThan(0)
+      expect(usage.outputTokens).toBeGreaterThan(0)
+      const messages = JSON.parse(
+        getDatabase().select().from(subChats).where(eq(subChats.id, "sub-live-queued")).get()!
+          .messages,
+      )
+      expect(messages.map((message: any) => message.role)).toEqual(["user", "assistant"])
+      expect(messages[1].metadata.runId).toBe(queued.runId)
+      expect(
+        await drainPendingMcpRuns(databasePath, async () => {
+          throw new Error("duplicate live launch")
+        }),
+      ).toBe(0)
+    },
+    90_000,
+  )
+
+  it.skipIf(
+    !process.env.FLAPSTACK_LIVE_OLLAMA_ENDPOINT || !process.env.FLAPSTACK_LIVE_OLLAMA_MODEL,
+  )(
+    "cancels an opt-in installed Ollama response after actual streamed text",
+    async () => {
+      const actual = await vi.importActual<
+        typeof import("../src/main/lib/harness/local-model-catalog")
+      >("../src/main/lib/harness/local-model-catalog")
+      catalogMocks.probe.mockImplementation(actual.probeLocalModelCatalog)
+      const liveModel = process.env.FLAPSTACK_LIVE_OLLAMA_MODEL!
+      seedChat("live-cancel", { chatPermission: "read-only", model: liveModel })
+      let cancellation: ReturnType<typeof caller.cancel> | undefined
+      try {
+        const chunks = await collectLive(
+          await caller.chat(
+            input("live-cancel", {
+              model: liveModel,
+              endpoint: process.env.FLAPSTACK_LIVE_OLLAMA_ENDPOINT!,
+              prompt: "Write a long numbered list of 100 animals, one animal on each line.",
+            }),
+          ),
+          () => {
+            cancellation ??= caller.cancel({ runId: "run-live-cancel" })
+          },
+        )
+        expect(chunks.some((chunk) => chunk.type === "text-delta")).toBe(true)
+        expect(await cancellation).toEqual({ cancelled: true })
+        expect(readRun("run-live-cancel")?.status).toBe("cancelled")
+      } finally {
+        await caller.cancel({ runId: "run-live-cancel" })
+      }
+    },
+    90_000,
+  )
+
   it.each([
     "foreign-harness",
     "foreign-runtime",
@@ -757,4 +864,27 @@ async function collect(stream: any): Promise<any[]> {
     })
   })
   return chunks
+}
+
+async function collectLive(stream: any, onText?: () => void): Promise<any[]> {
+  const chunks: any[] = []
+  let subscription: { unsubscribe: () => void } | undefined
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await new Promise<void>((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error("Live Ollama stream exceeded 60 seconds")), 60_000)
+      subscription = stream.subscribe({
+        next: (chunk: any) => {
+          chunks.push(chunk)
+          if (chunk.type === "text-delta") onText?.()
+        },
+        error: reject,
+        complete: resolve,
+      })
+    })
+    return chunks
+  } finally {
+    clearTimeout(timer)
+    subscription?.unsubscribe()
+  }
 }

@@ -90,3 +90,30 @@ npx --yes @fission-ai/openspec@latest validate add-local-model-harness --strict 
 Real installed-model catalog/chat, one chat-only model, one tool-capable model,
 packaged preview, direct interaction/accessibility, and unavailable platform or
 device evidence remain manual acceptance. Headless success does not close them.
+
+### Opt-in installed Ollama check
+
+`tests/local-model-router-transport.test.ts` includes two live checks, skipped by
+default. Point `FLAPSTACK_LIVE_OLLAMA_ENDPOINT` at an isolated loopback Ollama
+server and `FLAPSTACK_LIVE_OLLAMA_MODEL` at an already installed model, then run:
+
+```sh
+npm test -- tests/local-model-router-transport.test.ts
+```
+
+The checks use a temporary Flapstack database and registered fixture directory,
+read-only run permissions, actual catalog and provider requests, durable queue
+claim, stored assistant/usage evidence, and cancellation after streamed text.
+They never download a model or change Ollama settings themselves. A 60-second
+stream deadline cancels stalled work. A cold provider load can exceed that
+deadline; inspect its logs before treating the failure as an app regression.
+
+Windows evidence used Ollama 0.20.6 and
+[Qwen3:0.6B Q4_K_M](https://ollama.com/library/qwen3:0.6b), 522,653,767 bytes,
+manifest `7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435`.
+The model is [Apache-2.0 licensed](https://huggingface.co/Qwen/Qwen3-0.6B/blob/main/LICENSE).
+Its home/cache and loopback port were isolated, cloud disabled, one request/model
+allowed, and idle model retention disabled using
+[documented Ollama configuration](https://docs.ollama.com/faq).
+The first cold load exceeded the fixture deadline; two unchanged reruns passed.
+This is live-provider backend evidence, not packaged UI or multi-OS acceptance.
