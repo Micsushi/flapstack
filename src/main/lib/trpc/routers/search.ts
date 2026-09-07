@@ -100,12 +100,22 @@ function isChatSearchVisible(
 export const searchRouter = router({
   query: publicProcedure
     .input(
-      z.object({
-        query: z.string().min(1),
-        scope: z.enum(["all", "project", "task", "chat"]).default("all"),
-        scopeId: z.string().optional(),
-        includeArchived: z.boolean().default(false),
-      }),
+      z
+        .object({
+          query: z.string().trim().min(1),
+          scope: z.enum(["all", "project", "task", "chat"]).default("all"),
+          scopeId: z.string().trim().min(1).optional(),
+          includeArchived: z.boolean().default(false),
+        })
+        .superRefine((input, ctx) => {
+          if (input.scope !== "all" && !input.scopeId) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["scopeId"],
+              message: "A selected scope is required for scoped search.",
+            })
+          }
+        }),
     )
     .query(({ input }) => {
       const db = getDatabase()

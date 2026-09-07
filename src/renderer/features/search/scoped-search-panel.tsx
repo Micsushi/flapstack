@@ -16,6 +16,7 @@ import {
 import { trpc } from "../../lib/trpc"
 import { cn } from "../../lib/utils"
 import { isNavigableScopedSearchResult } from "./scoped-search-navigation"
+import { SearchFeedback } from "./search-feedback"
 
 type Scope = "all" | "project" | "task" | "chat"
 
@@ -62,7 +63,12 @@ export function ScopedSearchPanel({
   useEffect(() => {
     setVisibleCount(RESULT_PAGE_SIZE)
   }, [trimmedQuery, scope, scopeId, includeArchived])
-  const { data: results = [], isFetching } = trpc.search.query.useQuery(
+  const {
+    data: results = [],
+    isFetching,
+    error,
+    refetch,
+  } = trpc.search.query.useQuery(
     { query: trimmedQuery, scope, scopeId, includeArchived },
     { enabled: canSearch },
   )
@@ -73,6 +79,7 @@ export function ScopedSearchPanel({
         <div className="relative min-w-0 flex-1">
           <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
+            aria-label="Search workspace context"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search all context..."
@@ -80,7 +87,7 @@ export function ScopedSearchPanel({
           />
         </div>
         <Select value={scope} onValueChange={(value) => setScope(value as Scope)}>
-          <SelectTrigger className="h-8 w-24 rounded-md text-xs">
+          <SelectTrigger aria-label="Search scope" className="h-8 w-24 rounded-md text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -111,9 +118,15 @@ export function ScopedSearchPanel({
       )}
       {canSearch && (
         <div className="mt-2 max-h-52 space-y-1 overflow-y-auto">
-          {isFetching && results.length === 0 ? (
-            <div className="px-1 py-2 text-xs text-muted-foreground">Searching...</div>
-          ) : results.length === 0 ? (
+          <SearchFeedback
+            error={error ? "Search is unavailable. Retry to load current results." : null}
+            busy={isFetching}
+            onRetry={() => void refetch()}
+          />
+          {error && results.length > 0 && (
+            <p className="px-1 text-xs text-muted-foreground">Showing previously loaded results.</p>
+          )}
+          {!error && !isFetching && results.length === 0 ? (
             <div className="px-1 py-2 text-xs text-muted-foreground">No results</div>
           ) : (
             results.slice(0, visibleCount).map((result, index) => {

@@ -1,38 +1,10 @@
 import React from "react"
-import { Button } from "../../../components/ui/button"
+import { SearchFeedback } from "../../search/search-feedback"
 
-export function FileSearchFeedback({
-  error,
-  busy,
-  onRetry,
-}: {
+export function FileSearchFeedback(props: {
   error?: string | null
   busy: boolean
   onRetry: () => void
 }) {
-  if (error) {
-    return (
-      <div className="mx-2 my-2 space-y-2 text-sm">
-        <div role="alert" className="break-words text-foreground">
-          <p>Could not search this workspace.</p>
-          <p className="text-muted-foreground">{error}</p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={busy}
-          onKeyDown={(event) => event.stopPropagation()}
-          onClick={onRetry}
-        >
-          {busy ? "Retrying…" : "Retry search"}
-        </Button>
-      </div>
-    )
-  }
-  return busy ? (
-    <p role="status" className="mx-2 my-2 text-sm text-muted-foreground">
-      Searching files…
-    </p>
-  ) : null
+  return <SearchFeedback {...props} loadingLabel="Searching files…" />
 }

@@ -1304,7 +1304,16 @@ describe("Stage 1 E1 search archive and scope filters", () => {
       .run()
 
     const caller = searchRouter.createCaller(ctx)
+    for (const scope of ["project", "task", "chat"] as const) {
+      for (const scopeId of [undefined, "", "   "]) {
+        await expect(caller.query({ query: "needle", scope, scopeId })).rejects.toMatchObject({
+          code: "BAD_REQUEST",
+        })
+      }
+    }
+    await expect(caller.query({ query: "   " })).rejects.toMatchObject({ code: "BAD_REQUEST" })
     const allActive = await caller.query({ query: "needle" })
+    expect(await caller.query({ query: "  needle  " })).toEqual(allActive)
     const allActiveKeys = allActive.map((result) => `${result.type}:${result.title}`).sort()
 
     expect(allActiveKeys).toEqual([
