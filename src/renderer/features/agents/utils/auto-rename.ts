@@ -4,10 +4,11 @@ interface AutoRenameParams {
   subChatId: string
   parentChatId: string
   userMessage: string
-  isFirstSubChat: boolean
   generateName: (userMessage: string) => Promise<{ name: string | null }>
-  renameSubChat: (input: { subChatId: string; name: string }) => Promise<void>
-  renameChat: (input: { chatId: string; name: string }) => Promise<void>
+  applyName: (input: { subChatId: string; parentChatId: string; name: string }) => Promise<{
+    subChatApplied: boolean
+    parentChatApplied: boolean
+  }>
   updateSubChatName: (subChatId: string, name: string) => void
   updateChatName: (chatId: string, name: string) => void
 }
@@ -21,10 +22,8 @@ export async function autoRenameAgentChat({
   subChatId,
   parentChatId,
   userMessage,
-  isFirstSubChat,
   generateName,
-  renameSubChat,
-  renameChat,
+  applyName,
   updateSubChatName,
   updateChatName,
 }: AutoRenameParams) {
@@ -45,15 +44,9 @@ export async function autoRenameAgentChat({
       }
 
       try {
-        // Rename sub-chat
-        await renameSubChat({ subChatId, name })
-        updateSubChatName(subChatId, name)
-
-        // Also rename parent chat if this is the first sub-chat
-        if (isFirstSubChat) {
-          await renameChat({ chatId: parentChatId, name })
-          updateChatName(parentChatId, name)
-        }
+        const result = await applyName({ subChatId, parentChatId, name })
+        if (result.subChatApplied) updateSubChatName(subChatId, name)
+        if (result.parentChatApplied) updateChatName(parentChatId, name)
 
         return // Success!
       } catch {

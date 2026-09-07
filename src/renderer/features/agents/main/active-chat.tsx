@@ -260,6 +260,7 @@ import { SubChatStatusCard } from "../ui/sub-chat-status-card"
 import { SplitViewContainer } from "../ui/split-view-container"
 import { TextSelectionPopover } from "../ui/text-selection-popover"
 import { autoRenameAgentChat } from "../utils/auto-rename"
+import { isUntitledChatName } from "../../../../shared/chat-title"
 import {
   generateCommitToPrMessage,
   generatePrMessage,
@@ -6038,8 +6039,7 @@ function ChatViewScoped({
   const utils = api.useUtils()
 
   // tRPC mutations for renaming
-  const renameSubChatMutation = api.agents.renameSubChat.useMutation()
-  const renameChatMutation = api.agents.renameChat.useMutation()
+  const applyAutomaticTitleMutation = trpc.chats.applyAutomaticTitle.useMutation()
   const generateSubChatNameMutation = api.agents.generateSubChatName.useMutation()
 
   // PR creation loading state - using atom to allow ChatViewInner to reset it
@@ -8193,7 +8193,6 @@ Make sure to preserve all functionality from both branches when resolving confli
         subChatId,
         parentChatId: chatId,
         userMessage,
-        isFirstSubChat: isFirst,
         generateName: async (msg) => {
           const metadata = await generateSubChatNameMutation.mutateAsync({
             userMessage: msg,
@@ -8212,15 +8211,15 @@ Make sure to preserve all functionality from both branches when resolving confli
           }
           return metadata
         },
-        renameSubChat: async (input) => {
-          await renameSubChatMutation.mutateAsync(input)
-        },
-        renameChat: async (input) => {
-          await renameChatMutation.mutateAsync(input)
-        },
+        applyName: (input) => applyAutomaticTitleMutation.mutateAsync(input),
         updateSubChatName: (subChatIdToUpdate, name) => {
           // Update local store
-          subChatStore.getState().updateSubChatName(subChatIdToUpdate, name)
+          const state = subChatStore.getState()
+          if (
+            isUntitledChatName(state.allSubChats.find((sc) => sc.id === subChatIdToUpdate)?.name)
+          ) {
+            state.updateSubChatName(subChatIdToUpdate, name)
+          }
           // Also update query cache so init effect doesn't overwrite
           utils.agents.getAgentChat.setData({ chatId }, (old: any) => {
             if (!old) return old
@@ -8254,7 +8253,7 @@ Make sure to preserve all functionality from both branches when resolving confli
             return {
               ...old,
               subChats: old.subChats.map((sc: any) =>
-                sc.id === subChatIdToUpdate ? { ...sc, name } : sc,
+                sc.id === subChatIdToUpdate && isUntitledChatName(sc.name) ? { ...sc, name } : sc,
               ),
             }
           })
@@ -8264,12 +8263,14 @@ Make sure to preserve all functionality from both branches when resolving confli
           // On desktop, selectedTeamId is always null, so we update unconditionally
           utils.agents.getAgentChats.setData({ teamId: selectedTeamId }, (old: any) => {
             if (!old) return old
-            return old.map((c: any) => (c.id === chatIdToUpdate ? { ...c, name } : c))
+            return old.map((c: any) =>
+              c.id === chatIdToUpdate && isUntitledChatName(c.name) ? { ...c, name } : c,
+            )
           })
           // Optimistic update for header (single chat query)
           utils.agents.getAgentChat.setData({ chatId: chatIdToUpdate }, (old) => {
             if (!old) return old
-            return { ...old, name }
+            return isUntitledChatName(old.name) ? { ...old, name } : old
           })
         },
       })
@@ -8282,8 +8283,7 @@ Make sure to preserve all functionality from both branches when resolving confli
       chatTitleGenerationEnabled,
       chatTitleStyle,
       generateSubChatNameMutation,
-      renameSubChatMutation,
-      renameChatMutation,
+      applyAutomaticTitleMutation,
       selectedTeamId,
       selectedOllamaModel,
       trpcUtils.chats.listTagAssignments,

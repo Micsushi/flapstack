@@ -47,6 +47,7 @@ import { execWithShellEnv } from "../../git/shell-env"
 import { applyRollbackStash } from "../../git/stash"
 import { checkInternetConnection, checkOllamaStatus } from "../../ollama"
 import { generateChatMetadataWithOllama } from "../../ollama/chat-metadata"
+import { applyAutomaticChatTitle } from "../../automatic-chat-title"
 import { terminalManager } from "../../terminal/manager"
 import {
   getDetachedChatCheckoutPath,
@@ -2082,6 +2083,20 @@ export const chatsRouter = router({
         .where(eq(subChats.id, input.id))
         .returning()
         .get()
+    }),
+
+  applyAutomaticTitle: publicProcedure
+    .input(
+      z.object({
+        subChatId: z.string(),
+        parentChatId: z.string(),
+        name: z.string().trim().min(1).max(80),
+      }),
+    )
+    .mutation(({ input }) => {
+      const result = applyAutomaticChatTitle(getSqliteDatabase(), input)
+      if (!result) throw new TRPCError({ code: "NOT_FOUND", message: "Chat not found" })
+      return result
     }),
 
   /**

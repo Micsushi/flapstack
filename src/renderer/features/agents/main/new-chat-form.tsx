@@ -2,6 +2,7 @@
 
 import { useVirtualizer } from "@tanstack/react-virtual"
 import type { AgentRuntimePreference } from "../../../../shared/agent-runtime"
+import { initialChatName } from "../../../../shared/chat-title"
 import type { RunPermissionMode } from "../../../../shared/harness-types"
 import { isReadOnlyChatMode, resolveChatModePermission } from "../../../../shared/chat-mode"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
@@ -63,6 +64,7 @@ import {
   hiddenModelsAtom,
   selectedOllamaModelAtom,
   chatSourceModeAtom,
+  chatTitleGenerationEnabledAtom,
 } from "../../../lib/atoms"
 // Desktop uses real tRPC
 import { toast } from "sonner"
@@ -298,6 +300,7 @@ export function NewChatForm({
   // Mode for new chat - uses user's default preference directly
   // Note: defaultAgentMode is initialized synchronously via atomWithStorage with getOnInit: true
   const defaultAgentMode = useAtomValue(defaultAgentModeAtom)
+  const chatTitleGenerationEnabled = useAtomValue(chatTitleGenerationEnabledAtom)
   const [agentMode, setAgentMode] = useState<AgentMode>(() => defaultAgentMode)
   const featureVisibility = useFeatureVisibility()
   const [runtimePreference, setRuntimePreference] = useState<AgentRuntimePreference>("auto")
@@ -1445,7 +1448,7 @@ export function NewChatForm({
       projectId: chatScope === "global" ? undefined : validatedProject?.id,
       taskId: chatScope === "task" ? selectedTask?.id : undefined,
       scope: chatScope,
-      name: message.trim().slice(0, 50), // Use first 50 chars as chat name
+      name: initialChatName(message, chatTitleGenerationEnabled),
       harness: agentProfileSelection?.harness ?? selectedAgent.id,
       model: agentProfileSelection?.model ?? selectedChatModel,
       runtimePreference: agentProfileSelection?.runtimePreference ?? runtimePreference,
@@ -1473,6 +1476,7 @@ export function NewChatForm({
     selectedTask,
     createChatMutation,
     hasContent,
+    chatTitleGenerationEnabled,
     selectedBranch,
     selectedBranchType,
     workMode,
