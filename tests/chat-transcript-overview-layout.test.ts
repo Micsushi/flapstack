@@ -18,15 +18,15 @@ describe("ChatTranscriptOverview layout", () => {
     expect(html.match(/<li/g)).toHaveLength(4)
   })
 
-  it("keeps overlapping markers hidden until the full rail is hovered or focused", () => {
+  it("keeps markers visible and interactive without first hovering the rail", () => {
     const html = renderOverview(markers(4))
 
     expect(html).toContain("group/timeline")
     expect(html).toContain("hover:bg-popover")
     expect(html).toContain("focus-within:bg-popover")
-    expect(html).toContain("opacity-0")
-    expect(html).toContain("group-hover/timeline:opacity-100")
-    expect(html).toContain("group-focus-within/timeline:opacity-100")
+    expect(html).not.toContain("opacity-0")
+    expect(html).not.toContain("group-hover/timeline:opacity-100")
+    expect(html).toContain('<ol class="relative flex max-h-full flex-col justify-center">')
   })
 })
 

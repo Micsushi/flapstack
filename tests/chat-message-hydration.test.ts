@@ -6,6 +6,50 @@ import {
 } from "../src/renderer/features/agents/main/chat-message-hydration"
 
 describe("chat message hydration", () => {
+  it("recovers an empty assistant placeholder without requiring another message", () => {
+    const user = { id: "user", role: "user", parts: [{ type: "text", text: "Explain this" }] }
+    const chat = {
+      status: "ready",
+      messages: [user, { id: "answer", role: "assistant", parts: [] }],
+    }
+    const answer = {
+      id: "answer",
+      role: "assistant",
+      parts: [{ type: "text", text: "Completed answer" }],
+    }
+    expect(hydrateChatFromPersistedMessages(chat, [user, answer])).toBe(true)
+    expect(chat.messages[0]).toBe(user)
+    expect(chat.messages[1]).toBe(answer)
+    expect(hydrateChatFromPersistedMessages(chat, [user, answer])).toBe(false)
+  })
+
+  it("preserves nonempty, tool, and differently identified local messages", () => {
+    const saved = [
+      { id: "answer", role: "assistant", parts: [{ type: "text", text: "Saved answer" }] },
+    ]
+    for (const message of [
+      { id: "answer", role: "assistant", parts: [{ type: "text", text: "Newer local answer" }] },
+      { id: "answer", role: "assistant", parts: [{ type: "tool-read", state: "input-available" }] },
+      { id: "optimistic", role: "assistant", parts: [] },
+    ]) {
+      const chat = { status: "ready", messages: [message] }
+      expect(hydrateChatFromPersistedMessages(chat, saved)).toBe(false)
+      expect(chat.messages[0]).toBe(message)
+    }
+  })
+
+  it("defers restoration while submitted and allows the same persisted data after idle", () => {
+    const chat = {
+      status: "submitted",
+      messages: [{ id: "answer", role: "assistant", parts: [] }] as unknown[],
+    }
+    const saved = [
+      { id: "answer", role: "assistant", parts: [{ type: "text", text: "Saved answer" }] },
+    ]
+    expect(hydrateChatFromPersistedMessages(chat, saved)).toBe(false)
+    chat.status = "ready"
+    expect(hydrateChatFromPersistedMessages(chat, saved)).toBe(true)
+  })
   it("hydrates a cached empty chat when persisted messages arrive", () => {
     const chat = { status: "ready", messages: [] as unknown[] }
     const persisted = [{ id: "user-1", role: "user" }]

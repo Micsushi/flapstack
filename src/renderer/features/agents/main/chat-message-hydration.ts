@@ -62,11 +62,45 @@ export function hydrateChatFromPersistedMessages(
     persistedMessages.length === 0 ||
     chat.status === "streaming" ||
     chat.status === "submitted" ||
-    persistedMessages.length <= chat.messages.length
+    persistedMessages.length < chat.messages.length
   ) {
     return false
   }
 
-  chat.messages = [...persistedMessages]
+  if (persistedMessages.length === chat.messages.length) {
+    let recovered = false
+    const messages = chat.messages.map((message, index) => {
+      const persisted = persistedMessages[index]
+      if (!message || typeof message !== "object" || !persisted || typeof persisted !== "object")
+        return message
+      const current = message as { id?: unknown; role?: unknown; parts?: unknown }
+      const saved = persisted as { id?: unknown; role?: unknown; parts?: unknown }
+      // Recover only empty assistant placeholders with the same durable identity.
+      // Without a revision, nonempty local output may be newer than persistence.
+      if (
+        current.role !== "assistant" ||
+        saved.role !== "assistant" ||
+        typeof current.id !== "string" ||
+        current.id !== saved.id ||
+        !Array.isArray(current.parts) ||
+        !Array.isArray(saved.parts) ||
+        !current.parts.every(isEmptyTextPart) ||
+        saved.parts.every(isEmptyTextPart)
+      )
+        return message
+      recovered = true
+      return persisted
+    })
+    if (!recovered) return false
+    chat.messages = messages
+  } else {
+    chat.messages = [...persistedMessages]
+  }
   return true
+}
+
+function isEmptyTextPart(part: unknown): boolean {
+  if (!part || typeof part !== "object") return false
+  const value = part as { type?: unknown; text?: unknown }
+  return (value.type === "text" || value.type === "reasoning") && value.text === ""
 }

@@ -16,7 +16,7 @@ export function ChatTranscriptOverview({
       className="group/timeline absolute bottom-24 left-0 top-16 z-20 hidden w-10 items-center justify-center rounded-r-lg border-r border-transparent bg-transparent transition-[background-color,border-color,box-shadow] duration-150 hover:border-border hover:bg-popover hover:shadow-lg focus-within:border-border focus-within:bg-popover focus-within:shadow-lg motion-reduce:transition-none sm:flex"
     >
       <span className="sr-only">Private reasoning is never summarized here.</span>
-      <ol className="pointer-events-none relative flex max-h-full flex-col justify-center opacity-0 transition-opacity duration-150 group-hover/timeline:pointer-events-auto group-hover/timeline:opacity-100 group-focus-within/timeline:pointer-events-auto group-focus-within/timeline:opacity-100 motion-reduce:transition-none">
+      <ol className="relative flex max-h-full flex-col justify-center">
         {markers.map((marker) => (
           <li key={marker.id} className="relative flex justify-center">
             <button
@@ -25,7 +25,7 @@ export function ChatTranscriptOverview({
               aria-label={`Go to prompt ${marker.ordinal} of ${marker.total}: ${marker.promptPreview}`}
               onClick={() => onJump(marker)}
             >
-              <span className="block h-px w-2 bg-muted-foreground/50 transition-[width,background-color] group-hover/marker:w-5 group-hover/marker:bg-foreground group-focus-visible/marker:w-5 group-focus-visible/marker:bg-foreground" />
+              <span className="block h-px w-2 bg-muted-foreground transition-[width,background-color] group-hover/marker:w-5 group-hover/marker:bg-foreground group-focus-visible/marker:w-5 group-focus-visible/marker:bg-foreground" />
               <span className="pointer-events-none absolute left-9 top-1/2 hidden w-80 -translate-y-1/2 rounded-xl border border-border bg-popover px-3 py-2.5 text-left text-popover-foreground shadow-lg group-hover/marker:block group-focus-visible/marker:block">
                 <span className="line-clamp-2 block text-sm font-medium leading-5">
                   {marker.promptPreview}

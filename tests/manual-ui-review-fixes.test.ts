@@ -20,7 +20,7 @@ describe("manual UI review fixes", () => {
     expect(overview).toContain("group-hover/marker:block")
     expect(overview).toContain("left-0")
     expect(overview).toContain("hover:bg-popover")
-    expect(overview).toContain("group-hover/timeline:opacity-100")
+    expect(overview).not.toContain("opacity-0")
     expect(overview).toContain("promptPreview")
     expect(overview).not.toContain("right-1.5")
     expect(overview).not.toContain("ProgressCapsule")
@@ -39,6 +39,8 @@ describe("manual UI review fixes", () => {
     expect(activeChat).toContain("Loading chat…")
     expect(activeChat).toContain("refetchOnMount: false")
     expect(activeChat).not.toContain('refetchOnMount: "always"')
+    expect(activeChat).toContain('existing.status !== "streaming"')
+    expect(activeChat).toContain('existing.status !== "submitted"')
   })
 
   it("expands long user messages inline instead of opening a dialog", () => {

@@ -7421,7 +7421,11 @@ Make sure to preserve all functionality from both branches when resolving confli
 
       const existing = agentChatStore.get(subChatId)
       if (existing) {
-        if (persistedHydrationIdentities.get(subChatId) !== rawDesiredMessages) {
+        if (
+          existing.status !== "streaming" &&
+          existing.status !== "submitted" &&
+          persistedHydrationIdentities.get(subChatId) !== rawDesiredMessages
+        ) {
           hydrateChatFromPersistedMessages(existing, readDesiredMessages())
           persistedHydrationIdentities.set(subChatId, rawDesiredMessages)
         }
