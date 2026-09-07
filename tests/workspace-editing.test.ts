@@ -164,6 +164,31 @@ it.each([false, true])("replays undo after source expiry (interrupted=%s)", asyn
   await expect(service.revert(undo)).rejects.toThrow("permit")
 })
 
+it("expires enough snapshots for the UTF-8 byte budget independently of record count", async () => {
+  const content = "雪".repeat(699_050)
+  const first = await service.save(request(content))
+  const copy = sqlite.prepare(`INSERT INTO workspace_edits
+    SELECT ?, project_id, chat_id, root_path, root_identity, relative_path, request_hash,
+      before_content, after_content, before_sha256, after_sha256, reverts_id, state, created_at + 1
+    FROM workspace_edits WHERE id = ?`)
+  sqlite.transaction(() => {
+    for (let i = 0; i < 30; i++) copy.run(randomUUID(), first.id)
+  })()
+  await service.save({ ...request(content), expectedSha256: hash(content) })
+  const usage = sqlite
+    .prepare(
+      `SELECT count(*) count,
+    sum(state = 'expired') expired,
+    sum(length(cast(before_content as blob)) + length(cast(after_content as blob))) bytes
+    FROM workspace_edits`,
+    )
+    .get() as { count: number; expired: number; bytes: number }
+  expect(usage.count).toBe(32)
+  expect(usage.expired).toBe(2)
+  expect(usage.bytes).toBeLessThanOrEqual(64 * 1024 * 1024)
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(content)
+})
+
 it("serializes duplicate reversals of a prepared source", async () => {
   service = new WorkspaceEditingService(db, (root, path, source, options) =>
     writeFileInsideRoot(root, path, source, { ...options, afterCommit: undefined }),
@@ -307,6 +332,24 @@ it("enforces chat ownership and permission changes before the filesystem commit"
   expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
 })
 
+it.each(["beforeCommit", "afterCommit"] as const)(
+  "rechecks permission at %s and preserves the original file on denial",
+  async (phase) => {
+    service = new WorkspaceEditingService(db, (root, path, source, options) =>
+      writeFileInsideRoot(root, path, source, {
+        ...options,
+        [phase]: async (targetPath: string) => {
+          sqlite.prepare("UPDATE chats SET permission_mode = 'read-only'").run()
+          await options?.[phase]?.(targetPath)
+        },
+      }),
+    )
+    await expect(service.save(request())).rejects.toThrow("permit")
+    expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
+    expect((await service.history(scope))[0].state).toBe("failed")
+  },
+)
+
 it("fails closed for incomplete custom policy and permits only an explicit project-write capability", async () => {
   for (const policy of [
     "invalid",
@@ -322,6 +365,56 @@ it("fails closed for incomplete custom policy and permits only an explicit proje
     .prepare("UPDATE chats SET custom_permissions = ?")
     .run(JSON.stringify({ ...disabledCustomPermissions, projectWrite: true }))
   expect((await service.save(request())).state).toBe("applied")
+})
+
+it("rejects queued saves when the registered root is replaced while the lock is held", async () => {
+  let entered!: () => void
+  let release!: () => void
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const resume = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  service = new WorkspaceEditingService(db, async (root, path, source, options) => {
+    entered()
+    await resume
+    return writeFileInsideRoot(root, path, source, options)
+  })
+  const first = service.save(request())
+  await waiting
+  const second = new WorkspaceEditingService(db).save(request("queued"))
+  const results = Promise.allSettled([first, second])
+  renameSync(root, join(container, "old-root"))
+  mkdirSync(root)
+  writeFileSync(join(root, "file.txt"), "replacement")
+  release()
+  expect((await results).map((result) => result.status)).toEqual(["rejected", "rejected"])
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe("replacement")
+  expect(readFileSync(join(container, "old-root", "file.txt"), "utf8")).toBe(original)
+  expect(sqlite.prepare("SELECT count(*) count FROM workspace_edits").get()).toEqual({ count: 1 })
+})
+
+it("never rolls a committed edit into a replacement root after authority drifts", async () => {
+  const input = request()
+  service = new WorkspaceEditingService(db, (root, path, source, options) =>
+    writeFileInsideRoot(root, path, source, {
+      ...options,
+      afterCommit: async (targetPath) => {
+        renameSync(root, join(container, "old-root"))
+        mkdirSync(root)
+        writeFileSync(join(root, path), "replacement")
+        await options?.afterCommit?.(targetPath)
+      },
+    }),
+  )
+  await expect(service.save(input)).rejects.toThrow()
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe("replacement")
+  expect(readFileSync(join(container, "old-root", "file.txt"), "utf8")).toBe(input.content)
+  expect(sqlite.prepare("SELECT state FROM workspace_edits WHERE id = ?").get(input.id)).toEqual({
+    state: "prepared",
+  })
+  expect(sqlite.prepare("SELECT count(*) count FROM mcp_audit_records").get()).toEqual({ count: 0 })
 })
 
 it("rejects traversal, symlinked parents and replaced registered roots", async () => {
