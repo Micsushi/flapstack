@@ -39,6 +39,8 @@ import {
 import { createAgentOrchestrationService } from "../agent-orchestration/service"
 import { getAgentActivityStore } from "../agent-runtime/activity-service"
 import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../agent-runtime/snapshot"
+import { resolveProviderAccountSnapshot } from "../provider-accounts/snapshot"
+import { getSqliteDatabase } from "../db"
 import { isPreviewExecutable, resolveFlapstackProtocol } from "./lifecycle"
 import { DEFAULT_CLAUDE_MODEL_ID, normalizeOpencodeModelId } from "../../../shared/model-catalog"
 import {
@@ -2557,6 +2559,7 @@ export async function launchHarnessTestRun(input: {
     prompt,
     model,
     reasoningEffort: input.reasoningEffort ?? "minimal",
+    providerAccount: resolveProviderAccountSnapshot(getSqliteDatabase(), harness),
     permissionMode: subChat.permissionMode ?? chat.permissionMode ?? "ask-before-edits",
     customPermissions: chat.customPermissions ?? null,
     worktreePath: project.path,

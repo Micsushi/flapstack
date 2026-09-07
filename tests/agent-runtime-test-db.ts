@@ -47,6 +47,13 @@ export function createLegacyRuntimeDatabase(filename = ":memory:"): Database.Dat
 }
 
 export function applyRuntimeMigration(database: Database.Database): void {
+  const accountMigration = readFileSync(
+    resolve(process.cwd(), "drizzle/0059_shiny_ogun.sql"),
+    "utf8",
+  )
+  for (const statement of accountMigration.split("--> statement-breakpoint")) {
+    if (statement.includes("ALTER TABLE `agent_runs`")) database.exec(statement)
+  }
   const migration = readFileSync(resolve(process.cwd(), "drizzle/0034_agent_runtime.sql"), "utf8")
   const transaction = database.transaction(() => {
     for (const statement of migration.split("--> statement-breakpoint")) {

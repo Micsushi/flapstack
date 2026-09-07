@@ -1598,7 +1598,20 @@ describe("workflow and standalone Agent Profile launches", () => {
         confirmedSnapshotDigest: "0".repeat(64),
       }),
     ).toThrowError(expect.objectContaining({ code: "secret-detected" }))
+    sqlite.exec(`
+      INSERT INTO anthropic_accounts (id, oauth_token, credential_revision)
+      VALUES ('selected-account', 'encrypted-test-token', 7);
+      INSERT OR REPLACE INTO anthropic_settings (id, active_account_id)
+      VALUES ('singleton', 'selected-account');
+    `)
     const first = await launches.launch({ ...base, confirmedSnapshotDigest: preview.digest }, false)
+    expect(
+      sqlite
+        .prepare(
+          "SELECT provider_account_id, provider_credential_revision FROM agent_runs WHERE id = ?",
+        )
+        .get(first.runId),
+    ).toEqual({ provider_account_id: "selected-account", provider_credential_revision: "7" })
     const duplicate = await new StandaloneAgentLaunchService(databasePath).launch(
       { ...base, confirmedSnapshotDigest: preview.digest },
       false,
@@ -1667,6 +1680,13 @@ describe("workflow and standalone Agent Profile launches", () => {
       false,
     )
     expect(followUp.snapshotId).toBe(first.snapshotId)
+    expect(
+      sqlite
+        .prepare(
+          "SELECT provider_account_id, provider_credential_revision FROM agent_runs WHERE id = ?",
+        )
+        .get(followUp.runId),
+    ).toEqual({ provider_account_id: "selected-account", provider_credential_revision: "7" })
     expect(
       await launches.followUp(first.id, "request-follow-up", "Check the result.", false),
     ).toEqual(expect.objectContaining({ id: followUp.id }))

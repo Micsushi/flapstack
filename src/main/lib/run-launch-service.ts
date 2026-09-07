@@ -37,6 +37,8 @@ import { readDurableAgentProfileRuntimeAuthority } from "./agent-profiles/runtim
 import { canonicalJson } from "./agent-profiles/values"
 import { parseDurableOrchestrationAgentDefinition } from "./agent-orchestration/durable-definition"
 import { isSubChatRewinding } from "./sub-chat-rewind-guard"
+import type { ProviderAccountSnapshot } from "../../shared/provider-account"
+import { providerAccountSnapshotFromRow } from "./provider-accounts/snapshot"
 
 export type QueuedAgentRun = {
   runId: string
@@ -58,6 +60,7 @@ export type QueuedAgentRun = {
   requiredLocalToolTiers?: Array<"read" | "project-write" | "shell" | "git" | "network">
   runtimeLaunch?: ResolvedRuntimeLaunch
   profileRuntimeAuthority?: AgentProfileRuntimeAuthority
+  providerAccount: ProviderAccountSnapshot
   outputSchema?: Record<string, unknown> | null
 }
 
@@ -156,8 +159,9 @@ export function queueChatRun(
         worktree_path, prompt_message_id, initial_prompt, vault_context_sections,
         runtime_snapshot_version, runtime_preference, runtime_preference_source, resolved_runtime,
         runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
-        runtime_control_snapshot, status, started_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+        runtime_control_snapshot, provider_account_id, provider_auth_mode,
+        provider_runtime_target, provider_credential_revision, status, started_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
     ).run(
       runId,
       input.chatId,
@@ -451,6 +455,13 @@ function appendCorruptLaunchAudit(db: Database.Database, row: Row, error: unknow
     customPermissions: null,
     worktreePath: null,
     projectPath: null,
+    providerAccount: {
+      provider: String(row.harness ?? "unknown"),
+      accountId: "legacy-system-default",
+      authMode: "legacy",
+      runtimeTarget: "local",
+      credentialRevision: "legacy",
+    },
   }
   appendLaunchAudit(
     db,
@@ -597,6 +608,7 @@ function queuedRun(db: Database.Database, row: Row): QueuedAgentRun | null {
       ? { profileRuntimeAuthority: profileAuthority.authority }
       : {}),
     runtimeLaunch: resolvedLaunchFromSnapshotRow(row),
+    providerAccount: providerAccountSnapshotFromRow(row),
   }
 }
 
@@ -749,13 +761,19 @@ function projectTerminalRun(
 
 function runtimeSnapshotProjection(db: Database.Database): string {
   const columns = db.prepare("PRAGMA table_info(agent_runs)").all() as Array<{ name: string }>
+  const accountProjection = columns.some((column) => column.name === "provider_account_id")
+    ? "r.provider_account_id, r.provider_auth_mode, r.provider_runtime_target, r.provider_credential_revision"
+    : "'legacy-system-default' provider_account_id, 'legacy' provider_auth_mode, 'local' provider_runtime_target, 'legacy' provider_credential_revision"
   if (columns.some((column) => column.name === "runtime_snapshot_version")) {
     return `r.runtime_snapshot_version, r.runtime_preference,
       r.runtime_preference_source, r.resolved_runtime, r.runtime_adapter_version,
-      r.runtime_protocol_version, r.runtime_capability_snapshot, r.runtime_control_snapshot`
+      r.runtime_protocol_version, r.runtime_capability_snapshot, r.runtime_control_snapshot,
+      ${accountProjection}`
   }
   return `0 runtime_snapshot_version, 'flapstack-native' runtime_preference,
     'legacy' runtime_preference_source, 'flapstack-native' resolved_runtime,
     'legacy-stage3' runtime_adapter_version, 'legacy-stage3' runtime_protocol_version,
-    '{}' runtime_capability_snapshot, '{}' runtime_control_snapshot`
+    '{}' runtime_capability_snapshot, '{}' runtime_control_snapshot,
+    'legacy-system-default' provider_account_id, 'legacy' provider_auth_mode,
+    'local' provider_runtime_target, 'legacy' provider_credential_revision`
 }

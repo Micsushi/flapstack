@@ -34,7 +34,7 @@ describe("stage 6 migration snapshots", () => {
     const snapshot57 = readJson<Snapshot>("drizzle/meta/0057_snapshot.json")
     const snapshot58 = readJson<Snapshot>("drizzle/meta/0058_snapshot.json")
 
-    expect(journal.entries.slice(-8).map(({ idx, tag }) => ({ idx, tag }))).toEqual([
+    expect(journal.entries.slice(51, 59).map(({ idx, tag }) => ({ idx, tag }))).toEqual([
       { idx: 51, tag: "0051_runtime_composition_attempts" },
       { idx: 52, tag: "0052_project-vault-custom-notes" },
       { idx: 53, tag: "0053_chat-tags" },

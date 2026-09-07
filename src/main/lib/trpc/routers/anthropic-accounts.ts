@@ -143,45 +143,6 @@ export const anthropicAccountsRouter = router({
   }),
 
   /**
-   * Get decrypted OAuth token for active account
-   */
-  getActiveToken: publicProcedure.query(() => {
-    const db = getDatabase()
-    const settings = db
-      .select()
-      .from(anthropicSettings)
-      .where(eq(anthropicSettings.id, "singleton"))
-      .get()
-
-    if (!settings?.activeAccountId) {
-      return { token: null, error: "No active account" }
-    }
-
-    const account = db
-      .select()
-      .from(anthropicAccounts)
-      .where(eq(anthropicAccounts.id, settings.activeAccountId))
-      .get()
-
-    if (!account) {
-      return { token: null, error: "Active account not found" }
-    }
-
-    try {
-      const token = decryptToken(account.oauthToken, (oauthToken) => {
-        db.update(anthropicAccounts)
-          .set({ oauthToken })
-          .where(eq(anthropicAccounts.id, account.id))
-          .run()
-      })
-      return { token, error: null }
-    } catch (error) {
-      console.error("[AnthropicAccounts] Decrypt error:", error)
-      return { token: null, error: "Failed to decrypt token" }
-    }
-  }),
-
-  /**
    * Switch to a different account
    */
   setActive: publicProcedure.input(z.object({ accountId: z.string() })).mutation(({ input }) => {

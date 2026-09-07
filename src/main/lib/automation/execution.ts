@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import { providerAccountSnapshotFromRow } from "../provider-accounts/snapshot"
 import { openAppDatabase } from "../db/access"
 import { execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -644,8 +645,9 @@ export class AutomationExecutionService {
              worktree_path, prompt_message_id, initial_prompt, runtime_snapshot_version,
              runtime_preference, runtime_preference_source, resolved_runtime,
              runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
-             runtime_control_snapshot, status, started_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+             runtime_control_snapshot, provider_account_id, provider_auth_mode,
+             provider_runtime_target, provider_credential_revision, status, started_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
         )
         .run(
           runId,
@@ -1295,6 +1297,7 @@ function queuedRunById(database: Sqlite, runId: string): QueuedAgentRun | null {
   if (!row) return null
   return {
     runId: String(row.id),
+    providerAccount: providerAccountSnapshotFromRow(row),
     chatId: String(row.chat_id),
     subChatId: String(row.sub_chat_id),
     harness: row.harness as AgentHarness,

@@ -134,8 +134,9 @@ describe("Agent Runtime run creation", () => {
           id, chat_id, harness, model, permission_mode, runtime_snapshot_version,
           runtime_preference, runtime_preference_source, resolved_runtime,
           runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
-          runtime_control_snapshot, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+          runtime_control_snapshot, provider_account_id, provider_auth_mode,
+          provider_runtime_target, provider_credential_revision, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
       )
       .run("run-1", "chat-1", "codex", "gpt", "read-only", ...runtimeSnapshotSqlValues(snapshot))
     const beforeRetry = database.prepare("SELECT * FROM agent_runs WHERE id = 'run-1'").get()

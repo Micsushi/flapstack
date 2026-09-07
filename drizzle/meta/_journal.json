@@ -414,6 +414,13 @@
       "when": 1786488137538,
       "tag": "0058_agent_chat_metadata_and_waits",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "6",
+      "when": 1788752656497,
+      "tag": "0059_shiny_ogun",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import { providerAccountSnapshotFromRow } from "../provider-accounts/snapshot"
 import { randomUUID } from "node:crypto"
 import {
   normalizeChatMode,
@@ -215,8 +216,9 @@ export function materializeInteractiveRuntimeRun(
              runtime_snapshot_version,
              runtime_preference, runtime_preference_source, resolved_runtime,
              runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
-             runtime_control_snapshot, status, started_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`,
+             runtime_control_snapshot, provider_account_id, provider_auth_mode,
+             provider_runtime_target, provider_credential_revision, status, started_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`,
         )
         .run(
           input.runId,
@@ -288,6 +290,7 @@ export function materializeInteractiveRuntimeRun(
     projectPath: context.project_path,
     codexThreadVisibility: input.codexThreadVisibility ?? "hidden",
     runtimeLaunch: launch,
+    providerAccount: providerAccountSnapshotFromRow({ ...snapshot, harness: input.harness }),
   }
 }
 

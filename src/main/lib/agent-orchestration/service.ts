@@ -1951,8 +1951,9 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
       worktree_path, prompt_message_id, initial_prompt, runtime_snapshot_version,
       runtime_preference, runtime_preference_source, resolved_runtime, runtime_adapter_version,
       runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot,
-      status, started_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      provider_account_id, provider_auth_mode, provider_runtime_target,
+      provider_credential_revision, status, started_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
   ).run(
     runId,
     chatId,

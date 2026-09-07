@@ -130,8 +130,11 @@ export class DevRuntimeActivityFixtureService {
            runtime_snapshot_version, runtime_preference, runtime_preference_source,
            resolved_runtime, runtime_adapter_version, runtime_protocol_version,
            runtime_capability_snapshot, runtime_control_snapshot,
+           provider_account_id, provider_auth_mode, provider_runtime_target,
+           provider_credential_revision,
            status, started_at, completed_at
-         ) VALUES (?, ?, ?, ?, ?, 'read-only', 1, ?, 'chat', ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, 'read-only', 1, ?, 'chat', ?, ?, ?, ?, ?,
+           'fixture-account', 'legacy', 'local', 'fixture', ?, ?, ?)`,
       )
       for (const [index, definition] of FIXTURE_RUNS.entries()) {
         const startedAt = Math.floor((FIXTURE_BASE_TIME + index * 60_000) / 1_000)

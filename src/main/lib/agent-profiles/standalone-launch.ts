@@ -1,4 +1,9 @@
 import Database from "better-sqlite3"
+import {
+  providerAccountSnapshotFromRow,
+  providerAccountSnapshotColumns,
+  resolveProviderAccountSnapshot,
+} from "../provider-accounts/snapshot"
 import { randomUUID } from "node:crypto"
 import { existsSync, realpathSync } from "node:fs"
 import { execFileSync } from "node:child_process"
@@ -208,6 +213,9 @@ export class StandaloneAgentLaunchService {
               serviceTier: speed.serviceTier,
             },
           }),
+          providerAccountSnapshotColumns(
+            resolveProviderAccountSnapshot(db, snapshot.capability.harness),
+          ),
         )
         if (runtimeSnapshot.resolvedRuntime !== snapshot.runtimeResolution.resolvedRuntime) {
           throw new StandaloneAgentLaunchError(
@@ -242,8 +250,9 @@ export class StandaloneAgentLaunchService {
              runtime_preference, runtime_preference_source, resolved_runtime,
              runtime_adapter_version, runtime_protocol_version,
              runtime_capability_snapshot, runtime_control_snapshot,
-             status, started_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+             provider_account_id, provider_auth_mode, provider_runtime_target,
+             provider_credential_revision, status, started_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
         ).run(
           ids.runId,
           ids.chatId,
@@ -411,8 +420,9 @@ export class StandaloneAgentLaunchService {
              worktree_path, prompt_message_id, initial_prompt, runtime_snapshot_version,
              runtime_preference, runtime_preference_source, resolved_runtime,
              runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
-             runtime_control_snapshot, status, started_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+             runtime_control_snapshot, provider_account_id, provider_auth_mode,
+             provider_runtime_target, provider_credential_revision, status, started_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
         ).run(
           runId,
           prior.chatId,
@@ -432,6 +442,10 @@ export class StandaloneAgentLaunchService {
           priorRun.runtime_protocol_version,
           priorRun.runtime_capability_snapshot,
           priorRun.runtime_control_snapshot,
+          priorRun.provider_account_id,
+          priorRun.provider_auth_mode,
+          priorRun.provider_runtime_target,
+          priorRun.provider_credential_revision,
           now,
         )
         if (prior.orchestrationTaskId) {
@@ -1211,6 +1225,7 @@ function queuedRun(db: Database.Database, runId: string): QueuedAgentRun {
         }
       : {}),
     runtimeLaunch: resolvedLaunchFromSnapshotRow(row),
+    providerAccount: providerAccountSnapshotFromRow(row),
   }
 }
 

@@ -1203,11 +1203,14 @@ function seedRuntimeRun(database: Database.Database, runId: string): void {
          id, chat_id, sub_chat_id, harness, model, permission_mode, status,
          runtime_snapshot_version, runtime_preference, runtime_preference_source,
          resolved_runtime, runtime_adapter_version, runtime_protocol_version,
-         runtime_capability_snapshot, runtime_control_snapshot
+         runtime_capability_snapshot, runtime_control_snapshot,
+         provider_account_id, provider_auth_mode, provider_runtime_target,
+         provider_credential_revision
        ) VALUES (?, 'performance-chat', 'performance-subchat', 'codex', 'gpt-test',
          'read-only', 'running', 1, 'codex', 'chat', 'codex',
          'performance-adapter', 'performance-protocol',
-         '{"schemaVersion":1}', '{"schemaVersion":1}')`,
+         '{"schemaVersion":1}', '{"schemaVersion":1}',
+         'performance-account', 'legacy', 'local', 'performance')`,
     )
     .run(runId)
 }

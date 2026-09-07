@@ -1,4 +1,5 @@
 import Database from "better-sqlite3"
+import { providerAccountSnapshotFromRow } from "../provider-accounts/snapshot"
 import type { ResolvedRuntimeLaunch } from "../../../shared/agent-runtime"
 import type { AgentProfileRuntimeAuthority } from "../../../shared/agent-profiles"
 import {
@@ -54,6 +55,7 @@ export type RuntimeLaunchOwnership = {
 
 /** Exact durable input accepted by F11 MainRuntimeLaunchService.launch. */
 export type MainRuntimeQueuedRun = {
+  providerAccount: ReturnType<typeof providerAccountSnapshotFromRow>
   runId: string
   chatId: string
   subChatId: string
@@ -253,6 +255,7 @@ function loadDurableRun(
       worktreePath: stringOrNull(row.worktree_path),
       projectPath: stringOrNull(row.project_path),
       runtimeLaunch,
+      providerAccount: providerAccountSnapshotFromRow(row),
       ...(durableDefinition.localEndpoint
         ? { localEndpoint: durableDefinition.localEndpoint }
         : {}),

@@ -1685,6 +1685,10 @@ export const agentRuns = sqliteTable(
     runtimeControlSnapshot: text("runtime_control_snapshot")
       .notNull()
       .default('{"schemaVersion":1}'),
+    providerAccountId: text("provider_account_id").notNull().default("legacy-system-default"),
+    providerAuthMode: text("provider_auth_mode").notNull().default("legacy"),
+    providerRuntimeTarget: text("provider_runtime_target").notNull().default("local"),
+    providerCredentialRevision: text("provider_credential_revision").notNull().default("legacy"),
     status: text("status").notNull().default("running"),
     startedAt: integer("started_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     completedAt: integer("completed_at", { mode: "timestamp" }),
@@ -3072,6 +3076,9 @@ export const anthropicAccounts = sqliteTable("anthropic_accounts", {
   email: text("email"), // User's email from OAuth (if available)
   displayName: text("display_name"), // User-editable label
   oauthToken: text("oauth_token").notNull(), // Encrypted with safeStorage
+  authMode: text("auth_mode").notNull().default("subscription"),
+  runtimeTarget: text("runtime_target").notNull().default("local"),
+  credentialRevision: integer("credential_revision").notNull().default(1),
   connectedAt: integer("connected_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
   desktopUserId: text("desktop_user_id"), // Reference to flapstack.dev user

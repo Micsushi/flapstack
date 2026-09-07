@@ -464,14 +464,6 @@ export const claudeCodeRouter = router({
     }),
 
   /**
-   * Check for existing Claude token in system credentials
-   */
-  getSystemToken: publicProcedure.query(() => {
-    const token = getExistingClaudeToken()?.trim() ?? null
-    return { token }
-  }),
-
-  /**
    * Import Claude token from system credentials
    */
   importSystemToken: publicProcedure.mutation(async () => {
@@ -548,68 +540,6 @@ export const claudeCodeRouter = router({
       }
       return { success: true }
     }),
-
-  /**
-   * Get decrypted OAuth token (local)
-   * Now uses multi-account system - gets token from active account
-   */
-  getToken: publicProcedure.query(() => {
-    const db = getDatabase()
-
-    // First try multi-account system
-    const settings = db
-      .select()
-      .from(anthropicSettings)
-      .where(eq(anthropicSettings.id, "singleton"))
-      .get()
-
-    if (settings?.activeAccountId) {
-      const account = db
-        .select()
-        .from(anthropicAccounts)
-        .where(eq(anthropicAccounts.id, settings.activeAccountId))
-        .get()
-
-      if (account) {
-        try {
-          const token = decryptToken(account.oauthToken, (oauthToken) => {
-            db.update(anthropicAccounts)
-              .set({ oauthToken })
-              .where(eq(anthropicAccounts.id, account.id))
-              .run()
-          })
-          return { token, error: null }
-        } catch (error) {
-          console.error("[ClaudeCode] Decrypt error:", error)
-          return { token: null, error: "Failed to decrypt token" }
-        }
-      }
-    }
-
-    // Fallback to legacy table
-    const cred = db
-      .select()
-      .from(claudeCodeCredentials)
-      .where(eq(claudeCodeCredentials.id, "default"))
-      .get()
-
-    if (!cred?.oauthToken) {
-      return { token: null, error: "Not connected" }
-    }
-
-    try {
-      const token = decryptToken(cred.oauthToken, (oauthToken) => {
-        db.update(claudeCodeCredentials)
-          .set({ oauthToken })
-          .where(eq(claudeCodeCredentials.id, "default"))
-          .run()
-      })
-      return { token, error: null }
-    } catch (error) {
-      console.error("[ClaudeCode] Decrypt error:", error)
-      return { token: null, error: "Failed to decrypt token" }
-    }
-  }),
 
   /**
    * Disconnect - delete active account from multi-account system

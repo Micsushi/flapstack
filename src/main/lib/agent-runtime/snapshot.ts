@@ -13,6 +13,13 @@ import { checkRuntimeCompatibility } from "./compatibility"
 import type { RunPermissionMode } from "../../../shared/harness-types"
 import { createRuntimeDefaultsService } from "./defaults"
 import { AgentRuntimeResolutionError, assertResolvedAgentRuntime } from "./resolver"
+import {
+  providerAccountSnapshotColumns,
+  providerAccountSnapshotFromRow,
+  providerAccountSnapshotSqlValues,
+  resolveProviderAccountSnapshot,
+  type ProviderAccountSnapshotColumns,
+} from "../provider-accounts/snapshot"
 
 type Sqlite = Database.Database
 type DatabaseLike = Sqlite | object
@@ -31,7 +38,7 @@ export const LEGACY_RUNTIME_CAPABILITIES: RuntimeCapabilitySnapshot = {
   unavailableReason: null,
 }
 
-export type RuntimeSnapshotColumns = {
+export type RuntimeSnapshotColumns = ProviderAccountSnapshotColumns & {
   runtimeSnapshotVersion: number
   runtimePreference: AgentRuntimePreference
   runtimePreferenceSource: ResolvedRuntimeLaunch["preferenceSource"]
@@ -118,10 +125,16 @@ export function constructRuntimeSnapshot(
     permission: input.permission,
     adapterProbes: input.adapterProbes,
   })
-  return runtimeSnapshotColumns(launch)
+  return runtimeSnapshotColumns(
+    launch,
+    providerAccountSnapshotColumns(resolveProviderAccountSnapshot(sqlite, input.harness)),
+  )
 }
 
-export function runtimeSnapshotColumns(launch: ResolvedRuntimeLaunch): RuntimeSnapshotColumns {
+export function runtimeSnapshotColumns(
+  launch: ResolvedRuntimeLaunch,
+  account: ProviderAccountSnapshotColumns,
+): RuntimeSnapshotColumns {
   return {
     runtimeSnapshotVersion: 1,
     runtimePreference: launch.requestedPreference,
@@ -131,6 +144,7 @@ export function runtimeSnapshotColumns(launch: ResolvedRuntimeLaunch): RuntimeSn
     runtimeProtocolVersion: launch.versions.protocolVersion,
     runtimeCapabilitySnapshot: JSON.stringify(launch.capabilities),
     runtimeControlSnapshot: JSON.stringify(launch.controls),
+    ...account,
   }
 }
 
@@ -144,6 +158,10 @@ export function legacyRuntimeSnapshot(): RuntimeSnapshotColumns {
     runtimeProtocolVersion: "legacy-stage3",
     runtimeCapabilitySnapshot: JSON.stringify(LEGACY_RUNTIME_CAPABILITIES),
     runtimeControlSnapshot: JSON.stringify(DEFAULT_RUNTIME_CONTROLS),
+    providerAccountId: "legacy-system-default",
+    providerAuthMode: "legacy",
+    providerRuntimeTarget: "local",
+    providerCredentialRevision: "legacy",
   }
 }
 
@@ -166,6 +184,7 @@ export function interpretRuntimeSnapshot(row: Record<string, unknown>): RuntimeS
       row.runtime_capability_snapshot ?? row.runtimeCapabilitySnapshot,
     ),
     runtimeControlSnapshot: String(row.runtime_control_snapshot ?? row.runtimeControlSnapshot),
+    ...providerAccountSnapshotColumns(providerAccountSnapshotFromRow(row)),
   }
 }
 
@@ -218,6 +237,7 @@ export function runtimeSnapshotSqlValues(snapshot: RuntimeSnapshotColumns): read
     snapshot.runtimeProtocolVersion,
     snapshot.runtimeCapabilitySnapshot,
     snapshot.runtimeControlSnapshot,
+    ...providerAccountSnapshotSqlValues(snapshot),
   ]
 }
 
