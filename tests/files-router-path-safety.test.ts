@@ -24,7 +24,12 @@ const state = vi.hoisted(() => ({
 }))
 
 const assertRegisteredWorktree = vi.hoisted(() => vi.fn())
-const scanState = vi.hoisted(() => ({ opens: 0, beforeOpen: null as (() => Promise<void>) | null }))
+const scanState = vi.hoisted(() => ({
+  opens: 0,
+  beforeOpen: null as (() => Promise<void>) | null,
+  identityPath: "",
+  identityDelta: 0n,
+}))
 const watchState = vi.hoisted(() => ({ watcher: null as import("chokidar").FSWatcher | null }))
 vi.mock("chokidar", async (importOriginal) => {
   const actual = await importOriginal<typeof import("chokidar")>()
@@ -41,6 +46,14 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>()
   return {
     ...actual,
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      const info = await actual.lstat(...args)
+      if (String(args[0]) !== scanState.identityPath) return info
+      const exact = 9007199254740992n + scanState.identityDelta
+      return Object.assign(Object.create(Object.getPrototypeOf(info)), info, {
+        ino: args[1]?.bigint ? exact : Number(exact),
+      })
+    },
     opendir: async (...args: Parameters<typeof actual.opendir>) => {
       scanState.opens += 1
       await scanState.beforeOpen?.()
@@ -95,6 +108,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   scanState.opens = 0
   scanState.beforeOpen = null
+  scanState.identityPath = ""
+  scanState.identityDelta = 0n
   state.trashed = []
   state.subChatId = null
   state.registeredRoots.clear()
@@ -236,6 +251,26 @@ describe("files router mutation path safety", () => {
     expect(await caller.search({ projectPath: root, query: "file-999" })).toHaveLength(1)
     expect(scanState.opens).toBe(1)
   }, 15_000)
+
+  it("rejects adjacent 64-bit scan identities before publishing entries", async () => {
+    const root = state.userDataPath
+    state.registeredRoots.add(root)
+    setBetaFeatureEnabled("streamedFileSearch", true)
+    writeFileSync(join(root, "unverified.txt"), "text")
+    scanState.identityPath = realpathSync(root)
+    scanState.beforeOpen = async () => {
+      scanState.identityDelta = 1n
+    }
+    const events: WorkspaceFileSearchEvent[] = []
+    const stream = await caller.searchStream({ requestId: randomUUID(), projectPath: root })
+    const subscription = stream.subscribe({ next: (event) => events.push(event) })
+    try {
+      await vi.waitFor(() => expect(events.at(-1)?.status).toBe("error"))
+      expect(JSON.stringify(events)).not.toContain("unverified.txt")
+    } finally {
+      subscription.unsubscribe()
+    }
+  })
 
   it("never publishes entries from a directory swapped before opening", async () => {
     const root = state.userDataPath

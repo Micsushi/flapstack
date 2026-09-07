@@ -49,6 +49,9 @@ The shared rooted-file authority also keeps bigint identities through root,
 parent, target, descriptor and rollback checks. Synthetic adjacent 64-bit identity
 races exercise all supported file actions, independently of the host filesystem's
 current inode allocation.
+File-discovery scans and local-model directory reads use the same exact-ID rule.
+Git-exclusion snapshots and lock cleanup retain bigint identities too, so a
+rounded-equal replacement cannot be mistaken for an owned lock or snapshot.
 
 Each buffer is limited to 2 MiB of strict UTF-8. Draft storage separately allows
 at most 1,000 buffers and 64 MiB of text, with at most 64 live leases. Reaching a

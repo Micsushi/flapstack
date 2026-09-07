@@ -143,7 +143,7 @@ async function scanDirectory(
 
   const entries: FileEntry[] = []
 
-  const currentInfo = await lstat(currentPath)
+  const currentInfo = await lstat(currentPath, { bigint: true })
   budget.signal.throwIfAborted()
   if (currentInfo.isSymbolicLink() || !currentInfo.isDirectory())
     throw new Error("File discovery root changed during scanning")
@@ -163,7 +163,7 @@ async function scanDirectory(
   for await (const entry of dirEntries) {
     budget.signal.throwIfAborted()
     // Partial results must be validated before publication, not only at scan end.
-    const liveDirectory = await lstat(currentPath)
+    const liveDirectory = await lstat(currentPath, { bigint: true })
     if (
       liveDirectory.isSymbolicLink() ||
       liveDirectory.dev !== currentInfo.dev ||

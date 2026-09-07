@@ -1,7 +1,27 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+const identityState = vi.hoisted(() => ({ path: "", delta: 0n }))
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>()
+  return {
+    ...actual,
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      const info = await actual.lstat(...args)
+      if (String(args[0]) !== identityState.path) return info
+      const exact = 9007199254740992n + identityState.delta
+      return Object.assign(Object.create(Object.getPrototypeOf(info)), info, {
+        ino: args[1]?.bigint ? exact : Number(exact),
+      })
+    },
+    readdir: async (...args: Parameters<typeof actual.readdir>) => {
+      const entries = await actual.readdir(...args)
+      if (String(args[0]) === identityState.path) identityState.delta = 1n
+      return entries
+    },
+  }
+})
 import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import {
   LOCAL_MODEL_READ_TOOL_SCHEMAS,
@@ -17,10 +37,25 @@ import {
 const roots: string[] = []
 
 afterEach(() => {
+  identityState.path = ""
+  identityState.delta = 0n
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
 describe("local model read tools", () => {
+  it("does not return entries from adjacent 64-bit directory identities", async () => {
+    const root = realpathSync(projectFixture())
+    identityState.path = root
+    const executor = createReadOnlyLocalModelToolExecutor({
+      rootPath: root,
+      verifyRoot: () => root,
+    })
+    await expect(execute(executor, "list_directory", { path: "." })).resolves.toMatchObject({
+      ok: false,
+      errorCode: "path-denied",
+    })
+  })
+
   it("publishes normalized schemas and executes bounded read, list, glob, and grep tools", async () => {
     const root = projectFixture()
     const verifyRoot = vi.fn(() => root)

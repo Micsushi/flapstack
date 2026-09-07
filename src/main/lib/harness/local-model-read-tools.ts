@@ -652,10 +652,10 @@ async function safeDirectory(root: string, relativePath: string): Promise<string
 
 async function readVerifiedDirectory(root: string, relativePath: string) {
   const directory = await safeDirectory(root, relativePath)
-  const before = await lstat(directory)
+  const before = await lstat(directory, { bigint: true })
   const entries = await readdir(directory, { withFileTypes: true })
   const rechecked = await safeDirectory(root, relativePath)
-  const after = await lstat(rechecked)
+  const after = await lstat(rechecked, { bigint: true })
   if (
     directory !== rechecked ||
     before.dev !== after.dev ||

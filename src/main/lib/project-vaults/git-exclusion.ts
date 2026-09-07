@@ -7,7 +7,7 @@ import {
   fsyncSync,
   linkSync,
   openSync,
-  lstatSync,
+  lstatSync as nativeLstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -23,6 +23,7 @@ const FLAPSTACK_GIT_EXCLUDE_LOCK = "flapstack-project-vault-exclude.lock"
 const LOCK_WAIT_TIMEOUT_MS = 10_000
 const LOCK_STALE_AFTER_MS = 30_000
 const COMPARE_AND_SWAP_ATTEMPTS = 8
+const lstatSync = (path: string) => nativeLstatSync(path, { bigint: true })
 
 export type ProjectVaultGitExclusionHooks = {
   /** Test seam for proving a user edit between read and atomic replace is retained. */
@@ -49,11 +50,11 @@ type ExcludeSnapshot = {
   exists: boolean
   content: string
   mode: number
-  deviceId: number
-  inodeId: number
-  size: number
-  modifiedAt: number
-  changedAt: number
+  deviceId: bigint
+  inodeId: bigint
+  size: bigint
+  modifiedAt: bigint
+  changedAt: bigint
 }
 
 export function ensureProjectVaultGitExclusion(
@@ -315,7 +316,7 @@ function withGitExclusionLock<T>(plan: GitExclusionPlan, action: () => T): T {
       if (lock.isSymbolicLink() || !lock.isFile()) {
         throw new Error("the Git exclusion lock is not a regular file")
       }
-      if (Date.now() - lock.mtimeMs > LOCK_STALE_AFTER_MS) {
+      if (Date.now() - Number(lock.mtimeMs) > LOCK_STALE_AFTER_MS) {
         let ownerPid: number | null
         try {
           ownerPid = readLockOwnerPid(lockPath)
@@ -347,7 +348,7 @@ function withGitExclusionLock<T>(plan: GitExclusionPlan, action: () => T): T {
     }
   }
 
-  const ownedIdentity = fstatSync(descriptor)
+  const ownedIdentity = fstatSync(descriptor, { bigint: true })
   let result: T | undefined
   let actionError: unknown
   try {
@@ -452,18 +453,18 @@ function readExcludeSnapshotAt(path: string): ExcludeSnapshot {
     if (
       sameFilesystemEntry(before, after) &&
       before.size === after.size &&
-      before.mtimeMs === after.mtimeMs &&
-      before.ctimeMs === after.ctimeMs
+      before.mtimeNs === after.mtimeNs &&
+      before.ctimeNs === after.ctimeNs
     ) {
       return {
         exists: true,
         content,
-        mode: after.mode,
+        mode: Number(after.mode),
         deviceId: after.dev,
         inodeId: after.ino,
         size: after.size,
-        modifiedAt: after.mtimeMs,
-        changedAt: after.ctimeMs,
+        modifiedAt: after.mtimeNs,
+        changedAt: after.ctimeNs,
       }
     }
   }
@@ -512,8 +513,8 @@ function assertNoLinkedWorktreeExposure(plan: GitExclusionPlan): void {
 }
 
 function sameFilesystemEntry(
-  left: { dev: number; ino: number },
-  right: { dev: number; ino: number },
+  left: { dev: bigint; ino: bigint },
+  right: { dev: bigint; ino: bigint },
 ): boolean {
   return left.dev === right.dev && left.ino === right.ino
 }
