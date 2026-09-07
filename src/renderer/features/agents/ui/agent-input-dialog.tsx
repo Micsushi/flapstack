@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useId, useMemo, useRef, useState } from "react"
 import { ChevronLeft, ChevronRight, X } from "lucide-react"
 import { Button } from "../../../components/ui/button"
 import { cn } from "../../../lib/utils"
@@ -15,6 +15,17 @@ type AgentInputDialogProps = {
   onAnswerInChat: () => void
 }
 
+export function useAgentInputDisclosure(requestId: string | undefined, active: boolean) {
+  const [openedRequestId, setOpenedRequestId] = useState<string | null>(null)
+  useEffect(() => {
+    setOpenedRequestId(null)
+  }, [requestId, active])
+  return {
+    open: active && Boolean(requestId) && openedRequestId === requestId,
+    setOpen: (open: boolean) => setOpenedRequestId(open && active ? (requestId ?? null) : null),
+  }
+}
+
 export function AgentInputDialog({
   request,
   open,
@@ -23,6 +34,8 @@ export function AgentInputDialog({
   onSkip,
   onAnswerInChat,
 }: AgentInputDialogProps) {
+  const titleId = useId()
+  const descriptionId = useId()
   const [questionIndex, setQuestionIndex] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string[]>>({})
   const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({})
@@ -111,15 +124,15 @@ export function AgentInputDialog({
   return (
     <section
       role="region"
-      aria-labelledby="agent-input-title"
-      aria-describedby="agent-input-description"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
       className="relative z-20 mx-auto w-full max-w-2xl overflow-hidden rounded-t-xl border border-b-0 border-border bg-background shadow-[0_-8px_24px_hsl(var(--background)/0.35)]"
     >
       <header className="border-b border-border px-4 py-3 pr-12">
-        <h2 id="agent-input-title" className="text-sm font-semibold">
+        <h2 id={titleId} className="text-sm font-semibold">
           {question.header || "Agent needs input"}
         </h2>
-        <p id="agent-input-description" className="mt-0.5 text-xs text-muted-foreground">
+        <p id={descriptionId} className="mt-0.5 text-xs text-muted-foreground">
           Question {questionIndex + 1} of {request.questions.length}.{" "}
           {isContinuation
             ? "This answer continues as a normal user turn."
@@ -144,7 +157,7 @@ export function AgentInputDialog({
               const checked = selected.includes(option.id)
               return (
                 <label
-                  key={option.label}
+                  key={option.id}
                   className={cn(
                     "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
                     checked ? "border-foreground/40 bg-muted" : "border-border hover:bg-muted/50",

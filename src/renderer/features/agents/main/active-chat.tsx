@@ -249,7 +249,7 @@ import { AgentToolRegistry } from "../ui/agent-tool-registry"
 import { AttachmentTray } from "../ui/attachment-tray"
 import { isPlanFile } from "../ui/agent-tool-utils"
 import { AgentUserMessageBubble } from "../ui/agent-user-message-bubble"
-import { AgentInputDialog } from "../ui/agent-input-dialog"
+import { AgentInputDialog, useAgentInputDisclosure } from "../ui/agent-input-dialog"
 import { AgentsHeaderControls } from "../ui/agents-header-controls"
 import { ChatTitleEditor } from "../ui/chat-title-editor"
 import { getHarnessChipMeta } from "../constants"
@@ -2867,18 +2867,10 @@ const ChatViewInner = memo(function ChatViewInner({
     isQuestionExpired ||
     displayQuestions?.request?.capability.mode === "continuation" ||
     displayQuestions?.request?.capability.mode === "unsupported"
-  const [questionDialogOpen, setQuestionDialogOpen] = useState(false)
-  const autoOpenedQuestionIdRef = useRef<string | null>(null)
-
-  useEffect(() => {
-    if (!displayQuestions) {
-      setQuestionDialogOpen(false)
-      return
-    }
-    if (!isActive || autoOpenedQuestionIdRef.current === displayQuestions.toolUseId) return
-    autoOpenedQuestionIdRef.current = displayQuestions.toolUseId
-    setQuestionDialogOpen(true)
-  }, [displayQuestions, isActive])
+  const { open: questionDialogOpen, setOpen: setQuestionDialogOpen } = useAgentInputDisclosure(
+    displayQuestions?.toolUseId,
+    isActive,
+  )
 
   useEffect(() => {
     if (!import.meta.env.DEV || !trpcClient.devMcpTestControl) return
@@ -5324,7 +5316,7 @@ const ChatViewInner = memo(function ChatViewInner({
           className="absolute bottom-0 left-0 right-3 z-20"
           data-chat-bottom-dock
         >
-          {/* Shared question dialog. Background chats never open it automatically. */}
+          {/* Questions stay visible without expanding or taking focus until requested. */}
           {displayQuestions && (
             <>
               <AgentInputDialog
@@ -5342,12 +5334,13 @@ const ChatViewInner = memo(function ChatViewInner({
                 <div className="relative z-20 px-4">
                   <div className="mx-auto flex w-full max-w-2xl items-start justify-between gap-3 rounded-t-xl border border-b-0 border-border bg-muted/30 px-3 py-2">
                     <div className="min-w-0 text-xs text-muted-foreground">
-                      <div className="font-medium text-foreground">Agent questions</div>
-                      {displayQuestions.questions.map((question, index) => (
-                        <div key={`${displayQuestions.toolUseId}-${index}`} className="truncate">
-                          {index + 1}. {question.question}
-                        </div>
-                      ))}
+                      <div className="font-medium text-foreground" role="status">
+                        {displayQuestions.questions.length} agent question
+                        {displayQuestions.questions.length === 1 ? "" : "s"}
+                      </div>
+                      <div className="line-clamp-2 break-words">
+                        {displayQuestions.questions[0]?.question}
+                      </div>
                       {isQuestionContinuation && (
                         <div className="mt-1 text-amber-600 dark:text-amber-400">
                           This harness cannot resume a paused structured request. Your reply will
@@ -5359,9 +5352,10 @@ const ChatViewInner = memo(function ChatViewInner({
                       variant="outline"
                       size="sm"
                       className="shrink-0"
+                      aria-expanded={false}
                       onClick={() => setQuestionDialogOpen(true)}
                     >
-                      Reopen questions
+                      Answer questions
                     </Button>
                   </div>
                 </div>

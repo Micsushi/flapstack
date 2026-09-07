@@ -3,7 +3,10 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { AgentInputDialog } from "../src/renderer/features/agents/ui/agent-input-dialog"
+import {
+  AgentInputDialog,
+  useAgentInputDisclosure,
+} from "../src/renderer/features/agents/ui/agent-input-dialog"
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -51,6 +54,76 @@ afterEach(() => {
 })
 
 describe("AgentInputDialog", () => {
+  it("keeps new requests collapsed and preserves composer focus until explicitly opened", async () => {
+    const container = document.createElement("div")
+    document.body.appendChild(container)
+    root = createRoot(container)
+    function View({ requestId, active = true }: { requestId: string; active?: boolean }) {
+      const disclosure = useAgentInputDisclosure(requestId, active)
+      return (
+        <>
+          <textarea aria-label="Composer" />
+          <button onClick={() => disclosure.setOpen(true)}>Answer questions</button>
+          <AgentInputDialog
+            request={{ ...baseRequest, toolUseId: requestId }}
+            open={disclosure.open}
+            onOpenChange={disclosure.setOpen}
+            onAnswer={vi.fn()}
+            onSkip={vi.fn()}
+            onAnswerInChat={vi.fn()}
+          />
+        </>
+      )
+    }
+    const paint = async () =>
+      act(async () => {
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+      })
+    act(() => root!.render(<View requestId="first" />))
+    const composer = container.querySelector("textarea")!
+    composer.focus()
+    await paint()
+    expect(container.querySelector('[role="region"]')).toBeNull()
+    expect(document.activeElement).toBe(composer)
+    act(() => container.querySelector("button")!.click())
+    await paint()
+    expect(document.activeElement).toBe(container.querySelector('input[type="radio"]'))
+    act(() => root!.render(<View requestId="second" />))
+    expect(container.querySelector('[role="region"]')).toBeNull()
+    act(() => container.querySelector("button")!.click())
+    act(() => root!.render(<View requestId="second" active={false} />))
+    act(() => root!.render(<View requestId="second" />))
+    expect(container.querySelector('[role="region"]')).toBeNull()
+  })
+
+  it("uses distinct accessible labels for multiple chat panes", () => {
+    const container = document.createElement("div")
+    document.body.appendChild(container)
+    root = createRoot(container)
+    act(() =>
+      root!.render(
+        <>
+          {["first", "second"].map((id) => (
+            <AgentInputDialog
+              key={id}
+              request={{ ...baseRequest, toolUseId: id }}
+              open
+              onOpenChange={vi.fn()}
+              onAnswer={vi.fn()}
+              onSkip={vi.fn()}
+              onAnswerInChat={vi.fn()}
+            />
+          ))}
+        </>,
+      ),
+    )
+    const labels = [...container.querySelectorAll('[role="region"]')].map((region) =>
+      region.getAttribute("aria-labelledby"),
+    )
+    expect(new Set(labels).size).toBe(2)
+    for (const label of labels) expect(document.getElementById(label!)).not.toBeNull()
+  })
+
   it("renders as a docked region instead of an interruptive modal", () => {
     renderDialog()
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
