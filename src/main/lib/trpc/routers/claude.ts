@@ -23,6 +23,7 @@ import {
 } from "../../claude"
 import { getExistingClaudeToken } from "../../claude-token"
 import { decryptClaudeCredential } from "../../claude-credential-storage"
+import { resolveClaudeAccountToken } from "../../provider-accounts/claude-token"
 import {
   clearClaudeStreamIfOwned,
   persistClaudeMessagesForStream,
@@ -43,10 +44,7 @@ import {
 } from "../../claude-config"
 import {
   agentRuns,
-  anthropicAccounts,
-  anthropicSettings,
   chats,
-  claudeCodeCredentials,
   getDatabase,
   getDatabasePath,
   getSqliteDatabase,
@@ -393,85 +391,7 @@ async function completeClaudeAgentRun(
  * Returns null if not connected
  */
 function getClaudeCodeToken(): string | null {
-  try {
-    const db = getDatabase()
-
-    console.log("[claude-auth] ========== CLAUDE CODE AUTH DEBUG ==========")
-
-    // First try multi-account system
-    const settings = db
-      .select()
-      .from(anthropicSettings)
-      .where(eq(anthropicSettings.id, "singleton"))
-      .get()
-
-    if (settings?.activeAccountId) {
-      const account = db
-        .select()
-        .from(anthropicAccounts)
-        .where(eq(anthropicAccounts.id, settings.activeAccountId))
-        .get()
-
-      if (account?.oauthToken) {
-        console.log(
-          "[claude-auth] Using multi-account system, activeAccountId:",
-          settings.activeAccountId,
-        )
-        const decrypted = decryptToken(account.oauthToken, (oauthToken) => {
-          db.update(anthropicAccounts)
-            .set({ oauthToken })
-            .where(eq(anthropicAccounts.id, account.id))
-            .run()
-        })
-        console.log("[claude-auth] Token decrypted successfully")
-        console.log("[claude-auth] ============================================")
-        return decrypted
-      }
-
-      console.log("[claude-auth] Active account not found or has no token, falling back to legacy")
-    }
-
-    // Fallback to legacy table
-    const cred = db
-      .select()
-      .from(claudeCodeCredentials)
-      .where(eq(claudeCodeCredentials.id, "default"))
-      .get()
-
-    console.log("[claude-auth] Legacy credential available:", Boolean(cred?.oauthToken))
-
-    if (!cred?.oauthToken) {
-      const systemToken = getExistingClaudeToken()?.trim()
-      if (systemToken) {
-        console.log("[claude-auth] Using Claude Code token from system credentials")
-        console.log("[claude-auth] ============================================")
-        return systemToken
-      }
-
-      console.log("[claude-auth] No Claude Code credentials found")
-      console.log("[claude-auth] ============================================")
-      return null
-    }
-
-    const decrypted = decryptToken(cred.oauthToken, (oauthToken) => {
-      db.update(claudeCodeCredentials)
-        .set({ oauthToken })
-        .where(eq(claudeCodeCredentials.id, "default"))
-        .run()
-    })
-    console.log("[claude-auth] Token decrypted successfully (legacy)")
-    console.log("[claude-auth] ============================================")
-
-    return decrypted
-  } catch (error) {
-    console.error("[claude-auth] Error getting Claude Code token:", error)
-    const systemToken = getExistingClaudeToken()?.trim()
-    if (systemToken) {
-      console.log("[claude-auth] Falling back to Claude Code token from system credentials")
-      return systemToken
-    }
-    return null
-  }
+  return resolveClaudeAccountToken(getDatabase(), decryptToken, getExistingClaudeToken)
 }
 
 // Dynamic import for ESM module - CACHED to avoid re-importing on every message
@@ -1347,7 +1267,7 @@ export const claudeRouter = router({
                     baseUrl: customCredentialStatus.metadata.baseUrl,
                   }
                 : undefined
-            const claudeCodeToken = getClaudeCodeToken()
+            const claudeCodeToken = secureCustomConfig ? null : getClaudeCodeToken()
             const offlineResult = await checkOfflineFallback(
               secureCustomConfig,
               claudeCodeToken,

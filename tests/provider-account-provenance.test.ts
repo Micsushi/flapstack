@@ -87,6 +87,10 @@ describe("provider account provenance", () => {
       expect(() => providerAccountSnapshotFromRow({ provider_auth_mode: "invalid" })).toThrow()
       expect(resolveProviderAccountSnapshot(db, "codex").accountId).toBe("system-default")
       expect(resolveProviderAccountSnapshot(db, "local").authMode).toBe("local")
+      db.exec("DELETE FROM anthropic_accounts")
+      expect(() => resolveProviderAccountSnapshot(db, "claude-code")).toThrow(
+        "Selected Claude account is unavailable",
+      )
     } finally {
       db.close()
     }

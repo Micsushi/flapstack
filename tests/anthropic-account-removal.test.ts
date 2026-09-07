@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
 import { anthropicAccountsRouter } from "../src/main/lib/trpc/routers/anthropic-accounts"
+import { resolveClaudeAccountToken } from "../src/main/lib/provider-accounts/claude-token"
 
 const state = vi.hoisted(() => ({ db: null as unknown, clearCaches: vi.fn() }))
 vi.mock("../src/main/lib/db", async () => ({
@@ -35,6 +36,10 @@ describe("Anthropic account removal", () => {
   const token = (id: string) => Buffer.from(`sealed:${id}`).toString("base64")
   const active = () => sqlite.prepare("SELECT active_account_id FROM anthropic_settings").get()
   const credential = () => sqlite.prepare("SELECT oauth_token FROM claude_code_credentials").get()
+  const resolveToken = (
+    decrypt: Parameters<typeof resolveClaudeAccountToken>[1],
+    system = vi.fn(() => "system-token"),
+  ) => resolveClaudeAccountToken(drizzle(sqlite, { schema }), decrypt, system)
 
   beforeEach(() => {
     sqlite = new Database(":memory:")
@@ -105,5 +110,50 @@ describe("Anthropic account removal", () => {
       id: "a",
     })
     expect(state.clearCaches).not.toHaveBeenCalled()
+  })
+
+  it("never falls back to system credentials when a selected or legacy credential fails", () => {
+    const system = vi.fn(() => "system-token")
+    const decrypt = vi.fn(() => {
+      throw new Error("credential unavailable")
+    })
+    expect(() => resolveToken(decrypt, system)).toThrow("credential unavailable")
+    sqlite.exec("UPDATE anthropic_settings SET active_account_id = NULL")
+    expect(() => resolveToken(decrypt, system)).toThrow("credential unavailable")
+    expect(system).not.toHaveBeenCalled()
+  })
+
+  it("fails closed for a missing selected account instead of using a legacy token", () => {
+    sqlite.exec("DELETE FROM anthropic_accounts WHERE id = 'a'")
+    const decrypt = vi.fn(() => "decrypted-token")
+    const system = vi.fn(() => "system-token")
+    expect(() => resolveToken(decrypt, system)).toThrow("Selected Claude account is unavailable")
+    expect(decrypt).not.toHaveBeenCalled()
+    expect(system).not.toHaveBeenCalled()
+  })
+
+  it("uses system credentials only when no managed or legacy credential is selected", () => {
+    sqlite.exec(
+      "UPDATE anthropic_settings SET active_account_id = NULL; DELETE FROM claude_code_credentials",
+    )
+    const decrypt = vi.fn(() => "decrypted-token")
+    const system = vi.fn(() => " system-token ")
+    expect(resolveToken(decrypt, system)).toBe("system-token")
+    expect(decrypt).not.toHaveBeenCalled()
+    expect(system).toHaveBeenCalledOnce()
+  })
+
+  it("persists legacy ciphertext migration before returning a token", () => {
+    const decrypt = (_ciphertext: string, migrate: (value: string) => void) => {
+      migrate("new-ciphertext")
+      return "decrypted-token"
+    }
+    expect(resolveToken(decrypt)).toBe("decrypted-token")
+    expect(
+      sqlite.prepare("SELECT oauth_token FROM anthropic_accounts WHERE id = 'a'").get(),
+    ).toEqual({ oauth_token: "new-ciphertext" })
+    sqlite.exec(`CREATE TRIGGER reject_token BEFORE UPDATE ON anthropic_accounts
+      BEGIN SELECT RAISE(ABORT, 'migration failure'); END;`)
+    expect(() => resolveToken(decrypt)).toThrow("migration failure")
   })
 })

@@ -25,6 +25,9 @@ Removing the active Anthropic account changes selection and the legacy launch
 credential in one database transaction. Removing the last account clears that
 credential. A corrupt replacement or failed write rolls back the removal; cached
 SDK configuration is invalidated only after a successful active-account change.
+Missing selected accounts and credential read/migration failures stop OAuth launch
+instead of silently falling back to the system account. Explicit custom API
+configuration does not read unrelated OAuth credentials.
 
 This is provenance, not account isolation. Per-account provider homes, credential
 rotation enforcement, and binding a running provider session to an isolated home

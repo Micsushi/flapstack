@@ -137,8 +137,8 @@ function resolveActiveAnthropicAccount(
         ${hasRuntimeTarget ? "a.runtime_target" : "'local' runtime_target"},
         ${hasRevision ? "a.credential_revision" : "1 credential_revision"}
        FROM anthropic_settings s
-       JOIN anthropic_accounts a ON a.id = s.active_account_id
-       WHERE s.id = 'singleton'`,
+       LEFT JOIN anthropic_accounts a ON a.id = s.active_account_id
+       WHERE s.id = 'singleton' AND s.active_account_id IS NOT NULL AND s.active_account_id != ''`,
     )
     .get() as
     | {
@@ -149,6 +149,10 @@ function resolveActiveAnthropicAccount(
       }
     | undefined
   if (!row) return null
+  if (!row.id)
+    throw new Error(
+      "Selected Claude account is unavailable; reconnect it or select another account",
+    )
   return providerAccountSnapshotSchema.parse({
     provider: "anthropic",
     accountId: row.id,
