@@ -119,6 +119,10 @@ import {
 } from "./agent-runtime/launch-access"
 import { isFrozenAgentProfileToolAllowed } from "./agent-profiles/runtime-authority"
 import {
+  loadInteractiveRuntimeAssistantText,
+  persistInteractiveRuntimeAssistantFallback,
+} from "./agent-runtime/interactive-chat"
+import {
   CLAUDE_PROVIDER_TO_CODEX_CONTRACT,
   CODEX_PROVIDER_TO_CLAUDE_CONTRACT,
   LOCAL_PROVIDER_TO_CODEX_CONTRACT,
@@ -902,6 +906,20 @@ export class MainRuntimeLaunchService {
             )
             .run(terminal, now, runId)
           if (transition.changes === 0) return
+          if (
+            terminal === "success" &&
+            run.resolved_runtime !== "flapstack-native" &&
+            run.prompt_message_id?.startsWith("mcp-diff-feedback-") &&
+            db
+              .prepare("SELECT id FROM diff_feedback_batches WHERE id = ? AND run_id = ?")
+              .get(run.prompt_message_id.slice("mcp-diff-feedback-".length), runId)
+          ) {
+            persistInteractiveRuntimeAssistantFallback(
+              db,
+              runId,
+              loadInteractiveRuntimeAssistantText(db, runId),
+            )
+          }
           if (run.sub_chat_id) {
             db.prepare(
               `UPDATE sub_chats SET run_status = COALESCE((
@@ -1183,9 +1201,17 @@ export class MainRuntimeLaunchService {
 
   private requireRunRow(db: Database.Database, runId: string) {
     const row = db
-      .prepare("SELECT id, sub_chat_id, resolved_runtime FROM agent_runs WHERE id = ?")
+      .prepare(
+        "SELECT id, sub_chat_id, resolved_runtime, prompt_message_id FROM agent_runs WHERE id = ?",
+      )
       .get(runId) as
-      { id: string; sub_chat_id: string | null; resolved_runtime: string } | undefined
+      | {
+          id: string
+          sub_chat_id: string | null
+          resolved_runtime: string
+          prompt_message_id: string | null
+        }
+      | undefined
     if (!row) throw new Error(`Runtime run ${runId} is missing.`)
     return row
   }

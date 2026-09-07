@@ -13,6 +13,7 @@ import {
   resolveInteractiveRuntime,
 } from "../src/main/lib/agent-runtime/interactive-chat"
 import { createRuntimeDefaultsService } from "../src/main/lib/agent-runtime/defaults"
+import { createAgentActivityStore } from "../src/main/lib/agent-runtime/activity-store"
 import { migrateDatabase } from "../src/main/lib/db/migrate"
 import * as schema from "../src/main/lib/db/schema"
 import type { AgentRuntimePreference } from "../src/shared/agent-runtime"
@@ -32,6 +33,44 @@ afterEach(() => {
 })
 
 describe("interactive Runtime launch bridge", () => {
+  it("pages completed text through validated activity and omits corrupt private payloads", () => {
+    seedChat("codex", "auto", [])
+    materializeInteractiveRuntimeRun(database, {
+      runId: "paged-output",
+      chatId: "chat",
+      subChatId: "sub",
+      harness: "codex",
+      prompt: "Read output",
+      model: null,
+      mode: "write",
+      reasoningEffort: null,
+      reasoningEnabled: true,
+    })
+    const store = createAgentActivityStore(database)
+    for (let index = 0; index < 501; index++)
+      store.append("paged-output", {
+        provider: "openai",
+        kind: "agent-text",
+        phase: "completed",
+        displayClass: "summary",
+        privacyClass: "public",
+        payload: { text: `${index},` },
+      })
+    expect(loadInteractiveRuntimeAssistantText(database, "paged-output")).toBe(
+      Array.from({ length: 501 }, (_, index) => `${index},`).join(""),
+    )
+    database.pragma("ignore_check_constraints=ON")
+    database.exec("DROP TRIGGER agent_activity_events_append_only")
+    database
+      .prepare(
+        "UPDATE agent_activity_events SET privacy_class='private' WHERE run_id='paged-output' AND sequence=1",
+      )
+      .run()
+    expect(loadInteractiveRuntimeAssistantText(database, "paged-output")).toBe(
+      Array.from({ length: 500 }, (_, index) => `${index + 1},`).join(""),
+    )
+  })
+
   it.each([
     ["codex", "codex", "gpt-5.5", "high"],
     ["claude-code", "claude-code", "claude-opus-4-8", "max"],
@@ -281,6 +320,21 @@ describe("interactive Runtime launch bridge", () => {
       reasoningEnabled: true,
     })
 
+    const before = JSON.parse(
+      (
+        database.prepare("SELECT messages FROM sub_chats WHERE id = 'sub'").get() as {
+          messages: string
+        }
+      ).messages,
+    )
+    before.push({
+      id: "queued-next",
+      role: "user",
+      parts: [{ type: "text", text: "Next feedback" }],
+    })
+    database
+      .prepare("UPDATE sub_chats SET messages = ? WHERE id = 'sub'")
+      .run(JSON.stringify(before))
     persistInteractiveRuntimeAssistantFallback(
       database,
       "runtime-fallback-run",
@@ -295,6 +349,7 @@ describe("interactive Runtime launch bridge", () => {
         }
       ).messages,
     ) as Array<Record<string, any>>
+    expect(messages.at(-1)?.id).toBe("queued-next")
     expect(messages.filter((message) => message.role === "assistant")).toEqual([
       expect.objectContaining({
         parts: [{ type: "text", text: "Fixed.\n\nDetails" }],

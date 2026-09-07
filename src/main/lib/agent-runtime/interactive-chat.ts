@@ -312,23 +312,30 @@ export function loadInteractiveRuntimeAssistantText(
   database: Database.Database,
   runId: string,
 ): string {
-  const rows = database
-    .prepare(
-      `SELECT payload_json FROM agent_activity_events
-       WHERE run_id = ? AND kind = 'agent-text' AND phase = 'completed'
-       ORDER BY sequence`,
-    )
-    .all(runId) as Array<{ payload_json: string }>
-  return rows
-    .map(({ payload_json }) => {
-      try {
-        const payload = JSON.parse(payload_json) as { text?: unknown }
-        return typeof payload.text === "string" ? payload.text : ""
-      } catch {
-        return ""
-      }
+  const store = createAgentActivityStore(database)
+  const text: string[] = []
+  let cursor: number | undefined
+  do {
+    const page = store.query({
+      runId,
+      kinds: ["agent-text"],
+      afterStorageId: cursor,
+      direction: "forward",
+      limit: 500,
+      corruptionMode: "redacted-placeholder",
     })
-    .join("")
+    for (const event of page.events) {
+      if (
+        event.kind === "agent-text" &&
+        event.phase === "completed" &&
+        event.privacyClass !== "private" &&
+        event.privacyClass !== "encrypted"
+      )
+        text.push(event.payload.text)
+    }
+    cursor = page.nextCursor ?? undefined
+  } while (cursor)
+  return text.join("")
 }
 
 export function persistInteractiveRuntimeAssistantFallback(
@@ -343,7 +350,7 @@ export function persistInteractiveRuntimeAssistantFallback(
       const row = database
         .prepare(
           `SELECT r.sub_chat_id sub_chat_id, r.resolved_runtime resolved_runtime,
-                  r.started_at started_at, r.completed_at completed_at,
+                  r.started_at started_at, r.completed_at completed_at, r.prompt_message_id prompt_message_id,
                   s.messages messages
            FROM agent_runs r
            JOIN sub_chats s ON s.id = r.sub_chat_id
@@ -355,6 +362,7 @@ export function persistInteractiveRuntimeAssistantFallback(
             resolved_runtime: string
             started_at: number | null
             completed_at: number | null
+            prompt_message_id: string | null
             messages: string
           }
         | undefined
@@ -377,7 +385,12 @@ export function persistInteractiveRuntimeAssistantFallback(
         completedText,
         resolveAgentHotlineEnabled(messages),
       )
-      messages.push({
+      const promptIndex = messages.findIndex((message) => message.id === row.prompt_message_id)
+      const nextUser =
+        promptIndex < 0
+          ? -1
+          : messages.findIndex((message, index) => index > promptIndex && message.role === "user")
+      messages.splice(nextUser < 0 ? messages.length : nextUser, 0, {
         id: randomUUID(),
         role: "assistant",
         parts: [{ type: "text", text }],

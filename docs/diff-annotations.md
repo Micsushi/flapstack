@@ -68,6 +68,11 @@ batch after restart or loss of worktree access; changed selections fail. Each
 batch permits up to 25 comments and a 512 KiB serialized prompt. Comment bodies
 are preserved as JSON-encoded review data, without generation or rewriting.
 
-This foundation has no public send route or UI yet. Provider transcript ordering,
+Completed direct-runtime feedback answers are projected into their conversation
+from validated activity records. The idempotent assistant fallback inserts the
+answer before a later user turn instead of appending it after queued feedback.
+Native routers keep their existing transcript persistence.
+
+This foundation has no public send route or UI yet. Full provider ordering evidence,
 sent-state presentation, cancellation, mobile authorization and end-to-end send
 acceptance remain required before enabling that surface.
