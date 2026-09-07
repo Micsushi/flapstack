@@ -59,3 +59,10 @@ Plan-file reads also enforce the 2 MiB text limit while reading, including files
 that grow after their initial size check. A successful empty plan replaces the
 cached text; it is not treated as a missing response. Both details-sidebar plan
 views cover that transition in `tests/plan-content-cache.test.tsx`.
+
+Diff prefetch uses the same rooted 2 MiB reader for each of its first 20 text
+files. Symlinked paths, traversal and oversized files are omitted from expanded
+content. The durable worktree identity is checked before Git collection, after
+collection, and before publishing prefetched content. Cached and unchanged
+responses also require a valid root. Router-level junction, replacement,
+traversal, empty-file and cache checks live in `tests/parsed-diff-read-boundary.test.ts`.

@@ -37,9 +37,11 @@ import {
   sanitizeProjectName,
 } from "../../git"
 import {
+  assertRegisteredFilesystemRoot,
   bindFilesystemRootIdentity,
   rebindRegisteredFilesystemRoot,
 } from "../../git/security/path-validation"
+import { readFileInsideRoot } from "../../path-safety"
 import type { WorktreeSetupResult } from "../../git/worktree-config"
 import { computeContentHash, gitCache } from "../../git/cache"
 import { splitUnifiedDiffByFile } from "../../git/diff-parser"
@@ -2188,10 +2190,18 @@ export const chatsRouter = router({
         }
       }
 
+      const root = assertRegisteredFilesystemRoot(chat.worktreePath, db)
+      const verifyReviewRoot = () => {
+        const latest = db.select().from(chats).where(eq(chats.id, input.chatId)).get()
+        if (latest?.worktreePath !== chat.worktreePath)
+          throw new Error("Review worktree changed; refresh the diff")
+        assertRegisteredFilesystemRoot(chat.worktreePath!, db)
+      }
       // 1. Get raw diff (only uncommitted changes - don't show branch diff after commit)
-      const result = await getWorktreeDiff(chat.worktreePath, chat.baseBranch ?? undefined, {
+      const result = await getWorktreeDiff(root.canonicalPath, chat.baseBranch ?? undefined, {
         onlyUncommitted: true,
       })
+      verifyReviewRoot()
 
       if (!result.success) {
         return {
@@ -2276,15 +2286,9 @@ export const chatsRouter = router({
         await Promise.all(
           filesToFetch.map(async ({ key, filePath }) => {
             try {
-              const fullPath = path.join(chat.worktreePath!, filePath)
-
-              // Check file size first
-              const stats = await fs.stat(fullPath)
-              if (stats.size > MAX_FILE_SIZE) {
-                return // Skip large files
-              }
-
-              const content = await fs.readFile(fullPath, "utf-8")
+              const content = (
+                await readFileInsideRoot(root.canonicalPath, filePath, { maxBytes: MAX_FILE_SIZE })
+              ).toString("utf-8")
 
               // Quick binary check (NUL bytes in first 8KB)
               const checkLength = Math.min(content.length, 8192)
@@ -2302,6 +2306,7 @@ export const chatsRouter = router({
         )
       }
 
+      verifyReviewRoot()
       const response: ParsedDiffResponse = {
         files,
         totalAdditions,
