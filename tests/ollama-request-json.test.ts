@@ -11,6 +11,32 @@ afterEach(() => {
 const limits = { timeoutMs: 100, maxBytes: 100 }
 
 describe("bounded local Ollama requests", () => {
+  it("preserves a single-token title even when the model invents an action", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ models: [{ name: "local" }] })))
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              response: JSON.stringify({
+                title: "Discuss hi",
+                tags: [],
+              }),
+            }),
+          ),
+        ),
+    )
+    await expect(
+      generateChatMetadataWithOllama({
+        userMessage: "hi",
+        titleStyle: "concise",
+        includeTags: false,
+      }),
+    ).resolves.toEqual({ title: "hi", tags: [] })
+  })
+
   it("uses only the fixed local origin and disallows redirects", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"ok":true}'))
     vi.stubGlobal("fetch", fetchMock)

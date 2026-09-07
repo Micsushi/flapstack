@@ -249,6 +249,8 @@ export function fallbackChatMetadata(
   titleStyle: ChatTitleStyle,
 ): GeneratedChatMetadata {
   const tags = inferHighConfidenceChatTags(userMessage)
+  const literalTitle = singleTokenChatTitle(userMessage)
+  if (literalTitle) return { title: literalTitle, tags }
   const normalized = metadataSourceMessage(userMessage)
     .normalize("NFKC")
     .replace(/<[^>]+>/g, " ")
@@ -262,6 +264,14 @@ export function fallbackChatMetadata(
   const subject = fallbackSubject(normalized, subjectWordBudget)
   const title = sanitizeChatTitle(`${action} ${subject}`.trim(), titleStyle)
   return { title: title ?? "New chat", tags }
+}
+
+/** A single bounded word needs no invented action or semantic summary. */
+export function singleTokenChatTitle(userMessage: string): string | null {
+  const message = metadataSourceMessage(userMessage)
+  return message.length <= 80 && /^[\p{L}\p{N}][\p{L}\p{M}\p{N}._-]*$/u.test(message)
+    ? message
+    : null
 }
 
 function metadataSourceMessage(userMessage: string): string {

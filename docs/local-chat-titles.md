@@ -15,6 +15,12 @@ cancellation, model selection, schema rejection, and fallback eligibility. They
 do not measure title quality from an installed model or replace the existing
 heuristic fallback with semantic generation.
 
+A single token containing letters, numbers, combining marks, dots, underscores,
+or hyphens is retained exactly when it fits the existing 80-character title cap.
+This rule applies to both model output and fallback, preserves language/case,
+and avoids inventing an action for short input. It does not classify greetings
+or claim semantic quality for longer messages. Metadata tagging is unchanged.
+
 Automatic application uses a separate atomic mutation. Only empty names or the
 default `New Chat` placeholder are eligible. A late result leaves existing names
 alone; only the first sub-chat may also name an untitled parent. Cache updates

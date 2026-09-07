@@ -2,6 +2,7 @@ import { z } from "zod"
 import {
   buildChatMetadataPrompt,
   parseGeneratedChatMetadata,
+  singleTokenChatTitle,
   type ChatTitleStyle,
   type GeneratedChatMetadata,
 } from "../../../shared/chat-metadata"
@@ -35,7 +36,12 @@ export async function generateChatMetadataWithOllama(input: {
         },
       }),
     )
-    return data.success ? parseGeneratedChatMetadata(data.data.response, input.titleStyle) : null
+    const metadata = data.success
+      ? parseGeneratedChatMetadata(data.data.response, input.titleStyle)
+      : null
+    return metadata
+      ? { ...metadata, title: singleTokenChatTitle(input.userMessage) ?? metadata.title }
+      : null
   } catch {
     // The caller retains its local fallback; never log message/model response contents.
     return null

@@ -4,9 +4,24 @@ import {
   fallbackChatMetadata,
   inferHighConfidenceChatTags,
   parseGeneratedChatMetadata,
+  singleTokenChatTitle,
 } from "../src/shared/chat-metadata"
 
 describe("chat metadata", () => {
+  it("preserves bounded single-token input without adding an invented action", () => {
+    for (const message of ["hi", "Bonjour", "你好", "cafe\u0301", "README.md", "retry-policy"]) {
+      expect(singleTokenChatTitle(` ${message} `)).toBe(message)
+      expect(fallbackChatMetadata(message, "concise").title).toBe(message)
+    }
+    expect(singleTokenChatTitle("a".repeat(80))).toBe("a".repeat(80))
+    for (const message of ["", "two words", "a".repeat(81), "https://example.com", "<script>"]) {
+      expect(singleTokenChatTitle(message)).toBeNull()
+    }
+    expect(singleTokenChatTitle("<codex_delegation><input>hello</input></codex_delegation>")).toBe(
+      "hello",
+    )
+  })
+
   it("validates structured output and enforces the configured title length", () => {
     expect(
       parseGeneratedChatMetadata(
