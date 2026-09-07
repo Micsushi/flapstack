@@ -3526,6 +3526,29 @@ export type UsageDaemonStatus = typeof usageDaemonStatus.$inferSelect
 export type NewUsageDaemonStatus = typeof usageDaemonStatus.$inferInsert
 
 // Draft review comments never mutate Git and retain their exact diff anchor.
+export const diffFeedbackBatches = sqliteTable(
+  "diff_feedback_batches",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    subChatId: text("sub_chat_id")
+      .notNull()
+      .references(() => subChats.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    requestHash: text("request_hash").notNull(),
+    selection: text("selection").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [index("diff_feedback_chat_idx").on(table.chatId, table.createdAt)],
+)
+
 export const diffAnnotations = sqliteTable(
   "diff_annotations",
   {

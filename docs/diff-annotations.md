@@ -60,3 +60,14 @@ Migration `0060_durable_diff_annotations` is additive. Tests exercise real Git
 diffs without changing their files, database reopen, stale/renamed anchors,
 version conflicts, root replacement, scope and UTF-8 limits, reversible deletion,
 audit rollback and the disabled service gate.
+
+Internal feedback foundation (`0061_durable_diff_feedback`) atomically records a
+selected-version batch, one visible user message, a pending run and metadata-only
+audit. It performs no provider dispatch itself. UUID retries return the original
+batch after restart or loss of worktree access; changed selections fail. Each
+batch permits up to 25 comments and a 512 KiB serialized prompt. Comment bodies
+are preserved as JSON-encoded review data, without generation or rewriting.
+
+This foundation has no public send route or UI yet. Provider transcript ordering,
+sent-state presentation, cancellation, mobile authorization and end-to-end send
+acceptance remain required before enabling that surface.

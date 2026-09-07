@@ -40,6 +40,19 @@ export const changeDiffAnnotationSchema = diffAnnotationScopeSchema.extend({
   id: z.string().uuid(),
   expectedVersion: z.number().int().positive(),
 })
+export const diffFeedbackLimits = { comments: 25, promptBytes: 512 * 1024 } as const
+export const sendDiffFeedbackSchema = diffAnnotationScopeSchema.extend({
+  id: z.string().uuid(),
+  subChatId: z.string().min(1).max(200),
+  comments: z
+    .array(z.object({ id: z.string().uuid(), version: z.number().int().positive() }))
+    .min(1)
+    .max(diffFeedbackLimits.comments)
+    .refine(
+      (rows) => new Set(rows.map((row) => row.id)).size === rows.length,
+      "Select each comment once",
+    ),
+})
 export type DiffAnnotationScope = z.infer<typeof diffAnnotationScopeSchema>
 export type DiffAnnotationAnchor = z.infer<typeof diffAnnotationAnchorSchema>
 export type DiffAnnotationDto = DiffAnnotationScope &
