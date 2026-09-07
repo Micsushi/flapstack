@@ -2,6 +2,7 @@ import { Terminal as XTerm } from "xterm"
 import { FitAddon } from "@xterm/addon-fit"
 import { WebglAddon } from "@xterm/addon-webgl"
 import { CanvasAddon } from "@xterm/addon-canvas"
+import { SerializeAddon } from "@xterm/addon-serialize"
 import { WebLinksAddon } from "@xterm/addon-web-links"
 import type { ITheme } from "xterm"
 import {
@@ -86,6 +87,7 @@ export interface CreateTerminalOptions {
 export interface TerminalInstance {
   xterm: XTerm
   fitAddon: FitAddon
+  serializeAddon: SerializeAddon
   cleanup: () => void
 }
 
@@ -128,6 +130,8 @@ export function createTerminalInstance(
   console.log("[Terminal:create] Step 3: Loading FitAddon")
   const fitAddon = new FitAddon()
   xterm.loadAddon(fitAddon)
+  const serializeAddon = new SerializeAddon()
+  xterm.loadAddon(serializeAddon)
 
   // 5. Load GPU-accelerated renderer
   console.log("[Terminal:create] Step 5: Loading renderer")
@@ -191,6 +195,7 @@ export function createTerminalInstance(
   return {
     xterm,
     fitAddon,
+    serializeAddon,
     cleanup: () => {
       cleanupQuerySuppression()
       renderer.dispose()

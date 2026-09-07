@@ -34,6 +34,7 @@ export interface TerminalExitEvent {
 export type TerminalEvent = TerminalDataEvent | TerminalExitEvent
 
 export interface SessionResult {
+  replayEnabled?: boolean
   isNew: boolean
   /** Serialized terminal state from xterm's SerializeAddon */
   serializedState: string
@@ -55,6 +56,7 @@ export interface CreateSessionParams {
 }
 
 export interface InternalCreateSessionParams extends CreateSessionParams {
+  enableReplay?: boolean
   useFallbackShell?: boolean
   performanceOwnershipToken?: string
 }

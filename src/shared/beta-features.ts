@@ -5,6 +5,7 @@ export const BETA_FEATURE_IDS = [
   "automations",
   "planning",
   "branchesAndWorktrees",
+  "terminalRecovery",
 ] as const
 
 export type BetaFeatureId = (typeof BETA_FEATURE_IDS)[number]
@@ -17,6 +18,7 @@ export const DEFAULT_BETA_FEATURE_SETTINGS: BetaFeatureSettings = {
   automations: false,
   planning: false,
   branchesAndWorktrees: false,
+  terminalRecovery: false,
 }
 
 export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
@@ -24,6 +26,12 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
   label: string
   description: string
 }> = [
+  {
+    id: "terminalRecovery",
+    label: "Terminal Recovery",
+    description:
+      "Recover detached output for new terminals. Existing terminals keep their mode; app-restart history is not yet supported.",
+  },
   {
     id: "projectMemory",
     label: "Project Memory",

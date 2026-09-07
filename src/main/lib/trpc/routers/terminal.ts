@@ -9,6 +9,7 @@ import type { TerminalEvent } from "../../terminal/types"
 import { TRPCError } from "@trpc/server"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import { resolveInsideRoot } from "../../path-safety"
+import { isBetaFeatureEnabled } from "../../beta-features/settings"
 import {
   MAX_TERMINAL_COLS,
   MAX_TERMINAL_ROWS,
@@ -35,11 +36,15 @@ export const terminalRouter = router({
     )
     .mutation(async ({ input }) => {
       try {
-        const result = await terminalManager.createOrAttach(input)
+        const result = await terminalManager.createOrAttach(
+          input,
+          isBetaFeatureEnabled("terminalRecovery"),
+        )
         return {
           paneId: input.paneId,
           isNew: result.isNew,
           serializedState: result.serializedState,
+          replayEnabled: result.replayEnabled ?? false,
         }
       } catch (err) {
         console.error("[TerminalRouter] createOrAttach error:", err)

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest"
 import { TerminalManager } from "../src/main/lib/terminal/manager"
 import { portManager } from "../src/main/lib/terminal/port-manager"
+import { TerminalReplay } from "../src/main/lib/terminal/replay"
 import type {
   TerminalSession,
   InternalCreateSessionParams,
@@ -34,6 +35,23 @@ function fixture() {
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+})
+
+it("keeps a live terminal's creation mode when the beta setting changes", async () => {
+  const { manager, session } = fixture()
+  await expect(manager.createOrAttach({ paneId: session.paneId }, true)).resolves.toMatchObject({
+    isNew: false,
+    replayEnabled: false,
+  })
+  session.replay = new TerminalReplay(80, 24, { pause() {}, resume() {} })
+  try {
+    await expect(manager.createOrAttach({ paneId: session.paneId }, false)).resolves.toMatchObject({
+      isNew: false,
+      replayEnabled: true,
+    })
+  } finally {
+    session.replay.dispose()
+  }
 })
 
 it("does not remove a replacement PTY when the old exit grace timer fires", () => {

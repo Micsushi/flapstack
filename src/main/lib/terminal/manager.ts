@@ -50,8 +50,8 @@ export class TerminalManager extends EventEmitter {
     super()
   }
 
-  async createOrAttach(params: CreateSessionParams): Promise<SessionResult> {
-    return this.createOrAttachInternal(params)
+  async createOrAttach(params: CreateSessionParams, enableReplay = false): Promise<SessionResult> {
+    return this.createOrAttachInternal({ ...params, enableReplay })
   }
 
   /** Use the product PTY path with the stable fallback shell for bounded test controls. */
@@ -59,6 +59,7 @@ export class TerminalManager extends EventEmitter {
     const result = await this.createOrAttachInternal({
       ...params,
       useFallbackShell: true,
+      enableReplay: true,
       performanceOwnershipToken: randomUUID(),
     })
     const session = this.sessions.get(params.paneId)
@@ -117,6 +118,7 @@ export class TerminalManager extends EventEmitter {
       return {
         isNew: false,
         serializedState: existing.serializedState || "",
+        replayEnabled: !!existing.replay,
       }
     }
 
@@ -174,6 +176,7 @@ export class TerminalManager extends EventEmitter {
     return {
       isNew: true,
       serializedState: "",
+      replayEnabled: !!session.replay,
     }
   }
 

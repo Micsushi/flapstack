@@ -1,7 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { terminalManager } from "../src/main/lib/terminal/manager"
+import { terminalRouter } from "../src/main/lib/trpc/routers/terminal"
 import {
   betaFeatureForTrpcPath,
   getBetaFeatureSettings,
@@ -29,12 +31,35 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   if (previousConfigDir === undefined) delete process.env.FLAPSTACK_CONFIG_DIR
   else process.env.FLAPSTACK_CONFIG_DIR = previousConfigDir
   rmSync(directory, { recursive: true, force: true })
 })
 
 describe("beta service gates", () => {
+  it("selects terminal recovery in main while preserving the existing session mode", async () => {
+    const create = vi.spyOn(terminalManager, "createOrAttach").mockResolvedValue({
+      isNew: true,
+      serializedState: "",
+      replayEnabled: false,
+    })
+    const caller = terminalRouter.createCaller({ getWindow: () => null })
+    const input = { paneId: "beta-terminal", enableReplay: true }
+    expect(DEFAULT_BETA_FEATURE_SETTINGS.terminalRecovery).toBe(false)
+    await expect(caller.createOrAttach(input)).resolves.toMatchObject({ replayEnabled: false })
+    expect(create).toHaveBeenLastCalledWith({ paneId: "beta-terminal" }, false)
+
+    setBetaFeatureEnabled("terminalRecovery", true)
+    await caller.createOrAttach(input)
+    expect(create).toHaveBeenLastCalledWith({ paneId: "beta-terminal" }, true)
+
+    create.mockResolvedValue({ isNew: false, serializedState: "", replayEnabled: true })
+    setBetaFeatureEnabled("terminalRecovery", false)
+    await expect(caller.createOrAttach(input)).resolves.toMatchObject({ replayEnabled: true })
+    expect(create).toHaveBeenLastCalledWith({ paneId: "beta-terminal" }, false)
+  })
+
   it("keeps every service off until the user opts in", () => {
     expect(getBetaFeatureSettings()).toEqual(DEFAULT_BETA_FEATURE_SETTINGS)
     expect(Object.values(getBetaFeatureSettings()).every((enabled) => !enabled)).toBe(true)

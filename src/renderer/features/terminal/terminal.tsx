@@ -23,7 +23,7 @@ import { parseCwd } from "./parseCwd"
 import { sanitizeForTitle } from "./commandBuffer"
 import { shellEscapePaths } from "./utils"
 import { TerminalSearch } from "./TerminalSearch"
-import type { TerminalProps } from "./types"
+import type { TerminalProps, TerminalStreamEvent } from "./types"
 import type { TerminalReplayEvent } from "../../../shared/terminal-replay"
 import { createTerminalReplayConsumer } from "./replay-consumer"
 import { hotPathConsole as console } from "../../lib/hot-path-console"
@@ -51,6 +51,7 @@ export function Terminal({
 
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [replayView, setReplayView] = useState(0)
+  const [replayEnabled, setReplayEnabled] = useState(false)
   const [replayPane, setReplayPane] = useState<string | null>(null)
   const replayConsumerRef = useRef<ReturnType<typeof createTerminalReplayConsumer> | null>(null)
   const [terminalCwd, setTerminalCwd] = useState<string | null>(initialCwd || cwd)
@@ -159,6 +160,23 @@ export function Terminal({
   }, [])
 
   // Subscribe to terminal output
+  trpc.terminal.stream.useSubscription(paneId, {
+    onData: (event: TerminalStreamEvent) => {
+      const terminal = xtermRef.current
+      if (!terminal) return
+      if (event.type === "data" && event.data) {
+        terminal.write(event.data)
+        updateCwdRef.current(event.data)
+      } else if (event.type === "exit") {
+        isExitedRef.current = true
+        terminal.writeln(`\r\n\r\n[Process exited with code ${event.exitCode}]`)
+        terminal.writeln("[Press any key to restart]")
+      }
+    },
+    onError: (error) =>
+      xtermRef.current?.write(`\r\n\x1b[31m[Connection error: ${error.message}]\x1b[0m\r\n`),
+    enabled: !(replayEnabled && replayPane === paneId),
+  })
   trpc.terminal.replay.useSubscription(
     { paneId, view: replayView },
     {
@@ -174,7 +192,7 @@ export function Terminal({
           "\r\n[Terminal stream closed before final status. Press any key to reattach.]",
         )
       },
-      enabled: replayView > 0 && replayPane === paneId,
+      enabled: replayEnabled && replayView > 0 && replayPane === paneId,
     },
   )
 
@@ -195,7 +213,7 @@ export function Terminal({
     console.log("[Terminal:useEffect] Creating terminal instance...", {
       isDark,
     })
-    const { xterm, fitAddon, cleanup } = createTerminalInstance(container, {
+    const { xterm, fitAddon, serializeAddon, cleanup } = createTerminalInstance(container, {
       cwd: terminalCwdRef.current || cwd,
       isDark,
       onFileLinkClick: (path, line, column) => {
@@ -242,10 +260,14 @@ export function Terminal({
     })
 
     // Subscribe after PTY creation; the main-owned snapshot includes detached output.
-    const attachReplay = () => {
+    let usesReplay = false
+    const attachReplay = (result: { replayEnabled?: boolean; serializedState: string }) => {
       if (!isUnmounted) {
+        usesReplay = result.replayEnabled ?? false
+        setReplayEnabled(usesReplay)
         setReplayPane(paneId)
         setReplayView((view) => view + 1)
+        if (!usesReplay && result.serializedState) xterm.write(result.serializedState)
       }
     }
 
@@ -309,8 +331,8 @@ export function Terminal({
         initialCommands,
       },
       {
-        onSuccess: () => {
-          attachReplay()
+        onSuccess: (result) => {
+          attachReplay(result)
           xterm.focus()
         },
         onError: (err) => {
@@ -390,7 +412,10 @@ export function Terminal({
       if (replayConsumerRef.current === replayConsumer) replayConsumerRef.current = null
 
       // Detach instead of kill - keeps session alive for reattach
-      detachRef.current({ paneId })
+      detachRef.current({
+        paneId,
+        serializedState: usesReplay ? undefined : serializeAddon.serialize(),
+      })
 
       console.log("[Terminal:useEffect] Disposing xterm...")
       xterm.dispose()

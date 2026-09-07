@@ -9,13 +9,18 @@ Detach accepts an explicitly empty serialized screen. Omitting the snapshot
 preserves the existing value. This distinction prevents cleared terminal state
 from being replaced by an older snapshot on reattach.
 
-The current renderer now attaches to main-owned parsed terminal state. Output
+Terminal Recovery is a default-off beta setting. It applies to new terminals;
+existing terminals retain their creation mode when the setting changes. With the
+setting off, the renderer keeps the legacy raw stream and serialized detach
+screen. The main process chooses the mode, not renderer-supplied input.
+
+With Terminal Recovery enabled, the renderer attaches to main-owned parsed terminal state. Output
 continues to update that state while the view is detached. Each attachment starts
 with an ordered snapshot, followed by acknowledged output. The browser acknowledges
 only after xterm has parsed a delivery. A replacement snapshot waits for previous
 parsing before resetting the screen, preventing old queued output from appearing
 on the replacement terminal. Legacy detach and raw-stream endpoints remain for
-compatibility; the current renderer no longer serializes its own detach screen.
+compatibility; recovery-enabled terminals do not serialize their own detach screen.
 
 Recovery uses the official MIT-licensed [headless xterm](https://github.com/xtermjs/xterm.js/tree/6.0.0)
 and the existing [serialization addon](https://github.com/xtermjs/xterm.js/blob/6.0.0/addons/addon-serialize/README.md).
