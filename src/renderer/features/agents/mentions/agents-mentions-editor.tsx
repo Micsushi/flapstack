@@ -12,6 +12,7 @@ import {
 } from "react"
 import { createFileIconElement } from "./agents-file-mention"
 import { MENTION_PREFIXES } from "./mention-prefixes"
+import { pasteFromContextMenu } from "../utils/context-paste"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -972,20 +973,33 @@ export const AgentsMentionsEditor = memo(
     // Handle keydown
     const handleKeyDown = useCallback(
       (e: React.KeyboardEvent) => {
+        if ((e.metaKey || e.ctrlKey) && ["z", "y"].includes(e.key.toLowerCase())) {
+          if (debounceTimer.current) {
+            clearTimeout(debounceTimer.current)
+            debounceTimer.current = null
+          }
+        }
         // Custom undo (Cmd+Z / Ctrl+Z)
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
-          if (undoStack.current.length > 0) {
-            e.preventDefault()
+          e.preventDefault()
+          const currentState = getCurrentState()
+          // Debounced input may have saved the current state, not a prior state.
+          while (
+            undoStack.current.at(-1)?.html === currentState?.html &&
+            undoStack.current.length
+          ) {
+            undoStack.current.pop()
+          }
+          const state = undoStack.current.pop()
+          if (state) {
             isUndoRedo.current = true
 
             // Save current state to redo stack
-            const currentState = getCurrentState()
             if (currentState) {
               redoStack.current.push(currentState)
             }
 
             // Restore previous state
-            const state = undoStack.current.pop()!
             if (editorRef.current) {
               editorRef.current.innerHTML = state.html
               lastSavedHtml.current = state.html
@@ -996,8 +1010,8 @@ export const AgentsMentionsEditor = memo(
             }
 
             isUndoRedo.current = false
-            return
           }
+          return
         }
 
         // Custom redo (Cmd+Shift+Z / Ctrl+Shift+Z or Cmd+Y / Ctrl+Y)
@@ -1005,8 +1019,8 @@ export const AgentsMentionsEditor = memo(
           (e.metaKey || e.ctrlKey) &&
           ((e.key.toLowerCase() === "z" && e.shiftKey) || e.key.toLowerCase() === "y")
         ) {
+          e.preventDefault()
           if (redoStack.current.length > 0) {
-            e.preventDefault()
             isUndoRedo.current = true
 
             // Save current state to undo stack
@@ -1027,8 +1041,8 @@ export const AgentsMentionsEditor = memo(
             }
 
             isUndoRedo.current = false
-            return
           }
+          return
         }
 
         // Prevent submission during IME composition (e.g., Chinese/Japanese/Korean input)
@@ -1421,28 +1435,9 @@ export const AgentsMentionsEditor = memo(
             <ContextMenuItem
               disabled={disabled}
               onSelect={() => {
-                void navigator.clipboard
-                  .readText()
-                  .then((text) => {
-                    if (!text || !editorRef.current) return
-                    editorRef.current.focus()
-                    const selection = window.getSelection()
-                    const range = contextSelectionRef.current
-                    if (selection && range) {
-                      selection.removeAllRanges()
-                      selection.addRange(range)
-                    }
-                    immediateSaveUndoState()
-                    document.execCommand("insertText", false, text)
-                    editorRef.current.dispatchEvent(
-                      new InputEvent("input", {
-                        bubbles: true,
-                        inputType: "insertFromPaste",
-                        data: text,
-                      }),
-                    )
-                  })
-                  .catch(() => editorRef.current?.focus())
+                if (editorRef.current) {
+                  void pasteFromContextMenu(editorRef.current, contextSelectionRef.current)
+                }
               }}
             >
               Paste

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from "react"
 import { trpc } from "../../../lib/trpc"
+import { toast } from "sonner"
 
 export interface PastedTextFile {
   id: string
@@ -50,8 +51,10 @@ export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn 
         }
 
         setPastedTexts((prev) => [...prev, newPasted])
-      } catch (error) {
-        console.error("[usePastedTextFiles] Failed to write:", error)
+      } catch {
+        toast.error("Could not attach pasted text", {
+          description: "The text was not added. Your clipboard is unchanged; try pasting again.",
+        })
       }
     },
     [subChatId, writePastedTextMutation],

@@ -57,7 +57,10 @@ describe("manual UI review fixes", () => {
   it("provides native-feeling paste and mouse-back navigation", () => {
     const editor = read("src/renderer/features/agents/mentions/agents-mentions-editor.tsx")
     const layout = read("src/renderer/features/layout/agents-layout.tsx")
-    expect(editor).toContain("navigator.clipboard")
+    const contextPaste = read("src/renderer/features/agents/utils/context-paste.ts")
+    expect(editor).toContain("pasteFromContextMenu(editorRef.current")
+    expect(contextPaste).toContain("navigator.clipboard.readText()")
+    expect(contextPaste).toContain("window.desktopApi.clipboardRead()")
     expect(editor).toContain("Paste")
     expect(layout).toContain("event.button !== 3")
     expect(layout).toContain("moveInNavigationHistory")
