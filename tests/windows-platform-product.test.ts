@@ -128,7 +128,9 @@ describe("Windows product platform behavior", () => {
           },
         )
         expect(result.status, result.stderr || result.stdout).toBe(0)
-        for (let attempt = 0; attempt < 50 && !existsSync(marker); attempt += 1) {
+        // cmd creates the redirected file before echo writes its completion marker.
+        for (let attempt = 0; attempt < 50; attempt += 1) {
+          if (existsSync(marker) && readFileSync(marker, "utf8").trim() === "launched") break
           await new Promise((resolve) => setTimeout(resolve, 20))
         }
         expect(readFileSync(marker, "utf8").trim()).toBe("launched")
