@@ -83,6 +83,10 @@
 - Blocked by: S6-F1-T1, S6-F1-T2
 - Blocks: S6-F1-T9, S6-F9-T4
 - Context: root ui-design.md progress/timeline sections, Plan view, runtime activity.
+- Follow-up: the 2026-09-07 unread/outcome/runtime distinction requirement is
+  recorded once in `docs/owner-manual-testing-backlog.md` under the owner-requested
+  local UI pass. It is pending implementation and installed proof, not part of
+  this task's earlier T2-core acceptance.
 
 ### S6-F1-T7 — Refine saved workspaces and multi-window behavior
 

@@ -1793,6 +1793,40 @@ the owner explicitly relabels it `release-blocking`.
 
 ## 2026-08-05 owner-requested local UI pass
 
+- [ ] Unread, response outcome and runtime status distinctions
+  - State: issue found; implementation pending; installed proof not established.
+  - Source review: 2026-09-07, task branch `bb44753e`, main `6589e8c8`.
+    This is a new explicit requirement gap, not covered by prior T2-core signoff.
+  - Implemented: sidebar priority is pending question (blue question icon),
+    running (spinner), pending plan (amber dot), then unseen (blue `#307BD0` dot).
+    Chat/group/pane completion markers represent unseen chat IDs, not an outcome
+    taxonomy. Automation Inbox separately labels read/unread and automation kind.
+  - Evidence: `src/renderer/features/sidebar/agents-sidebar.tsx` status branches;
+    `src/renderer/components/ui/icons.tsx` `LoadingDot`;
+    `src/renderer/features/agents/atoms/index.ts` `agentsUnseenChangesAtom`;
+    `src/renderer/features/agents/lib/chat-unseen-state.ts`;
+    `src/renderer/features/agents/main/active-chat.tsx` finish callbacks;
+    `src/renderer/features/agents/ui/agents-content.tsx` tab indicators.
+    The unseen set contains no completed/blocked/stopped outcome. Finish callbacks
+    mark unseen even after a manual abort; sound/notification suppression does
+    not give that dot a distinct outcome. Tab dots are aria-hidden inside controls
+    named Close, so they do not supply an accessible outcome label.
+  - Required: model unread state, message/work outcome and runtime status as
+    independent dimensions. Distinguish needs-help/input, verified work-complete,
+    agent-stopped with work incomplete, blocked/failed, and unknown/ambiguous.
+    A stopped process or completed turn must not imply completed work; uncertain
+    evidence must not be silently promoted to a confirmed outcome. Use accessible
+    text/icons alongside distinct, contrast-tested colors, not color alone.
+  - Verify with unread/read crossed with running, needs-input, completed, manually
+    stopped, blocked, failed and uncertain fixtures; include group aggregation,
+    simultaneous chats, restart, keyboard/screen-reader, light/dark and reduced
+    motion. Visiting a chat clears unread only, never its outcome or runtime truth.
+  - Installed boundary: no exact installed-package walkthrough proves these new
+    distinctions. Preserved peer branch `codex/flapstack-owner-870a` has notification
+    routing/cooldown and cancellation/recovery fixes through `57c55bcf`; those are
+    not integrated here and do not implement this indicator taxonomy. Native
+    notification-center behavior remains separately unverified.
+
 - [ ] Existing chat hydration and transcript navigation
   - Open short and long existing chats from the sidebar.
   - Expected: persisted messages appear without waiting indefinitely; chats with
