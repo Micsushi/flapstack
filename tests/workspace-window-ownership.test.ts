@@ -63,6 +63,36 @@ describe("saved workspace window ownership", () => {
     secondary = register(manager, 2, "workspace-secondary")
   })
 
+  it("routes an old notification to the current chat owner with its exact sub-chat", () => {
+    manager.claimChat("chat", secondary.id)
+    secondary.minimized = true
+    const target = { chatId: "chat", subChatId: "task" }
+    expect(manager.openNotificationTarget(target, main.id)).toBe(true)
+    expect(secondary.focused).toBe(true)
+    expect(secondary.minimized).toBe(false)
+    expect(secondary.webContents.sent.at(-1)).toEqual({
+      channel: "app:notification-clicked",
+      payload: target,
+    })
+    expect(
+      main.webContents.sent.some((event) => event.channel === "app:notification-clicked"),
+    ).toBe(false)
+  })
+
+  it("recovers notification navigation after the source window closes", () => {
+    manager.unregister(main as never)
+    main.destroyed = true
+    main.webContents.destroyed = true
+    const target = { chatId: "chat", subChatId: "task" }
+    expect(manager.openNotificationTarget(target, main.id)).toBe(true)
+    expect(secondary.webContents.sent.at(-1)).toEqual({
+      channel: "app:notification-clicked",
+      payload: target,
+    })
+    manager.unregister(secondary as never)
+    expect(manager.openNotificationTarget(target, main.id)).toBe(false)
+  })
+
   it("allows only one live pane/chat owner under competing claims", () => {
     const attempts = [
       manager.claimWorkspacePane("workspace", "pane", ["chat"], main.id),

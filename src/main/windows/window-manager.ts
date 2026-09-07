@@ -350,6 +350,23 @@ export class WindowManager {
     return undefined
   }
 
+  openNotificationTarget(
+    target: { chatId?: string; subChatId?: string },
+    sourceWindowId?: number,
+  ): boolean {
+    const ownerId = target.chatId ? this.getChatOwner(target.chatId) : undefined
+    const preferredId = ownerId ?? sourceWindowId
+    const window =
+      (preferredId !== undefined && this.isLive(preferredId)
+        ? this.windows.get(preferredId)
+        : null) ?? this.getAll()[0]
+    if (!window) return false
+    if (window.isMinimized()) window.restore()
+    window.focus()
+    window.webContents.send("app:notification-clicked", target)
+    return true
+  }
+
   compareAndTransferChat(
     chatId: string,
     expectedOwnerStableId: string,

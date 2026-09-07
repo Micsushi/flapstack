@@ -40,20 +40,21 @@ export function useDesktopNotifications() {
   const notificationsEnabled = useAtomValue(desktopNotificationsEnabledAtom)
   const notifyWhenFocused = useAtomValue(notifyWhenFocusedAtom)
 
-  // track last notification time to throttle rapid-fire notifications
-  const lastNotificationTime = useRef<number>(0)
-  const pendingNotification = useRef<NotificationOptions | null>(null)
-  const throttleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Each task owns its throttle slot; one task must never replace another's alert.
+  const deliveries = useRef(
+    new Map<
+      string,
+      { pending: NotificationOptions | null; timer: ReturnType<typeof setTimeout> }
+    >(),
+  )
 
-  // Cleanup timer on unmount to prevent memory leak
   useEffect(() => {
+    const active = deliveries.current
     return () => {
-      if (throttleTimer.current) {
-        clearTimeout(throttleTimer.current)
-        throttleTimer.current = null
-      }
+      for (const delivery of active.values()) clearTimeout(delivery.timer)
+      active.clear()
     }
-  }, [])
+  }, [notificationsEnabled])
 
   const showNotification = useCallback(
     (
@@ -79,58 +80,38 @@ export function useDesktopNotifications() {
         return
       }
 
-      const now = Date.now()
-      const timeSinceLastNotification = now - lastNotificationTime.current
-      const currentPriority = options?.priority ? NOTIFICATION_PRIORITY[options.priority] : 0
-
-      // if we're within throttle window, check priority
-      if (timeSinceLastNotification < NOTIFICATION_THROTTLE_MS) {
-        const pendingPriority = pendingNotification.current?.priority
-          ? NOTIFICATION_PRIORITY[pendingNotification.current.priority]
-          : 0
-
-        // Only queue if higher or equal priority than pending
-        if (currentPriority >= pendingPriority) {
-          pendingNotification.current = {
-            title,
-            body,
-            silent: options?.silent,
-            priority: options?.priority,
-            chatId: options?.chatId,
-            subChatId: options?.subChatId,
-          }
-        }
-
-        // set up a timer to show the pending notification after throttle period
-        if (!throttleTimer.current) {
-          throttleTimer.current = setTimeout(() => {
-            throttleTimer.current = null
-            if (pendingNotification.current) {
-              const pending = pendingNotification.current
-              pendingNotification.current = null
-              // Directly send notification without recursive call to avoid re-throttling
-              lastNotificationTime.current = Date.now()
-              window.desktopApi?.showNotification({
-                title: pending.title,
-                body: pending.body,
-                chatId: pending.chatId,
-                subChatId: pending.subChatId,
-              })
-            }
-          }, NOTIFICATION_THROTTLE_MS - timeSinceLastNotification)
-        }
+      const key = JSON.stringify([options?.chatId, options?.subChatId])
+      const notification = { title, body, ...options }
+      const active = deliveries.current
+      const existing = active.get(key)
+      if (existing) {
+        const priority = NOTIFICATION_PRIORITY[options?.priority ?? "complete"]
+        const pendingPriority = NOTIFICATION_PRIORITY[existing.pending?.priority ?? "complete"]
+        if (!existing.pending || priority >= pendingPriority) existing.pending = notification
         return
       }
 
-      lastNotificationTime.current = now
-
-      // use the IPC bridge to show native notification
-      window.desktopApi?.showNotification({
-        title,
-        body,
-        chatId: options?.chatId,
-        subChatId: options?.subChatId,
-      })
+      const send = (pending: NotificationOptions) => {
+        window.desktopApi?.showNotification({
+          title: pending.title,
+          body: pending.body,
+          chatId: pending.chatId,
+          subChatId: pending.subChatId,
+        })
+      }
+      const flush = () => {
+        const delivery = active.get(key)
+        if (!delivery?.pending) {
+          active.delete(key)
+          return
+        }
+        const pending = delivery.pending
+        delivery.pending = null
+        delivery.timer = setTimeout(flush, NOTIFICATION_THROTTLE_MS)
+        send(pending)
+      }
+      active.set(key, { pending: null, timer: setTimeout(flush, NOTIFICATION_THROTTLE_MS) })
+      send(notification)
     },
     [notificationsEnabled],
   )

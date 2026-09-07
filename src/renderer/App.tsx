@@ -38,6 +38,7 @@ import {
   featureVisibilityGuideRerunAtom,
 } from "./lib/atoms"
 import { appStore } from "./lib/jotai-store"
+import { subscribeNotificationNavigation } from "./lib/notification-navigation"
 import { subscribeCliLaunchDirectories } from "./lib/cli-launch-directory"
 import { VSCodeThemeProvider } from "./lib/themes/theme-provider"
 import { trpc } from "./lib/trpc"
@@ -172,37 +173,31 @@ function AppContent() {
   useEffect(() => {
     if (!window.desktopApi?.onNotificationClicked) return
 
-    return window.desktopApi.onNotificationClicked(({ chatId, subChatId }) => {
-      if (!chatId) return
-      // Only `chat.project` is read here, so use the metadata query rather than
-      // chats.get, which pulls every sub-chat transcript into the renderer.
-      void trpcUtils.chats.getMetadata
-        .fetch({ id: chatId })
-        .then((chat) => {
-          if (!chat) return
-          if (chat.project) {
-            setSelectedProject({
-              id: chat.project.id,
-              name: chat.project.name,
-              path: chat.project.path,
-              gitRemoteUrl: chat.project.gitRemoteUrl,
-              gitProvider: chat.project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
-              gitOwner: chat.project.gitOwner,
-              gitRepo: chat.project.gitRepo,
-            })
-          }
-          setDesktopView(null)
-          setShowNewChatForm(false)
-          setSelectedDraftId(null)
-          setSelectedChatIsRemote(false)
-          if (subChatId) queueNavigation(chatId, subChatId)
-          setSelectedChatId(chatId)
-          setChatId(chatId)
-        })
-        .catch((error) => {
-          console.warn("[Notification] Failed to open chat:", error)
-        })
-    })
+    return subscribeNotificationNavigation(
+      window.desktopApi.onNotificationClicked,
+      (chatId) => trpcUtils.chats.getMetadata.fetch({ id: chatId }),
+      (chat, { chatId, subChatId }) => {
+        if (!chatId) return
+        if (chat.project) {
+          setSelectedProject({
+            id: chat.project.id,
+            name: chat.project.name,
+            path: chat.project.path,
+            gitRemoteUrl: chat.project.gitRemoteUrl,
+            gitProvider: chat.project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+            gitOwner: chat.project.gitOwner,
+            gitRepo: chat.project.gitRepo,
+          })
+        }
+        setDesktopView(null)
+        setShowNewChatForm(false)
+        setSelectedDraftId(null)
+        setSelectedChatIsRemote(false)
+        if (subChatId) queueNavigation(chatId, subChatId)
+        setSelectedChatId(chatId)
+        setChatId(chatId)
+      },
+    )
   }, [
     queueNavigation,
     setChatId,

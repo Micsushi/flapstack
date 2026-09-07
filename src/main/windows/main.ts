@@ -341,18 +341,12 @@ function registerIpcHandlers(): void {
         ...(process.platform === "win32" && { silent: false }),
       })
 
+      const sourceWindowId = getWindowFromEvent(event)?.id
       notification.on("click", () => {
-        const win = getWindowFromEvent(event)
-        if (win) {
-          if (win.isMinimized()) win.restore()
-          win.focus()
-        }
-        if (!event.sender.isDestroyed()) {
-          event.sender.send("app:notification-clicked", {
-            chatId: options.chatId,
-            subChatId: options.subChatId,
-          })
-        }
+        windowManager.openNotificationTarget(
+          { chatId: options.chatId, subChatId: options.subChatId },
+          sourceWindowId,
+        )
       })
 
       notification.show()
