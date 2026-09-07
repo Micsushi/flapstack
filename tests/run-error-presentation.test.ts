@@ -37,6 +37,18 @@ describe("run error presentation", () => {
     })
   })
 
+  it("does not claim exhausted usage or a known reset for a bare rate limit", () => {
+    const result = presentRunError("HTTP 429 Too Many Requests")
+    expect(result.title).toBe("Provider rate limit")
+    expect(result.message).not.toMatch(/out of usage|wait for the reset/i)
+    expect(result.technicalDetail).toBe("HTTP 429 Too Many Requests")
+  })
+
+  it("preserves generation failures instead of claiming a usage limit", () => {
+    expect(presentRunError("Failed to generate a response").title).toBe("Run failed")
+    expect(presentRunError("Connection to port 429 closed").title).toBe("Run failed")
+  })
+
   it("keeps an unknown provider error visible", () => {
     expect(presentRunError("Provider connection closed")).toEqual({
       title: "Run failed",

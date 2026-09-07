@@ -8,6 +8,7 @@ import { z } from "zod"
 import { setConnectionMethod } from "../../analytics"
 import { agentInputLifecycle } from "../../agent-input/service"
 import { sleep } from "../../../../shared/sleep"
+import { classifyProviderLimitError } from "../../../../shared/provider-limit-error"
 import {
   formatClaudeInputAnswers,
   normalizeClaudeInputQuestions,
@@ -2615,6 +2616,7 @@ ${prompt}
                     // Categorize SDK-level errors
                     // Use the raw error code (e.g., "invalid_request") for category matching
                     const rawErrorCode = msgAny.error || ""
+                    const limitKind = classifyProviderLimitError(String(sdkError), rawErrorCode)
                     let errorCategory = "SDK_ERROR"
                     // Default errorContext to the full error text (which may include detailed message)
                     let errorContext = sdkError
@@ -2642,12 +2644,8 @@ ${prompt}
                     } else if (rawErrorCode === "invalid_api_key" || sdkError.includes("api_key")) {
                       errorCategory = "INVALID_API_KEY_SDK"
                       errorContext = sdkError
-                    } else if (
-                      rawErrorCode === "rate_limit_exceeded" ||
-                      sdkError.includes("rate")
-                    ) {
-                      errorCategory = "RATE_LIMIT_SDK"
-                      errorContext = "Session limit reached"
+                    } else if (limitKind) {
+                      errorCategory = limitKind === "quota" ? "USAGE_LIMIT" : "RATE_LIMIT_SDK"
                     } else if (rawErrorCode === "overloaded" || sdkError.includes("overload")) {
                       errorCategory = "OVERLOADED_SDK"
                       errorContext = "Claude is overloaded, try again later"
@@ -2937,6 +2935,7 @@ ${prompt}
                 // Build detailed error message with category
                 let errorContext = "Claude streaming error"
                 let errorCategory = "UNKNOWN"
+                const limitKind = classifyProviderLimitError(err.message ?? "")
 
                 const isSessionNotFound = isMissingClaudeSessionError(
                   stderrOutput,
@@ -2974,9 +2973,10 @@ ${prompt}
                 ) {
                   errorContext = "Invalid API key"
                   errorCategory = "INVALID_API_KEY"
-                } else if (err.message?.includes("rate_limit") || err.message?.includes("429")) {
-                  errorContext = "Session limit reached"
-                  errorCategory = "RATE_LIMIT"
+                } else if (limitKind) {
+                  errorContext =
+                    limitKind === "quota" ? "Usage limit reached" : "Provider rate limit"
+                  errorCategory = limitKind === "quota" ? "USAGE_LIMIT" : "RATE_LIMIT"
                 } else if (
                   err.message?.includes("network") ||
                   err.message?.includes("ECONNREFUSED") ||

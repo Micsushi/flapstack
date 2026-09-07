@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { FileSearchFeedback } from "../src/renderer/features/file-viewer/components/file-search-feedback"
 
 const containers: HTMLDivElement[] = []
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
 afterEach(() => {
   for (const container of containers.splice(0)) container.remove()
 })

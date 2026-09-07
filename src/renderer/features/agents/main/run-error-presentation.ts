@@ -1,11 +1,11 @@
+import { classifyProviderLimitError } from "../../../../shared/provider-limit-error"
+
 export type RunErrorPresentation = {
   title: string
   message: string
   technicalDetail: string | null
 }
 
-const USAGE_LIMIT_PATTERN =
-  /(?:\b429\b|insufficient[_ -]?quota|rate[_ -]?limit|usage limit|quota exceeded|out of (?:usage|credits)|too many requests)/i
 const LOCAL_LAUNCH_PERMISSION_PATTERN =
   /(?:spawn\b[^\r\n]{0,512}\b(?:eperm|eacces)\b|access is denied)/i
 const AUTH_PATTERN = /(?:\b401\b|unauthori[sz]ed|authentication failed|sign[- ]?in required)/i
@@ -29,12 +29,15 @@ export function presentRunError(
     }
   }
 
-  if (detail && USAGE_LIMIT_PATTERN.test(detail)) {
+  const limitKind = detail ? classifyProviderLimitError(detail) : null
+  if (limitKind) {
     return {
-      title: "Usage limit reached",
+      title: limitKind === "quota" ? "Usage limit reached" : "Provider rate limit",
       message:
-        "This provider is temporarily rate-limited or out of usage. Wait for the reset, or switch provider or account.",
-      technicalDetail: detail,
+        limitKind === "quota"
+          ? "This provider reports a usage limit. Check account usage and reset details, or switch provider or account."
+          : "This provider rejected the request with a rate limit. Check its retry or account-limit details before retrying.",
+      technicalDetail: detail ?? null,
     }
   }
 

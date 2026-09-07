@@ -67,20 +67,24 @@ const ERROR_TOAST_CONFIG: Record<
     description: "Your Claude API key is invalid. Check your CLI configuration.",
   },
   RATE_LIMIT_SDK: {
-    title: "Session limit reached",
-    description: "You've hit the Claude Code usage limit.",
+    title: "Provider rate limit",
+    description: "Check the provider's retry or account-limit details before retrying.",
     action: {
       label: "View usage",
       onClick: () => trpcClient.external.openExternal.mutate("https://claude.ai/settings/usage"),
     },
   },
   RATE_LIMIT: {
-    title: "Session limit reached",
-    description: "You've hit the Claude Code usage limit.",
+    title: "Provider rate limit",
+    description: "Check the provider's retry or account-limit details before retrying.",
     action: {
       label: "View usage",
       onClick: () => trpcClient.external.openExternal.mutate("https://claude.ai/settings/usage"),
     },
+  },
+  USAGE_LIMIT: {
+    title: "Usage limit reached",
+    description: "The provider reports a usage limit. Check account usage and reset details.",
   },
   OVERLOADED_SDK: {
     title: "Claude is busy",
