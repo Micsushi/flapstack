@@ -73,10 +73,10 @@ async function request() {
     comments: [{ id: row.id, version: row.version }],
   }
 }
-it("rejects local feedback before consuming the comment or queueing work", async () => {
+it("rejects local feedback without a model before consuming the comment or queueing work", async () => {
   const input = await request()
-  sqlite.prepare("UPDATE sub_chats SET harness='local', model='fixture-local' WHERE id='sub'").run()
-  await expect(feedback.queue(input)).rejects.toThrow(/local-model feedback.*not yet supported/i)
+  sqlite.prepare("UPDATE sub_chats SET harness='local', model=NULL WHERE id='sub'").run()
+  await expect(feedback.queue(input)).rejects.toThrow(/local chats require a model/i)
   expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
   expect(sqlite.prepare("SELECT count(*) count FROM diff_feedback_batches").get()).toEqual({
     count: 0,
@@ -94,12 +94,10 @@ it("rejects local feedback before consuming the comment or queueing work", async
 it("rechecks local eligibility after diff collection but preserves committed retries", async () => {
   const input = await request()
   readDiff.mockImplementationOnce(async () => {
-    sqlite
-      .prepare("UPDATE sub_chats SET harness='local', model='fixture-local' WHERE id='sub'")
-      .run()
+    sqlite.prepare("UPDATE sub_chats SET harness='local', model=NULL WHERE id='sub'").run()
     return { success: true, diff }
   })
-  await expect(feedback.queue(input)).rejects.toThrow(/local-model feedback/i)
+  await expect(feedback.queue(input)).rejects.toThrow(/local chats require a model/i)
   sqlite.prepare("UPDATE sub_chats SET harness='codex' WHERE id='sub'").run()
   const batch = await feedback.queue(input)
   sqlite.prepare("UPDATE sub_chats SET harness='local' WHERE id='sub'").run()

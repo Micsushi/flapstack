@@ -33,6 +33,7 @@ import {
 } from "./local-model-read-tools"
 import { LOCAL_MODEL_READ_TOOL_SCHEMAS } from "./local-model-read-tools"
 import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../agent-runtime/snapshot"
+import { findPromptById, insertAssistantForPrompt } from "./message-order"
 import {
   createProjectLocalModelWriteToolExecutor,
   LOCAL_MODEL_WRITE_TOOL_NAMES,
@@ -124,6 +125,7 @@ export type LocalModelPersistedRunFinish = {
 
 export type StreamLocalModelChatInput = {
   runId?: string
+  promptMessageId?: string
   chatId: string
   subChatId: string
   prompt: string
@@ -270,10 +272,15 @@ export class LocalModelChatService {
   private async *run(input: StreamLocalModelChatInput): AsyncGenerator<UIMessageChunk> {
     const runId = input.runId ?? randomUUID()
     const streamId = randomUUID()
-    const promptMessageId = randomUUID()
+    const promptMessageId = input.promptMessageId ?? randomUUID()
     const assistantMessageId = randomUUID()
-    const controller = new AbortController()
     const previousRunId = this.activeRunBySubChat.get(input.subChatId)
+    if (this.activeByRun.has(runId) || (input.promptMessageId && previousRunId)) {
+      yield { type: "error", errorText: SAFE_ERROR_TEXT["run-not-startable"] }
+      yield { type: "finish" }
+      return
+    }
+    const controller = new AbortController()
     if (previousRunId) this.activeByRun.get(previousRunId)?.abort()
     this.activeRunBySubChat.set(input.subChatId, runId)
     this.activeByRun.set(runId, controller)
@@ -314,6 +321,7 @@ export class LocalModelChatService {
 
     try {
       const transcript = this.dependencies.persistence.loadTranscript(input.subChatId)
+      const promptIndex = transcript.findIndex((message) => message.id === promptMessageId)
       const context = await (this.dependencies.buildContext ?? defaultContextBuilder)(input)
       this.dependencies.persistence.begin({
         runId,
@@ -348,7 +356,7 @@ export class LocalModelChatService {
       const endpoint = input.endpoint ?? getOllamaEndpointConfig()
       const messages = assembleLocalModelMessages({
         context: context.context,
-        transcript,
+        transcript: promptIndex < 0 ? transcript : transcript.slice(0, promptIndex),
         prompt: input.modelPrompt ?? input.prompt,
         maxTranscriptChars: input.maxTranscriptChars,
       })
@@ -978,23 +986,55 @@ export function createDatabaseLocalModelRunPersistence(db: AppDatabase): LocalMo
     },
     begin(input) {
       db.transaction((tx) => {
-        const existingRun = tx
-          .select({ id: agentRuns.id, status: agentRuns.status })
-          .from(agentRuns)
-          .where(eq(agentRuns.id, input.runId))
-          .get()
-        if (existingRun && existingRun.status !== "pending") {
-          throw new LocalModelStreamError("run-not-startable")
-        }
+        const existingRun = tx.select().from(agentRuns).where(eq(agentRuns.id, input.runId)).get()
         const existingSubChat = tx
-          .select({ messages: subChats.messages })
+          .select({
+            messages: subChats.messages,
+            chatId: subChats.chatId,
+            streamId: subChats.streamId,
+          })
           .from(subChats)
           .where(eq(subChats.id, input.subChatId))
           .get()
-        if (!existingSubChat) throw new Error("Local model sub-chat does not exist.")
+        if (!existingSubChat || existingSubChat.chatId !== input.chatId)
+          throw new LocalModelStreamError("run-not-startable")
+        if (
+          existingRun &&
+          (existingSubChat.streamId ||
+            existingRun.chatId !== input.chatId ||
+            existingRun.subChatId !== input.subChatId ||
+            existingRun.harness !== "local" ||
+            existingRun.resolvedRuntime !== "flapstack-native" ||
+            existingRun.model !== input.model ||
+            existingRun.permissionMode !== input.permissionMode ||
+            existingRun.customPermissions !== input.customPermissions ||
+            existingRun.worktreePath !== input.worktreePath ||
+            (existingRun.promptMessageId !== null &&
+              existingRun.promptMessageId !== input.promptMessageId) ||
+            (existingRun.initialPrompt !== null && existingRun.initialPrompt !== input.prompt) ||
+            (existingRun.status !== "pending" &&
+              !(
+                existingRun.status === "running" &&
+                existingRun.promptMessageId?.startsWith("mcp-") &&
+                !existingSubChat.streamId
+              )))
+        )
+          throw new LocalModelStreamError("run-not-startable")
 
-        const messages = parseTranscript(existingSubChat.messages)
-        if (!messages.some((message) => message.id === input.promptMessageId)) {
+        let messages = parseTranscript(existingSubChat.messages)
+        if (
+          messages.some(
+            (message) => message.role === "assistant" && message.metadata?.runId === input.runId,
+          )
+        )
+          throw new LocalModelStreamError("run-not-startable")
+        let persistedPrompt
+        try {
+          persistedPrompt = findPromptById(messages, input.promptMessageId, input.prompt)
+        } catch {
+          throw new LocalModelStreamError("run-not-startable")
+        }
+        if (!persistedPrompt) {
           messages.push({
             id: input.promptMessageId,
             role: "user",
@@ -1003,17 +1043,21 @@ export function createDatabaseLocalModelRunPersistence(db: AppDatabase): LocalMo
           })
         }
         if (!messages.some((message) => message.id === input.assistantMessageId)) {
-          messages.push({
-            id: input.assistantMessageId,
-            role: "assistant",
-            parts: [{ type: "text", text: "" }],
-            metadata: {
-              runId: input.runId,
-              localModel: input.metadata,
-              context: input.context,
-              streamState: "streaming",
+          messages = insertAssistantForPrompt(
+            messages,
+            {
+              id: input.assistantMessageId,
+              role: "assistant",
+              parts: [{ type: "text", text: "" }],
+              metadata: {
+                runId: input.runId,
+                localModel: input.metadata,
+                context: input.context,
+                streamState: "streaming",
+              },
             },
-          })
+            input.promptMessageId,
+          )
         }
 
         assertSubChatNotRewinding(input.subChatId)
@@ -1032,7 +1076,15 @@ export function createDatabaseLocalModelRunPersistence(db: AppDatabase): LocalMo
         }
         cancelStaleRunningRuns(tx, { runId: input.runId, subChatId: input.subChatId })
         if (existingRun) {
-          tx.update(agentRuns).set(runValues).where(eq(agentRuns.id, input.runId)).run()
+          tx.update(agentRuns)
+            .set({
+              status: "running",
+              completedAt: null,
+              promptMessageId: existingRun.promptMessageId ?? input.promptMessageId,
+              initialPrompt: existingRun.initialPrompt ?? input.prompt,
+            })
+            .where(eq(agentRuns.id, input.runId))
+            .run()
         } else {
           const runtimeSnapshot = constructRuntimeSnapshot(db, {
             chatId: input.chatId,
@@ -1048,20 +1100,25 @@ export function createDatabaseLocalModelRunPersistence(db: AppDatabase): LocalMo
           .set({
             streamId: input.streamId,
             sessionId: null,
-            harness: "local",
-            model: input.model,
-            permissionMode: input.permissionMode,
-            worktreePath: input.worktreePath,
+            ...(!existingRun
+              ? {
+                  harness: "local",
+                  model: input.model,
+                  permissionMode: input.permissionMode,
+                  worktreePath: input.worktreePath,
+                }
+              : {}),
             runStatus: "running",
             messages: JSON.stringify(messages),
             updatedAt: new Date(),
           })
           .where(eq(subChats.id, input.subChatId))
           .run()
-        tx.update(chats)
-          .set({ harness: "local", model: input.model })
-          .where(eq(chats.id, input.chatId))
-          .run()
+        if (!existingRun)
+          tx.update(chats)
+            .set({ harness: "local", model: input.model })
+            .where(eq(chats.id, input.chatId))
+            .run()
       })
     },
     appendAssistantText(input) {

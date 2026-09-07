@@ -131,10 +131,6 @@ export class DiffFeedbackService {
           .from(schema.subChats)
           .where(eq(schema.subChats.id, input.subChatId))
           .get()!
-        // Local persistence cannot yet adopt a claimed run and its durable prompt.
-        // Fail before consuming this comment version, not after queue dispatch.
-        if ((conversation.harness ?? latestChat.harness) === "local")
-          throw new Error("Local-model feedback is not yet supported; the comment remains unsent")
         const run = queueChatRun(this.sqlite, {
           chatId: input.chatId,
           subChatId: input.subChatId,

@@ -35,6 +35,16 @@ recomputing its runtime snapshot, and rejects conflicting scope, provider, promp
 or terminal state before provider dispatch. Tests use actual routers and SQLite
 with mocked provider transports, not live provider acceptance.
 
+Native local-model launches adopt only matching pending or claimed MCP runs, with
+no occupied conversation stream or earlier response for the same run. Scope,
+native runtime, model, permissions, worktree and durable prompt identity are
+rechecked at persistence. Existing snapshots and newer Chat preferences are not
+rewritten. The provider receives history before its owning prompt; its response
+is inserted before later queued users. Duplicate or rejected subscriptions do not
+own cancellation of the original stream, and queued work cannot supersede it.
+These tests use real SQLite queue claims and native routing with a mocked local
+provider, not an installed Ollama acceptance run.
+
 `tests/chat-run-queue-target.test.ts` covers explicit targets, foreign/missing
 targets, per-conversation harness choice, active status, exact retry and conflicting
 reuse. Mutation-service, Chat-wait and main-launcher tests cover the existing

@@ -6,9 +6,14 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { randomUUID } from "node:crypto"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 const catalogMocks = vi.hoisted(() => ({ probe: vi.fn() }))
+vi.mock("../src/main/lib/permissions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/main/lib/permissions")>()),
+  getPermissionPreferences: () => ({ globalDefault: "read-only" }),
+}))
 const transportMocks = vi.hoisted(() => ({
   subscribe: vi.fn(),
   cancel: vi.fn(),
@@ -38,6 +43,7 @@ import {
   chats,
   closeDatabase,
   getDatabase,
+  getSqliteDatabase,
   projects,
   subChats,
   usageSamples,
@@ -45,6 +51,9 @@ import {
 import * as schema from "../src/main/lib/db/schema"
 import { bindRegisteredFilesystemRoot } from "../src/main/lib/git/security/path-validation"
 import { localModelsRouter } from "../src/main/lib/trpc/routers/local-models"
+import { queueChatRun, drainPendingMcpRuns } from "../src/main/lib/run-launch-service"
+import { DiffAnnotationService } from "../src/main/lib/diff-annotations/service"
+import { DiffFeedbackService } from "../src/main/lib/diff-annotations/feedback"
 import { LocalModelChatTransport } from "../src/renderer/features/agents/lib/local-model-chat-transport"
 import {
   LOCAL_MODEL_CATALOG_CACHE_VERSION,
@@ -102,6 +111,158 @@ afterAll(() => {
 })
 
 describe("local model router bridge", () => {
+  it.each([
+    "foreign-harness",
+    "foreign-runtime",
+    "terminal",
+    "ordinary-running",
+    "changed-prompt",
+    "changed-message",
+    "occupied-stream",
+  ])("does not adopt a %s run", async (kind) => {
+    seedChat(kind, { chatPermission: "read-only" })
+    const sqlite = getSqliteDatabase()
+    const queued = queueChatRun(sqlite, {
+      chatId: `chat-${kind}`,
+      subChatId: `sub-${kind}`,
+      initialPrompt: "Answer locally",
+      idempotencyKey: kind,
+    })
+    if (!queued.ok) throw new Error(queued.message)
+    if (kind === "foreign-harness")
+      sqlite.prepare("UPDATE agent_runs SET harness='codex' WHERE id=?").run(queued.runId)
+    if (kind === "foreign-runtime") {
+      const record = readRun(queued.runId)!
+      // Create the incompatible fixture without weakening immutable-snapshot triggers.
+      getDatabase().delete(agentRuns).where(eq(agentRuns.id, queued.runId)).run()
+      getDatabase()
+        .insert(agentRuns)
+        .values({ ...record, resolvedRuntime: "codex" })
+        .run()
+    }
+    if (kind === "changed-message")
+      sqlite.prepare("UPDATE sub_chats SET messages=? WHERE id=?").run(
+        JSON.stringify([
+          {
+            id: readRun(queued.runId)!.promptMessageId,
+            role: "user",
+            parts: [{ type: "text", text: "changed persisted prompt" }],
+          },
+        ]),
+        `sub-${kind}`,
+      )
+    if (kind === "terminal")
+      sqlite.prepare("UPDATE agent_runs SET status='success' WHERE id=?").run(queued.runId)
+    if (kind === "ordinary-running")
+      sqlite
+        .prepare("UPDATE agent_runs SET status='running', prompt_message_id='ordinary' WHERE id=?")
+        .run(queued.runId)
+    if (kind === "changed-prompt")
+      sqlite
+        .prepare("UPDATE agent_runs SET initial_prompt='different' WHERE id=?")
+        .run(queued.runId)
+    if (kind === "occupied-stream") {
+      sqlite.prepare("UPDATE agent_runs SET status='running' WHERE id=?").run(queued.runId)
+      sqlite.prepare("UPDATE sub_chats SET stream_id='other-stream' WHERE id=?").run(`sub-${kind}`)
+    }
+    const before = readRun(queued.runId)
+    const beforeMessages = sqlite
+      .prepare("SELECT messages FROM sub_chats WHERE id=?")
+      .get(`sub-${kind}`)
+    const fetchMock = successFetch()
+    vi.stubGlobal("fetch", fetchMock)
+    try {
+      const chunks = await collect(await caller.chat(input(kind, { runId: queued.runId })))
+      expect(chunks).toContainEqual(expect.objectContaining({ type: "error" }))
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(readRun(queued.runId)).toEqual(before)
+      expect(
+        sqlite.prepare("SELECT messages FROM sub_chats WHERE id=?").get(`sub-${kind}`),
+      ).toEqual(beforeMessages)
+    } finally {
+      sqlite.prepare("UPDATE agent_runs SET status='cancelled' WHERE id=?").run(queued.runId)
+    }
+  })
+
+  it("adopts a claimed queued run without changing its snapshot or later chat preferences", async () => {
+    seedChat("queued", { chatPermission: "read-only" })
+    const queued = queueChatRun(getSqliteDatabase(), {
+      chatId: "chat-queued",
+      subChatId: "sub-queued",
+      initialPrompt: "queued question",
+      idempotencyKey: "local-queued",
+    })
+    if (!queued.ok) throw new Error(queued.message)
+    const before = readRun(queued.runId)!
+    const db = getDatabase()
+    db.update(subChats)
+      .set({
+        permissionMode: "full-access",
+        model: "new-preference",
+        messages: JSON.stringify([
+          {
+            id: before.promptMessageId,
+            role: "user",
+            parts: [{ type: "text", text: "queued question" }],
+          },
+          { id: "later-user", role: "user", parts: [{ type: "text", text: "later question" }] },
+        ]),
+      })
+      .where(eq(subChats.id, "sub-queued"))
+      .run()
+    db.update(chats)
+      .set({ permissionMode: "full-access", model: "new-preference" })
+      .where(eq(chats.id, "chat-queued"))
+      .run()
+    const fetchMock = successFetch()
+    vi.stubGlobal("fetch", fetchMock)
+    expect(
+      await drainPendingMcpRuns(
+        databasePath,
+        async (run) => {
+          const chunks = await collect(
+            await caller.chat(
+              input("queued", {
+                runId: run.runId,
+                prompt: run.prompt,
+                model: run.model!,
+              }),
+            ),
+          )
+          expect(chunks.some((chunk) => chunk.type === "error")).toBe(false)
+        },
+        { waitForCompletion: true },
+      ),
+    ).toBe(1)
+    expect(readRun(queued.runId)).toMatchObject({
+      status: "success",
+      permissionMode: before.permissionMode,
+      model: before.model,
+      customPermissions: before.customPermissions,
+      promptMessageId: before.promptMessageId,
+      runtimeCapabilitySnapshot: before.runtimeCapabilitySnapshot,
+    })
+    const row = db.select().from(subChats).where(eq(subChats.id, "sub-queued")).get()!
+    expect(row).toMatchObject({ permissionMode: "full-access", model: "new-preference" })
+    const messages = JSON.parse(row.messages)
+    expect(messages.map((message: any) => message.role)).toEqual(["user", "assistant", "user"])
+    expect(messages[0].id).toBe(before.promptMessageId)
+    expect(messages[1].metadata.localModel.permission.mode).toBe("read-only")
+    expect(messages[2].id).toBe("later-user")
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1].body))
+    expect(body.model).toBe(model)
+    expect(
+      body.messages.filter((message: any) => message.content.includes("queued question")),
+    ).toHaveLength(1)
+    expect(JSON.stringify(body.messages)).not.toContain("later question")
+    expect(
+      await drainPendingMcpRuns(databasePath, async () => {
+        throw new Error("duplicate")
+      }),
+    ).toBe(0)
+  })
+
   it("reports loopback-only diagnostics with no cloud fallback", async () => {
     await expect(caller.diagnostics({ endpoint })).resolves.toMatchObject({
       provider: "ollama",
@@ -111,6 +272,68 @@ describe("local model router bridge", () => {
       reconnectable: false,
       cloudFallback: false,
     })
+  })
+
+  it("runs a durable feedback batch through the queue claim and local persistence once", async () => {
+    seedChat("feedback", { chatPermission: "read-only" })
+    const scope = { projectId: "project-local-route", chatId: "chat-feedback" }
+    const readDiff = async () => ({
+      success: true,
+      diff: "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n",
+    })
+    const annotations = new DiffAnnotationService(getDatabase(), readDiff)
+    const comment = await annotations.create({
+      ...scope,
+      id: randomUUID(),
+      body: "Review this local change",
+      anchor: {
+        diffHash: (await annotations.list(scope)).diffHash!,
+        filePath: "file.txt",
+        side: "right",
+        startLine: 1,
+        endLine: 1,
+      },
+    })
+    const feedback = new DiffFeedbackService(getSqliteDatabase(), readDiff)
+    const request = {
+      ...scope,
+      id: randomUUID(),
+      subChatId: "sub-feedback",
+      comments: [{ id: comment.id, version: comment.version }],
+    }
+    const batch = await feedback.queue(request)
+    const fetchMock = successFetch()
+    vi.stubGlobal("fetch", fetchMock)
+    expect(
+      await drainPendingMcpRuns(
+        databasePath,
+        async (run) => {
+          const chunks = await collect(
+            await caller.chat(
+              input("feedback", { runId: run.runId, prompt: run.prompt, model: run.model! }),
+            ),
+          )
+          expect(chunks.some((chunk) => chunk.type === "error")).toBe(false)
+        },
+        { waitForCompletion: true },
+      ),
+    ).toBe(1)
+    expect(readRun(batch.runId)?.status).toBe("success")
+    expect((await annotations.list(scope)).annotations[0]).toMatchObject({
+      lastFeedbackVersion: 1,
+      feedback: { status: "success" },
+    })
+    expect(await feedback.queue(request)).toEqual(batch)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const row = getDatabase().select().from(subChats).where(eq(subChats.id, "sub-feedback")).get()!
+    expect(JSON.parse(row.messages)).toMatchObject([
+      {
+        id: `mcp-diff-feedback-${request.id}`,
+        role: "user",
+        metadata: { feedbackBatchId: batch.id },
+      },
+      { role: "assistant", metadata: { runId: batch.runId } },
+    ])
   })
 
   it("routes the Dev fixture through normal catalog and persisted chat paths", async () => {
@@ -316,6 +539,24 @@ describe("local model router bridge", () => {
 
     const chunksPromise = collect(await caller.chat(input("cancel", { runId: "run-cancel" })))
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    const duplicate = await collect(await caller.chat(input("cancel", { runId: "run-cancel" })))
+    expect(duplicate).toContainEqual(expect.objectContaining({ type: "error" }))
+    expect(readRun("run-cancel")?.status).toBe("running")
+    const foreign = await collect(await caller.chat(input("missing", { runId: "run-cancel" })))
+    expect(foreign).toContainEqual(expect.objectContaining({ type: "error" }))
+    expect(readRun("run-cancel")?.status).toBe("running")
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const queued = queueChatRun(getSqliteDatabase(), {
+      chatId: "chat-cancel",
+      subChatId: "sub-cancel",
+      initialPrompt: "Answer locally",
+      idempotencyKey: "while-active",
+    })
+    if (!queued.ok) throw new Error(queued.message)
+    const premature = await collect(await caller.chat(input("cancel", { runId: queued.runId })))
+    expect(premature).toContainEqual(expect.objectContaining({ type: "error" }))
+    expect(readRun("run-cancel")?.status).toBe("running")
+    expect(readRun(queued.runId)?.status).toBe("pending")
     await expect(caller.cancel({ runId: "run-cancel" })).resolves.toEqual({ cancelled: true })
     const chunks = await chunksPromise
 

@@ -27,7 +27,7 @@ import {
   createDatabaseLocalModelRunPersistence,
   LocalModelChatService,
 } from "../../harness/local-model-stream"
-import { chats, getDatabase, subChats } from "../../db"
+import { agentRuns, chats, getDatabase, subChats } from "../../db"
 import type { UIMessageChunk } from "../../claude/types"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import { parsePermissionMode } from "../../permissions"
@@ -119,6 +119,7 @@ export const localModelsRouter = router({
     .subscription(({ input }) =>
       observable<UIMessageChunk>((emit) => {
         let active = true
+        let ownsStream = false
         const safeNext = (chunk: UIMessageChunk) => {
           if (active) emit.next(chunk)
         }
@@ -148,24 +149,39 @@ export const localModelsRouter = router({
               .where(and(eq(subChats.id, input.subChatId), eq(chats.id, input.chatId)))
               .get()
             if (!row) throw new Error("Local model chat was not found.")
+            const run = db.select().from(agentRuns).where(eq(agentRuns.id, input.runId)).get()
+            if (
+              run &&
+              (run.chatId !== input.chatId ||
+                run.subChatId !== input.subChatId ||
+                run.harness !== "local" ||
+                run.resolvedRuntime !== "flapstack-native" ||
+                run.model !== input.model ||
+                (run.initialPrompt !== null && run.initialPrompt !== input.prompt))
+            ) {
+              throw new Error("Local model run does not match this launch.")
+            }
 
             const requestedPermissionMode = parsePermissionMode(
-              row.subChatPermissionMode ?? row.chatPermissionMode,
+              run?.permissionMode ?? row.subChatPermissionMode ?? row.chatPermissionMode,
             )
             if (!requestedPermissionMode) throw new Error("Local model permission mode is invalid.")
-            const permissionMode = resolveChatModePermission(input.mode, requestedPermissionMode)
+            const permissionMode = run
+              ? requestedPermissionMode
+              : resolveChatModePermission(input.mode, requestedPermissionMode)
             const worktree = assertRegisteredWorktree(
-              row.worktreePath ?? row.chatWorktreePath ?? input.cwd,
+              run?.worktreePath ?? row.worktreePath ?? row.chatWorktreePath ?? input.cwd,
             )
             const project = input.projectPath
               ? assertRegisteredWorktree(input.projectPath)
               : undefined
             const storedLocalModel =
-              row.subChatHarness === "local" && row.subChatModel
+              run?.model ??
+              (row.subChatHarness === "local" && row.subChatModel
                 ? row.subChatModel
                 : row.chatHarness === "local"
                   ? row.chatModel
-                  : null
+                  : null)
             if (storedLocalModel && storedLocalModel !== input.model) {
               safeNext({
                 type: "error",
@@ -192,7 +208,9 @@ export const localModelsRouter = router({
               return
             }
 
-            const customPermissions = parseStoredCustomPermissionCapabilities(row.customPermissions)
+            const storedCustomPermissions = run ? run.customPermissions : row.customPermissions
+            const customPermissions =
+              parseStoredCustomPermissionCapabilities(storedCustomPermissions)
             const metadata = createLocalModelRunMetadata({
               catalog,
               model: selection.model,
@@ -203,18 +221,24 @@ export const localModelsRouter = router({
             const fixtureFetch = devFixtureEnabled()
               ? createLocalModelDevFixtureFetch(endpoint.baseUrl)
               : null
-            for await (const chunk of getLocalModelChatService().stream({
+            if (!active) return
+            const service = getLocalModelChatService()
+            if (service.diagnostics().activeRunIds.includes(input.runId))
+              throw new Error("Local model run is already active.")
+            ownsStream = true
+            for await (const chunk of service.stream({
               runId: input.runId,
+              promptMessageId: run?.promptMessageId ?? undefined,
               chatId: input.chatId,
               subChatId: input.subChatId,
               prompt: input.prompt,
               modelPrompt: applyChatModeInstruction(input.prompt, input.mode),
               model: launchModel,
               permissionMode,
-              customPermissions: row.customPermissions,
+              customPermissions: storedCustomPermissions,
               cwd: worktree.canonicalPath,
               projectPath: project?.canonicalPath,
-              worktreePath: worktree.canonicalPath,
+              worktreePath: run?.worktreePath ?? worktree.canonicalPath,
               metadata,
               endpoint,
               ...(fixtureFetch ? { fetchImpl: fixtureFetch } : {}),
@@ -237,7 +261,7 @@ export const localModelsRouter = router({
 
         return () => {
           active = false
-          getLocalModelChatService().cancel(input.runId)
+          if (ownsStream) getLocalModelChatService().cancel(input.runId)
         }
       }),
     ),
