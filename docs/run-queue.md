@@ -20,6 +20,12 @@ conversation, prompt or vault selection fails rather than returning an unrelated
 earlier run. Existing native/direct-runtime recovery and cancellation policies
 are unchanged.
 
+The Claude router preserves explicit prompt-message identity: distinct IDs remain
+distinct turns even with identical text, and an already persisted ID is reused
+without appending it again. Changed text under that ID fails before provider
+dispatch. Callers without an ID retain the legacy last-message text fallback.
+This transcript check does not make provider execution replay-safe by itself.
+
 `tests/chat-run-queue-target.test.ts` covers explicit targets, foreign/missing
 targets, per-conversation harness choice, active status, exact retry and conflicting
 reuse. Mutation-service, Chat-wait and main-launcher tests cover the existing

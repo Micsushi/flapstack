@@ -1207,17 +1207,31 @@ export const claudeRouter = router({
                 .run()
             }
 
-            // Check if last message is already this user message (avoid duplicate)
+            // A durable identity outranks text equality. Legacy callers without
+            // an identity retain the last-message fallback.
             const lastMsg = existingMessages[existingMessages.length - 1]
             const lastMsgText = lastMsg?.parts?.find((p: any) => p.type === "text")?.text
-            const isDuplicate = lastMsg?.role === "user" && lastMsgText === input.prompt
+            const promptMessageId = input.promptMessageId ?? queuedPromptMessageId
+            const persistedPrompt = promptMessageId
+              ? existingMessages.find((message: any) => message.id === promptMessageId)
+              : lastMsg?.role === "user" && lastMsgText === input.prompt
+                ? lastMsg
+                : undefined
+            if (
+              persistedPrompt &&
+              (persistedPrompt.role !== "user" ||
+                persistedPrompt.parts?.find((part: any) => part.type === "text")?.text !==
+                  input.prompt)
+            ) {
+              throw new Error("Prompt message identity was reused with different content.")
+            }
 
             // 2. Create user message and save BEFORE streaming (skip if duplicate)
             let userMessage: any
             let messagesToSave: any[]
 
-            if (isDuplicate) {
-              userMessage = lastMsg
+            if (persistedPrompt) {
+              userMessage = persistedPrompt
               messagesToSave = existingMessages
               db.update(subChats)
                 .set({ streamId, updatedAt: new Date() })
