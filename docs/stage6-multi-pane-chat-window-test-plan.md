@@ -15,6 +15,10 @@ acceptance remains authoritative in `docs/stage6-full-feature-test-matrix.md`.
   windows do not consume workbench-window slots.
 - Moving a Chat changes presentation and editable ownership only. It never
   creates, archives, duplicates, or deletes the durable Chat.
+- Resizing changes only the adjacent pair and preserves its combined space.
+  If the pair cannot fit both minimum sizes, their minima scale proportionally
+  to fit; no pane receives a zero or negative size. Check a narrow four-pane
+  layout as well as a wide layout with room to drag.
 
 ## Required Evidence Header
 

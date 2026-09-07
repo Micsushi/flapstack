@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react"
 import { getDefaultRatios } from "../atoms"
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
+import { resizeSplitPair } from "../../../lib/split-ratios"
 
 const MIN_PANE_WIDTH = 350
 
@@ -17,7 +18,6 @@ export function SplitViewContainer({ panes, hiddenTabs }: SplitViewContainerProp
   const [localRatios, setLocalRatios] = useState<number[] | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const ratiosRef = useRef(splitRatios)
-  ratiosRef.current = splitRatios
 
   // Use local ratios during drag, else persisted. Auto-fix if length mismatch.
   const currentRatios = (() => {
@@ -25,6 +25,7 @@ export function SplitViewContainer({ panes, hiddenTabs }: SplitViewContainerProp
     if (splitRatios.length === panes.length) return splitRatios
     return getDefaultRatios(panes.length)
   })()
+  ratiosRef.current = currentRatios
 
   // When pane count changes, reset ratios if they don't match
   useEffect(() => {
@@ -105,6 +106,7 @@ function SplitDivider({
       const startX = event.clientX
       const startRatios = [...ratiosRef.current]
       const containerWidth = container.getBoundingClientRect().width
+      if (!Number.isFinite(containerWidth) || containerWidth <= 0) return
       const pointerId = event.pointerId
       const target = event.currentTarget
 
@@ -120,8 +122,6 @@ function SplitDivider({
       let finalRatios = startRatios
 
       const minRatio = MIN_PANE_WIDTH / containerWidth
-      // Combined width of the two adjacent panes stays constant
-      const combined = startRatios[index] + startRatios[index + 1]
 
       const onMove = (e: PointerEvent) => {
         const deltaX = e.clientX - startX
@@ -129,22 +129,8 @@ function SplitDivider({
         hasMoved = true
 
         const deltaRatio = deltaX / containerWidth
-        let newLeft = startRatios[index] + deltaRatio
-        let newRight = combined - newLeft
-
-        // Clamp both panes to minimum
-        if (newLeft < minRatio) {
-          newLeft = minRatio
-          newRight = combined - minRatio
-        }
-        if (newRight < minRatio) {
-          newRight = minRatio
-          newLeft = combined - minRatio
-        }
-
-        const newRatios = [...startRatios]
-        newRatios[index] = newLeft
-        newRatios[index + 1] = newRight
+        const newRatios = resizeSplitPair(startRatios, index, deltaRatio, minRatio, minRatio)
+        if (!newRatios) return
         finalRatios = newRatios
         onLocalRatiosChange(newRatios)
       }

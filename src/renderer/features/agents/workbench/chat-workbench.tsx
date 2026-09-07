@@ -30,6 +30,7 @@ import {
   type ChatWorkbenchLayout,
 } from "../../../../shared/chat-workbench"
 import { cn } from "../../../lib/utils"
+import { resizeSplitPair } from "../../../lib/split-ratios"
 import { incrementPerformanceCounter } from "../../../lib/performance-counters"
 import { configureChatDragFeedback, shouldPopOutChatDrag } from "../lib/chat-drag-feedback"
 import { MoreHorizontal, SquareTerminal, X } from "lucide-react"
@@ -786,20 +787,11 @@ function SplitChild({
     split.sizes.slice(0, index + 1).reduce((sum, size) => sum + size, 0) * 100
   const resizedSizes = (delta: number, extent: number, baseSizes = split.sizes) => {
     if (index >= split.children.length - 1) return
-    const currentPair = baseSizes[index] + baseSizes[index + 1]
-    const current = baseSizes[index]
     const minimumCurrent =
       (split.direction === "row" ? childMinimum.width : childMinimum.height) / extent
     const minimumAdjacent =
       (split.direction === "row" ? adjacentMinimum.width : adjacentMinimum.height) / extent
-    const nextCurrent = Math.min(
-      currentPair - minimumAdjacent,
-      Math.max(minimumCurrent, current + delta),
-    )
-    const sizes = [...baseSizes]
-    sizes[index] = nextCurrent
-    sizes[index + 1] = currentPair - nextCurrent
-    return sizes
+    return resizeSplitPair(baseSizes, index, delta, minimumCurrent, minimumAdjacent) ?? undefined
   }
   const resize = (delta: number, baseSizes = split.sizes) => {
     const parent = ref.current?.parentElement
