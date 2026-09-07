@@ -461,6 +461,10 @@ export class TerminalManager extends EventEmitter {
     ).length
   }
 
+  getLiveSessionCount(): number {
+    return Array.from(this.sessions.values()).filter((session) => session.isAlive).length
+  }
+
   /**
    * Get all alive sessions for a given scope key.
    * Used by new workspaces to discover shared terminals.

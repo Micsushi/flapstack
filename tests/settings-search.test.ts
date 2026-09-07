@@ -50,6 +50,14 @@ describe("Settings search", () => {
     })
   })
 
+  it("finds sleep prevention by its control and power terminology", () => {
+    for (const query of ["sleep prevention", "caffeinate", "awake"]) {
+      expect(searchSettings(query, { showDevelopment: false })[0]).toMatchObject({
+        targetId: "preferences-sleep-prevention",
+      })
+    }
+  })
+
   it("requires every normalized query token to match", () => {
     expect(searchSettings("default permission", { showDevelopment: false })[0]?.id).toBe(
       "permissions-default",

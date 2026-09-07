@@ -151,6 +151,10 @@ export type RuntimeStructuredOutput = Readonly<{
 }>
 
 const services = new Map<string, MainRuntimeLaunchService>()
+
+export function hasActiveMainRuntimeRuns(): boolean {
+  return [...services.values()].some((service) => service.coordinator.activeRunIds().length > 0)
+}
 const TRANSLATED_RUNTIME_RELEASE_REASON =
   "Translated Runtime pack credentialed provider and package evidence is open."
 

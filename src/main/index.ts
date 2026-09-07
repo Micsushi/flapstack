@@ -23,7 +23,9 @@ import {
   registerDatabaseMaintenanceParticipant,
   withDatabaseOperation,
 } from "./lib/db"
-import { getMainRuntimeLaunchService } from "./lib/main-run-launcher"
+import { getMainRuntimeLaunchService, hasActiveMainRuntimeRuns } from "./lib/main-run-launcher"
+import { initializeSleepPrevention, stopSleepPrevention } from "./lib/sleep-prevention/service"
+import { terminalManager } from "./lib/terminal"
 import {
   CrossProviderDelegationService,
   nextRuntimeRecoverySchedule,
@@ -687,11 +689,18 @@ if (gotTheLock) {
 
   app.on("before-quit", () => {
     setIsQuitting(true)
+    stopSleepPrevention()
   })
 
   // App ready
   app.whenReady().then(async () => {
     if (IS_HEADLESS_PERFORMANCE) app.dock?.hide()
+    if (!IS_STAGE6_PERFORMANCE) {
+      initializeSleepPrevention(() => ({
+        agentWork: hasActiveAgentSessions() || hasActiveMainRuntimeRuns(),
+        terminals: terminalManager.getLiveSessionCount(),
+      }))
+    }
     if (IS_CONTROL_DEV) {
       app.setName(APP_DISPLAY_NAME)
     }

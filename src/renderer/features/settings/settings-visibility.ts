@@ -394,6 +394,13 @@ export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
     ["rename", "name", "first message", "summary", "title generation"],
   ),
   control(
+    "preferences-sleep-prevention",
+    "preferences",
+    "Sleep prevention",
+    "Keep the system awake for active agents and owned terminals",
+    ["power", "awake", "caffeinate", "automatic", "sleep"],
+  ),
+  control(
     "preferences-chat-title-detail",
     "preferences",
     "Chat title detail",

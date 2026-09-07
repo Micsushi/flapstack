@@ -27,6 +27,7 @@ import { CHAT_MODES, CHAT_MODE_META } from "../../../../shared/chat-mode"
 import { APP_META, type ExternalApp } from "../../../../shared/external-apps"
 import { initAnalytics, shutdown as shutdownAnalytics } from "../../../lib/analytics"
 import { toast } from "sonner"
+import { SleepPreventionSetting } from "./sleep-prevention-setting"
 
 // Editor icon imports
 import cursorIcon from "../../../assets/app-icons/cursor.svg"
@@ -252,6 +253,8 @@ export function AgentsPreferencesTab() {
           </p>
         </div>
       )}
+
+      <SleepPreventionSetting />
 
       {/* Agent Behavior */}
       <div className="bg-background rounded-lg border border-border overflow-hidden">
