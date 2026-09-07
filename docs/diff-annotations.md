@@ -50,9 +50,14 @@ comment query is cached. Refresh remains available after a metadata lookup failu
 and retries project resolution before enabling scoped writes.
 
 Limits: 16 KiB UTF-8 per comment, 1,000 consecutive lines per anchor, 1,000 stored
-comments per Chat including deleted drafts, and an 8 MiB collected diff before
-annotation parsing. This reuses the existing Git diff collector; it does not yet
-provide streaming process-output bounds or large-diff acceptance. No persistent
+comments per Chat including deleted drafts, and an 8 MiB uncommitted-review
+collection budget shared across status, filenames, diff output and diagnostics.
+Each Git stdout/stderr stream is capped at the remaining budget; an overflow or
+30-second collection deadline returns an error, never a partial successful diff.
+The main review and annotation paths share this collector. Git external diff and
+text-conversion drivers are disabled, with no shell or optional index refresh;
+this is not an OS sandbox or user-cancellable large-diff acceptance. Branch/base
+comparison retains its separate existing collector. No persistent
 content index, automatic relocation, agent permission bypass or alternate audit
 system is introduced.
 

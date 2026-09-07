@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { lstat, mkdir, readFile, realpath, stat, unlink } from "node:fs/promises"
-import { devNull, homedir, tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
 import simpleGit from "simple-git"
@@ -999,20 +999,94 @@ export async function createWorktreeForChat(
   }
 }
 
-/**
- * Get diff for a worktree compared to its base branch
- * @param worktreePath - Path to the worktree
- * @param baseBranch - The base branch to compare against (if not provided, uses default branch)
- */
+/** Shared review collection: bounded streams and no partial-success result. */
+async function getBoundedUncommittedDiff(worktreePath: string): Promise<string> {
+  const limit = 8 * 1024 * 1024
+  let remaining = limit
+  const deadline = Date.now() + 30_000
+  const run = async (args: string[], allowDifference = false) => {
+    const timeout = deadline - Date.now()
+    if (timeout <= 0) throw new Error("Review diff reached the 30 second collection limit")
+    if (remaining <= 0) throw new Error("Review diff exceeds the 8 MiB collection limit")
+    let output: { stdout: string; stderr: string }
+    try {
+      output = await execFileAsync("git", ["--no-pager", "-c", "core.fsmonitor=false", ...args], {
+        cwd: worktreePath,
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+        encoding: "utf8",
+        windowsHide: true,
+        maxBuffer: remaining,
+        timeout,
+        killSignal: "SIGKILL",
+      })
+    } catch (error) {
+      if (
+        allowDifference &&
+        isExecFileException(error) &&
+        error.code === 1 &&
+        !error.killed &&
+        !error.signal &&
+        error.stdout?.startsWith("diff --git ")
+      ) {
+        output = { stdout: error.stdout, stderr: error.stderr ?? "" }
+      } else if (isExecFileException(error) && error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+        throw new Error("Review diff exceeds the 8 MiB collection limit")
+      } else if (isExecFileException(error) && error.killed) {
+        throw new Error("Review diff reached the 30 second collection limit")
+      } else {
+        throw new Error("Review diff collection failed; refresh before reviewing")
+      }
+    }
+    remaining -= Buffer.byteLength(output.stdout) + Buffer.byteLength(output.stderr)
+    if (remaining < 0) throw new Error("Review diff exceeds the 8 MiB collection limit")
+    return output.stdout
+  }
+  if (!(await run(["status", "--porcelain=v1", "-z", "--untracked-files=all"]))) return ""
+  const diffArgs = ["diff", "--no-color", "--no-ext-diff", "--no-textconv"]
+  const parts = [
+    await run([
+      ...diffArgs,
+      "HEAD",
+      "--",
+      ":!*.lock",
+      ":!*-lock.*",
+      ":!package-lock.json",
+      ":!pnpm-lock.yaml",
+      ":!yarn.lock",
+    ]),
+  ]
+  const untracked = await run(["ls-files", "--others", "--exclude-standard", "-z"])
+  for (const file of untracked.split("\0")) {
+    if (
+      !file ||
+      file.endsWith(".lock") ||
+      file.includes("-lock.") ||
+      file.endsWith("package-lock.json") ||
+      file.endsWith("pnpm-lock.yaml") ||
+      file.endsWith("yarn.lock")
+    )
+      continue
+    // Git recognizes /dev/null on Windows too; node:os.devNull is a Win32 device path.
+    parts.push(await run([...diffArgs, "--no-index", "--", "/dev/null", file], true))
+  }
+  const diff = parts.filter(Boolean).join("\n")
+  if (Buffer.byteLength(diff) > limit)
+    throw new Error("Review diff exceeds the 8 MiB collection limit")
+  return diff
+}
+
+/** Get uncommitted review changes, or compare a clean worktree to its base branch. */
 export async function getWorktreeDiff(
   worktreePath: string,
   baseBranch?: string,
   options?: { onlyUncommitted?: boolean },
 ): Promise<{ success: boolean; diff?: string; error?: string }> {
   try {
+    if (options?.onlyUncommitted) {
+      return { success: true, diff: await getBoundedUncommittedDiff(worktreePath) }
+    }
     const git = simpleGit(worktreePath)
     const status = await git.status()
-    const currentBranch = status.current
 
     // Has uncommitted changes - diff against HEAD
     if (!status.isClean()) {
@@ -1041,7 +1115,14 @@ export async function getWorktreeDiff(
       const untrackedDiffs: string[] = []
       for (const file of untrackedFiles) {
         try {
-          const fileDiff = await git.raw(["diff", "--no-color", "--no-index", devNull, file])
+          const fileDiff = await git.raw([
+            "diff",
+            "--no-color",
+            "--no-index",
+            "--",
+            "/dev/null",
+            file,
+          ])
           if (fileDiff) {
             untrackedDiffs.push(fileDiff)
           }
@@ -1063,11 +1144,6 @@ export async function getWorktreeDiff(
       const combinedDiff = [workingDiff, untrackedDiff].filter(Boolean).join("\n")
 
       return { success: true, diff: combinedDiff }
-    }
-
-    // All committed - if onlyUncommitted mode, return empty diff
-    if (options?.onlyUncommitted) {
-      return { success: true, diff: "" }
     }
 
     // All committed - diff against base branch
