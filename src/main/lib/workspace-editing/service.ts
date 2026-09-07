@@ -248,6 +248,7 @@ export class WorkspaceEditingService {
         pending.id,
         pending.revision,
         pending.intent,
+        ...(pending.reviewedDiskSha256 ? [pending.reviewedDiskSha256] : []),
       ]),
     )
   }
@@ -272,7 +273,9 @@ export class WorkspaceEditingService {
       if (operation.state === "expired") return row
     }
     const baseSha256 =
-      operation?.state === "applied" && row.baseSha256 === operation.beforeSha256
+      operation?.state === "applied" &&
+      (row.baseSha256 === operation.beforeSha256 ||
+        pending.reviewedDiskSha256 === operation.beforeSha256)
         ? operation.afterSha256
         : row.baseSha256
     const updated = this.db
@@ -297,13 +300,20 @@ export class WorkspaceEditingService {
 
   async saveDraft(input: z.infer<typeof saveWorkspaceDraftSchema>, owner: WorkspaceDraftOwner) {
     const value = saveWorkspaceDraftSchema.parse(input)
+    if (value.intent === "autosave" && value.reviewedDiskSha256)
+      throw new Error("Replacing a reviewed disk version requires an explicit Save")
     this.writable(value, value.intent)
     const root = this.draftRoot(value)
     return withRootLock(root.path, async () => {
       let draft = this.draft(value, value.draftId)
       this.draftLease(draft.id, value.leaseToken, owner)
       this.writable(value, value.intent)
-      const pending = { id: value.id, revision: value.expectedRevision, intent: value.intent }
+      const pending = {
+        id: value.id,
+        revision: value.expectedRevision,
+        intent: value.intent,
+        ...(value.reviewedDiskSha256 ? { reviewedDiskSha256: value.reviewedDiskSha256 } : {}),
+      }
       const requestHash = this.draftSaveHash(draft, pending)
       let previous = this.db
         .select()
@@ -348,7 +358,7 @@ export class WorkspaceEditingService {
           {
             ...value,
             relativePath: draft.relativePath,
-            expectedSha256: draft.baseSha256,
+            expectedSha256: value.reviewedDiskSha256 ?? draft.baseSha256,
             content: draft.content,
           },
           null,

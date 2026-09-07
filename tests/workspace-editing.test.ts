@@ -256,6 +256,49 @@ it("saves the owned draft through the existing journal and replays old save ids 
   expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(original)
 })
 
+it("replaces only the explicitly reviewed disk version and preserves its undo", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  const buffer = await service.updateDraft(draftUpdate(opened), owner)
+  const external = "external change 雪\r\n"
+  writeFileSync(join(root, "file.txt"), external)
+  const input = { ...draftSave(opened, buffer.revision), reviewedDiskSha256: hash(external) }
+  await expect(service.saveDraft({ ...input, intent: "autosave" }, owner)).rejects.toThrow(
+    /explicit Save/,
+  )
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(external)
+  const saved = await service.saveDraft(input, owner)
+  expect(saved.draft.baseSha256).toBe(hash(buffer.content))
+  expect(saved.draft.content).toBe(buffer.content)
+  expect(saved.draft.pendingSave).toBeNull()
+  expect(saved.operation.beforeSha256).toBe(hash(external))
+  expect(await service.saveDraft(input, owner)).toEqual(saved)
+  await expect(
+    service.saveDraft({ ...input, reviewedDiskSha256: hash(original) }, owner),
+  ).rejects.toThrow(/reused/)
+  await service.revert({ ...scope, id: randomUUID(), operationId: saved.operation.id })
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(external)
+})
+
+it("rejects disk changes after review without rebasing or discarding the draft", async () => {
+  const owner = draftOwner()
+  const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+  const buffer = await service.updateDraft(draftUpdate(opened), owner)
+  writeFileSync(join(root, "file.txt"), "later change")
+  await expect(
+    service.saveDraft(
+      { ...draftSave(opened, buffer.revision), reviewedDiskSha256: hash("reviewed change") },
+      owner,
+    ),
+  ).rejects.toBeInstanceOf(WorkspaceEditConflictError)
+  expect(service.readDraft({ ...scope, draftId: buffer.id })).toMatchObject({
+    content: buffer.content,
+    baseSha256: buffer.baseSha256,
+    revision: buffer.revision,
+  })
+  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe("later change")
+})
+
 it("keeps stale disk bytes and the draft when save conflicts", async () => {
   const owner = draftOwner()
   const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
@@ -1024,9 +1067,20 @@ it.each([
   "draft-ack",
   "draft-external",
   "draft-ack-external",
+  "draft-reviewed",
+  "draft-ack-reviewed",
+  "draft-reviewed-external",
+  "draft-ack-reviewed-external",
 ] as const)(
   "recovers an actual child exit after %s commit",
   async (kind) => {
+    const reviewed = kind.includes("reviewed")
+    if (reviewed) {
+      const owner = draftOwner()
+      const opened = await service.openDraft({ ...scope, relativePath: "file.txt" }, owner)
+      service.releaseDraft(draftUpdate(opened), owner)
+      writeFileSync(join(root, "file.txt"), "reviewed external version")
+    }
     const created =
       kind === "remove"
         ? await service.saveAs({
@@ -1044,6 +1098,7 @@ it.each([
           : "new.txt",
       operationId: created?.id,
       newName: kind === "rename-case" ? "FILE.TXT" : "renamed.txt",
+      ...(reviewed ? { reviewedDiskSha256: hash("reviewed external version") } : {}),
     }
     const evidenceRoot = resolve(".local-evidence")
     mkdirSync(evidenceRoot, { recursive: true })
@@ -1095,7 +1150,14 @@ it.each([
           },
         })
         const beforeReplay = statSync(join(root, "file.txt")).ino
-        const replay = await service.saveDraft({ ...draftSave(opened, 1), id: input.id }, owner)
+        const replay = await service.saveDraft(
+          {
+            ...draftSave(opened, 1),
+            id: input.id,
+            ...(reviewed ? { reviewedDiskSha256: input.reviewedDiskSha256 } : {}),
+          },
+          owner,
+        )
         expect(replay.operation.state).toBe(applied ? "applied" : "conflict")
         expect(readFileSync(join(root, "file.txt"), "utf8")).toBe(
           external ? "external after interruption" : input.content,

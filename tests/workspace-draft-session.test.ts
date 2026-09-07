@@ -5,6 +5,41 @@ import { createWorkspaceDraftSession } from "../src/renderer/features/file-viewe
 const target = { projectId: "project", chatId: "chat", relativePath: "file.txt" }
 const hash = (content: string) => createHash("sha256").update(content).digest("hex")
 type Client = Parameters<typeof createWorkspaceDraftSession>[1]
+it("requires the displayed disk digest and explicit save to resolve a conflict", async () => {
+  const f = fixture()
+  await f.session.open()
+  f.session.setContent("my draft")
+  f.changeDisk("reviewed version")
+  await f.session.refreshDisk()
+  expect(f.session.getSnapshot().conflict).toBe(true)
+  expect(await f.session.save()).toBe(false)
+  expect(await f.session.save("autosave", hash("reviewed version"))).toBe(false)
+  expect(await f.session.save("save", hash("older version"))).toBe(false)
+  expect(f.client.save).not.toHaveBeenCalled()
+  expect(await f.session.save("save", hash("reviewed version"))).toBe(true)
+  expect(f.client.save).toHaveBeenCalledWith(
+    expect.objectContaining({ reviewedDiskSha256: hash("reviewed version"), intent: "save" }),
+  )
+  expect(f.session.getSnapshot()).toMatchObject({ conflict: false, content: "my draft" })
+})
+
+it("retries an interrupted reviewed replacement with the same digest and UUID", async () => {
+  const f = fixture()
+  await f.session.open()
+  f.session.setContent("my draft")
+  f.changeDisk("reviewed version")
+  await f.session.refreshDisk()
+  vi.mocked(f.client.save).mockImplementationOnce(async (input) => {
+    await f.save(input)
+    throw new Error("Lost acknowledgement")
+  })
+  expect(await f.session.save("save", hash("reviewed version"))).toBe(false)
+  const pending = vi.mocked(f.client.save).mock.calls[0][0]
+  expect(await f.session.retry()).toBe(true)
+  expect(vi.mocked(f.client.save).mock.calls[1][0]).toEqual(pending)
+  expect(f.getWrites()).toBe(1)
+})
+
 function fixture() {
   let row = {
     id: "12345678-1234-4234-8234-123456789abc",

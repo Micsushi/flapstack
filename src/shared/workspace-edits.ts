@@ -55,9 +55,17 @@ export const pendingWorkspaceDraftSaveSchema = z.object({
   id: z.string().uuid(),
   revision: z.number().int().nonnegative(),
   intent: z.enum(["save", "autosave"]),
+  reviewedDiskSha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
 })
 export const saveWorkspaceDraftSchema = releaseWorkspaceDraftSchema.extend({
   id: z.string().uuid(),
   expectedRevision: z.number().int().nonnegative(),
   intent: z.enum(["save", "autosave"]),
+  reviewedDiskSha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
 })

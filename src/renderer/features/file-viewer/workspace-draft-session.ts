@@ -167,15 +167,24 @@ export function createWorkspaceDraftSession(
       return true
     },
     flush,
-    save: (intent: "save" | "autosave" = "save") =>
+    save: (intent: "save" | "autosave" = "save", reviewedDiskSha256?: string) =>
       enqueue(async () => {
-        if (blocked || !(await syncBuffer()) || state.conflict) return false
-        if (state.disk?.content === state.content) return true
+        if (blocked || !(await syncBuffer())) return false
+        if (
+          reviewedDiskSha256 &&
+          (intent !== "save" ||
+            state.draft?.pendingSave ||
+            state.disk?.sha256 !== reviewedDiskSha256)
+        )
+          return false
+        if (state.conflict && !reviewedDiskSha256) return false
+        if (!reviewedDiskSha256 && state.disk?.content === state.content) return true
         pendingSave = {
           ...draftTarget(),
           id: crypto.randomUUID(),
           expectedRevision: state.draft!.revision,
           intent,
+          ...(reviewedDiskSha256 ? { reviewedDiskSha256 } : {}),
         }
         publish({ interruptedSave: true })
         return applySave(await client.save(pendingSave))

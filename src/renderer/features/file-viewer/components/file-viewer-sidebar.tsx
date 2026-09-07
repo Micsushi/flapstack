@@ -1015,6 +1015,26 @@ function CodeViewer({
             {binding.state.disk?.content ??
               "Disk contents unavailable. Your draft below is preserved."}
           </pre>
+          {binding.state.conflict && binding.state.disk && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+              <p className="min-w-0 flex-1 text-muted-foreground">
+                Replace this disk version with your draft. Undo restores this version.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={
+                  !editable ||
+                  binding.state.busy ||
+                  binding.session.needsRetry() ||
+                  !!binding.state.draft?.pendingSave
+                }
+                onClick={() => void binding.session?.save("save", binding.state.disk!.sha256)}
+              >
+                Replace reviewed version
+              </Button>
+            </div>
+          )}
         </section>
       )}
       <div

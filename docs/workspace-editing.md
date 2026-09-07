@@ -78,7 +78,15 @@ not survive those model transitions; durable text does.
 
 Watcher events refresh disk evidence without replacing text. Changed or missing
 disk content disables Save and offers a separate disk review. This first surface
-does not yet offer reload/rebase, Save As, draft discard, missing-file export or
+offers **Replace reviewed version** for an existing readable file: it explicitly
+saves the draft against the digest currently displayed in disk review. Another
+external change rejects that replacement. The reviewed digest is bound into the
+operation's retry identity and pending recovery metadata; autosave cannot use it.
+The journal retains the reviewed version for undo. Child-process interruption
+tests cover this path both before journal completion and after commit, including
+later external edits; reopening never replays the replacement.
+
+The surface does not yet offer reload/rebase, Save As, draft discard, missing-file export or
 ownership reacquisition after another window takes a lease. Shared file undo/redo
 uses the audited reversal API and refreshes disk evidence; it never discards a draft.
 
@@ -89,6 +97,9 @@ exercised actual Monaco typing, Save, external-write conflicts, pane reopening,
 beta toggles and NUL rejection at desktop and 390px widths. Its IPC/disk seam is
 simulated, not evidence of full Electron IPC or native-device integration. Rapid
 model disposal emitted one Monaco cancellation diagnostic; draft assertions passed.
+The subsequent reviewed-replacement fixture passed with one recorded write and
+no browser errors. Invalid-input rejection also restores the exact visible buffer
+when Monaco undo groups earlier valid typing with the rejected input.
 
 Each save requires a project/chat scope, relative path, exact SHA-256 of the
 opened bytes and a fresh operation UUID. The main process checks ownership,
