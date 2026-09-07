@@ -11,6 +11,7 @@ import {
   statSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -168,6 +169,41 @@ it("renames exact bytes, replays a lost response and reverses the path across re
   expect(existsSync(join(root, input.newName))).toBe(false)
   await service.revert({ ...scope, id: randomUUID(), operationId: undo.id })
   expect(readFileSync(join(root, input.newName), "utf8")).toBe(original)
+})
+
+it("reverses case-only spelling changes without confusing aliases with separate files", async () => {
+  const input = {
+    ...scope,
+    id: randomUUID(),
+    relativePath: "file.txt",
+    expectedSha256: hash(original),
+    newName: "FILE.TXT",
+  }
+  const renamed = await service.rename(input)
+  expect(readdirSync(root)).toEqual(["FILE.TXT"])
+  expect(await service.rename(input)).toEqual(renamed)
+  const undo = await service.revert({ ...scope, id: randomUUID(), operationId: renamed.id })
+  expect(readdirSync(root)).toEqual(["file.txt"])
+  await service.revert({ ...scope, id: randomUUID(), operationId: undo.id })
+  expect(readdirSync(root)).toEqual(["FILE.TXT"])
+  expect(readFileSync(join(root, "FILE.TXT"), "utf8")).toBe(original)
+})
+
+it("restores the original spelling after a failed case-only rename audit", async () => {
+  const input = {
+    ...scope,
+    id: randomUUID(),
+    relativePath: "file.txt",
+    expectedSha256: hash(original),
+    newName: "FILE.TXT",
+  }
+  sqlite.exec(
+    "CREATE TRIGGER reject_edit_audit BEFORE INSERT ON mcp_audit_records BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END",
+  )
+  await expect(service.rename(input)).rejects.toThrow("audit unavailable")
+  expect(readdirSync(root)).toEqual(["file.txt"])
+  sqlite.exec("DROP TRIGGER reject_edit_audit")
+  expect((await service.rename(input)).state).toBe("failed")
 })
 
 it("rejects rename collisions, stale bytes and unsafe names", async () => {
@@ -448,7 +484,7 @@ it("recovers a durable write interrupted before metadata completion without rewr
   expect(sqlite.prepare("SELECT count(*) count FROM mcp_audit_records").get()).toEqual({ count: 1 })
 })
 
-it.each(["save", "create", "remove", "rename", "rename-linked"] as const)(
+it.each(["save", "create", "remove", "rename", "rename-linked", "rename-case"] as const)(
   "recovers an actual child exit after %s commit",
   async (kind) => {
     const created =
@@ -464,7 +500,7 @@ it.each(["save", "create", "remove", "rename", "rename-linked"] as const)(
       ...request(),
       relativePath: kind === "save" || kind.startsWith("rename") ? "file.txt" : "new.txt",
       operationId: created?.id,
-      newName: "renamed.txt",
+      newName: kind === "rename-case" ? "FILE.TXT" : "renamed.txt",
     }
     const evidenceRoot = resolve(".local-evidence")
     mkdirSync(evidenceRoot, { recursive: true })
@@ -509,7 +545,7 @@ it.each(["save", "create", "remove", "rename", "rename-linked"] as const)(
       expect(recovered.state).toBe(kind === "rename-linked" ? "conflict" : "applied")
       if (kind === "remove") expect(existsSync(join(root, input.relativePath))).toBe(false)
       else if (kind.startsWith("rename")) {
-        expect(existsSync(join(root, input.relativePath))).toBe(kind === "rename-linked")
+        expect(readdirSync(root).includes(input.relativePath)).toBe(kind === "rename-linked")
         expect(readFileSync(join(root, input.newName), "utf8")).toBe(original)
       } else expect(readFileSync(join(root, input.relativePath), "utf8")).toBe(input.content)
     } finally {

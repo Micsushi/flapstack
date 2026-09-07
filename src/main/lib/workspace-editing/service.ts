@@ -116,12 +116,13 @@ export class WorkspaceEditingService {
     return result
   }
 
-  async read(input: z.infer<typeof workspaceEditTargetSchema>) {
+  async read(input: z.infer<typeof workspaceEditTargetSchema>, exactName = false) {
     const value = workspaceEditTargetSchema.parse(input)
     const scope = this.scope(value)
     const path = this.path(scope.root.canonicalPath, value.relativePath)
     const bytes = await readFileInsideRoot(scope.root.canonicalPath, path, {
       maxBytes: workspaceEditMaxBytes,
+      exactName,
     })
     if (this.scope(value).identity !== scope.identity) throw new Error("Editor root changed")
     return { content: text(bytes), sha256: hash(bytes), byteLength: bytes.byteLength }
@@ -174,10 +175,17 @@ export class WorkspaceEditingService {
     const scope = this.scope(authority)
     if (scope.identity !== row.rootIdentity || scope.root.canonicalPath !== row.rootPath)
       throw new Error("Edit history belongs to a different registered root")
-    const currentHash = await this.recoveryHash(row.rootPath, row.relativePath)
+    const exactName =
+      row.kind === "rename" &&
+      row.previousRelativePath?.toLowerCase() === row.relativePath.toLowerCase()
+    const currentHash = await this.recoveryHash(row.rootPath, row.relativePath, exactName)
     if (row.kind === "rename") {
       if (!row.previousRelativePath) throw new Error("Rename history has no source path")
-      const previousHash = await this.recoveryHash(row.rootPath, row.previousRelativePath)
+      const previousHash = await this.recoveryHash(
+        row.rootPath,
+        row.previousRelativePath,
+        exactName,
+      )
       if (this.scope(authority).identity !== row.rootIdentity)
         throw new Error("Editor root changed")
       return this.finish(
@@ -201,9 +209,15 @@ export class WorkspaceEditingService {
     )
   }
 
-  private async recoveryHash(root: string, path: string): Promise<string | null | undefined> {
+  private async recoveryHash(
+    root: string,
+    path: string,
+    exactName = false,
+  ): Promise<string | null | undefined> {
     try {
-      return hash(await readFileInsideRoot(root, path, { maxBytes: workspaceEditMaxBytes }))
+      return hash(
+        await readFileInsideRoot(root, path, { maxBytes: workspaceEditMaxBytes, exactName }),
+      )
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
       // Unreadable bytes remain unknown, distinct from a verified missing target.
@@ -333,6 +347,7 @@ export class WorkspaceEditingService {
       if (path === renameFrom || dirname(path) !== dirname(renameFrom))
         throw new Error("Rename requires a different name in the same directory")
     }
+    const exactName = renameFrom !== null && renameFrom.toLowerCase() === path.toLowerCase()
     let bytes = Buffer.from(input.content, "utf8")
     if (text(bytes) !== input.content) throw new Error("Draft contains invalid Unicode")
     const afterSha256 = kind === "rename" ? input.expectedSha256! : hash(bytes)
@@ -379,10 +394,11 @@ export class WorkspaceEditingService {
     const before = await this.readForSave(
       { ...input, relativePath: renameFrom ?? path },
       kind === "create",
+      exactName,
     )
     if (before.sha256 !== input.expectedSha256) throw new WorkspaceEditConflictError(before.sha256)
     if (kind === "rename") {
-      const destination = await this.readForSave({ ...input, relativePath: path }, true)
+      const destination = await this.readForSave({ ...input, relativePath: path }, true, exactName)
       if (destination.sha256 !== null) throw new WorkspaceEditConflictError(destination.sha256)
       bytes = Buffer.from(before.content, "utf8")
     }
@@ -446,7 +462,11 @@ export class WorkspaceEditingService {
       if (kind === "rename") {
         await this.renameFile(scope.root.canonicalPath, renameFrom!, basename(path), {
           beforeCommit: async () => {
-            const current = await this.readForSave({ ...input, relativePath: renameFrom! })
+            const current = await this.readForSave(
+              { ...input, relativePath: renameFrom! },
+              false,
+              exactName,
+            )
             if (current.sha256 !== before.sha256)
               throw new WorkspaceEditConflictError(current.sha256)
             if (this.writable(input, input.intent).identity !== scope.identity)
@@ -455,8 +475,8 @@ export class WorkspaceEditingService {
         })
         try {
           if (
-            (await this.recoveryHash(scope.root.canonicalPath, renameFrom!)) !== null ||
-            (await this.recoveryHash(scope.root.canonicalPath, path)) !== afterSha256
+            (await this.recoveryHash(scope.root.canonicalPath, renameFrom!, exactName)) !== null ||
+            (await this.recoveryHash(scope.root.canonicalPath, path, exactName)) !== afterSha256
           )
             throw new WorkspaceEditConflictError(null)
           if (this.writable(input, input.intent).identity !== scope.identity)
@@ -466,7 +486,11 @@ export class WorkspaceEditingService {
           if (this.scope(input).identity !== scope.identity) throw error
           await renameFileInsideRoot(scope.root.canonicalPath, path, basename(renameFrom!), {
             beforeCommit: async () => {
-              const current = await this.readForSave({ ...input, relativePath: path })
+              const current = await this.readForSave(
+                { ...input, relativePath: path },
+                false,
+                exactName,
+              )
               if (current.sha256 !== afterSha256)
                 throw new WorkspaceEditConflictError(current.sha256)
               if (this.scope(input).identity !== scope.identity)
@@ -550,6 +574,7 @@ export class WorkspaceEditingService {
         const current = await this.readForSave(
           { ...input, relativePath: renameFrom ?? path },
           kind === "create",
+          exactName,
         )
         if (current.sha256 !== before.sha256) throw new WorkspaceEditConflictError(current.sha256)
       } catch (conflict) {
@@ -562,9 +587,10 @@ export class WorkspaceEditingService {
   private async readForSave(
     input: z.infer<typeof workspaceEditTargetSchema>,
     allowMissing = false,
+    exactName = false,
   ) {
     try {
-      return await this.read(input)
+      return await this.read(input, exactName)
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") {
         if (allowMissing) return { content: "", sha256: null, byteLength: 0 }

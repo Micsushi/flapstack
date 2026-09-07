@@ -6,6 +6,7 @@ import {
   link,
   mkdir,
   open,
+  opendir,
   readFile,
   realpath,
   rename,
@@ -45,6 +46,8 @@ export type RootedReadOptions = {
   /** Test seam for deterministic root/parent/final swap attacks. */
   beforeOpen?: (targetPath: string) => void | Promise<void>
   maxBytes?: number
+  /** Distinguish case-only rename aliases using the final directory entry. */
+  exactName?: boolean
 }
 
 export class RootedReadTooLargeError extends Error {
@@ -306,6 +309,11 @@ export async function readFileInsideRoot(
 
   await options.beforeOpen?.(snapshot.targetPath)
   await validateExistingSnapshot(snapshot)
+  if (options.exactName) {
+    if (!(await exactFileNameExists(snapshot.parentPath, basename(snapshot.targetPath))))
+      throw Object.assign(new Error("Exact filename does not exist"), { code: "ENOENT" })
+    await validateExistingSnapshot(snapshot)
+  }
   const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0
   const handle = await open(snapshot.targetPath, constants.O_RDONLY | noFollow)
   try {
@@ -338,6 +346,33 @@ export async function renameFileInsideRoot(
   if (newPath === snapshot.targetPath) throw new Error("Rename requires a different name")
   await options.beforeCommit?.(snapshot.targetPath)
   await validateExistingSnapshot(snapshot)
+  const destination = await lstatOrNull(newPath)
+  if (
+    newPath.toLowerCase() === snapshot.targetPath.toLowerCase() &&
+    destination &&
+    sameIdentity(identity(destination), snapshot.targetIdentity)
+  ) {
+    if (
+      (await exactFileNameExists(snapshot.parentPath, newName)) ||
+      !(await exactFileNameExists(snapshot.parentPath, basename(snapshot.targetPath)))
+    )
+      throw existsError()
+    await validateExistingSnapshot(snapshot)
+    await validateTargetIdentity(newPath, snapshot.targetIdentity)
+    // Both spellings refer to one directory entry, not two overwrite candidates.
+    await rename(snapshot.targetPath, newPath)
+    await validateRootAndParent(
+      snapshot.lexicalRoot,
+      snapshot.realRoot,
+      snapshot.rootIdentity,
+      snapshot.parentPath,
+      snapshot.parentIdentity,
+    )
+    await validateTargetIdentity(newPath, snapshot.targetIdentity)
+    if (!(await exactFileNameExists(snapshot.parentPath, newName)))
+      throw new Error("Rename spelling was not applied")
+    return { targetPath: snapshot.targetPath, newPath }
+  }
   // Exclusive hard-link creation cannot replace a destination appearing concurrently.
   // A crash between link and unlink leaves both names for journal reconciliation.
   await link(snapshot.targetPath, newPath)
@@ -815,6 +850,17 @@ async function lstatOrNull(path: string) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null
     throw error
   }
+}
+
+async function exactFileNameExists(parent: string, name: string): Promise<boolean> {
+  const directory = await opendir(parent)
+  let count = 0
+  for await (const entry of directory) {
+    if (++count > 10_000)
+      throw new Error("Exact filename verification exceeds 10000 directory entries")
+    if (entry.name === name) return true
+  }
+  return false
 }
 
 function identity(info: {

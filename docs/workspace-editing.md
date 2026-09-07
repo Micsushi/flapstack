@@ -50,8 +50,11 @@ destination cannot be overwritten. Both names can briefly exist. An interruption
 in that interval leaves an explicit conflict and preserves both names; recovery
 does not guess which to remove. Finalized renames reverse only while source and
 destination checks still hold. Filesystems without hard-link support fail without
-an overwriting fallback. Case-only renames on case-insensitive filesystems remain
-unsupported. Generic file-tree directory renames are outside this beta authority.
+an overwriting fallback. Case-only renames verify exact directory-entry spelling
+before using a native rename of the single aliased entry. Exact-name scans are
+bounded at 10,000 entries and fail visibly above that limit. Recovery distinguishes
+the old and new spelling even on case-insensitive filesystems. Generic file-tree
+directory renames are outside this beta authority.
 Ordinary file-tree regular-file renames share the exclusive-link helper;
 symlink and directory moves retain their existing platform implementation and
 are not covered by the new no-overwrite guarantee.
