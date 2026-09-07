@@ -4,6 +4,8 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { EventEmitter } from "node:events"
+import { PassThrough } from "node:stream"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
 
@@ -124,6 +126,60 @@ afterEach(() => {
 })
 
 describe("Cursor extension policy launch contract", () => {
+  it("keeps a durable prompt identity and inserts its reply before later queued work", async () => {
+    const sqlite = new Database(databasePath)
+    sqlite.prepare("DELETE FROM extension_enablement_policies").run()
+    sqlite.prepare("UPDATE sub_chats SET messages=? WHERE id='sub-policy'").run(
+      JSON.stringify([
+        { id: "prompt-policy", role: "user", parts: [{ type: "text", text: "Policy prompt" }] },
+        { id: "later", role: "user", parts: [{ type: "text", text: "Later work" }] },
+      ]),
+    )
+    sqlite.close()
+    mocks.spawn.mockImplementation(() => {
+      const child = Object.assign(new EventEmitter(), {
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        exitCode: null as number | null,
+        signalCode: null,
+      })
+      setImmediate(() => {
+        child.stdout.write(
+          JSON.stringify({
+            type: "assistant",
+            message: { role: "assistant", content: [{ type: "text", text: "Fixture answer" }] },
+          }) + "\n",
+        )
+        child.stdout.write(
+          JSON.stringify({ type: "result", subtype: "success", result: "Fixture answer" }) + "\n",
+        )
+        child.exitCode = 0
+        child.emit("close", 0)
+      })
+      return child
+    })
+    const chunks = await collectStream(
+      await cursorRouter.createCaller({ getWindow: () => null }).chat({
+        runId: "run-policy",
+        chatId: "chat-policy",
+        subChatId: "sub-policy",
+        prompt: "Policy prompt",
+        cwd: directory,
+      }),
+    )
+    expect(chunks.filter((chunk) => chunk.type === "error")).toEqual([])
+    expect(mocks.spawn).toHaveBeenCalledOnce()
+    const reader = new Database(databasePath)
+    const row = reader.prepare("SELECT messages FROM sub_chats WHERE id='sub-policy'").get() as {
+      messages: string
+    }
+    reader.close()
+    const messages = JSON.parse(row.messages)
+    expect(messages.map((message: any) => message.role)).toEqual(["user", "assistant", "user"])
+    expect(messages[0].id).toBe("prompt-policy")
+    expect(messages[2].id).toBe("later")
+  })
   it("blocks an unsupported command disable before spawning cursor-agent", async () => {
     const stream = await cursorRouter.createCaller({ getWindow: () => null }).chat({
       runId: "run-policy",

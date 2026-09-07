@@ -26,6 +26,15 @@ without appending it again. Changed text under that ID fails before provider
 dispatch. Callers without an ID retain the legacy last-message text fallback.
 This transcript check does not make provider execution replay-safe by itself.
 
+Native Codex, Cursor and OpenCode also prefer the persisted prompt ID over matching
+text. Replies are kept before later queued user turns. Claude/Codex streaming
+snapshots stop at the owning prompt, then merge later durable messages back on
+completion; Cursor/OpenCode insert their completed reply at that boundary.
+OpenCode reuses an existing pending/running run without inserting it again or
+recomputing its runtime snapshot, and rejects conflicting scope, provider, prompt
+or terminal state before provider dispatch. Tests use actual routers and SQLite
+with mocked provider transports, not live provider acceptance.
+
 `tests/chat-run-queue-target.test.ts` covers explicit targets, foreign/missing
 targets, per-conversation harness choice, active status, exact retry and conflicting
 reuse. Mutation-service, Chat-wait and main-launcher tests cover the existing

@@ -38,6 +38,7 @@ import {
   parseCursorStreamLine,
 } from "../../cursor/stream"
 import { findReusableCursorPromptMessage } from "../../cursor/turn"
+import { findPromptById, insertAssistantForPrompt } from "../../harness/message-order"
 import {
   buildHarnessContextBundle,
   getLastHarnessContextFingerprint,
@@ -437,6 +438,7 @@ export const cursorRouter = router({
               .select({
                 permissionMode: agentRuns.permissionMode,
                 customPermissions: agentRuns.customPermissions,
+                promptMessageId: agentRuns.promptMessageId,
               })
               .from(agentRuns)
               .where(eq(agentRuns.id, input.runId))
@@ -485,11 +487,13 @@ export const cursorRouter = router({
             )
 
             // Persist the user message (dedupe a resent prompt like Codex).
-            const reusablePromptMessage = findReusableCursorPromptMessage(
-              existingMessages,
-              input.prompt,
-              input.forceNewSession === true,
-            )
+            const reusablePromptMessage = persistedRunSnapshot?.promptMessageId
+              ? findPromptById(existingMessages, persistedRunSnapshot.promptMessageId, input.prompt)
+              : findReusableCursorPromptMessage(
+                  existingMessages,
+                  input.prompt,
+                  input.forceNewSession === true,
+                )
             const isDuplicatePrompt = Boolean(reusablePromptMessage)
 
             let messagesForStream = existingMessages
@@ -498,7 +502,7 @@ export const cursorRouter = router({
 
             if (!isDuplicatePrompt) {
               const userMessage = {
-                id: crypto.randomUUID(),
+                id: persistedRunSnapshot?.promptMessageId ?? crypto.randomUUID(),
                 role: "user",
                 parts: buildUserParts(input.prompt, input.images),
                 metadata: { model: metadataModel },
@@ -675,7 +679,9 @@ export const cursorRouter = router({
               const latestMessages = parseStoredMessages(latest?.messages)
               db.update(subChats)
                 .set({
-                  messages: JSON.stringify([...latestMessages, assistantMessage]),
+                  messages: JSON.stringify(
+                    insertAssistantForPrompt(latestMessages, assistantMessage, promptMessageId),
+                  ),
                   updatedAt: new Date(),
                 })
                 .where(eq(subChats.id, input.subChatId))

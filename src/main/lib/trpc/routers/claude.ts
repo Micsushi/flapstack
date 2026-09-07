@@ -1232,7 +1232,9 @@ export const claudeRouter = router({
 
             if (persistedPrompt) {
               userMessage = persistedPrompt
-              messagesToSave = existingMessages
+              messagesToSave = promptMessageId
+                ? existingMessages.slice(0, existingMessages.indexOf(persistedPrompt) + 1)
+                : existingMessages
               db.update(subChats)
                 .set({ streamId, updatedAt: new Date() })
                 .where(eq(subChats.id, input.subChatId))

@@ -167,6 +167,7 @@ describe("Claude legacy queue routing", () => {
       worktreePath: directory,
     } as QueuedAgentRun)
     expect(readVisibleTranscript().filter((text) => text === "A")).toHaveLength(1)
+    expect(readVisibleTranscript()).toEqual(["A", "A-response", "Later"])
   })
 
   it("persists A/response/B/response through the real router", async () => {

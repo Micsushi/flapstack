@@ -111,6 +111,38 @@ afterEach(() => {
 })
 
 describe("Codex router terminal provider failure", () => {
+  it("preserves an earlier durable prompt and puts its response before later work", async () => {
+    const sqlite = new Database(databasePath)
+    sqlite.prepare("UPDATE agent_runs SET initial_prompt='A' WHERE id='run-auth'").run()
+    sqlite.prepare("UPDATE sub_chats SET messages=? WHERE id='sub-auth'").run(
+      JSON.stringify([
+        { id: "mcp-auth-prompt", role: "user", parts: [{ type: "text", text: "A" }] },
+        { id: "later", role: "user", parts: [{ type: "text", text: "Later" }] },
+      ]),
+    )
+    sqlite.close()
+    mocks.streamText.mockReturnValue({
+      toUIMessageStream: (options: any) =>
+        new ReadableStream({
+          async start(controller) {
+            await options.onFinish({
+              responseMessage: {
+                id: "reply",
+                role: "assistant",
+                parts: [{ type: "text", text: "A-response", state: "done" }],
+              },
+              isContinuation: false,
+            })
+            controller.enqueue({ type: "finish", finishReason: "stop" })
+            controller.close()
+          },
+        }),
+    })
+    await drainPendingMcpRuns(databasePath, launchThroughRealCodexRouter, {
+      waitForCompletion: true,
+    })
+    expect(readVisibleTranscript()).toEqual(["A", "A-response", "Later"])
+  })
   it("keeps auth failure authoritative through router completion and launch audit", async () => {
     await drainPendingMcpRuns(databasePath, launchThroughRealCodexRouter, {
       waitForCompletion: true,

@@ -72,6 +72,7 @@ import {
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
 import { mergeMessagesPreservingSpokenText } from "../../speech/history"
+import { findPromptById } from "../../harness/message-order"
 import {
   buildCodexPermissionApplication,
   getGlobalDefault,
@@ -2132,13 +2133,22 @@ export const codexRouter = router({
                 : null
 
             const lastMessage = existingMessages[existingMessages.length - 1]
-            const isDuplicatePrompt =
-              lastMessage?.role === "user" &&
-              extractPromptFromStoredMessage(lastMessage) === input.prompt
+            const reusablePrompt = persistedRunSnapshot?.promptMessageId
+              ? findPromptById(existingMessages, persistedRunSnapshot.promptMessageId, input.prompt)
+              : lastMessage?.role === "user" &&
+                  extractPromptFromStoredMessage(lastMessage) === input.prompt
+                ? lastMessage
+                : undefined
+            const isDuplicatePrompt = Boolean(reusablePrompt)
 
-            let messagesForStream = existingMessages
+            let messagesForStream =
+              reusablePrompt && persistedRunSnapshot?.promptMessageId
+                ? existingMessages.slice(0, existingMessages.indexOf(reusablePrompt) + 1)
+                : existingMessages
             let promptMessageId =
-              isDuplicatePrompt && typeof lastMessage?.id === "string" ? lastMessage.id : undefined
+              isDuplicatePrompt && typeof reusablePrompt?.id === "string"
+                ? reusablePrompt.id
+                : undefined
             const isAuthoritativeRun = () => {
               const currentStream = activeStreams.get(input.subChatId)
               return currentStream?.runId === input.runId

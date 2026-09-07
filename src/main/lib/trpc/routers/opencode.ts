@@ -67,6 +67,7 @@ import { resolveReasoningControls } from "../../../../shared/reasoning-output"
 import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
 import { cancelStaleRunningRuns } from "../../agent-run-lifecycle"
 import { assertSubChatNotRewinding } from "../../sub-chat-rewind-guard"
+import { findPromptById, insertAssistantForPrompt } from "../../harness/message-order"
 
 const providerSchema = z.enum(OPENCODE_HARNESSES)
 const permissionModeSchema = z.enum(permissionModes)
@@ -345,6 +346,7 @@ export const opencodeRouter = router({
           let db: ReturnType<typeof getDatabase> | undefined
           let runPersisted = false
           let messagesWithPrompt: any[] | undefined
+          let promptMessageId: string | undefined
           let sidecarSessionId: string | undefined
           let contextMetadata: HarnessContextMetadata | undefined
           let text = ""
@@ -395,15 +397,32 @@ export const opencodeRouter = router({
             const chat = db.select().from(chats).where(eq(chats.id, input.chatId)).get()
             if (!subChat) throw new Error("Sub-chat not found")
             if (!chat) throw new Error("Chat not found")
+            if (subChat.chatId !== chat.id) throw new Error("Conversation belongs to another chat")
 
             const persistedRunSnapshot = db
               .select({
                 permissionMode: agentRuns.permissionMode,
                 customPermissions: agentRuns.customPermissions,
+                chatId: agentRuns.chatId,
+                subChatId: agentRuns.subChatId,
+                harness: agentRuns.harness,
+                status: agentRuns.status,
+                promptMessageId: agentRuns.promptMessageId,
+                initialPrompt: agentRuns.initialPrompt,
               })
               .from(agentRuns)
               .where(eq(agentRuns.id, runId))
               .get()
+            if (
+              persistedRunSnapshot &&
+              (persistedRunSnapshot.chatId !== input.chatId ||
+                persistedRunSnapshot.subChatId !== input.subChatId ||
+                persistedRunSnapshot.harness !== input.provider ||
+                (persistedRunSnapshot.initialPrompt != null &&
+                  persistedRunSnapshot.initialPrompt !== input.prompt) ||
+                !["pending", "running"].includes(persistedRunSnapshot.status))
+            )
+              throw new Error("Queued run is unavailable in this conversation")
             const requestedPermissionMode =
               parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
               resolvePermissionMode(subChat.permissionMode, chat.permissionMode)
@@ -416,24 +435,31 @@ export const opencodeRouter = router({
                   )
                 : null
             assertSubChatNotRewinding(input.subChatId)
-            const runtimeSnapshot = constructRuntimeSnapshot(db, {
-              chatId: input.chatId,
-              harness: input.provider,
-              model: input.model,
-              permission: runtimePermissionSnapshot(permissionMode, customPermissions),
-            })
+            const runtimeSnapshot = persistedRunSnapshot
+              ? undefined
+              : constructRuntimeSnapshot(db, {
+                  chatId: input.chatId,
+                  harness: input.provider,
+                  model: input.model,
+                  permission: runtimePermissionSnapshot(permissionMode, customPermissions),
+                })
             const messages = parseStoredMessages(subChat.messages)
             const last = messages[messages.length - 1]
-            const duplicate =
-              last?.role === "user" &&
-              last?.parts?.some((part: any) => part?.type === "text" && part.text === input.prompt)
-            const promptMessage = duplicate
-              ? last
-              : {
-                  id: crypto.randomUUID(),
-                  role: "user",
-                  parts: [{ type: "text", text: input.prompt }],
-                }
+            const existingPrompt = persistedRunSnapshot?.promptMessageId
+              ? findPromptById(messages, persistedRunSnapshot.promptMessageId, input.prompt)
+              : last?.role === "user" &&
+                  last?.parts?.some(
+                    (part: any) => part?.type === "text" && part.text === input.prompt,
+                  )
+                ? last
+                : undefined
+            const duplicate = Boolean(existingPrompt)
+            const promptMessage = existingPrompt ?? {
+              id: persistedRunSnapshot?.promptMessageId ?? crypto.randomUUID(),
+              role: "user",
+              parts: [{ type: "text", text: input.prompt }],
+            }
+            promptMessageId = promptMessage.id
             messagesWithPrompt = duplicate ? messages : mergeMessagesById(messages, [promptMessage])
             if (!duplicate) {
               if (!isAuthoritativeRun()) return
@@ -443,23 +469,25 @@ export const opencodeRouter = router({
                 .run()
             }
 
-            cancelStaleRunningRuns(db, { runId, subChatId: input.subChatId })
-            db.insert(agentRuns)
-              .values({
-                ...runtimeSnapshot,
-                id: runId,
-                chatId: input.chatId,
-                subChatId: input.subChatId,
-                harness: input.provider,
-                model: input.model,
-                permissionMode,
-                customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
-                worktreePath: input.cwd,
-                promptMessageId: promptMessage.id,
-                status: "running",
-                startedAt: new Date(startedAt),
-              })
-              .run()
+            if (!persistedRunSnapshot) {
+              cancelStaleRunningRuns(db, { runId, subChatId: input.subChatId })
+              db.insert(agentRuns)
+                .values({
+                  ...runtimeSnapshot,
+                  id: runId,
+                  chatId: input.chatId,
+                  subChatId: input.subChatId,
+                  harness: input.provider,
+                  model: input.model,
+                  permissionMode,
+                  customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
+                  worktreePath: input.cwd,
+                  promptMessageId: promptMessage.id,
+                  status: "running",
+                  startedAt: new Date(startedAt),
+                })
+                .run()
+            }
             runPersisted = true
             safeEmit({
               type: "message-metadata",
@@ -709,7 +737,11 @@ export const opencodeRouter = router({
                   db.update(subChats)
                     .set({
                       messages: JSON.stringify(
-                        mergeMessagesById(currentMessages, [assistantMessage]),
+                        insertAssistantForPrompt(
+                          currentMessages,
+                          assistantMessage,
+                          promptMessageId,
+                        ),
                       ),
                       updatedAt: new Date(),
                     })
