@@ -4,6 +4,8 @@ type TerminalFitSchedulerOptions = {
   fit: () => void
   readSize: () => { cols: number; rows: number }
   onResize: (cols: number, rows: number) => void
+  /** Undefined keeps legacy fitting; null defers an unmeasurable recovery view. */
+  proposeSize?: () => { cols: number; rows: number } | null | undefined
   requestFrame?: (callback: FrameRequestCallback) => number
   cancelFrame?: (handle: number) => void
 }
@@ -12,6 +14,7 @@ export function createTerminalFitScheduler({
   fit,
   readSize,
   onResize,
+  proposeSize,
   requestFrame = requestAnimationFrame,
   cancelFrame = cancelAnimationFrame,
 }: TerminalFitSchedulerOptions) {
@@ -24,8 +27,17 @@ export function createTerminalFitScheduler({
       frame = requestFrame(() => {
         frame = null
         try {
-          fit()
-          const size = readSize()
+          const proposed = proposeSize?.()
+          if (proposed === null) return
+          if (proposed === undefined) fit()
+          const size = proposed ?? readSize()
+          if (
+            !Number.isFinite(size.cols) ||
+            !Number.isFinite(size.rows) ||
+            size.cols < 1 ||
+            size.rows < 1
+          )
+            return
           if (lastSize?.cols === size.cols && lastSize.rows === size.rows) return
           lastSize = size
           incrementPerformanceCounter("terminal-resize")

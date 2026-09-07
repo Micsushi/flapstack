@@ -9,7 +9,6 @@ export function createTerminalReplayConsumer(
   },
   callbacks: {
     acknowledge: (event: TerminalReplayEvent) => void
-    afterSnapshot: () => void
     data: (data: string) => void
     exit: (exitCode: number, signal?: number) => void
   },
@@ -38,7 +37,6 @@ export function createTerminalReplayConsumer(
       if (event.subscriptionId === activeSubscription) {
         callbacks.data(event.data)
         callbacks.acknowledge(event)
-        if (event.type === "snapshot") callbacks.afterSnapshot()
       }
       drain()
     })

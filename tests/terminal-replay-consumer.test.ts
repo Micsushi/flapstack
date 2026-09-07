@@ -12,7 +12,7 @@ function fixture() {
     resize: vi.fn(),
     write: vi.fn((_data: string, done: () => void) => parsed.push(done)),
   }
-  const callbacks = { acknowledge: vi.fn(), afterSnapshot: vi.fn(), data: vi.fn(), exit: vi.fn() }
+  const callbacks = { acknowledge: vi.fn(), data: vi.fn(), exit: vi.fn() }
   return {
     terminal,
     callbacks,
@@ -53,14 +53,13 @@ it("waits for old parsing before resetting and keeps only the latest replacement
   expect(callbacks.acknowledge).toHaveBeenCalledWith(snapshot("newest"))
 })
 
-it("does not acknowledge or refit a disposed terminal and ignores stale subscription deltas", () => {
+it("does not acknowledge a disposed terminal and ignores stale subscription deltas", () => {
   const { consumer, callbacks, parsed, terminal } = fixture()
   consumer.accept(snapshot("current"))
   consumer.accept({ type: "data", subscriptionId: "old", deliveryId: 2, data: "wrong" })
   consumer.dispose()
   parsed.shift()!()
   expect(callbacks.acknowledge).not.toHaveBeenCalled()
-  expect(callbacks.afterSnapshot).not.toHaveBeenCalled()
   expect(terminal.write).toHaveBeenCalledOnce()
 })
 
@@ -69,7 +68,6 @@ it("parses an empty snapshot with the installed browser xterm before acknowledgi
   const acknowledge = vi.fn()
   const consumer = createTerminalReplayConsumer(terminal, {
     acknowledge,
-    afterSnapshot() {},
     data() {},
     exit() {},
   })
@@ -100,7 +98,6 @@ it.each([
         acknowledged.push(event)
         replay.acknowledge(event.subscriptionId, event.deliveryId)
       },
-      afterSnapshot() {},
       data() {},
       exit() {},
     })

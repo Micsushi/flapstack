@@ -240,7 +240,6 @@ export function Terminal({
           subscriptionId: event.subscriptionId,
           deliveryId: event.deliveryId,
         }),
-      afterSnapshot: () => fitAddon.fit(),
       data: (data) => updateCwdRef.current(data),
       exit: (exitCode) => {
         isExitedRef.current = true
@@ -369,9 +368,15 @@ export function Terminal({
       focusPaneRef.current()
     })
 
-    const cleanupResize = setupResizeHandlers(container, xterm, fitAddon, (cols, rows) => {
-      resizeRef.current({ paneId, cols, rows })
-    })
+    const cleanupResize = setupResizeHandlers(
+      container,
+      xterm,
+      fitAddon,
+      (cols, rows) => {
+        resizeRef.current({ paneId, cols, rows })
+      },
+      () => usesReplay,
+    )
 
     const cleanupPaste = setupPasteHandler(xterm, {
       onPaste: (text) => {
@@ -489,7 +494,7 @@ export function Terminal({
   return (
     <div
       role="application"
-      className="relative h-full w-full overflow-hidden"
+      className={`relative h-full w-full ${replayEnabled ? "overflow-x-auto overflow-y-hidden" : "overflow-hidden"}`}
       style={{ backgroundColor: terminalBg }}
       onDragOver={handleDragOver}
       onDrop={handleDrop}

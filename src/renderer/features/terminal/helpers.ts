@@ -328,11 +328,15 @@ export function setupResizeHandlers(
   xterm: XTerm,
   fitAddon: FitAddon,
   onResize: (cols: number, rows: number) => void,
+  usesReplay: () => boolean = () => false,
 ): () => void {
   const scheduler = createTerminalFitScheduler({
     fit: () => fitAddon.fit(),
     readSize: () => ({ cols: xterm.cols, rows: xterm.rows }),
     onResize,
+    // Recovery grids change only when an ordered main-owned snapshot arrives.
+    // Measuring a local container must not reflow already acknowledged output.
+    proposeSize: () => (usesReplay() ? (fitAddon.proposeDimensions() ?? null) : undefined),
   })
   const resizeObserver = new ResizeObserver(() => scheduler.schedule())
   resizeObserver.observe(container)

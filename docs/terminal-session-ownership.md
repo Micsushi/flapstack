@@ -22,6 +22,13 @@ parsing before resetting the screen, preventing old queued output from appearing
 on the replacement terminal. Legacy detach and raw-stream endpoints remain for
 compatibility; recovery-enabled terminals do not serialize their own detach screen.
 
+Recovery views keep the main process's character grid, including when the same
+terminal appears in differently sized panes. Container changes propose a PTY
+resize without locally reflowing parsed output; the ordered snapshot applies
+the resulting geometry to every view. Snapshots never trigger another fit or
+resize request. A narrower recovery pane scrolls horizontally to retain access
+to columns beyond its viewport. Legacy terminals retain local fit behavior.
+
 The serializer does not retain all interpreter state. An attachment inside an
 unfinished escape sequence or Unicode surrogate pair receives bounded snapshots
 instead of interpreting the raw suffix as ordinary text. Non-default character
