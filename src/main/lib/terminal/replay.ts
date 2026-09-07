@@ -21,6 +21,7 @@ type Subscriber = {
   pending: boolean
   dirty: boolean
   scheduled: boolean
+  canStream: boolean
   timer?: ReturnType<typeof setTimeout>
 }
 
@@ -135,6 +136,7 @@ export class TerminalReplay {
       pending: false,
       dirty: true,
       scheduled: true,
+      canStream: false,
     }
     this.subscribers.set(id, subscriber)
     this.batcher.flush()
@@ -149,14 +151,19 @@ export class TerminalReplay {
     if (subscriber.timer) clearTimeout(subscriber.timer)
     subscriber.timer = undefined
     if (subscriber.dirty) {
-      // One resnapshot at most every 100ms for slow views. No unbounded IPC or per-view byte queue.
-      subscriber.scheduled = true
-      subscriber.timer = setTimeout(() => {
-        subscriber.timer = undefined
-        this.snapshot(subscriptionId, subscriber)
-      }, 100)
-      subscriber.timer.unref()
+      this.scheduleSnapshot(subscriptionId, subscriber)
     } else if (this.exit) this.deliver(subscriptionId, subscriber, this.exit)
+  }
+
+  private scheduleSnapshot(id: string, subscriber: Subscriber): void {
+    if (subscriber.scheduled) return
+    // Bound resnapshots for slow views and snapshots taken inside unfinished input.
+    subscriber.scheduled = true
+    subscriber.timer = setTimeout(() => {
+      subscriber.timer = undefined
+      this.snapshot(id, subscriber)
+    }, 100)
+    subscriber.timer.unref()
   }
 
   private snapshot(id: string, subscriber: Subscriber): void {
@@ -171,6 +178,7 @@ export class TerminalReplay {
       }
       subscriber.dirty = false
       subscriber.scheduled = false
+      subscriber.canStream = canStreamAfterTerminalSnapshot(this.terminal)
       this.deliver(id, subscriber, {
         type: "snapshot",
         data,
@@ -183,7 +191,10 @@ export class TerminalReplay {
   private broadcast(payload: TerminalReplayPayload): void {
     for (const [id, subscriber] of this.subscribers) {
       if (subscriber.pending || subscriber.scheduled) subscriber.dirty = true
-      else this.deliver(id, subscriber, payload)
+      else if (!subscriber.canStream) {
+        subscriber.dirty = true
+        this.scheduleSnapshot(id, subscriber)
+      } else this.deliver(id, subscriber, payload)
     }
   }
 
@@ -277,6 +288,72 @@ export class TerminalReplay {
     this.resume()
     this.terminal.dispose()
   }
+}
+
+/**
+ * xterm 6.0.0's serializer omits unfinished input, character sets, saved cursor,
+ * scroll margins and custom tab stops. Only stream from a compatible snapshot.
+ * Keep this pinned, read-only compatibility probe isolated. Unknown shapes use
+ * bounded snapshots, never raw continuations that could corrupt the display.
+ * See upstream InputHandler, EscapeSequenceParser and StringToUtf32.
+ */
+export function canStreamAfterTerminalSnapshot(terminal: unknown): boolean {
+  const core = (
+    terminal as {
+      _core?: {
+        _charsetService?: { glevel?: unknown; _charsets?: unknown[] }
+        _bufferService?: {
+          buffer?: {
+            scrollTop?: unknown
+            scrollBottom?: unknown
+            _rows?: unknown
+            _cols?: unknown
+            tabs?: Record<string, unknown>
+            savedX?: unknown
+            savedY?: unknown
+            savedCharset?: unknown
+            savedCurAttrData?: {
+              fg?: unknown
+              bg?: unknown
+              extended?: { _ext?: unknown; _urlId?: unknown }
+            }
+          }
+        }
+        _inputHandler?: {
+          _parser?: { currentState?: unknown }
+          _stringDecoder?: { _interim?: unknown }
+        }
+      }
+    } | null
+  )?._core
+  const input = core?._inputHandler
+  const charset = core?._charsetService
+  const buffer = core?._bufferService?.buffer
+  return (
+    input?._parser?.currentState === 0 &&
+    input?._stringDecoder?._interim === 0 &&
+    charset?.glevel === 0 &&
+    Array.isArray(charset._charsets) &&
+    charset._charsets.every((value) => value == null) &&
+    buffer?.scrollTop === 0 &&
+    typeof buffer._rows === "number" &&
+    buffer.scrollBottom === buffer._rows - 1 &&
+    buffer.savedX === 0 &&
+    buffer.savedY === 0 &&
+    buffer.savedCharset == null &&
+    buffer.savedCurAttrData?.fg === 0 &&
+    buffer.savedCurAttrData?.bg === 0 &&
+    buffer.savedCurAttrData?.extended?._ext === 0 &&
+    buffer.savedCurAttrData?.extended?._urlId === 0 &&
+    typeof buffer._cols === "number" &&
+    !!buffer.tabs &&
+    Object.keys(buffer.tabs).every(
+      (column) => Number(column) % 8 === 0 && buffer.tabs![column] === true,
+    ) &&
+    Array.from({ length: Math.ceil(buffer._cols / 8) }, (_, index) => index * 8).every(
+      (column) => buffer.tabs![column] === true,
+    )
+  )
 }
 
 export function assertTerminalGeometry(cols: number, rows: number): void {

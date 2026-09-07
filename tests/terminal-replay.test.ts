@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest"
-import { TerminalReplay } from "../src/main/lib/terminal/replay"
+import { TerminalReplay, canStreamAfterTerminalSnapshot } from "../src/main/lib/terminal/replay"
 import type { TerminalReplayEvent } from "../src/shared/terminal-replay"
 
 const replays: TerminalReplay[] = []
@@ -123,5 +123,15 @@ it("rejects invalid or excessive dimensions before allocating a terminal", () =>
     [80.5, 24],
   ]) {
     expect(() => new TerminalReplay(cols, rows, { pause() {}, resume() {} })).toThrow("dimensions")
+  }
+})
+
+it("fails closed when a headless dependency change hides parser or decoder state", () => {
+  for (const terminal of [
+    null,
+    {},
+    { _core: { _inputHandler: { _parser: { currentState: 0 } } } },
+  ]) {
+    expect(canStreamAfterTerminalSnapshot(terminal)).toBe(false)
   }
 })

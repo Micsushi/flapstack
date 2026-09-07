@@ -22,6 +22,23 @@ parsing before resetting the screen, preventing old queued output from appearing
 on the replacement terminal. Legacy detach and raw-stream endpoints remain for
 compatibility; recovery-enabled terminals do not serialize their own detach screen.
 
+The serializer does not retain all interpreter state. An attachment inside an
+unfinished escape sequence or Unicode surrogate pair receives bounded snapshots
+instead of interpreting the raw suffix as ordinary text. Non-default character
+sets, saved cursor state, scroll margins and tab stops also keep the attachment
+on snapshots until compatible state returns. Ordinary compatible attachments
+keep low-latency raw output. The fallback is limited to one snapshot per 100 ms
+and the same acknowledgement/byte bounds; complex terminal programs may refresh
+more slowly while it is active.
+
+This read-only compatibility probe is pinned to headless xterm 6.0.0. Unknown
+dependency shapes fall back to snapshots. Its contract is verified against the
+upstream [serializer](https://github.com/xtermjs/xterm.js/blob/6.0.0/addons/addon-serialize/src/SerializeAddon.ts),
+[parser](https://github.com/xtermjs/xterm.js/blob/6.0.0/src/common/parser/EscapeSequenceParser.ts)
+and [Unicode decoder](https://github.com/xtermjs/xterm.js/blob/6.0.0/src/common/input/TextDecoder.ts).
+Cold parking cannot discard the interpreter merely because its screen was
+serialized. No automatic cold parking is enabled by this implementation.
+
 Recovery uses the official MIT-licensed [headless xterm](https://github.com/xtermjs/xterm.js/tree/6.0.0)
 and the existing [serialization addon](https://github.com/xtermjs/xterm.js/blob/6.0.0/addons/addon-serialize/README.md).
 It keeps the existing 10,000-row scrollback policy. Dimensions are bounded to 500

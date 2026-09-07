@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest"
 import { Terminal } from "xterm"
+import { TerminalReplay } from "../src/main/lib/terminal/replay"
 import { createTerminalReplayConsumer } from "../src/renderer/features/terminal/replay-consumer"
 import type { TerminalReplayEvent } from "../src/shared/terminal-replay"
 
@@ -80,3 +81,49 @@ it("parses an empty snapshot with the installed browser xterm before acknowledgi
     terminal.dispose()
   }
 })
+
+it.each([
+  ["CSI", "prefix\x1b[", "31mRED", "prefixRED"],
+  ["OSC", "prefix\x1b]0;part", "ial title\x07RED", "prefixRED"],
+  ["surrogate pair", "prefix\ud83d", "\ude80RED", "prefix🚀RED"],
+  ["character set", "prefix\x1b(0", "q", "prefix─"],
+  ["saved cursor", "ab\x1b7cd", "\x1b8X", "abXd"],
+  ["cleared tab stops", "ab\x1b[3g", "\tX", `ab${" ".repeat(77)}X`],
+])(
+  "recovers attachment inside an unfinished %s without exposing its continuation as text",
+  async (_kind, prefix, suffix, expected) => {
+    const terminal = new Terminal({ cols: 80, rows: 24 })
+    const replay = new TerminalReplay(80, 24, { pause() {}, resume() {} })
+    const acknowledged: TerminalReplayEvent[] = []
+    const consumer = createTerminalReplayConsumer(terminal, {
+      acknowledge(event) {
+        acknowledged.push(event)
+        replay.acknowledge(event.subscriptionId, event.deliveryId)
+      },
+      afterSnapshot() {},
+      data() {},
+      exit() {},
+    })
+    replay.write(prefix)
+    const unsubscribe = replay.subscribe({
+      next: consumer.accept,
+      error(error) {
+        throw error
+      },
+      complete() {},
+    })
+    try {
+      await vi.waitFor(() => expect(acknowledged).toHaveLength(1))
+      replay.write(suffix)
+      await vi.waitFor(() =>
+        expect(terminal.buffer.active.getLine(0)?.translateToString(true)).toBe(expected),
+      )
+      expect(acknowledged.at(-1)?.type).toBe("snapshot")
+    } finally {
+      unsubscribe()
+      consumer.dispose()
+      replay.dispose()
+      terminal.dispose()
+    }
+  },
+)
