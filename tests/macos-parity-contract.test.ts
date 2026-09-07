@@ -29,7 +29,7 @@ describe("macOS app command contract", () => {
   it("keeps macOS renderer frames active when AppKit reports the page hidden", () => {
     const windowSource = readFileSync("src/main/windows/main.ts", "utf8")
 
-    expect(windowSource).toContain(
+    expect(windowSource.replace(/\s+/g, " ")).toContain(
       'process.platform === "darwin" || launchPresentation.keepRendererActive',
     )
     expect(windowSource).toContain("backgroundThrottling: false")
