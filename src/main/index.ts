@@ -50,6 +50,7 @@ import {
   isDevTestControlEnabled,
   isPreviewExecutable,
   isStage6PerformanceProfile,
+  isHeadlessPerformanceProfile,
   resolveFlapstackProtocol,
   resolvePreviewUserDataName,
 } from "./lib/mcp-test-control/lifecycle"
@@ -160,6 +161,13 @@ let automationBetaTransition = Promise.resolve()
 // Use different protocol in dev to avoid conflicts with production app
 const IS_PREVIEW = !IS_DEV && isPreviewExecutable()
 const IS_STAGE6_PERFORMANCE = !app.isPackaged && isStage6PerformanceProfile()
+let IS_HEADLESS_PERFORMANCE = false
+try {
+  IS_HEADLESS_PERFORMANCE = isHeadlessPerformanceProfile(app.isPackaged)
+} catch {
+  console.error("[App] Hidden runtime profile validation failed.")
+  app.exit(1)
+}
 const IS_CONTROL_DEV = IS_DEV || IS_STAGE6_PERFORMANCE
 const PROTOCOL = resolveFlapstackProtocol(IS_CONTROL_DEV, IS_PREVIEW)
 const APP_DISPLAY_NAME = IS_CONTROL_DEV
@@ -348,6 +356,7 @@ console.log("[Protocol] process argument count:", process.argv.length)
  * Launch Services caches protocol handlers and may need time to update.
  */
 function registerProtocol(): boolean {
+  if (IS_STAGE6_PERFORMANCE) return false
   let success = false
 
   if (process.defaultApp) {
@@ -682,12 +691,15 @@ if (gotTheLock) {
 
   // App ready
   app.whenReady().then(async () => {
+    if (IS_HEADLESS_PERFORMANCE) app.dock?.hide()
     if (IS_CONTROL_DEV) {
       app.setName(APP_DISPLAY_NAME)
     }
 
     try {
-      const migration = await migrateClaudeMcpSecretFiles()
+      const migration = IS_STAGE6_PERFORMANCE
+        ? { migrated: 0, deferred: 0 }
+        : await migrateClaudeMcpSecretFiles()
       if (migration.migrated > 0) {
         console.info(`[MCP] Protected ${migration.migrated} plaintext credential bundle(s).`)
       }
@@ -1351,6 +1363,7 @@ if (gotTheLock) {
             {
               name: "Usage startup catch-up",
               run: () => {
+                if (IS_STAGE6_PERFORMANCE) return
                 void withDatabaseOperation(() =>
                   runStartupCatchUp({
                     db: initDatabase(),
@@ -1399,6 +1412,7 @@ if (gotTheLock) {
       exit: (code) => app.exit(code),
       report: (error) => {
         console.error("[App] Failed required startup:", error)
+        if (IS_HEADLESS_PERFORMANCE) return
         const notice = describeRequiredStartupFailure(error, getDatabasePath())
         dialog.showMessageBoxSync({
           type: "error",
@@ -1418,6 +1432,7 @@ if (gotTheLock) {
     // Warm up MCP cache 3 seconds after startup (background, non-blocking)
     // This populates the cache so all future sessions can use filtered MCP servers
     setTimeout(async () => {
+      if (IS_STAGE6_PERFORMANCE) return
       try {
         const results = await Promise.allSettled([
           getAllMcpConfigHandler(),

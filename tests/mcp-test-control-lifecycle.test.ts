@@ -5,11 +5,55 @@ import {
   isDevTestControlEnabled,
   isPreviewExecutable,
   isStage6PerformanceProfile,
+  isHeadlessPerformanceProfile,
   resolveFlapstackProtocol,
   resolvePreviewUserDataName,
 } from "../src/main/lib/mcp-test-control/lifecycle"
 
 describe("test-control lifecycle", () => {
+  it("requires an isolated supervised profile before hiding a test window", () => {
+    const env = {
+      FLAPSTACK_STAGE6_HEADLESS: "1",
+      FLAPSTACK_STAGE6_PERFORMANCE_PROFILE: "1",
+      FLAPSTACK_DEV_INSTANCE: "stage6-perf-123-abc",
+      FLAPSTACK_DEV_MCP_PROFILE: "Flapstack Dev stage6-perf-123-abc",
+      FLAPSTACK_STAGE6_RUN_TOKEN: "s6-123-abc-012345abcdef",
+    }
+    expect(isHeadlessPerformanceProfile(false, env)).toBe(true)
+    expect(isHeadlessPerformanceProfile(false, {})).toBe(false)
+    expect(() => isHeadlessPerformanceProfile(true, env)).toThrow("isolated")
+    for (const field of [
+      "FLAPSTACK_STAGE6_PERFORMANCE_PROFILE",
+      "FLAPSTACK_DEV_INSTANCE",
+      "FLAPSTACK_DEV_MCP_PROFILE",
+      "FLAPSTACK_STAGE6_RUN_TOKEN",
+    ]) {
+      expect(() => isHeadlessPerformanceProfile(false, { ...env, [field]: "wrong" })).toThrow(
+        "isolated",
+      )
+    }
+  })
+
+  it("keeps isolated performance probes out of global startup side effects", () => {
+    const main = readFileSync("src/main/index.ts", "utf8")
+    expect(main).toContain("if (IS_STAGE6_PERFORMANCE) return false")
+    expect(main).toContain('console.error("[App] Hidden runtime profile validation failed.")')
+    expect(main).toMatch(
+      /console.error\("\[App\] Failed required startup:", error\)\s*if \(IS_HEADLESS_PERFORMANCE\) return/,
+    )
+    expect(main).toMatch(/setTimeout\(async \(\) => \{\s*if \(IS_STAGE6_PERFORMANCE\) return/)
+    expect(main).toMatch(
+      /const migration = IS_STAGE6_PERFORMANCE\s*\? \{ migrated: 0, deferred: 0 \}\s*:\s*await migrateClaudeMcpSecretFiles/,
+    )
+    expect(main).toMatch(
+      /name: "Usage startup catch-up",\s*run: \(\) => \{\s*if \(IS_STAGE6_PERFORMANCE\) return/,
+    )
+    const window = readFileSync("src/main/windows/main.ts", "utf8")
+    expect(window).toContain("offscreen: true, focusOnNavigation: false")
+    expect(window).toMatch(
+      /createdWindow.on\("ready-to-show", \(\) => \{\s*if \(headlessPerformance\) return/,
+    )
+  })
   it("stays disabled in packages unless the exact test flag is present", () => {
     expect(isDevTestControlEnabled(false, false, {})).toBe(false)
     expect(

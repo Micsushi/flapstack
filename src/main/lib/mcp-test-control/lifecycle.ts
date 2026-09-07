@@ -15,6 +15,25 @@ export function isStage6PerformanceProfile(
   return env.FLAPSTACK_STAGE6_PERFORMANCE_PROFILE === "1"
 }
 
+/** A hidden launch must never fall back to an ordinary or shared user profile. */
+export function isHeadlessPerformanceProfile(
+  isPackaged: boolean,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  if (env.FLAPSTACK_STAGE6_HEADLESS !== "1") return false
+  const instance = env.FLAPSTACK_DEV_INSTANCE ?? ""
+  if (
+    isPackaged ||
+    !isStage6PerformanceProfile(env) ||
+    !/^stage6-perf-\d+-[a-z0-9]+$/.test(instance) ||
+    env.FLAPSTACK_DEV_MCP_PROFILE !== `Flapstack Dev ${instance}` ||
+    !/^s6-\d+-[a-z0-9]+-[a-f0-9]{12}$/.test(env.FLAPSTACK_STAGE6_RUN_TOKEN ?? "")
+  ) {
+    throw new Error("Hidden runtime verification requires an isolated supervised test profile.")
+  }
+  return true
+}
+
 export function isDevTestControlEnabled(
   isDev: boolean,
   isPreview: boolean,

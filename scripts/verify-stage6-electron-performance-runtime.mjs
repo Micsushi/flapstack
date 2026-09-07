@@ -53,6 +53,8 @@ if (!process.env.FLAPSTACK_STAGE6_ELECTRON_HOSTED) {
   const evidencePayload = {
     ...payload,
     gitSha,
+    executionMode:
+      process.env.FLAPSTACK_STAGE6_HEADLESS === "1" ? "hidden-window" : "visible-window",
   }
   const evidence = {
     ...evidencePayload,

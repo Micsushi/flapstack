@@ -34,6 +34,7 @@ import {
   windowManager,
 } from "./window-manager"
 import { createInitialLaunchPresentationResolver } from "./launch-presentation"
+import { isHeadlessPerformanceProfile } from "../lib/mcp-test-control/lifecycle"
 import {
   cleanupFailedWorkbenchWindowCreation,
   clampWorkbenchWindowBounds,
@@ -1254,6 +1255,7 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
       options?.applyInitialLaunchPresentation === true,
     )
     const initialBounds = options?.restoredBounds ?? launchPresentation.bounds
+    const headlessPerformance = isHeadlessPerformanceProfile(app.isPackaged)
 
     window = new BrowserWindow({
       width: initialBounds?.width ?? 1400,
@@ -1296,7 +1298,10 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
         sandbox: false, // Required for electron-trpc
         webSecurity: true,
         partition: "persist:main", // Use persistent session for cookies
-        ...(process.platform === "darwin" || launchPresentation.keepRendererActive
+        ...(headlessPerformance ? { offscreen: true, focusOnNavigation: false } : {}),
+        ...(headlessPerformance ||
+        process.platform === "darwin" ||
+        launchPresentation.keepRendererActive
           ? { backgroundThrottling: false }
           : {}),
       },
@@ -1352,6 +1357,7 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
 
     // Show window when ready
     createdWindow.on("ready-to-show", () => {
+      if (headlessPerformance) return
       console.log("[Main] Window", createdWindow.id, "ready to show")
       // Start with traffic lights hidden - the renderer will show them
       // after hydration based on the persisted sidebar state
