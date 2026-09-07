@@ -250,6 +250,10 @@ export async function readFileInsideRoot(
   targetRelativePath: string,
   options: RootedReadOptions = {},
 ): Promise<Buffer> {
+  const { maxBytes } = options
+  if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) {
+    throw new RangeError("Read limit must be a non-negative safe integer")
+  }
   const snapshot = await snapshotExistingPath(rootPath, targetRelativePath)
   const targetInfo = await lstat(snapshot.targetPath)
   if (targetInfo.isSymbolicLink() || !targetInfo.isFile()) {
@@ -265,11 +269,22 @@ export async function readFileInsideRoot(
     if (!opened.isFile() || !sameIdentity(identity(opened), snapshot.targetIdentity)) {
       throw new Error("Read target inode changed during open")
     }
-    if (options.maxBytes !== undefined && opened.size > options.maxBytes) {
+    if (maxBytes !== undefined && opened.size > maxBytes) {
       throw new RootedReadTooLargeError(opened.size)
     }
     await validateExistingSnapshot(snapshot)
-    return await handle.readFile()
+    if (maxBytes === undefined) return await handle.readFile()
+    // A file may grow after stat. Read at most the limit plus one sentinel byte.
+    const chunks: Buffer[] = []
+    let total = 0
+    while (true) {
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes - total + 1))
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, total)
+      if (bytesRead === 0) return Buffer.concat(chunks, total)
+      total += bytesRead
+      if (total > maxBytes) throw new RootedReadTooLargeError(total)
+      chunks.push(chunk.subarray(0, bytesRead))
+    }
   } finally {
     await handle.close().catch(() => undefined)
   }

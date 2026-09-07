@@ -34,3 +34,12 @@ Regression coverage lives in `tests/files-router-path-safety.test.ts`, including
 shared queries, cancellation, invalidation, unreadable roots and depth limits.
 Recent-path and reversible-action checks live in `tests/file-search-paths.test.ts`
 and `tests/file-search-recent-actions.test.tsx`.
+
+## File read limits
+
+The text preview accepts up to 2 MiB and the binary preview up to 20 MiB.
+Rooted reads enforce the caller's byte cap while reading, not just when checking
+the initial file size. A file that grows beyond its cap is rejected after at
+most one additional byte; it is not loaded fully or silently truncated. Reads
+without an explicit cap retain their existing behavior. Growth and exact-boundary
+regressions are covered by `tests/rooted-read-bounds.test.ts`.
