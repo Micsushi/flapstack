@@ -80,6 +80,7 @@ export const discussionChangeSchema = z.discriminatedUnion("type", [
       annotationId: id,
       body,
       role: z.enum(["user", "assistant"]),
+      model: z.string().trim().min(1).max(512).optional(),
     })
     .strict(),
   z
@@ -119,6 +120,46 @@ export const restoreDiscussionSchema = updateDiscussionSchema
   .omit({ change: true })
   .extend({ targetRevision: z.number().int().positive() })
   .strict()
+export const captureMixedSchema = z
+  .object({
+    scope: discussionScopeSchema,
+    body: z
+      .string()
+      .min(1)
+      .max(6000)
+      .refine((value) => value.trim().length > 0),
+    title: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict()
+export const restoreMixedSchema = z
+  .object({
+    scope: discussionScopeSchema,
+    changes: z
+      .array(
+        z
+          .object({
+            id,
+            expectedRevision: z.number().int().positive(),
+            targetRevision: z.number().int().positive().nullable(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(9),
+  })
+  .strict()
+export type MixedCaptureState = {
+  state: "grouped" | "unsorted"
+  dedupStatus: "available" | "unavailable"
+  warning: string | null
+  model: string | null
+  topicIds: string[]
+}
+export type MixedCaptureResult = Omit<MixedCaptureState, "topicIds"> & {
+  topics: DiscussionTopic[]
+  originalTopicId: string
+  undo: z.infer<typeof restoreMixedSchema>
+}
 export type DiscussionScope = z.infer<typeof discussionScopeSchema>
 export type DiscussionSource = z.infer<typeof discussionSourceSchema>
 export type DiscussionAnswer = z.infer<typeof discussionAnswerSchema>
@@ -134,7 +175,14 @@ export type DiscussionTopic = {
   archived: boolean
   read: boolean
   status: "more-work" | "needs-help" | "blocked" | "done"
-  captures: Array<z.infer<typeof discussionCaptureSchema> & { id: string; createdAt: number }>
+  captures: Array<
+    z.infer<typeof discussionCaptureSchema> & {
+      id: string
+      createdAt: number
+      origin?: { topicId: string; captureId: string; start: number; end: number }
+    }
+  >
+  captureBatch?: MixedCaptureState
   summaryHistory: Array<{ summary: string; createdAt: number }>
   questions: Array<
     z.infer<typeof discussionQuestionSchema> & {
@@ -149,7 +197,13 @@ export type DiscussionTopic = {
     source: DiscussionSource
     body: string
     createdAt: number
-    followups: Array<{ id: string; body: string; role: "user" | "assistant"; createdAt: number }>
+    followups: Array<{
+      id: string
+      body: string
+      role: "user" | "assistant"
+      createdAt: number
+      model?: string
+    }>
     promotedTopicId: string | null
   }>
   canonicalRecordIds: string[]

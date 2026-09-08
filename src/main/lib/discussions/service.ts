@@ -4,14 +4,17 @@ import { hostname } from "node:os"
 import { z } from "zod"
 import {
   createDiscussionSchema,
+  captureMixedSchema,
   discussionListSchema,
   discussionScopeSchema,
   discussionSourceSchema,
   restoreDiscussionSchema,
+  restoreMixedSchema,
   updateDiscussionSchema,
   type DiscussionScope,
   type DiscussionSource,
   type DiscussionTopic,
+  type MixedCaptureState,
 } from "../../../shared/discussions"
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex")
@@ -97,6 +100,169 @@ export class DiscussionService {
 
   metadata() {
     return { hostId: this.hostId }
+  }
+
+  mixedCaptureContext(scope: DiscussionScope) {
+    this.scope(scope)
+    const project = this.db
+      .prepare("SELECT path FROM projects WHERE id = ?")
+      .get(scope.projectId) as { path: string }
+    const topics = this.db
+      .prepare(
+        "SELECT id, revision, json_extract(body, '$.title') AS title, json_extract(body, '$.summary') AS summary FROM discussion_topics WHERE project_id = ? AND chat_id IS ? AND host_id = ? AND json_extract(body, '$.archived') = 0 AND json_extract(body, '$.captureBatch') IS NULL ORDER BY updated_at DESC, id LIMIT 200",
+      )
+      .all(scope.projectId, scope.chatId, scope.hostId) as Array<{
+      id: string
+      revision: number
+      title: string
+      summary: string
+    }>
+    return { projectPath: project.path, topics }
+  }
+
+  createMixedOriginal(raw: z.input<typeof captureMixedSchema>) {
+    const input = captureMixedSchema.parse(raw)
+    return this.db.transaction(() => {
+      const topic = this.create({
+        scope: input.scope,
+        title: input.title ?? input.body.trim().slice(0, 120),
+        capture: { body: input.body, kind: "note" },
+      })
+      // Preserve the exact original once; derived captures point back to this source and range.
+      topic.captures[0]!.body = input.body
+      topic.captureBatch = {
+        state: "unsorted",
+        dedupStatus: "unavailable",
+        warning: "Original saved; grouping has not completed.",
+        model: null,
+        topicIds: [],
+      }
+      topic.revision++
+      return this.save(topic, 1)
+    })()
+  }
+
+  finishMixedOriginal(original: DiscussionTopic, state: MixedCaptureState) {
+    return this.db.transaction(() => {
+      const current = this.read(original.scope, original.id)
+      if (current.revision !== original.revision)
+        throw new DiscussionError("CONFLICT", "Original capture changed while grouping")
+      current.captureBatch = state
+      current.archived = state.state === "grouped"
+      current.revision++
+      current.updatedAt = Date.now()
+      return this.save(current, original.revision)
+    })()
+  }
+
+  applyMixed(
+    original: DiscussionTopic,
+    groups: Array<{
+      title: string
+      kind: "fix" | "idea" | "note"
+      quote: string
+      summary: string
+      existingTopicId: string | null
+      expectedRevision?: number
+      recordIds: string[]
+    }>,
+    state: Omit<MixedCaptureState, "topicIds">,
+  ) {
+    return this.db.transaction(() => {
+      if (groups.length < 1 || groups.length > 8)
+        throw new DiscussionError("BAD_REQUEST", "Capture requires one to eight groups")
+      const topics: DiscussionTopic[] = []
+      const changes: z.infer<typeof restoreMixedSchema>["changes"] = []
+      const seen = new Set<string>()
+      for (const group of groups) {
+        const start = original.captures[0]!.body.indexOf(group.quote)
+        if (start < 0)
+          throw new DiscussionError("BAD_REQUEST", "Grouped quote is not an exact source substring")
+        const prior = group.existingTopicId
+          ? this.read(original.scope, group.existingTopicId)
+          : null
+        if (
+          prior &&
+          (prior.revision !== group.expectedRevision || prior.archived || prior.id === original.id)
+        )
+          throw new DiscussionError("CONFLICT", "An existing topic changed while grouping")
+        if (prior && seen.has(prior.id))
+          throw new DiscussionError("BAD_REQUEST", "Group each existing topic only once")
+        let topic = prior
+          ? this.update({
+              scope: original.scope,
+              id: prior.id,
+              expectedRevision: prior.revision,
+              change: { type: "capture", capture: { kind: group.kind, body: group.quote } },
+            })
+          : this.create({
+              scope: original.scope,
+              title: group.title,
+              summary: group.summary,
+              capture: { kind: group.kind, body: group.quote },
+            })
+        seen.add(topic.id)
+        topic.captures[topic.captures.length - 1]!.origin = {
+          topicId: original.id,
+          captureId: original.captures[0]!.id,
+          start,
+          end: start + group.quote.length,
+        }
+        topic.summary = group.summary
+        if (prior) topic.summaryHistory.push({ summary: group.summary, createdAt: Date.now() })
+        topic.canonicalRecordIds = [...new Set([...topic.canonicalRecordIds, ...group.recordIds])]
+        const version = topic.revision
+        topic.revision++
+        topic.updatedAt = Date.now()
+        topic = this.save(topic, version)
+        topics.push(topic)
+        changes.push({
+          id: topic.id,
+          expectedRevision: topic.revision,
+          targetRevision: prior?.revision ?? null,
+        })
+      }
+      const source = this.finishMixedOriginal(original, {
+        ...state,
+        topicIds: topics.map((topic) => topic.id),
+      })
+      changes.push({ id: source.id, expectedRevision: source.revision, targetRevision: null })
+      return {
+        topics,
+        originalTopicId: source.id,
+        ...state,
+        undo: { scope: source.scope, changes },
+      }
+    })()
+  }
+
+  restoreMixed(raw: z.input<typeof restoreMixedSchema>) {
+    const input = restoreMixedSchema.parse(raw)
+    return this.db.transaction(() => {
+      if (new Set(input.changes.map((change) => change.id)).size !== input.changes.length)
+        throw new DiscussionError("BAD_REQUEST", "Restore each topic only once")
+      const topics: DiscussionTopic[] = []
+      const changes: z.infer<typeof restoreMixedSchema>["changes"] = []
+      for (const change of input.changes) {
+        const before = this.read(input.scope, change.id)
+        const topic =
+          change.targetRevision === null
+            ? this.update({
+                scope: input.scope,
+                id: change.id,
+                expectedRevision: change.expectedRevision,
+                change: { type: "archive", archived: true },
+              })
+            : this.restore({ scope: input.scope, ...change, targetRevision: change.targetRevision })
+        topics.push(topic)
+        changes.push({
+          id: topic.id,
+          expectedRevision: topic.revision,
+          targetRevision: before.revision,
+        })
+      }
+      return { topics, undo: { scope: input.scope, changes } }
+    })()
   }
 
   private scope(raw: DiscussionScope) {
@@ -355,6 +521,7 @@ export class DiscussionService {
             body: change.body,
             role: change.role,
             createdAt: now,
+            ...(change.role === "assistant" && change.model ? { model: change.model } : {}),
           })
           break
         }

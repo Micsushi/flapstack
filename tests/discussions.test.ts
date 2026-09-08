@@ -131,7 +131,12 @@ it("keeps image and text annotations local, rejects nesting, and promotes with r
     annotationId,
     body: "Use eight pixels",
     role: "assistant",
+    model: "verified-local-model",
   })
+  expect(
+    new DiscussionService(db, scope.hostId).read(scope, topic.id).annotations[0]!.followups[0]!
+      .model,
+  ).toBe("verified-local-model")
   const image = service.sources(scope, "s", "m")[0]!.images[0]!
   topic = change(topic, {
     type: "annotation",
