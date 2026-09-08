@@ -1,3 +1,4 @@
+import { findDevVisibleTranscript } from "./dev-test-visible-transcript"
 import { useEffect } from "react"
 import {
   agentsSettingsDialogActiveTabAtom,
@@ -358,11 +359,14 @@ export function DevTestControlBridge() {
                 const group = groups.find(
                   (element) => element.dataset.activeChatId === request.chatId,
                 )
-                const transcript =
-                  group?.querySelector<HTMLElement>(
-                    "[data-chat-container][data-active-sub-chat-id]",
-                  ) ?? null
                 const mountedState = getMountedAgentSubChatStore(request.chatId)?.getState()
+                const transcript = findDevVisibleTranscript({
+                  document,
+                  chatId: request.chatId,
+                  subChatId: request.subChatId,
+                  selectedChatId: appStore.get(selectedAgentChatIdAtom),
+                  mountedState,
+                })
                 return {
                   chatId: group?.dataset.activeChatId ?? (mountedState ? request.chatId : ""),
                   subChatId:

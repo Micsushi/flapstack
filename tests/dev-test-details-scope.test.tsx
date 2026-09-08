@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { useProjectSelectionGuard } from "../src/renderer/features/sidebar/use-project-selection-guard"
 import { DevTestControlBridge } from "../src/renderer/features/settings/dev-test-control-bridge"
+import { findDevVisibleTranscript } from "../src/renderer/features/settings/dev-test-visible-transcript"
 import { appStore } from "../src/renderer/lib/jotai-store"
 import { selectedAgentChatIdAtom } from "../src/renderer/features/agents/atoms"
 import {
@@ -125,6 +126,66 @@ it("opens only the requested chat and reports its state even while another chat 
   expect(appStore.get(detailsSidebarOpenAtomFamily("b"))).toBe(false)
   expect(appStore.get(detailsSidebarOpenAtom)).toBe(false)
   expect(await send("mcp.get", { chatId: "b" })).toMatchObject({ chatId: "b", detailsOpen: false })
+})
+
+it("chat.select verifies the selected mounted mobile pane without a desktop group", async () => {
+  const mobile = document.createElement("div")
+  mobile.dataset.mobileChatMode = ""
+  const transcript = document.createElement("div")
+  transcript.dataset.chatContainer = ""
+  transcript.dataset.activeSubChatId = "pane-a"
+  transcript.dataset.stage6PerformanceMessageCount = "0"
+  vi.spyOn(transcript, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList)
+  mobile.append(transcript)
+  container.append(mobile)
+  expect(
+    await send("chat.select", {
+      chatId: "a",
+      subChatId: "pane-a",
+      project: { id: "project", name: "Fixture", path: "/fixture" },
+      persistedMessages: [],
+      showOrchestration: true,
+    }),
+  ).toMatchObject({ chatId: "a", subChatId: "pane-a", detailsOpen: true })
+})
+
+it("rejects ambiguous, hidden, unselected and incorrectly mounted mobile transcripts", () => {
+  const mobile = document.createElement("div")
+  mobile.dataset.mobileChatMode = ""
+  container.append(mobile)
+  const pane = () => {
+    const element = document.createElement("div")
+    element.dataset.chatContainer = ""
+    element.dataset.activeSubChatId = "pane-a"
+    vi.spyOn(element, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList)
+    mobile.append(element)
+    return element
+  }
+  const first = pane()
+  const input = {
+    document,
+    chatId: "a",
+    subChatId: "pane-a",
+    selectedChatId: "a",
+    mountedState: getMountedAgentSubChatStore("a")!.getState(),
+  }
+  expect(findDevVisibleTranscript(input)).toBe(first)
+  const duplicate = pane()
+  expect(findDevVisibleTranscript(input)).toBeNull()
+  duplicate.remove()
+  expect(findDevVisibleTranscript({ ...input, selectedChatId: "b" })).toBeNull()
+  expect(
+    findDevVisibleTranscript({
+      ...input,
+      mountedState: getMountedAgentSubChatStore("b")!.getState(),
+    }),
+  ).toBeNull()
+  expect(findDevVisibleTranscript({ ...input, subChatId: "pane-b" })).toBeNull()
+  first.style.visibility = "hidden"
+  expect(findDevVisibleTranscript(input)).toBeNull()
+  first.style.visibility = "visible"
+  vi.mocked(first.getClientRects).mockReturnValue([] as unknown as DOMRectList)
+  expect(findDevVisibleTranscript(input)).toBeNull()
 })
 
 it("chat.select opens the exact chat family and returns its mounted pane after visibility verification", async () => {
