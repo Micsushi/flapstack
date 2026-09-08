@@ -126,3 +126,14 @@ about potential overlap, not proof of writes or an exclusive lock; it does not
 stop agents. Missing worktree identity is shown as unavailable. The check uses
 paths registered at launch and does not inspect external processes, ports,
 other tasks or remote hosts.
+
+## Run project context
+
+In a chat's run history, select a run and open **Project context**. The panel reads
+saved launch evidence only when opened; **Refresh project context** checks the
+last recorded database metadata again. Switching runs closes the panel.
+
+Launch inclusion, rejection, empty context and unavailable evidence are separate
+from source changes and launch-budget truncation. A source marked unchanged was
+compared with recorded metadata, not the current file. Current files and provider
+receipt remain unverified. This panel never changes context or sends a run.

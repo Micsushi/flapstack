@@ -17,6 +17,8 @@ import { formatModelDisplayName } from "../../../../shared/model-catalog"
 import { useAtom } from "jotai"
 import { automationEvidenceRunIdAtom } from "@/features/automations/state"
 
+import { RunContextPanel } from "./run-context-panel"
+
 type RunStatus = "running" | "success" | "failure" | "cancelled" | string
 
 function formatTime(value: Date | string | number | null | undefined): string {
@@ -191,6 +193,12 @@ export function RunHistoryWidget({ chatId }: { chatId: string }) {
               <span>{formatTime(selectedRun.completedAt) || "pending"}</span>
             </div>
           </div>
+
+          <RunContextPanel
+            key={`${chatId}:${selectedRun.id}`}
+            chatId={chatId}
+            runId={selectedRun.id}
+          />
 
           <div className="rounded-md bg-muted/30 px-2 py-2 space-y-2">
             <div className="flex items-center gap-1.5 text-xs font-medium">
