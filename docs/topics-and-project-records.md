@@ -9,6 +9,8 @@ Topics keep a short editable summary, questions, choices, written answers and
 annotations. Changing a choice or writing an answer saves a recovery draft;
 **Submit answer** records the answer. **Mark read** changes only its read state.
 Topic status, running agents and accepted project work are separate.
+New captures and submitted answers refresh the summary when the local model is
+available. Recovery drafts do not change the summary.
 
 In a chat header, **Assign role** gives that chat an explicit discussion, lead or
 worker role. Leads and workers can link to related chats in the same project.
@@ -38,8 +40,14 @@ FLAPSTACK_DISCUSSION_MODEL=<installed chat model name>
 
 Mixed grouping and summary refresh use the same model. Generation is bounded to
 one request at a time and never launches tools or workers. Model suggestions are
-editable. Exact quote and record ID checks reject invalid grouping. If the model
-is unavailable, captures and drafts remain saved.
+editable. Grouping selects immutable source spans, checks full source coverage
+and supplied record IDs, then asks the model to check meaning. It can correct a
+failed proposal once before keeping the original unsorted. If the model is
+unavailable, captures and drafts remain saved.
+
+Automatic grouping remains experimental. The current local-model check rejected
+a correction that should have reused an existing topic. Single-topic capture,
+editable summaries and saved questions remain usable while grouping needs work.
 
 Canonical comparison checks a bounded set of relevant topics and indexed project
 features. A successful comparison does not prove that every possible duplicate

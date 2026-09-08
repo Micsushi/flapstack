@@ -495,12 +495,10 @@ it("refreshes committed answer meaning with selected labels and free text, never
       answer: { choiceIds: ["large"], text: "Uncommitted draft" },
     },
   })
-  const generate = vi
-    .fn()
-    .mockResolvedValue({
-      result: { summary: "Fix sidebar labels only; keep the dark theme as a future idea." },
-      model: "test",
-    })
+  const generate = vi.fn().mockResolvedValue({
+    result: { summary: "Fix sidebar labels only; keep the dark theme as a future idea." },
+    model: "test",
+  })
   await refreshDiscussionSummary(service, topic, generate as typeof generateDiscussionResult, {
     answeredQuestionId: questionId,
   })
