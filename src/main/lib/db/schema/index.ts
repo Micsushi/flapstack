@@ -11,6 +11,23 @@ import {
 import { relations, sql } from "drizzle-orm"
 import { createId } from "../utils"
 
+// Local discussion content. Feature/checklist authority remains in project-records.
+export const discussionTopics = sqliteTable("discussion_topics", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  chatId: text("chat_id").references(() => chats.id, { onDelete: "cascade" }),
+  hostId: text("host_id").notNull(),
+  revision: integer("revision").notNull(),
+  body: text("body").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, table => [index("discussion_topics_scope_idx").on(table.projectId, table.chatId, table.hostId, table.updatedAt)])
+
+export const discussionRevisions = sqliteTable("discussion_revisions", {
+  topicId: text("topic_id").notNull().references(() => discussionTopics.id, { onDelete: "cascade" }),
+  revision: integer("revision").notNull(),
+  body: text("body").notNull(),
+}, table => [primaryKey({ columns: [table.topicId, table.revision] })])
+
 // ============ PROJECTS ============
 export const projects = sqliteTable("projects", {
   id: text("id")
