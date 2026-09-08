@@ -40,12 +40,33 @@ export function DiscussionAnnotationThread({
           {annotation.source.target.quote}
         </blockquote>
       ) : (
-        <p className="text-sm">
-          Image {annotation.source.target.partIndex + 1} · preserved image region
-          <span className="mt-1 block text-xs text-muted-foreground">
-            Local replies use your text note. Image pixels are not sent to the model.
-          </span>
-        </p>
+        <div className="space-y-2">
+          <p className="text-sm font-medium">Selected image region</p>
+          <p className="text-xs text-muted-foreground">
+            Left {Number((annotation.source.target.region.x * 100).toFixed(2))}%, Top{" "}
+            {Number((annotation.source.target.region.y * 100).toFixed(2))}%, Width{" "}
+            {Number((annotation.source.target.region.width * 100).toFixed(2))}%, Height{" "}
+            {Number((annotation.source.target.region.height * 100).toFixed(2))}%
+          </p>
+          {annotation.imageSnapshot?.dataUrl.startsWith("data:image/png;base64,") ? (
+            <figure className="space-y-1">
+              <img
+                src={annotation.imageSnapshot.dataUrl}
+                alt="Saved selected image region"
+                className="block max-h-64 max-w-full rounded-md"
+              />
+              <figcaption className="text-xs text-muted-foreground">
+                Preserved crop, {annotation.imageSnapshot.width} x {annotation.imageSnapshot.height}{" "}
+                pixels. Local image questions use this selected crop.
+              </figcaption>
+            </figure>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Image pixels are unavailable for this saved annotation. Local replies use your text
+              note; they cannot inspect this image.
+            </p>
+          )}
+        </div>
       )}
       {(stale || sources.error || (!sources.isLoading && !source)) && (
         <p role="status" className="text-sm text-muted-foreground">

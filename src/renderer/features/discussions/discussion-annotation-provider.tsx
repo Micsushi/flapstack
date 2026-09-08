@@ -358,6 +358,25 @@ function AnnotationEditor({
           ) : (
             <fieldset className="space-y-2">
               <legend className="text-sm">Image region (percent from top left)</legend>
+              {image && (
+                <CurrentImagePreview
+                  scope={scope}
+                  source={{
+                    subChatId,
+                    messageId: message.messageId,
+                    role: message.role,
+                    revision: message.revision,
+                    target: {
+                      kind: "image",
+                      partIndex: image.partIndex,
+                      imageIdentity: image.imageIdentity,
+                      region: { x: 0, y: 0, width: 1, height: 1 },
+                    },
+                  }}
+                  region={region}
+                  validRegion={validRegion}
+                />
+              )}
               <div className="grid grid-cols-2 gap-2">
                 {Object.entries(region).map(([name, value]) => (
                   <label key={name} className="text-sm capitalize">
@@ -462,6 +481,65 @@ function AnnotationEditor({
             Follow-ups stay here. Promote explicitly to create a discussion topic.
           </p>
         </form>
+      )}
+    </div>
+  )
+}
+
+function CurrentImagePreview({
+  scope,
+  source,
+  region,
+  validRegion,
+}: {
+  scope: DiscussionScope
+  source: DiscussionSource
+  region: { x: number; y: number; width: number; height: number }
+  validRegion: boolean
+}) {
+  const preview = trpc.discussions.imagePreview.useQuery(
+    { scope, source },
+    { refetchOnWindowFocus: false },
+  )
+  const snapshot = preview.data?.available ? preview.data.imageSnapshot : undefined
+  const canDisplay = snapshot?.dataUrl.startsWith("data:image/png;base64,")
+  return (
+    <div className="space-y-2">
+      {snapshot && canDisplay ? (
+        <figure className="space-y-1">
+          <div className="relative w-fit max-w-full">
+            <img
+              src={snapshot.dataUrl}
+              alt="Current source image"
+              className="block max-h-64 max-w-full rounded-md"
+            />
+            {validRegion && (
+              <div
+                aria-hidden="true"
+                data-image-region-overlay
+                className="pointer-events-none absolute border-2 border-primary bg-primary/15"
+                style={{
+                  left: `${region.x}%`,
+                  top: `${region.y}%`,
+                  width: `${region.width}%`,
+                  height: `${region.height}%`,
+                }}
+              />
+            )}
+          </div>
+          <figcaption className="text-xs text-muted-foreground">
+            The outlined region will be preserved when you save.
+          </figcaption>
+        </figure>
+      ) : (
+        <p role="status" className="text-xs text-muted-foreground">
+          {preview.isLoading
+            ? "Loading image preview..."
+            : (preview.error?.message ??
+              (preview.data && !preview.data.available
+                ? preview.data.reason
+                : "Image pixels unavailable. You can save a text note linked to this source."))}
+        </p>
       )}
     </div>
   )
