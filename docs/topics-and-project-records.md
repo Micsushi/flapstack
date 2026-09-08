@@ -114,3 +114,13 @@ draft so you can review the newer result before retrying. Shared **Undo** and
 **Redo** restore review revisions in chronological order; a conflicting outside
 edit is not overwritten. A manually recorded review is not owner acceptance and
 does not start, resume or complete a run.
+
+## Shared worktree advisory
+
+The task's orchestration panel shows **Check shared worktree access** when current
+local runs share a saved worktree and at least one may edit or has unknown
+permissions. Each link names the exact run and opens its chat. This is a warning
+about potential overlap, not proof of writes or an exclusive lock; it does not
+stop agents. Missing worktree identity is shown as unavailable. The check uses
+paths registered at launch and does not inspect external processes, ports,
+other tasks or remote hosts.

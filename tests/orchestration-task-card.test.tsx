@@ -163,6 +163,59 @@ describe("orchestration task card", () => {
     expect(formatOrchestrationCost(0, 0, 0, "unknown")).toBeNull()
   })
 
+  it("shows potential shared access and navigates to the exact run chat without changing controls", async () => {
+    const navigate = vi.fn()
+    await act(async () =>
+      root.render(
+        <OrchestrationOverviewCard
+          overview={{
+            ...overview,
+            sharedWorktrees: {
+              groups: [
+                {
+                  path: "C:/worktree",
+                  runs: [
+                    {
+                      agentId: "a",
+                      runId: "run-a",
+                      chatId: "exact-chat-a",
+                      name: "Builder",
+                      access: "may-edit",
+                    },
+                    {
+                      agentId: "b",
+                      runId: "run-b",
+                      chatId: "exact-chat-b",
+                      name: "Reviewer",
+                      access: "unknown",
+                    },
+                  ],
+                },
+              ],
+              unknown: [],
+            },
+          }}
+          lineage={lineage}
+          currentChatId="chat-parent"
+          onNavigate={navigate}
+          onControl={() => {}}
+          onRetry={() => {}}
+          onReplace={() => {}}
+          onAdd={() => {}}
+        />,
+      ),
+    )
+    const advisory = container.querySelector('[aria-label="Shared worktree advisory"]')!
+    expect(advisory.textContent).toContain("potential overlap")
+    expect(advisory.textContent).toContain("Permissions unknown")
+    const button = advisory.querySelector(
+      '[aria-label="Open Reviewer, run run-b"]',
+    ) as HTMLButtonElement
+    await act(async () => button.click())
+    expect(navigate).toHaveBeenCalledWith("exact-chat-b")
+    expect(container.querySelector('[aria-label="Orchestration agents"]')).not.toBeNull()
+  })
+
   it("exposes a bounded renderer snapshot for authenticated MCP proof", async () => {
     await act(async () => {
       root.render(

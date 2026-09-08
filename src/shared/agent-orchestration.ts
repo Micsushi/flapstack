@@ -419,10 +419,22 @@ export type OrchestrationAggregateDto = {
   costQuality: z.infer<typeof orchestrationCostQualitySchema>
 }
 
+export type OrchestrationWorktreeRun = {
+  agentId: string
+  runId: string
+  chatId: string
+  name: string
+  access: "read-only" | "may-edit" | "unknown"
+}
+export type OrchestrationSharedWorktrees = {
+  groups: Array<{ path: string; runs: OrchestrationWorktreeRun[] }>
+  unknown: OrchestrationWorktreeRun[]
+}
 export type OrchestrationTaskOverviewDto = {
   orchestration: OrchestrationTaskDto
   aggregate: OrchestrationAggregateDto
   agents: OrchestrationAgentDto[]
+  sharedWorktrees?: OrchestrationSharedWorktrees
 }
 
 export type OrchestrationLineageDto = {

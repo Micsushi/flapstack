@@ -24,6 +24,7 @@ import {
   type OrchestrationUsageUpdate,
 } from "../../../shared/agent-orchestration"
 import { queryOrchestrationFleet, type OrchestrationFleetQueryOptions } from "./fleet"
+import { projectSharedWorktrees } from "./shared-worktrees"
 import { recordOrchestrationTransition } from "./activity-projection"
 import { parseCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
 import { epochSecondsToMilliseconds, nowEpochSeconds } from "../db/timestamps"
@@ -2140,6 +2141,7 @@ function requireOverview(db: Sqlite, taskId: string): OrchestrationTaskOverviewD
     orchestration: toTaskDto(orchestration, task),
     aggregate: aggregateRows(agents),
     agents,
+    sharedWorktrees: projectSharedWorktrees(db, taskId),
   }
 }
 
