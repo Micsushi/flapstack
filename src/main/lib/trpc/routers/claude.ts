@@ -1,3 +1,4 @@
+import { fetchToolsForServer } from "../../claude/mcp-discovery"
 import { observable } from "@trpc/server/observable"
 import { and, eq } from "drizzle-orm"
 import { app, BrowserWindow, safeStorage } from "electron"
@@ -82,8 +83,6 @@ import {
 } from "../../../../shared/chat-mode"
 import {
   ensureMcpTokensFresh,
-  fetchMcpTools,
-  fetchMcpToolsStdio,
   getMcpAuthStatus,
   startMcpOAuth,
   type McpToolInfo,
@@ -593,53 +592,6 @@ function getServerStatusFromConfig(serverConfig: McpServerConfig): string {
   // HTTP server without authType - assume no auth required (public endpoint)
   // Local stdio server - also connected
   return "connected"
-}
-
-const MCP_FETCH_TIMEOUT_MS = 40_000
-
-/**
- * Fetch tools from an MCP server (HTTP or stdio transport)
- * Times out after MCP_FETCH_TIMEOUT_MS seconds to prevent slow MCPs from blocking the cache update
- */
-async function fetchToolsForServer(serverConfig: McpServerConfig): Promise<McpToolInfo[]> {
-  const resolvedConfig = hydrateMcpServerSecrets(serverConfig)
-  const timeoutPromise = new Promise<McpToolInfo[]>((_, reject) =>
-    setTimeout(() => reject(new Error("Timeout")), MCP_FETCH_TIMEOUT_MS),
-  )
-
-  const fetchPromise = (async () => {
-    // HTTP transport
-    if (resolvedConfig.url) {
-      const headers = resolvedConfig.headers as Record<string, string> | undefined
-      try {
-        return await fetchMcpTools(resolvedConfig.url, headers)
-      } catch {
-        return []
-      }
-    }
-
-    // Stdio transport
-    const command = (resolvedConfig as any).command as string | undefined
-    if (command) {
-      try {
-        return await fetchMcpToolsStdio({
-          command,
-          args: (resolvedConfig as any).args,
-          env: (resolvedConfig as any).env,
-        })
-      } catch {
-        return []
-      }
-    }
-
-    return []
-  })()
-
-  try {
-    return await Promise.race([fetchPromise, timeoutPromise])
-  } catch {
-    return []
-  }
 }
 
 /**
