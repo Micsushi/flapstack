@@ -165,3 +165,39 @@ it("dispatches real chronological shared undo/redo in the modal and retains erro
   )
   expect(document.querySelector('[role="dialog"]')).not.toBeNull()
 })
+
+vi.mock("../src/renderer/features/agents/ui/mobile-worktree-access", () => ({
+  MobileWorktreeAccess: ({
+    projectId,
+    taskId,
+    onNavigate,
+  }: {
+    projectId: string
+    taskId: string
+    onNavigate: (id: string) => void
+  }) => (
+    <section data-worktree-task={taskId} data-worktree-project={projectId}>
+      <button onClick={() => onNavigate("source-chat")}>Open worktree source</button>
+    </section>
+  ),
+}))
+it("mounts worktree access only on its choice and closes before exact navigation", async () => {
+  const navigate = vi.fn()
+  await act(async () =>
+    root.render(
+      <MobileChatHeader historyChatId="a" projectId="p" taskId="t" onNavigate={navigate} />,
+    ),
+  )
+  await open()
+  expect(document.querySelector("[data-worktree-task]")).toBeNull()
+  await button("Worktree access")
+  expect(
+    document.querySelector('[data-worktree-task="t"][data-worktree-project="p"]'),
+  ).not.toBeNull()
+  await button("History")
+  expect(document.querySelector("[data-worktree-task]")).toBeNull()
+  await button("Worktree access")
+  await button("Open worktree source")
+  expect(navigate).toHaveBeenCalledWith("source-chat")
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+})

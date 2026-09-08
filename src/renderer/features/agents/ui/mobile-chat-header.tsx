@@ -236,6 +236,10 @@ const ReviewPanel = lazy(() =>
   })),
 )
 
+const WorktreeAccess = lazy(() =>
+  import("./mobile-worktree-access").then((module) => ({ default: module.MobileWorktreeAccess })),
+)
+
 /** The caller keys this local disclosure by chat, so an open history never follows a chat switch. */
 export function MobileRunHistory({
   chatId,
@@ -244,9 +248,10 @@ export function MobileRunHistory({
   onNavigate,
 }: { chatId: string } & ReviewScopeProps) {
   const [open, setOpen] = useState(false)
-  const [view, setView] = useState<"history" | "reviews">("history")
+  const [view, setView] = useState<"history" | "reviews" | "worktree">("history")
   const beta = useBetaFeatures()
   const canReview = Boolean(beta.orchestration && projectId && taskId && onNavigate)
+  const worktreeOpen = view === "worktree" && canReview
   const reviewsOpen = view === "reviews" && canReview
   const history = useSyncExternalStore(
     subscribeAppActionHistory,
@@ -277,8 +282,8 @@ export function MobileRunHistory({
         {canReview && (
           <div role="group" aria-label="Run history view" className="flex flex-wrap gap-2">
             <Button
-              variant={reviewsOpen ? "outline" : "secondary"}
-              aria-pressed={!reviewsOpen}
+              variant={reviewsOpen || worktreeOpen ? "outline" : "secondary"}
+              aria-pressed={!reviewsOpen && !worktreeOpen}
               onClick={() => setView("history")}
             >
               History
@@ -289,6 +294,13 @@ export function MobileRunHistory({
               onClick={() => setView("reviews")}
             >
               Run reviews
+            </Button>
+            <Button
+              variant={worktreeOpen ? "secondary" : "outline"}
+              aria-pressed={worktreeOpen}
+              onClick={() => setView("worktree")}
+            >
+              Worktree access
             </Button>
           </div>
         )}
@@ -322,7 +334,17 @@ export function MobileRunHistory({
         <div className="min-h-0 min-w-0 overflow-y-auto overscroll-contain break-words">
           {open && (
             <Suspense fallback={<p role="status">Loading run history…</p>}>
-              {reviewsOpen && projectId && taskId && onNavigate ? (
+              {worktreeOpen && projectId && taskId && onNavigate ? (
+                <WorktreeAccess
+                  key={JSON.stringify([projectId, taskId])}
+                  projectId={projectId}
+                  taskId={taskId}
+                  onNavigate={(target) => {
+                    setOpen(false)
+                    onNavigate(target)
+                  }}
+                />
+              ) : reviewsOpen && projectId && taskId && onNavigate ? (
                 <ReviewPanel
                   key={JSON.stringify([projectId, taskId])}
                   projectId={projectId}
