@@ -1,3 +1,5 @@
+import type { DiscussionImageSnapshot } from "../../../shared/discussions"
+import { discussionImageLimits } from "./images"
 import { z } from "zod"
 import { getOllamaEndpointConfig } from "../harness/local-model-catalog"
 import { requestOllamaJson } from "../ollama/request-json"
@@ -18,6 +20,7 @@ let busy = false
 export async function generateDiscussionResult<T>(input: {
   kind: "summary" | "reply" | "capture" | "capture-review"
   source: unknown
+  image?: DiscussionImageSnapshot
   schema: z.ZodType<T>
   request?: LocalRequest
   env?: NodeJS.ProcessEnv
@@ -27,6 +30,19 @@ export async function generateDiscussionResult<T>(input: {
   if (JSON.stringify(input.source).length > policy.maxContextCharacters) {
     throw new Error("This discussion is too long for the local reply. Select a smaller source.")
   }
+  if (
+    input.image &&
+    (input.kind !== "reply" ||
+      !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(input.image.dataUrl) ||
+      input.image.dataUrl.length > Math.ceil(discussionImageLimits.outputBytes / 3) * 4 + 22 ||
+      !Number.isInteger(input.image.width) ||
+      !Number.isInteger(input.image.height) ||
+      input.image.width < 1 ||
+      input.image.height < 1 ||
+      input.image.width > discussionImageLimits.edge ||
+      input.image.height > discussionImageLimits.edge)
+  )
+    throw new Error("Invalid discussion image snapshot")
   const env = input.env ?? process.env
   const config = getOllamaEndpointConfig({
     baseUrl: env.FLAPSTACK_DISCUSSION_OLLAMA_URL || env.FLAPSTACK_OLLAMA_BASE_URL,
@@ -41,14 +57,31 @@ export async function generateDiscussionResult<T>(input: {
         baseUrl: config.baseUrl,
       }),
     )
-    const configuredModel = env.FLAPSTACK_DISCUSSION_MODEL?.trim()
+    const configuredModel = (
+      input.image ? env.FLAPSTACK_DISCUSSION_VISION_MODEL : env.FLAPSTACK_DISCUSSION_MODEL
+    )?.trim()
     const model =
       configuredModel ||
-      tags.models.find((item) => !/embed|bert|rerank|cloud/i.test(item.name))?.name
+      (!input.image &&
+        tags.models.find((item) => !/embed|bert|rerank|cloud/i.test(item.name))?.name)
     if (!model || /cloud/i.test(model) || !tags.models.some((item) => item.name === model)) {
       throw new Error(
         "No local discussion model is available. Select an installed Ollama chat model.",
       )
+    }
+    if (input.image) {
+      const details = z
+        .object({ capabilities: z.array(z.string()).max(100) })
+        .parse(
+          await request("/api/show", {
+            timeoutMs: 2000,
+            maxBytes: 512 * 1024,
+            baseUrl: config.baseUrl,
+            body: { model },
+          }),
+        )
+      if (!details.capabilities.includes("vision"))
+        throw new Error("No local discussion model with vision capability is configured.")
     }
     const response = responseSchema.parse(
       await request("/api/generate", {
@@ -57,7 +90,10 @@ export async function generateDiscussionResult<T>(input: {
         baseUrl: config.baseUrl,
         body: {
           model,
-          prompt: discussionAssistantPrompt(input.kind, input.source),
+          prompt: discussionAssistantPrompt(input.kind, input.source, Boolean(input.image)),
+          ...(input.image
+            ? { images: [input.image.dataUrl.slice("data:image/png;base64,".length)] }
+            : {}),
           format: discussionOutputFormats[input.kind],
           stream: false,
           keep_alive: 0,

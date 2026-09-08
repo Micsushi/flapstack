@@ -6,6 +6,7 @@ import {
   captureMixedSchema,
   discussionListSchema,
   discussionScopeSchema,
+  discussionSourceSchema,
   restoreDiscussionSchema,
   restoreMixedSchema,
   updateDiscussionSchema,
@@ -74,6 +75,7 @@ export const discussionsRouter = router({
           })
         const generated = await generateDiscussionResult({
           kind: "reply",
+          image: annotation.imageSnapshot,
           schema: discussionReplySchema,
           source: {
             source: annotation.source,
@@ -141,6 +143,9 @@ export const discussionsRouter = router({
   read: procedure
     .input(z.object({ scope: discussionScopeSchema, id: z.string().min(1).max(200) }).strict())
     .query(({ input }) => handle(() => service().read(input.scope, input.id))),
+  imagePreview: procedure
+    .input(z.object({ scope: discussionScopeSchema, source: discussionSourceSchema }).strict())
+    .query(({ input }) => handleAsync(() => service().imagePreview(input.scope, input.source))),
   sources: procedure
     .input(
       z
@@ -186,7 +191,10 @@ export const discussionsRouter = router({
         })
     }
     const currentService = service()
-    const saved = handle(() => currentService.update(input))
+    const saved =
+      input.change.type === "annotation"
+        ? await handleAsync(() => currentService.updateWithImage(input))
+        : handle(() => currentService.update(input))
     return input.change.type === "capture" || input.change.type === "answer"
       ? (
           await refreshDiscussionSummary(

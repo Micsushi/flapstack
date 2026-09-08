@@ -2,7 +2,7 @@ import { validateLocalModelEndpoint } from "../../../shared/local-model-contract
 
 /** Bounded local-only Ollama requests, including the complete response body. */
 export async function requestOllamaJson(
-  endpoint: "/api/tags" | "/api/generate",
+  endpoint: "/api/tags" | "/api/generate" | "/api/show",
   options: { timeoutMs: number; maxBytes: number; body?: unknown; baseUrl?: string },
 ): Promise<unknown> {
   const config = validateLocalModelEndpoint(options.baseUrl ?? "http://localhost:11434")

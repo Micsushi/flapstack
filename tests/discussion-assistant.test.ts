@@ -101,3 +101,56 @@ it("refuses concurrent generation without leaking response contents", async () =
   release({ response: "private invalid text" })
   await expect(first).rejects.toThrow("could not be completed")
 })
+
+it("requires installed vision capability and sends one bounded image outside the prompt", async () => {
+  const image = { dataUrl: "data:image/png;base64,cGl4ZWxz", width: 2, height: 2 }
+  const visionEnv = { ...env, FLAPSTACK_DISCUSSION_VISION_MODEL: "local-vision" }
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({ models: [{ name: "local-vision" }] })
+    .mockResolvedValueOnce({ capabilities: ["completion", "vision"] })
+    .mockResolvedValueOnce({ response: '{"reply":"A crop."}', done: true })
+  await generateDiscussionResult({
+    kind: "reply",
+    source,
+    image,
+    schema: discussionReplySchema,
+    env: visionEnv,
+    request,
+  })
+  expect(request.mock.calls.map((call) => call[0])).toEqual([
+    "/api/tags",
+    "/api/show",
+    "/api/generate",
+  ])
+  expect(request.mock.calls[2][1].body.images).toEqual(["cGl4ZWxz"])
+  expect(request.mock.calls[2][1].body.prompt).not.toContain("cGl4ZWxz")
+  expect(request.mock.calls[2][1].body.prompt).toContain("image_available:\ntrue")
+  const noVision = vi
+    .fn()
+    .mockResolvedValueOnce({ models: [{ name: "local-vision" }] })
+    .mockResolvedValueOnce({ capabilities: ["completion"] })
+  await expect(
+    generateDiscussionResult({
+      kind: "reply",
+      source,
+      image,
+      schema: discussionReplySchema,
+      env: visionEnv,
+      request: noVision,
+    }),
+  ).rejects.toThrow("vision capability")
+  expect(noVision).toHaveBeenCalledTimes(2)
+  const invalid = vi.fn()
+  await expect(
+    generateDiscussionResult({
+      kind: "reply",
+      source,
+      image: { ...image, dataUrl: "https://example.com/a.png" },
+      schema: discussionReplySchema,
+      env: visionEnv,
+      request: invalid,
+    }),
+  ).rejects.toThrow("Invalid discussion image")
+  expect(invalid).not.toHaveBeenCalled()
+})

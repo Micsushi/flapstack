@@ -3,6 +3,8 @@ import { beforeEach, expect, it, vi } from "vitest"
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
+  updateWithImage: vi.fn(),
+  imagePreview: vi.fn(),
   read: vi.fn(),
   list: vi.fn(),
   restoreMixed: vi.fn(),
@@ -32,6 +34,8 @@ vi.mock("../src/main/lib/discussions/service", () => ({
   DiscussionService: class {
     create = mocks.create
     update = mocks.update
+    updateWithImage = mocks.updateWithImage
+    imagePreview = mocks.imagePreview
     read = mocks.read
     list = mocks.list
     restoreMixed = mocks.restoreMixed
@@ -166,4 +170,54 @@ it("stores real assistant model provenance and rejects public assistant imperson
       },
     }),
   ).rejects.toThrow("model response")
+})
+
+it("routes image annotations through backend cropping and passes only saved pixels to assist", async () => {
+  const source = {
+    subChatId: "s",
+    messageId: "m",
+    role: "user" as const,
+    revision: "a".repeat(64),
+    target: {
+      kind: "image" as const,
+      partIndex: 0,
+      imageIdentity: "identity",
+      region: { x: 0, y: 0, width: 1, height: 1 },
+    },
+  }
+  const imageSnapshot = { dataUrl: "data:image/png;base64,cGl4ZWxz", width: 2, height: 2 }
+  mocks.imagePreview.mockResolvedValue({ available: true, imageSnapshot })
+  expect(await caller.imagePreview({ scope, source })).toEqual({ available: true, imageSnapshot })
+  mocks.updateWithImage.mockResolvedValue(topic)
+  await caller.update({
+    scope,
+    id: "t",
+    expectedRevision: 4,
+    change: { type: "annotation", source, body: "Selected" },
+  })
+  expect(mocks.updateWithImage).toHaveBeenCalledTimes(1)
+  mocks.read.mockReturnValue({
+    ...topic,
+    annotations: [{ ...topic.annotations[0], imageSnapshot }],
+  })
+  mocks.generate.mockResolvedValue({ result: { reply: "Visible crop" }, model: "vision" })
+  await caller.assist({
+    scope,
+    id: "t",
+    expectedRevision: 4,
+    annotationId: "a",
+    question: "What is visible?",
+  })
+  expect(mocks.generate.mock.calls[0][0].image).toEqual(imageSnapshot)
+  expect(JSON.stringify(mocks.generate.mock.calls[0][0].source)).not.toContain(
+    imageSnapshot.dataUrl,
+  )
+  await expect(
+    caller.update({
+      scope,
+      id: "t",
+      expectedRevision: 4,
+      change: { type: "annotation", source, body: "Fake", imageSnapshot } as never,
+    }),
+  ).rejects.toThrow()
 })

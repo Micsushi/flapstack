@@ -1,3 +1,4 @@
+import sharp from "sharp"
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
@@ -302,4 +303,122 @@ it("bounds pages by bytes and selects only the requested message with explicit s
   )
   expect(service.sources(scope, "s", "m")).toHaveLength(1)
   expect(() => service.sources(scope, "s", "large")).toThrow("512 KiB")
+})
+
+it("crops embedded pixels, persists after source removal, and revalidates async source/topic changes", async () => {
+  const pixels = await sharp({ create: { width: 20, height: 10, channels: 3, background: "red" } })
+    .png()
+    .toBuffer()
+  const message = {
+    id: "m",
+    role: "user",
+    parts: [
+      {
+        type: "data-image",
+        data: { base64Data: pixels.toString("base64"), mediaType: "image/png" },
+      },
+    ],
+  }
+  const setMessage = (value: unknown) =>
+    db.prepare("UPDATE sub_chats SET messages=? WHERE id='s'").run(JSON.stringify([value]))
+  setMessage(message)
+  const current = service.sources(scope, "s", "m")[0]!
+  const imageSource: DiscussionSource = {
+    subChatId: "s",
+    messageId: "m",
+    role: "user",
+    revision: current.revision,
+    target: {
+      kind: "image",
+      ...current.images[0]!,
+      region: { x: 0.5, y: 0, width: 0.5, height: 1 },
+    },
+  }
+  const preview = await service.imagePreview(scope, imageSource)
+  expect(preview.available).toBe(true)
+  if (!preview.available) throw new Error(preview.reason)
+  expect(preview.imageSnapshot).toMatchObject({ width: 10, height: 10 })
+  const topic = create()
+  const saved = await service.updateWithImage({
+    scope,
+    id: topic.id,
+    expectedRevision: topic.revision,
+    change: { type: "annotation", source: imageSource, body: "Crop" },
+  })
+  expect(saved.annotations[0]!.imageSnapshot).toEqual(preview.imageSnapshot)
+  const pending = service.updateWithImage({
+    scope,
+    id: topic.id,
+    expectedRevision: saved.revision,
+    change: { type: "annotation", source: imageSource, body: "Late" },
+  })
+  change(saved, { type: "summary", summary: "Owner edit" })
+  await expect(pending).rejects.toThrow("changed")
+  const stale = service.imagePreview(scope, imageSource)
+  setMessage({ ...message, parts: [] })
+  await expect(stale).rejects.toThrow("changed")
+  db.close()
+  db = new Database(join(directory, "test.db"))
+  service = new DiscussionService(db, scope.hostId)
+  expect(service.read(scope, topic.id).annotations[0]!.imageSnapshot).toEqual(preview.imageSnapshot)
+  await expect(
+    service.imagePreview({ ...scope, projectId: "other", chatId: "other-chat" }, imageSource),
+  ).rejects.toThrow("outside")
+})
+
+it("reports external and malformed embedded pixels unavailable without fetching", async () => {
+  const current = service.sources(scope, "s", "m")[0]!
+  const imageSource: DiscussionSource = {
+    subChatId: "s",
+    messageId: "m",
+    role: "user",
+    revision: current.revision,
+    target: { kind: "image", ...current.images[0]!, region: { x: 0, y: 0, width: 1, height: 1 } },
+  }
+  expect(await service.imagePreview(scope, imageSource)).toMatchObject({ available: false })
+  const invalid = {
+    id: "m",
+    role: "user",
+    parts: [{ type: "image", image: "data:image/png;base64,AAAA" }],
+  }
+  db.prepare("UPDATE sub_chats SET messages=? WHERE id='s'").run(JSON.stringify([invalid]))
+  const changed = service.sources(scope, "s", "m")[0]!
+  expect(
+    await service.imagePreview(scope, {
+      ...imageSource,
+      revision: changed.revision,
+      target: {
+        ...imageSource.target,
+        kind: "image",
+        ...changed.images[0]!,
+        region: { x: 0, y: 0, width: 1, height: 1 },
+      },
+    }),
+  ).toMatchObject({ available: false })
+})
+
+it("selects exact repeated inline Markdown image identity without external fetch", async () => {
+  const red = await sharp({ create: { width: 3, height: 4, channels: 3, background: "red" } })
+    .png()
+    .toBuffer()
+  const blue = await sharp({ create: { width: 5, height: 6, channels: 3, background: "blue" } })
+    .png()
+    .toBuffer()
+  const text = `![first](data:image/png;base64,${red.toString("base64")}) ![second](data:image/png;base64,${blue.toString("base64")})`
+  db.prepare("UPDATE sub_chats SET messages=? WHERE id='s'").run(
+    JSON.stringify([{ id: "m", role: "assistant", parts: [{ type: "text", text }] }]),
+  )
+  const current = service.sources(scope, "s", "m")[0]!
+  expect(current.images).toHaveLength(2)
+  const selected: DiscussionSource = {
+    subChatId: "s",
+    messageId: "m",
+    role: "assistant",
+    revision: current.revision,
+    target: { kind: "image", ...current.images[1]!, region: { x: 0, y: 0, width: 1, height: 1 } },
+  }
+  expect(await service.imagePreview(scope, selected)).toMatchObject({
+    available: true,
+    imageSnapshot: { width: 5, height: 6 },
+  })
 })

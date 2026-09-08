@@ -163,6 +163,9 @@ export type MixedCaptureResult = Omit<MixedCaptureState, "topicIds"> & {
   originalTopicId: string
   undo: z.infer<typeof restoreMixedSchema>
 }
+export type DiscussionImageSnapshot = { dataUrl: string; width: number; height: number }
+export type DiscussionImagePreview =
+  { available: true; imageSnapshot: DiscussionImageSnapshot } | { available: false; reason: string }
 export type DiscussionScope = z.infer<typeof discussionScopeSchema>
 export type DiscussionSource = z.infer<typeof discussionSourceSchema>
 export type DiscussionAnswer = z.infer<typeof discussionAnswerSchema>
@@ -207,6 +210,7 @@ export type DiscussionTopic = {
       createdAt: number
       model?: string
     }>
+    imageSnapshot?: DiscussionImageSnapshot
     promotedTopicId: string | null
   }>
   canonicalRecordIds: string[]

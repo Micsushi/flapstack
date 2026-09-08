@@ -1,3 +1,4 @@
+import { cropDiscussionImage } from "./images"
 import type Database from "better-sqlite3"
 import { createHash, randomUUID } from "node:crypto"
 import { hostname } from "node:os"
@@ -16,6 +17,8 @@ import {
   type DiscussionTopic,
   type MixedCaptureState,
   type DiscussionCaptureSpan,
+  type DiscussionImageSnapshot,
+  type DiscussionImagePreview,
 } from "../../../shared/discussions"
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex")
@@ -311,7 +314,7 @@ export class DiscussionService {
     return scope
   }
 
-  sources(scope: DiscussionScope, subChatId: string, messageId: string) {
+  private rawSourceMessage(scope: DiscussionScope, subChatId: string, messageId: string): unknown {
     this.scope(scope)
     const row = this.db
       .prepare(
@@ -326,7 +329,11 @@ export class DiscussionService {
         "BAD_REQUEST",
         "Source message exceeds 8 MiB; capture a shorter excerpt in a new message",
       )
-    const message = sourceMessage(JSON.parse(row.message))
+    return JSON.parse(row.message)
+  }
+
+  sources(scope: DiscussionScope, subChatId: string, messageId: string) {
+    const message = sourceMessage(this.rawSourceMessage(scope, subChatId, messageId))
     if (message && Buffer.byteLength(JSON.stringify(message)) > 512 * 1024)
       throw new DiscussionError(
         "BAD_REQUEST",
@@ -360,6 +367,32 @@ export class DiscussionService {
       )
     )
       throw new DiscussionError("CONFLICT", "Selected image does not match the source revision")
+  }
+
+  async imagePreview(
+    scope: DiscussionScope,
+    raw: DiscussionSource,
+  ): Promise<DiscussionImagePreview> {
+    const source = discussionSourceSchema.parse(raw)
+    this.validateSource(scope, source)
+    if (source.target.kind !== "image")
+      throw new DiscussionError("BAD_REQUEST", "Select an image source")
+    const rawMessage = this.rawSourceMessage(scope, source.subChatId, source.messageId)
+    const result = await cropDiscussionImage(rawMessage, source.target, hash)
+    this.validateSource(scope, source)
+    return result
+  }
+
+  async updateWithImage(raw: z.input<typeof updateDiscussionSchema>): Promise<DiscussionTopic> {
+    const input = updateDiscussionSchema.parse(raw)
+    const topic = this.read(input.scope, input.id)
+    if (topic.revision !== input.expectedRevision)
+      throw new DiscussionError("CONFLICT", "Discussion changed; refresh before saving")
+    const preview =
+      input.change.type === "annotation" && input.change.source.target.kind === "image"
+        ? await this.imagePreview(input.scope, input.change.source)
+        : undefined
+    return this.update(input, preview?.available ? preview.imageSnapshot : undefined)
   }
 
   list(raw: z.input<typeof discussionListSchema>) {
@@ -477,7 +510,10 @@ export class DiscussionService {
     })()
   }
 
-  update(raw: z.input<typeof updateDiscussionSchema>): DiscussionTopic {
+  update(
+    raw: z.input<typeof updateDiscussionSchema>,
+    imageSnapshot?: DiscussionImageSnapshot,
+  ): DiscussionTopic {
     const input = updateDiscussionSchema.parse(raw)
     return this.db.transaction(() => {
       const topic = this.read(input.scope, input.id)
@@ -535,6 +571,7 @@ export class DiscussionService {
           topic.annotations.push({
             id: randomUUID(),
             source: change.source,
+            ...(imageSnapshot ? { imageSnapshot } : {}),
             body: change.body,
             createdAt: now,
             followups: [],
