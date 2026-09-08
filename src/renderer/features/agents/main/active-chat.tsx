@@ -8534,6 +8534,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                       {/* Mobile header - simplified with chat name as trigger */}
                       {isMobileFullscreen ? (
                         <MobileChatHeader
+                          historyChatId={chatId}
                           onBackToChats={onBackToChats}
                           onOpenPreview={onOpenPreview}
                           canOpenPreview={canOpenPreview}

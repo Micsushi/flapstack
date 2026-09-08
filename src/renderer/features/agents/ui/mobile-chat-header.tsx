@@ -1,9 +1,17 @@
 "use client"
 
-import { useMemo } from "react"
+import { lazy, Suspense, useMemo, useState } from "react"
 import { useAtomValue } from "jotai"
 import { loadingSubChatsAtom } from "../atoms"
-import { Play, AlignJustify, FolderDown } from "lucide-react"
+import { Play, AlignJustify, FolderDown, History } from "lucide-react"
+import {
+  Dialog,
+  DialogTrigger,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+  DialogClose,
+} from "../../../components/ui/dialog"
 import {
   IconSpinner,
   PlanIcon,
@@ -25,6 +33,7 @@ interface DiffStats {
 }
 
 interface MobileChatHeaderProps {
+  historyChatId?: string
   onBackToChats?: () => void
   onOpenPreview?: () => void
   canOpenPreview?: boolean
@@ -41,6 +50,7 @@ interface MobileChatHeaderProps {
 }
 
 export function MobileChatHeader({
+  historyChatId,
   onBackToChats,
   onOpenPreview,
   canOpenPreview = false,
@@ -114,6 +124,7 @@ export function MobileChatHeader({
           WebkitAppRegion: "no-drag",
         }}
       >
+        {historyChatId && <MobileRunHistory key={historyChatId} chatId={historyChatId} />}
         {/* Open Locally - only for sandbox chats */}
         {showOpenLocally && onOpenLocally && (
           <Button
@@ -186,5 +197,41 @@ export function MobileChatHeader({
         )}
       </div>
     </div>
+  )
+}
+
+const RunHistoryWidget = lazy(() =>
+  import("../../details-sidebar/sections/run-history-widget").then((module) => ({
+    default: module.RunHistoryWidget,
+  })),
+)
+
+/** The caller keys this local disclosure by chat, so an open history never follows a chat switch. */
+export function MobileRunHistory({ chatId }: { chatId: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7 p-0" aria-label="Run history">
+          <History aria-hidden="true" className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-3 p-4">
+        <DialogTitle className="pr-6">Run history</DialogTitle>
+        <DialogDescription>Saved runs and their recorded evidence for this chat.</DialogDescription>
+        <div className="min-h-0 overflow-y-auto overscroll-contain break-words">
+          {open && (
+            <Suspense fallback={<p role="status">Loading run history…</p>}>
+              <RunHistoryWidget chatId={chatId} />
+            </Suspense>
+          )}
+        </div>
+        <DialogClose asChild>
+          <Button variant="outline" className="shrink-0">
+            Back to chat
+          </Button>
+        </DialogClose>
+      </DialogContent>
+    </Dialog>
   )
 }
