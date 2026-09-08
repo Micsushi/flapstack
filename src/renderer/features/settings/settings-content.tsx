@@ -5,6 +5,7 @@ import {
   devToolsUnlockedAtom,
   settingsSearchQueryAtom,
   settingsSearchTargetAtom,
+  type SettingsTab,
 } from "../../lib/atoms"
 import { desktopViewAtom } from "../agents/atoms"
 import { AgentsAppearanceTab } from "../../components/dialogs/settings-tabs/agents-appearance-tab"
@@ -27,7 +28,8 @@ import { AgentsKeyboardTab } from "../../components/dialogs/settings-tabs/agents
 import { AgentsPortabilityTab } from "../../components/dialogs/settings-tabs/agents-portability-tab"
 import { AgentsBetaTab } from "../../components/dialogs/settings-tabs/agents-beta-tab"
 import { AgentsFeatureVisibilityTab } from "../../components/dialogs/settings-tabs/agents-feature-visibility-tab"
-import { normalizeVisibleSettingsTab } from "./settings-visibility"
+import { Button } from "../../components/ui/button"
+import { getVisibleSettingsTabs, normalizeVisibleSettingsTab } from "./settings-visibility"
 import { useBetaFeatures } from "./use-beta-features"
 import { revealSettingsTarget } from "./settings-target"
 
@@ -139,26 +141,55 @@ export function SettingsContent() {
     activeTab === "projects" ||
     activeTab === "plugins"
 
-  if (isTwoPanelTab) {
-    return (
+  const visibleTabs = [
+    ...getVisibleSettingsTabs("main", { showDevelopment: showDebugTab, betaFeatures }),
+    ...getVisibleSettingsTabs("advanced", { showDevelopment: showDebugTab, betaFeatures }),
+  ]
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <nav
+        aria-label="Settings navigation"
+        className="flex shrink-0 flex-wrap items-center gap-2 border-b p-3 min-[600px]:hidden"
+      >
+        <Button variant="outline" onClick={() => setDesktopView(null)}>
+          Back to chat
+        </Button>
+        <label className="min-w-0 flex-1 text-sm">
+          <span className="sr-only">Settings section</span>
+          <select
+            aria-label="Settings section"
+            value={activeTab}
+            className="h-9 w-full min-w-0 rounded-md border border-input bg-background px-2"
+            onChange={(event) => {
+              setSearchQuery("")
+              setSearchTarget(null)
+              setActiveTab(event.target.value as SettingsTab)
+            }}
+          >
+            {visibleTabs.map((tab) => (
+              <option key={tab.id} value={tab.id}>
+                {tab.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </nav>
       <div
-        className="h-full overflow-hidden outline-none"
+        className={
+          isTwoPanelTab
+            ? "min-h-0 flex-1 overflow-hidden outline-none"
+            : "min-h-0 flex-1 overflow-y-auto outline-none"
+        }
         data-settings-id={`settings-tab-${activeTab}`}
         tabIndex={-1}
       >
-        {renderTabContent()}
-      </div>
-    )
-  }
-
-  return (
-    <div
-      className="h-full overflow-y-auto outline-none"
-      data-settings-id={`settings-tab-${activeTab}`}
-      tabIndex={-1}
-    >
-      <div className={activeTab === "usage" ? "mx-auto w-full max-w-7xl" : "mx-auto max-w-2xl"}>
-        {renderTabContent()}
+        {isTwoPanelTab ? (
+          renderTabContent()
+        ) : (
+          <div className={activeTab === "usage" ? "mx-auto w-full max-w-7xl" : "mx-auto max-w-2xl"}>
+            {renderTabContent()}
+          </div>
+        )}
       </div>
     </div>
   )
