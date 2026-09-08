@@ -201,6 +201,16 @@ const KanbanView = lazy(() =>
 const PlanView = lazy(() =>
   import("../../plan/plan-view").then((module) => ({ default: module.PlanView })),
 )
+const ProjectDiscussionsView = lazy(() =>
+  import("../../discussions/discussion-surfaces").then((module) => ({
+    default: module.ProjectDiscussionsView,
+  })),
+)
+const ProjectRecordsView = lazy(() =>
+  import("../../project-records/project-records-view").then((module) => ({
+    default: module.ProjectRecordsView,
+  })),
+)
 const ProjectVaultView = lazy(() =>
   import("../../project-vault/project-vault-view").then((module) => ({
     default: module.ProjectVaultView,
@@ -400,7 +410,8 @@ function AgentsContentInner() {
       desktopView === "automations-detail" ||
       desktopView === "inbox") &&
       !betaFeatures.automations) ||
-    ((desktopView === "tasks" || desktopView === "plan") && !betaFeatures.planning) ||
+    ((desktopView === "tasks" || desktopView === "plan" || desktopView === "discussions") &&
+      !betaFeatures.planning) ||
     (desktopView === "project-vault" && !betaFeatures.projectMemory) ||
     (desktopView === "saved-workspaces" && !betaFeatures.savedWorkspaces)
       ? null
@@ -2901,6 +2912,10 @@ function AgentsContentInner() {
           <KanbanView />
         ) : effectiveDesktopView === "plan" ? (
           <PlanView />
+        ) : effectiveDesktopView === "discussions" ? (
+          <ProjectDiscussionsView />
+        ) : effectiveDesktopView === "project-records" ? (
+          <ProjectRecordsView />
         ) : effectiveDesktopView === "project-vault" ? (
           <ProjectVaultView key={selectedProject?.id} />
         ) : effectiveDesktopView === "saved-workspaces" ? (
@@ -3052,6 +3067,10 @@ function AgentsContentInner() {
             <KanbanView />
           ) : effectiveDesktopView === "plan" ? (
             <PlanView />
+          ) : effectiveDesktopView === "discussions" ? (
+            <ProjectDiscussionsView />
+          ) : effectiveDesktopView === "project-records" ? (
+            <ProjectRecordsView />
           ) : effectiveDesktopView === "project-vault" ? (
             <ProjectVaultView key={selectedProject?.id} />
           ) : effectiveDesktopView === "saved-workspaces" ? (
@@ -3180,7 +3199,11 @@ function AgentsContentInner() {
                                   onClick={() => handleSelectWorkbenchGroup(group.id)}
                                 >
                                   <span className="min-w-0 flex-1 truncate">{group.name}</span>
-                                  <ChatStatusIndicators chatIds={collectChatGroups(group.layout.root).flatMap((pane) => pane.chatIds)} />
+                                  <ChatStatusIndicators
+                                    chatIds={collectChatGroups(group.layout.root).flatMap(
+                                      (pane) => pane.chatIds,
+                                    )}
+                                  />
                                 </button>
                                 <button
                                   type="button"
@@ -3428,7 +3451,9 @@ function AgentsContentInner() {
                                 className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                                 onClick={() => handleSelectMainChatTab(chat.id)}
                               >
-                                <span className="min-w-0 flex-1 truncate">{chat.name || "New Chat"}</span>
+                                <span className="min-w-0 flex-1 truncate">
+                                  {chat.name || "New Chat"}
+                                </span>
                                 <ChatStatusIndicators chatIds={[chat.id]} />
                                 {hasUnseenChanges && (
                                   <span className="sr-only">, new response</span>

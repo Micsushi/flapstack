@@ -233,17 +233,24 @@ export const skillsRouter = router({
   list: listSkillsProcedure,
 
   /** Enabled composer inventory uses the same native policy resolver as runtime launch. */
-  listEnabled: publicProcedure.input(z.object({
-    cwd: z.string().optional(), // Legacy callers cannot establish scope with cwd alone.
-    subChatId: z.string().optional(),
-    projectId: z.string().optional(),
-    taskId: z.string().optional(),
-    harness: z.string().optional(),
-  }).optional()).query(async ({ input }) => {
-    const native = await listNativeSkillMentions(getDatabase(), input ?? {})
-    const pluginSkills = native.harness === "claude-code" ? await discoverEnabledPluginSkills() : []
-    return [...native.skills, ...dedupeSkills(pluginSkills)]
-  }),
+  listEnabled: publicProcedure
+    .input(
+      z
+        .object({
+          cwd: z.string().optional(), // Legacy callers cannot establish scope with cwd alone.
+          subChatId: z.string().optional(),
+          projectId: z.string().optional(),
+          taskId: z.string().optional(),
+          harness: z.string().optional(),
+        })
+        .optional(),
+    )
+    .query(async ({ input }) => {
+      const native = await listNativeSkillMentions(getDatabase(), input ?? {})
+      const pluginSkills =
+        native.harness === "claude-code" ? await discoverEnabledPluginSkills() : []
+      return [...native.skills, ...dedupeSkills(pluginSkills)]
+    }),
 
   /**
    * Create a new skill

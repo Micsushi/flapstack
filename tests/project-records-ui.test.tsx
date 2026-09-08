@@ -1,0 +1,101 @@
+// @vitest-environment jsdom
+import { act } from "react"
+import { createRoot } from "react-dom/client"
+import { Provider } from "jotai"
+import { expect, it, vi } from "vitest"
+import { ProjectRecordsView } from "../src/renderer/features/project-records/project-records-view"
+
+const fixture = vi.hoisted(() => {
+  const path = "lanes/flapstack/questions.md"
+  const snapshot = {
+    schemaVersion: 1,
+    path,
+    revision: "a".repeat(64),
+    document: {
+      schemaVersion: 1,
+      title: "Questions",
+      records: [
+        {
+          id: "Q1",
+          kind: "question",
+          title: "Destination",
+          state: "open",
+          history: [],
+          choices: ["Alpha", "Beta"],
+          draft: "",
+          answer: "",
+        },
+      ],
+    },
+  }
+  return {
+    path,
+    snapshot,
+    mutate: vi.fn(),
+    setData: vi.fn(),
+    cancel: vi.fn().mockResolvedValue(undefined),
+  }
+})
+vi.mock("../src/renderer/lib/trpc", () => ({
+  trpc: {
+    useUtils: () => ({
+      projectRecords: { read: { cancel: fixture.cancel, setData: fixture.setData } },
+    }),
+    projectRecords: {
+      list: {
+        useQuery: () => ({
+          data: { documents: [{ path: fixture.path, title: "Questions" }] },
+          refetch: vi.fn(),
+        }),
+      },
+      read: { useQuery: () => ({ data: fixture.snapshot, refetch: vi.fn() }) },
+      patch: { useMutation: () => ({ mutateAsync: fixture.mutate, isPending: false }) },
+    },
+  },
+  trpcClient: {},
+}))
+vi.mock("../src/renderer/features/project-records/record-action", () => ({
+  retainRecordAction: vi.fn(),
+}))
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+it("keeps a newer owner draft when an earlier answer finishes saving", async () => {
+  let finish!: (value: unknown) => void
+  fixture.mutate.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  const container = document.createElement("div")
+  document.body.append(container)
+  const root = createRoot(container)
+  const click = async (label: string) =>
+    act(async () =>
+      Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === label)!
+        .click(),
+    )
+  await act(async () =>
+    root.render(
+      <Provider>
+        <ProjectRecordsView />
+      </Provider>,
+    ),
+  )
+  await click("Alpha")
+  expect(fixture.mutate).not.toHaveBeenCalled()
+  await click("Submit answer")
+  await click("Beta")
+  await act(async () => finish({ conflict: false, snapshot: fixture.snapshot }))
+  expect(fixture.mutate.mock.calls[0][0].changes).toEqual({
+    answer: "Alpha",
+    draft: "Alpha",
+    state: "answered",
+  })
+  expect(container.querySelector("textarea")!.value).toBe("Beta")
+  expect(fixture.setData).toHaveBeenCalledWith({ path: fixture.path }, fixture.snapshot)
+  await act(async () => root.unmount())
+  container.remove()
+  window.localStorage.clear()
+})

@@ -40,6 +40,9 @@ export function DiscussionAnnotationThread({
       ) : (
         <p className="text-sm">
           Image {annotation.source.target.partIndex + 1} · preserved image region
+          <span className="mt-1 block text-xs text-muted-foreground">
+            Local replies use your text note. Image pixels are not sent to the model.
+          </span>
         </p>
       )}
       {(stale || sources.error || (!sources.isLoading && !source)) && (

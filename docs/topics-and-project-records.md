@@ -1,0 +1,58 @@
+# Topics and project records
+
+Enable **Settings → Beta features → Planning** to show **Topics** for a selected
+project. Capture a mixed note to group fixes and future ideas, or choose a single
+capture kind. The original note stays available through each group's source link.
+Failed grouping keeps the original as an unsorted topic.
+
+Topics keep a short editable summary, questions, choices, written answers and
+annotations. Changing a choice or writing an answer saves a recovery draft;
+**Submit answer** records the answer. Reading a topic changes only its read state.
+Topic status, running agents and accepted project work are separate.
+
+Use a message's annotation action to select user or assistant text, or an image
+region. Text anchors preserve the exact quote and position. A changed source is
+shown as stale. Follow-ups stay beside the annotation; **Promote to discussion**
+creates a linked topic. Local model replies use text and image-region metadata;
+image pixels are not sent to the model.
+
+## Local replies
+
+Run an installed Ollama chat model locally and set these variables before starting
+Flapstack:
+
+```text
+FLAPSTACK_DISCUSSION_OLLAMA_URL=http://127.0.0.1:11434
+FLAPSTACK_DISCUSSION_MODEL=<installed chat model name>
+```
+
+Mixed grouping and summary refresh use the same model. Generation is bounded to
+one request at a time and never launches tools or workers. Model suggestions are
+editable. Exact quote and record ID checks reject invalid grouping. If the model
+is unavailable, captures and drafts remain saved.
+
+Canonical comparison checks a bounded set of relevant topics and indexed project
+features. A successful comparison does not prove that every possible duplicate
+was found. The UI states when canonical comparison was unavailable.
+
+## Canonical project records
+
+**Project records** reads the local project-records writer API. Its Markdown files
+remain the authority for features, lane questions, outcomes and acceptance. Set:
+
+```text
+FLAPSTACK_PROJECT_RECORDS_URL=http://127.0.0.1:47831
+FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE=<private token file outside the repository>
+```
+
+The writer and Flapstack must use the same token. Credentials stay in the app
+backend. No Markdown parser or second records database lives in the renderer.
+
+Select a document, search its grouped records, and expand evidence or history.
+**Save draft** and **Submit answer** use revision checks. A conflict keeps the
+pending draft and shows the current canonical record for review. **Owner accepted**
+records T3 acceptance only; it does not merge code, publish or deploy.
+
+Undo and redo use the shared action history. A newer conflicting edit prevents
+undo from overwriting that work. Cross-device dispatch and history synchronization
+remain a separate phase; the existing mobile companion connects to one desktop.

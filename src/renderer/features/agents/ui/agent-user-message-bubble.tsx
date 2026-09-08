@@ -203,7 +203,9 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
         data-user-bubble
       >
         <div className="space-y-2 min-w-0 max-w-[85%]">
-          <div className="flex justify-end"><DiscussionAnnotationAction messageId={messageId} role="user" /></div>
+          <div className="flex justify-end">
+            <DiscussionAnnotationAction messageId={messageId} role="user" />
+          </div>
           {/* Show attached images from stored message */}
           {imageParts.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">

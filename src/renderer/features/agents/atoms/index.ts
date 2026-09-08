@@ -1290,6 +1290,8 @@ export type DesktopView =
   | "usage"
   | "tasks"
   | "plan"
+  | "discussions"
+  | "project-records"
   | "project-vault"
   | "saved-workspaces"
   | null

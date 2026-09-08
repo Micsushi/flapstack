@@ -1384,7 +1384,9 @@ function ChatGroup({
                             <SquareTerminal className="h-3.5 w-3.5 shrink-0" aria-hidden />
                           )}
                           <span className="truncate">{presentationName(chatId)}</span>
-                          {!getTerminalPresentationChatId(chatId) && <ChatStatusIndicators chatIds={[chatId]} />}
+                          {!getTerminalPresentationChatId(chatId) && (
+                            <ChatStatusIndicators chatIds={[chatId]} />
+                          )}
                           {readOnlyChatIds.has(chatId) ? " (read only)" : ""}
                           {unseenChatIds.has(chatId) && (
                             <span className="sr-only">, new response</span>

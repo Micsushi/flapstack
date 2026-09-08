@@ -33,6 +33,7 @@
   max-width: 75ch;
 }
 .discussion-annotation-layout {
+  container-type: inline-size;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -40,6 +41,8 @@
   flex: 1;
 }
 .discussion-annotation-chat {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   flex: 1;
@@ -66,6 +69,8 @@
   .discussions-layout[data-detail="false"] .discussions-detail {
     display: none;
   }
+}
+@container (max-width: 760px) {
   .discussion-annotation-layout[data-open="true"] .discussion-annotation-chat {
     display: none;
   }

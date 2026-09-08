@@ -2533,11 +2533,12 @@ export function NewChatForm({
                 position={mentionPosition}
                 projectPath={validatedProject?.path}
                 skillScope={{
-                  harness: agentProfileSelection && !("invalid" in agentProfileSelection)
-                    ? agentProfileSelection.harness
-                    : selectedAgent.id,
+                  harness:
+                    agentProfileSelection && !("invalid" in agentProfileSelection)
+                      ? agentProfileSelection.harness
+                      : selectedAgent.id,
                   projectId: chatScope === "global" ? undefined : validatedProject?.id,
-                  taskId: chatScope === "task" ? selectedTaskId ?? undefined : undefined,
+                  taskId: chatScope === "task" ? (selectedTaskId ?? undefined) : undefined,
                 }}
                 showingFilesList={showingFilesList}
                 showingSkillsList={showingSkillsList}

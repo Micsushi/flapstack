@@ -1,4 +1,5 @@
-export type WorkOutcome = "verified-complete" | "stopped-incomplete" | "blocked" | "failed" | "unknown"
+export type WorkOutcome =
+  "verified-complete" | "stopped-incomplete" | "blocked" | "failed" | "unknown"
 export type ChatStatus = {
   unread: boolean
   running: boolean
@@ -16,9 +17,14 @@ export function resolveChatStatus(input: {
   const statuses = input.runStatuses ?? []
   return {
     unread: !!input.unread,
-    running: !!input.running || statuses.some((status) => status === "running" || status === "pending"),
-    needsHelp: !!input.needsHelp || statuses.some((status) => status === "needs-input" || status === "waiting_for_input"),
-    outcome: statuses.some((status) => status === "failure" || status === "failed" || status === "error")
+    running:
+      !!input.running || statuses.some((status) => status === "running" || status === "pending"),
+    needsHelp:
+      !!input.needsHelp ||
+      statuses.some((status) => status === "needs-input" || status === "waiting_for_input"),
+    outcome: statuses.some(
+      (status) => status === "failure" || status === "failed" || status === "error",
+    )
       ? "failed"
       : statuses.includes("blocked")
         ? "blocked"

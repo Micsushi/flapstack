@@ -58,6 +58,8 @@ import { sleepPreventionRouter } from "./sleep-prevention"
 import { diffAnnotationsRouter } from "./diff-annotations"
 import { workspaceEditingRouter } from "./workspace-editing"
 import { visualCaptureRouter } from "./visual-capture"
+import { projectRecordsRouter } from "./project-records"
+import { discussionsRouter } from "./discussions"
 import { mobileBridgeRouter } from "./mobile-bridge"
 import {
   createFeatureVisibilityRouter,
@@ -91,6 +93,8 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     IS_DEV,
   )
   return router({
+    projectRecords: projectRecordsRouter,
+    discussions: discussionsRouter,
     sleepPrevention: sleepPreventionRouter,
     diffAnnotations: diffAnnotationsRouter,
     workspaceEditing: workspaceEditingRouter,

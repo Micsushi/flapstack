@@ -7238,6 +7238,8 @@ function AgentsSidebarInner({
   }
 
   const navigationVisibilityLabels = [
+    "Project records",
+    ...(selectedProject && betaFeatures.planning ? ["Topics"] : []),
     ...(betaFeatures.automations && featureVisibility.isVisible("automations")
       ? ["Automations", "Inbox"]
       : []),
@@ -7396,6 +7398,30 @@ function AgentsSidebarInner({
             className={cn("flex-shrink-0 px-2", hasVisibleNavigationItems ? "min-h-7 pb-1" : "h-0")}
           >
             {[
+              {
+                label: "Project records",
+                Icon: ClipboardList,
+                isActive: desktopView === "project-records",
+                onClick: () => {
+                  setShowNewChatForm(false)
+                  setDesktopView("project-records")
+                  setSearchQuery("")
+                },
+              },
+              ...(selectedProject && betaFeatures.planning
+                ? [
+                    {
+                      label: "Topics",
+                      Icon: BookOpenText,
+                      isActive: desktopView === "discussions",
+                      onClick: () => {
+                        setShowNewChatForm(false)
+                        setDesktopView("discussions")
+                        setSearchQuery("")
+                      },
+                    },
+                  ]
+                : []),
               ...(betaFeatures.automations && featureVisibility.isVisible("automations")
                 ? [
                     {
@@ -8300,5 +8326,9 @@ function AgentsSidebarInner({
 }
 
 export function AgentsSidebar(props: AgentsSidebarProps) {
-  return <ChatStatusProvider><AgentsSidebarInner {...props} /></ChatStatusProvider>
+  return (
+    <ChatStatusProvider>
+      <AgentsSidebarInner {...props} />
+    </ChatStatusProvider>
+  )
 }
