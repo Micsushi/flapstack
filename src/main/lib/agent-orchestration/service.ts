@@ -1674,11 +1674,11 @@ function stopTask(
   const now = nowEpochSeconds()
   const terminalAgentStatus =
     status === "completed" ? "stopped" : status === "failed" ? "stopped" : "stopped"
-  db.prepare(
+  const transition = db.prepare(
     `UPDATE task_orchestrations SET status = ?, stop_reason = ?, completed_at = ?, updated_at = ?
      WHERE task_id = ? AND status NOT IN ('completed','failed','stopped')`,
   ).run(status, reason, now, now, taskId)
-  recordTaskTransition(db, taskId, status, now)
+  if (transition.changes === 1) recordTaskTransition(db, taskId, status, now)
   const activeAgents = db
     .prepare(
       "SELECT id, run_id FROM orchestration_agents WHERE task_id = ? AND status IN ('queued','active')",

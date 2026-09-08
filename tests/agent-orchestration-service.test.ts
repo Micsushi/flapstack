@@ -28,18 +28,7 @@ beforeEach(() => {
   path = join(directory, "agents.db")
   projectPath = join(directory, "project")
   execFileSync("git", ["init", "-b", "main", projectPath])
-  execFileSync("git", [
-    "-C",
-    projectPath,
-    "-c",
-    "user.name=Test",
-    "-c",
-    "user.email=test@example.com",
-    "commit",
-    "--allow-empty",
-    "-m",
-    "init",
-  ])
+  execFileSync("git", ["-C", projectPath, "commit", "--allow-empty", "-m", "init"])
   sqlite = new Database(path)
   migrate(drizzle(sqlite, { schema }), { migrationsFolder: resolve(process.cwd(), "drizzle") })
   sqlite
@@ -62,6 +51,50 @@ afterEach(() => {
 })
 
 describe("durable agent task orchestration", () => {
+  it.each(["completed", "failed", "stopped"] as const)(
+    "records %s once across repeated overview reads while still cleaning stale active work",
+    (status) => {
+      const service = createAgentOrchestrationService(path)
+      const created = service.create(createInput({ count: 1 }))
+      const taskId = created.orchestration.taskId
+      const agent = created.agents[0]!
+      if (status === "stopped") service.control(taskId, "stop")
+      else {
+        sqlite
+          .prepare("UPDATE agent_runs SET status = ?, completed_at = ? WHERE id = ?")
+          .run(status === "completed" ? "success" : "failure", nowEpochSeconds(), agent.runId)
+        expect(service.getOverview(taskId)!.orchestration.status).toBe(status)
+      }
+      const workflowEvents = () =>
+        sqlite
+          .prepare(
+            "SELECT * FROM orchestration_transition_events WHERE task_id = ? AND entity_type = 'workflow' AND phase = ?",
+          )
+          .all(taskId, status)
+      expect(workflowEvents()).toHaveLength(1)
+      // Terminal reads must still clean inconsistent active rows, without inventing a new workflow transition.
+      sqlite.prepare("UPDATE orchestration_agents SET status = 'active' WHERE id = ?").run(agent.id)
+      sqlite
+        .prepare("UPDATE agent_runs SET status = 'running', completed_at = NULL WHERE id = ?")
+        .run(agent.runId)
+      expect(service.getOverview(taskId)!.agents[0]!.status).toBe("stopped")
+      expect(sqlite.prepare("SELECT status FROM agent_runs WHERE id = ?").get(agent.runId)).toEqual(
+        { status: "cancelled" },
+      )
+      expect(workflowEvents()).toHaveLength(1)
+      const snapshot = () =>
+        ["orchestration_transition_events", "orchestration_activity_events"].map((table) =>
+          sqlite.prepare(`SELECT * FROM ${table} WHERE task_id = ? ORDER BY id`).all(taskId),
+        )
+      const before = snapshot()
+      for (let attempt = 0; attempt < 3; attempt++) {
+        service.tickAll()
+        expect(service.getOverview(taskId)!.orchestration.status).toBe(status)
+      }
+      expect(snapshot()).toEqual(before)
+    },
+  )
+
   it("uses the authoritative 0031 saved-workspace constraints and indexes", () => {
     const table = sqlite
       .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'saved_workspaces'")
