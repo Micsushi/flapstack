@@ -3715,3 +3715,20 @@ export const workspaceEdits = sqliteTable(
     ),
   ],
 )
+
+// Exact historical run review revisions. Missing/cleared review is unreviewed, never implicit approval.
+export const orchestrationRunReviews = sqliteTable(
+  "orchestration_run_reviews",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    sourceRunId: text("source_run_id").notNull(),
+    revision: integer("revision").notNull(),
+    review: text("review"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.taskId, table.sourceRunId, table.revision] }),
+    check("orchestration_run_reviews_revision_check", sql`${table.revision} > 0`),
+  ],
+)

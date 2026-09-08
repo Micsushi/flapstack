@@ -1,6 +1,16 @@
+import { TRPCError } from "@trpc/server"
+import {
+  OrchestrationReviewService,
+  OrchestrationReviewError,
+} from "../../agent-orchestration/review-links"
+import {
+  orchestrationReviewScopeSchema,
+  orchestrationSetReviewSchema,
+  orchestrationRestoreReviewSchema,
+} from "../../../../shared/agent-orchestration"
 import Database from "better-sqlite3"
 import { z } from "zod"
-import { getDatabase, getDatabasePath } from "../../db"
+import { getDatabase, getDatabasePath, getSqliteDatabase } from "../../db"
 import {
   classifyPolicyChange,
   createOrchestrationOperationsService,
@@ -120,7 +130,25 @@ const actionSchema = z.discriminatedUnion("kind", [
   }),
 ])
 
+function reviewOperation<T>(run: (service: OrchestrationReviewService) => T): T {
+  try {
+    return run(new OrchestrationReviewService(getSqliteDatabase()))
+  } catch (error) {
+    if (error instanceof OrchestrationReviewError)
+      throw new TRPCError({ code: error.code, message: error.message })
+    throw error
+  }
+}
 export const orchestrationOperationsRouter = router({
+  reviewState: publicProcedure
+    .input(orchestrationReviewScopeSchema)
+    .query(({ input }) => reviewOperation((service) => service.state(input))),
+  setReview: publicProcedure
+    .input(orchestrationSetReviewSchema)
+    .mutation(({ input }) => reviewOperation((service) => service.set(input))),
+  restoreReview: publicProcedure
+    .input(orchestrationRestoreReviewSchema)
+    .mutation(({ input }) => reviewOperation((service) => service.restore(input))),
   getPolicy: publicProcedure
     .input(z.object({ taskId: taskIdSchema }))
     .query(({ input }) => service().getPolicy(input.taskId)),

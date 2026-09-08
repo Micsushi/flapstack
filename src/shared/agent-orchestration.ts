@@ -536,3 +536,48 @@ export type OrchestrationFleetPageDto = {
     providers: OrchestrationFleetFacetDto[]
   }
 }
+
+export const orchestrationReviewScopeSchema = z
+  .object({ projectId: idSchema, taskId: idSchema })
+  .strict()
+const orchestrationReviewValueSchema = z
+  .object({
+    reviewerRunId: idSchema,
+    verdict: z.enum(["pass", "needs-work", "inconclusive"]),
+    evidence: z.string().trim().min(1).max(8000),
+  })
+  .strict()
+export const orchestrationSetReviewSchema = orchestrationReviewScopeSchema
+  .extend({
+    sourceRunId: idSchema,
+    expectedRevision: z.number().int().nonnegative(),
+    review: orchestrationReviewValueSchema.nullable(),
+  })
+  .strict()
+export const orchestrationRestoreReviewSchema = orchestrationSetReviewSchema
+  .omit({ review: true })
+  .extend({ targetRevision: z.number().int().nonnegative() })
+  .strict()
+export type OrchestrationReview = z.infer<typeof orchestrationReviewValueSchema> & {
+  recordedAt: number
+  attribution: "manual"
+}
+export type OrchestrationRunReview = {
+  sourceRunId: string
+  revision: number
+  review: OrchestrationReview | null
+}
+export type OrchestrationReviewMember = {
+  agentId: string
+  runId: string
+  chatId: string
+  subChatId: string | null
+  name: string
+  role: string
+  status: string
+  runStatus: string
+}
+export type OrchestrationReviewState = {
+  members: OrchestrationReviewMember[]
+  reviews: OrchestrationRunReview[]
+}
