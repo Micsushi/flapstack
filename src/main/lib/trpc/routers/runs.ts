@@ -1,3 +1,6 @@
+import { getRunContextHealth } from "../../project-vaults/context-health"
+import { runContextHealthInputSchema } from "../../../../shared/run-context-health"
+import { getSqliteDatabase } from "../../db"
 import { desc, eq } from "drizzle-orm"
 import { z } from "zod"
 import { captureCheckpoint, captureRunManifest } from "../../checkpoints"
@@ -39,6 +42,9 @@ const vaultContextGraphSelectionSchema = z.object({
 })
 
 export const runsRouter = router({
+  getContextHealth: publicProcedure
+    .input(runContextHealthInputSchema)
+    .query(({ input }) => getRunContextHealth(getSqliteDatabase(), input)),
   createRun: publicProcedure
     .input(
       z.object({
