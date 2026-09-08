@@ -1,6 +1,7 @@
 "use client"
 
 import { useAtomValue } from "jotai"
+import { DiscussionAnnotationAction } from "../../discussions"
 import { ChevronRight, MoreHorizontal } from "lucide-react"
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { normalizeCodexToolPart } from "../../../../shared/codex-tool-normalizer"
@@ -1208,6 +1209,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
 
   return (
     <div data-assistant-message-id={message.id} className="group/message w-full mb-4">
+      <DiscussionAnnotationAction messageId={message.id} role="assistant" />
       <ProducerChips metadata={msgMetadata} />
       <div className="flex flex-col gap-1.5">
         {((hasActivity && visibleStepsCount > 0) || wasStopped) && (

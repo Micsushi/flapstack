@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, memo, useMemo } from "react"
 import { ChevronRight } from "lucide-react"
+import { DiscussionAnnotationAction } from "../../discussions"
 import { cn } from "../../../lib/utils"
 import { useOverflowDetection } from "../../../hooks/use-overflow-detection"
 import { AgentImageItem } from "./agent-image-item"
@@ -198,9 +199,11 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
     <>
       <div
         className="flex justify-end drop-shadow-[0_10px_20px_hsl(var(--background))]"
+        data-user-message-id={messageId}
         data-user-bubble
       >
         <div className="space-y-2 min-w-0 max-w-[85%]">
+          <div className="flex justify-end"><DiscussionAnnotationAction messageId={messageId} role="user" /></div>
           {/* Show attached images from stored message */}
           {imageParts.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
