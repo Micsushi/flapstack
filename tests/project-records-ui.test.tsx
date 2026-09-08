@@ -40,6 +40,7 @@ const fixture = vi.hoisted(() => {
 })
 vi.mock("../src/renderer/lib/trpc", () => ({
   trpc: {
+    useQueries: () => [{ data: fixture.snapshot, refetch: vi.fn() }],
     useUtils: () => ({
       projectRecords: { read: { cancel: fixture.cancel, setData: fixture.setData } },
     }),
@@ -134,5 +135,47 @@ it("keeps AI recommendations and resolutions out of the owner's answer draft", a
   } finally {
     await act(async () => root.unmount())
     Object.assign(record, original)
+  }
+})
+
+it("keeps unfinished outcomes in Checklist and answered questions in Questions", async () => {
+  const records = fixture.snapshot.document.records
+  const base = records[0]!
+  fixture.snapshot.document.records = [
+    { ...base, state: "answered" },
+    { ...base, id: "D1", kind: "outcome", title: "Finished work", state: "done" },
+    { ...base, id: "D2", kind: "outcome", title: "Unfinished work", state: "more_work" },
+    { ...base, id: "D3", kind: "outcome", title: "Retained history", state: "superseded" },
+  ]
+  const container = document.createElement("div")
+  const root = createRoot(container)
+  const click = (label: string) =>
+    act(async () =>
+      Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === label)!
+        .click(),
+    )
+  try {
+    await act(async () =>
+      root.render(
+        <Provider>
+          <ProjectRecordsView />
+        </Provider>,
+      ),
+    )
+    expect(container.textContent).toContain("Destination")
+    await click("Completed")
+    expect(container.textContent).toContain("Finished work")
+    expect(container.textContent).not.toContain("Unfinished work")
+    expect(container.textContent).not.toContain("Retained history")
+    await click("Checklist")
+    expect(container.textContent).toContain("Unfinished work")
+    expect(container.textContent).toContain("More work")
+    expect(container.textContent).toContain("Retained history")
+    expect(container.textContent).toContain("Superseded")
+    expect(container.textContent).not.toContain("Finished work")
+  } finally {
+    await act(async () => root.unmount())
+    fixture.snapshot.document.records = records
   }
 })

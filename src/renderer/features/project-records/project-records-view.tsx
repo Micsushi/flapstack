@@ -2,11 +2,12 @@ import { useMemo, useState } from "react"
 import { useAtom } from "jotai"
 import { atomWithStorage } from "jotai/utils"
 import { AlertCircle, CheckCircle2, Circle, RefreshCw, Search } from "lucide-react"
-import type { ProjectRecord } from "../../../shared/project-records"
+import type { ProjectRecord, ProjectRecordSnapshot } from "../../../shared/project-records"
 import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import { trpc, trpcClient } from "../../lib/trpc"
 import { retainRecordAction } from "./record-action"
+import { projectRecordGroups, type ProjectRecordEntry } from "./project-record-projection"
 
 // Pending text is a recovery draft, never a replacement for the canonical answer.
 const pendingDraftsAtom = atomWithStorage<Record<string, string>>("records:pending-drafts", {})
@@ -29,6 +30,7 @@ const stateLabel: Record<string, string> = {
   answered: "Answer recorded",
   resolved_independently: "AI resolved",
 }
+const viewLabels = { question: "Questions", outcome: "Completed", feature: "Checklist" } as const
 
 export function ProjectRecordsView() {
   const utils = trpc.useUtils()
@@ -36,36 +38,63 @@ export function ProjectRecordsView() {
     refetchOnWindowFocus: true,
     retry: false,
   })
-  const [chosenPath, setChosenPath] = useState("")
+  const [chosenProject, setChosenProject] = useState("")
+  const [chosenView, setChosenView] = useState<ProjectRecord["kind"]>("question")
   const [query, setQuery] = useState("")
-  const path = chosenPath || index.data?.documents[0]?.path || ""
-  const document = trpc.projectRecords.read.useQuery({ path }, { enabled: !!path, retry: false })
-  const current = document.data
+  const documents = trpc.useQueries((t) =>
+    (index.data?.documents ?? []).map((document) =>
+      t.projectRecords.read({ path: document.path }, { retry: false, refetchOnWindowFocus: true }),
+    ),
+  )
+  const snapshots = documents.flatMap((document) =>
+    document.data ? [document.data] : [],
+  ) as ProjectRecordSnapshot[]
+  const projects = projectRecordGroups(snapshots)
+  const selectedProject = projects.find((project) => project.id === chosenProject) ?? projects[0]
+  const views = Object.keys(viewLabels) as ProjectRecord["kind"][]
+  const selectedView = chosenView
   const [error, setError] = useState<string | null>(null)
   const patch = trpc.projectRecords.patch.useMutation()
   const refresh = async () => {
     await index.refetch()
-    if (path) await document.refetch()
+    await utils.projectRecords.read.invalidate()
   }
-  const records = current?.document.records ?? []
+  const records =
+    selectedProject?.entries.filter(({ record }) =>
+      selectedView === "question"
+        ? record.kind === "question"
+        : selectedView === "outcome"
+          ? record.kind === "outcome" && record.state === "done"
+          : record.kind === "feature" || (record.kind === "outcome" && record.state !== "done"),
+    ) ?? []
   const groups = useMemo(() => {
-    const result = new Map<string, ProjectRecord[]>()
-    for (const record of records) {
+    const result = new Map<string, ProjectRecordEntry[]>()
+    for (const entry of records) {
+      const { record } = entry
       if (
-        !`${record.id} ${record.title} ${text(record.description)}`
+        !`${record.id} ${record.title} ${text(record.description)} ${text(record.context)}`
           .toLocaleLowerCase()
           .includes(query.toLocaleLowerCase())
       )
         continue
       const group =
         text(record.group) ||
-        (record.kind === "question" ? "Questions" : record.kind === "outcome" ? "Done" : "Features")
-      result.set(group, [...(result.get(group) ?? []), record])
+        (record.kind === "question"
+          ? "Questions"
+          : record.kind === "outcome"
+            ? record.state === "done"
+              ? "Completed"
+              : "Needs follow-up"
+            : "Features")
+      result.set(group, [...(result.get(group) ?? []), entry])
     }
     return [...result]
   }, [records, query])
-  const save = async (record: ProjectRecord, changes: Record<string, unknown>) => {
-    if (!current) return false
+  const save = async (
+    { record, snapshot: current }: ProjectRecordEntry,
+    changes: Record<string, unknown>,
+  ) => {
+    const path = current.path
     setError(null)
     const input = { path, expectedRevision: current.revision, recordId: record.id, changes }
     try {
@@ -107,162 +136,190 @@ export function ProjectRecordsView() {
           size="icon"
           aria-label="Refresh project records"
           onClick={() => void refresh()}
-          disabled={index.isFetching || document.isFetching}
+          disabled={index.isFetching || documents.some((document) => document.isFetching)}
         >
           <RefreshCw className="h-4 w-4" aria-hidden="true" />
         </Button>
       </header>
-      <div className="flex flex-wrap gap-3 border-b px-5 py-3">
-        <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
-          Document
-          <select
-            value={path}
-            onChange={(event) => {
-              setChosenPath(event.target.value)
-              setError(null)
-            }}
-            className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2"
-            aria-label="Record document"
-          >
-            {!index.data?.documents.length && <option value="">No documents</option>}
-            {index.data?.documents.map((item) => (
-              <option value={item.path} key={item.path}>
-                {item.title}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="relative min-w-0 flex-1">
-          <Search
-            className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <Input
-            className="pl-9"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search records"
-            aria-label="Search records"
-          />
+      <div className="space-y-3 border-b px-5 py-3">
+        <div className="flex flex-wrap gap-3">
+          <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+            Project
+            <select
+              value={selectedProject?.id ?? ""}
+              onChange={(event) => {
+                setChosenProject(event.target.value)
+                setError(null)
+              }}
+              className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2"
+              aria-label="Record project"
+            >
+              {!projects.length && <option value="">No projects</option>}
+              {projects.map((project) => (
+                <option value={project.id} key={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="relative min-w-0 flex-1">
+            <Search
+              className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <Input
+              className="pl-9"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search records"
+              aria-label="Search records"
+            />
+          </div>
         </div>
+        {selectedProject && (
+          <nav className="flex flex-wrap gap-2" aria-label="Project record views">
+            {views.map((view) => (
+              <Button
+                key={view}
+                variant={view === selectedView ? "secondary" : "ghost"}
+                size="sm"
+                aria-current={view === selectedView ? "page" : undefined}
+                onClick={() => {
+                  setChosenView(view)
+                  setError(null)
+                }}
+              >
+                {viewLabels[view]}
+              </Button>
+            ))}
+          </nav>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        {(error || index.error || document.error) && (
+        {(error || index.error || documents.some((document) => document.error)) && (
           <p role="alert" className="mb-4 flex items-start gap-2 text-sm text-destructive">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            {error || index.error?.message || document.error?.message}
+            {error ||
+              index.error?.message ||
+              "Some project records could not be loaded. Refresh to retry."}
           </p>
         )}
-        {index.isLoading || (!!path && document.isLoading) ? (
+        {index.isLoading ||
+        (snapshots.length === 0 && documents.some((document) => document.isLoading)) ? (
           <p role="status" className="text-sm text-muted-foreground">
             Loading records…
           </p>
         ) : groups.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            {query ? "No matching records." : "No records in this document yet."}
+            {query
+              ? "No matching records."
+              : `No ${viewLabels[selectedView].toLowerCase()} records for this project yet.`}
           </p>
         ) : (
           groups.map(([group, items]) => (
             <section key={group} className="mb-6" aria-label={group}>
               <h2 className="mb-2 text-sm font-semibold">{group}</h2>
               <ul className="divide-y border-y">
-                {items.map((record) => (
-                  <li key={record.id} className="py-3">
-                    <div className="flex flex-wrap items-start gap-2">
-                      {record.state === "done" ? (
-                        <CheckCircle2
-                          className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400"
-                          aria-label="Done"
+                {items.map((entry) => {
+                  const { record, snapshot } = entry
+                  return (
+                    <li key={`${snapshot.path}:${record.id}`} className="py-3">
+                      <div className="flex flex-wrap items-start gap-2">
+                        {record.state === "done" ? (
+                          <CheckCircle2
+                            className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400"
+                            aria-label="Done"
+                          />
+                        ) : (
+                          <Circle
+                            className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <h3 className="break-words text-sm font-medium">{record.title}</h3>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {record.id} ·{" "}
+                            {record.state === "answered" && record.answerSource === "owner"
+                              ? "Owner answered"
+                              : (stateLabel[record.state] ?? record.state)}
+                          </p>
+                        </div>
+                        {record.kind !== "question" && (
+                          <label className="flex items-center gap-2 text-xs">
+                            <input
+                              type="checkbox"
+                              checked={accepted(record.t3)}
+                              disabled={patch.isPending}
+                              onChange={(event) =>
+                                void save(entry, {
+                                  t3: {
+                                    accepted: event.target.checked,
+                                    evidence: ["Owner checked the behavior in Flapstack"],
+                                    sourceRevision: snapshot.revision,
+                                    acceptedAt: new Date().toISOString(),
+                                  },
+                                })
+                              }
+                            />
+                            Owner accepted
+                          </label>
+                        )}
+                      </div>
+                      {text(record.description || record.context) && (
+                        <p className="mt-2 max-w-prose whitespace-pre-wrap break-words text-sm">
+                          {text(record.description || record.context)}
+                        </p>
+                      )}
+                      {record.kind === "question" ? (
+                        <QuestionAnswer
+                          record={record}
+                          path={snapshot.path}
+                          busy={patch.isPending}
+                          save={(changes) => save(entry, changes)}
                         />
                       ) : (
-                        <Circle
-                          className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
-                          aria-hidden="true"
-                        />
+                        <details className="mt-2 text-sm">
+                          <summary className="cursor-pointer text-muted-foreground">
+                            Evidence and how to try
+                          </summary>
+                          {(["t2", "t3", "t4"] as const).map((tier) => (
+                            <div key={tier} className="mt-2">
+                              <p className="font-medium">
+                                {tier.toUpperCase()}:{" "}
+                                {accepted(record[tier]) ? "Accepted" : "Not accepted"}
+                              </p>
+                              {tierEvidence(record[tier]).map((item, i) => (
+                                <p
+                                  key={i}
+                                  className="whitespace-pre-wrap break-words text-muted-foreground"
+                                >
+                                  {item}
+                                </p>
+                              ))}
+                            </div>
+                          ))}
+                          {["howToTry", "environment", "limitations"].map(
+                            (key) =>
+                              text(record[key]) && (
+                                <p key={key} className="mt-2 whitespace-pre-wrap break-words">
+                                  {text(record[key])}
+                                </p>
+                              ),
+                          )}
+                        </details>
                       )}
-                      <div className="min-w-0 flex-1">
-                        <h3 className="break-words text-sm font-medium">{record.title}</h3>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {record.id} ·{" "}
-                          {record.state === "answered" && record.answerSource === "owner"
-                            ? "Owner answered"
-                            : (stateLabel[record.state] ?? record.state)}
-                        </p>
-                      </div>
-                      {record.kind !== "question" && (
-                        <label className="flex items-center gap-2 text-xs">
-                          <input
-                            type="checkbox"
-                            checked={accepted(record.t3)}
-                            disabled={patch.isPending}
-                            onChange={(event) =>
-                              void save(record, {
-                                t3: {
-                                  accepted: event.target.checked,
-                                  evidence: ["Owner checked the behavior in Flapstack"],
-                                  sourceRevision: current?.revision,
-                                  acceptedAt: new Date().toISOString(),
-                                },
-                              })
-                            }
-                          />
-                          Owner accepted
-                        </label>
-                      )}
-                    </div>
-                    {text(record.description || record.context) && (
-                      <p className="mt-2 max-w-prose whitespace-pre-wrap break-words text-sm">
-                        {text(record.description || record.context)}
-                      </p>
-                    )}
-                    {record.kind === "question" ? (
-                      <QuestionAnswer
-                        record={record}
-                        path={path}
-                        busy={patch.isPending}
-                        save={save}
-                      />
-                    ) : (
-                      <details className="mt-2 text-sm">
-                        <summary className="cursor-pointer text-muted-foreground">
-                          Evidence and how to try
+                      <details className="mt-2 text-xs text-muted-foreground">
+                        <summary className="cursor-pointer">
+                          History ({record.history.length})
                         </summary>
-                        {(["t2", "t3", "t4"] as const).map((tier) => (
-                          <div key={tier} className="mt-2">
-                            <p className="font-medium">
-                              {tier.toUpperCase()}:{" "}
-                              {accepted(record[tier]) ? "Accepted" : "Not accepted"}
-                            </p>
-                            {tierEvidence(record[tier]).map((item, i) => (
-                              <p
-                                key={i}
-                                className="whitespace-pre-wrap break-words text-muted-foreground"
-                              >
-                                {item}
-                              </p>
-                            ))}
-                          </div>
-                        ))}
-                        {["howToTry", "environment", "limitations"].map(
-                          (key) =>
-                            text(record[key]) && (
-                              <p key={key} className="mt-2 whitespace-pre-wrap break-words">
-                                {text(record[key])}
-                              </p>
-                            ),
-                        )}
+                        <pre className="mt-2 whitespace-pre-wrap break-words font-sans">
+                          {JSON.stringify(record.history, null, 2)}
+                        </pre>
                       </details>
-                    )}
-                    <details className="mt-2 text-xs text-muted-foreground">
-                      <summary className="cursor-pointer">
-                        History ({record.history.length})
-                      </summary>
-                      <pre className="mt-2 whitespace-pre-wrap break-words font-sans">
-                        {JSON.stringify(record.history, null, 2)}
-                      </pre>
-                    </details>
-                  </li>
-                ))}
+                    </li>
+                  )
+                })}
               </ul>
             </section>
           ))
@@ -281,7 +338,7 @@ function QuestionAnswer({
   record: ProjectRecord
   path: string
   busy: boolean
-  save: (record: ProjectRecord, changes: Record<string, unknown>) => Promise<boolean>
+  save: (changes: Record<string, unknown>) => Promise<boolean>
 }) {
   const [drafts, setDrafts] = useAtom(pendingDraftsAtom)
   const key = `${path}:${record.id}`
@@ -289,7 +346,6 @@ function QuestionAnswer({
   const setDraft = (value: string) => setDrafts((current) => ({ ...current, [key]: value }))
   const saveDraft = async (submit: boolean) => {
     const success = await save(
-      record,
       submit ? { answer: draft, answerSource: "owner", draft, state: "answered" } : { draft },
     )
     if (success)

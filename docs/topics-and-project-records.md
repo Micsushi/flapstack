@@ -66,7 +66,13 @@ FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE=<private token file outside the repository>
 The writer and Flapstack must use the same token. Credentials stay in the app
 backend. No Markdown parser or second records database lives in the renderer.
 
-Select a document, search its grouped records, and expand evidence or history.
+Select a project, then open **Questions**, **Completed** or **Checklist**. Records
+use their explicit project assignments even when stored in a shared lane. A
+record shared by several projects keeps one saved answer and history. Unassigned
+lane records appear under **Shared work**. Search the selected view or expand its
+evidence and history.
+Completed contains finished outcomes only. Unfinished and superseded outcomes
+remain in Checklist with their actual status; answered questions stay in Questions.
 Questions distinguish AI recommendations and resolutions from saved owner
 answers. Recommendations never fill your answer automatically. Older answers
 without recorded authorship remain labelled as unverified.
