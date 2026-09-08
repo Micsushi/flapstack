@@ -1,3 +1,4 @@
+import { WorktreeDeclarationsPanel } from "./worktree-declarations-panel"
 import { Button } from "../../../components/ui/button"
 import { trpc } from "../../../lib/trpc"
 import { OrchestrationSharedWorktreeAdvisory } from "./orchestration-shared-worktree-advisory"
@@ -45,6 +46,12 @@ export function MobileWorktreeAccess({
           writes and exclusive access are not verified.
         </p>
       )}
+      <WorktreeDeclarationsPanel
+        key={JSON.stringify([projectId, taskId])}
+        projectId={projectId}
+        taskId={taskId}
+        onNavigate={onNavigate}
+      />
     </section>
   )
 }

@@ -347,3 +347,7 @@ describe("orchestration task card", () => {
     expect(onNavigate.mock.calls).toEqual([["parent"], ["child"]])
   })
 })
+
+vi.mock("../src/renderer/features/agents/ui/worktree-declarations-panel", () => ({
+  WorktreeDeclarationsPanel: () => null,
+}))

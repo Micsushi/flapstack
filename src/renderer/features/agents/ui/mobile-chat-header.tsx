@@ -304,7 +304,7 @@ export function MobileRunHistory({
             </Button>
           </div>
         )}
-        {reviewsOpen && (
+        {(reviewsOpen || worktreeOpen) && (
           <div className="space-y-2">
             <div role="group" aria-label="Shared action history" className="flex flex-wrap gap-2">
               <Button

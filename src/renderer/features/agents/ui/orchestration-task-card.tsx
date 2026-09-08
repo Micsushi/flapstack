@@ -1,5 +1,6 @@
+import { WorktreeDeclarationsPanel } from "./worktree-declarations-panel"
 import { OrchestrationSharedWorktreeAdvisory } from "./orchestration-shared-worktree-advisory"
-"use client"
+;("use client")
 
 import { useMemo, useState } from "react"
 import { useSetAtom } from "jotai"
@@ -426,7 +427,16 @@ export function OrchestrationOverviewCard({
 
       <OrchestrationActivityPanel taskId={orchestration.taskId} agents={agents} />
 
-      <OrchestrationSharedWorktreeAdvisory value={overview.sharedWorktrees} onNavigate={onNavigate} />
+      <OrchestrationSharedWorktreeAdvisory
+        value={overview.sharedWorktrees}
+        onNavigate={onNavigate}
+      />
+      <WorktreeDeclarationsPanel
+        key={JSON.stringify([orchestration.projectId, orchestration.taskId])}
+        projectId={orchestration.projectId}
+        taskId={orchestration.taskId}
+        onNavigate={onNavigate}
+      />
 
       {onPreviewGroupControl && onExecuteGroupControl && (
         <SwarmGroupControlPanel

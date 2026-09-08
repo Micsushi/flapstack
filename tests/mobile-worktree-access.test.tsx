@@ -103,3 +103,7 @@ it("reuses qualified warning and exact navigation with long-path wrapping and un
   await act(async () => target.click())
   expect(navigate).toHaveBeenCalledWith("chat-exact")
 })
+
+vi.mock("../src/renderer/features/agents/ui/worktree-declarations-panel", () => ({
+  WorktreeDeclarationsPanel: () => null,
+}))
