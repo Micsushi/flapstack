@@ -176,7 +176,7 @@ function AnnotationEditor({
     const updated = await store.change(topic, { type: "annotation", source, body })
     if (updated) {
       setSavedId(updated.annotations.at(-1)?.id ?? null)
-      setBody("")
+      setBody((current) => (current === body ? "" : current))
     }
   }
   return (

@@ -139,13 +139,16 @@ export function useDiscussionDraft<T>(key: string, fallback: T) {
     }
     return { value: fallback, storageError: true }
   })
-  const save = (value: T) => {
-    try {
-      window.localStorage.setItem(key, JSON.stringify(value))
-      setState({ value, storageError: false })
-    } catch {
-      setState({ value, storageError: true })
-    }
+  const save = (next: T | ((current: T) => T)) => {
+    setState((current) => {
+      const value = typeof next === "function" ? (next as (value: T) => T)(current.value) : next
+      try {
+        window.localStorage.setItem(key, JSON.stringify(value))
+        return { value, storageError: false }
+      } catch {
+        return { value, storageError: true }
+      }
+    })
   }
   return [state.value, save, state.storageError] as const
 }

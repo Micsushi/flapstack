@@ -60,7 +60,11 @@ function DiscussionsContent({
         `${mixed.state === "grouped" ? "Thoughts grouped into topics." : "Original saved, awaiting grouping."} ${mixed.warning ?? ""} ${mixed.dedupStatus === "unavailable" ? "Project-record matching unavailable." : "Existing project records checked."}`,
       )
     if (topic) {
-      setDraft({ title: "", body: "", kind: "note" })
+      setDraft((current) =>
+        JSON.stringify(current) === JSON.stringify(draft)
+          ? { title: "", body: "", kind: "note" }
+          : current,
+      )
       setSelectedId(topic.id)
       setShowCapture(false)
     }
@@ -432,7 +436,7 @@ function TopicDetail({
             void store
               .change(topic, { type: "capture", capture: { body: draft, kind: "note" } })
               .then((result) => {
-                if (result) setDraft("")
+                if (result) setDraft((current) => (current === draft ? "" : current))
               })
           }}
         >
@@ -484,8 +488,8 @@ function TopicDetail({
               })
               .then((result) => {
                 if (result) {
-                  setQuestion("")
-                  setChoices("")
+                  setQuestion((current) => (current === question ? "" : current))
+                  setChoices((current) => (current === choices ? "" : current))
                 }
               })
           }}

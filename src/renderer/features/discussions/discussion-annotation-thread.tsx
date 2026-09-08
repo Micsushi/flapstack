@@ -72,7 +72,7 @@ export function DiscussionAnnotationThread({
               body: draft,
             })
             .then((result) => {
-              if (result) setDraft("")
+              if (result) setDraft((current) => (current === draft ? "" : current))
             })
         }}
       >
@@ -98,7 +98,7 @@ export function DiscussionAnnotationThread({
         scope={scope}
         annotationId={annotation.id}
         question={draft}
-        onSaved={() => setDraft("")}
+        onSaved={() => setDraft((current) => (current === draft ? "" : current))}
         refresh={store.refresh}
         disabled={store.busy}
       />

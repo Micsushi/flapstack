@@ -6,7 +6,10 @@ import {
   quoteOccurrences,
   selectedMessageQuote,
 } from "../src/renderer/features/discussions/annotation-source"
-import { discussionDraftKey } from "../src/renderer/features/discussions/use-discussions"
+import {
+  discussionDraftKey,
+  useDiscussionDraft,
+} from "../src/renderer/features/discussions/use-discussions"
 import { DiscussionAnnotationProvider } from "../src/renderer/features/discussions/discussion-annotation-provider"
 import { DiscussionQuestion } from "../src/renderer/features/discussions/discussion-question"
 import type { DiscussionTopic } from "../src/shared/discussions"
@@ -30,6 +33,36 @@ afterEach(() => {
   window.getSelection()?.removeAllRanges()
 })
 describe("discussion source and question boundaries", () => {
+  it("retains edits made after an asynchronous draft save starts", async () => {
+    let finishSave: (() => void) | undefined
+    function Draft() {
+      const [value, setValue] = useDiscussionDraft("async-draft", "submitted")
+      return (
+        <>
+          <output>{value}</output>
+          <button
+            onClick={() => {
+              const submitted = value
+              finishSave = () => setValue((current) => (current === submitted ? "" : current))
+            }}
+          >
+            Save
+          </button>
+          <button onClick={() => setValue("newer edit")}>Edit</button>
+        </>
+      )
+    }
+    const container = document.createElement("div")
+    document.body.append(container)
+    const root = createRoot(container)
+    await act(async () => root.render(<Draft />))
+    await act(async () => container.querySelectorAll("button")[0]!.click())
+    await act(async () => container.querySelectorAll("button")[1]!.click())
+    await act(async () => finishSave!())
+    expect(container.querySelector("output")?.textContent).toBe("newer edit")
+    expect(JSON.parse(window.localStorage.getItem("async-draft")!)).toBe("newer edit")
+    await act(async () => root.unmount())
+  })
   it("keeps chat mounted when annotation scope becomes available", async () => {
     const mounted = vi.fn()
     const unmounted = vi.fn()
