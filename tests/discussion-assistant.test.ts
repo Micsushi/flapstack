@@ -1,3 +1,5 @@
+import sharp from "sharp"
+import { prepareDiscussionModelImage } from "../src/main/lib/discussions/images"
 import { expect, it, vi } from "vitest"
 import { generateDiscussionResult } from "../src/main/lib/discussions/assistant"
 import {
@@ -103,7 +105,12 @@ it("refuses concurrent generation without leaking response contents", async () =
 })
 
 it("requires installed vision capability and sends one bounded image outside the prompt", async () => {
-  const image = { dataUrl: "data:image/png;base64,cGl4ZWxz", width: 2, height: 2 }
+  const base64 = (
+    await sharp({ create: { width: 64, height: 64, channels: 3, background: "blue" } })
+      .png()
+      .toBuffer()
+  ).toString("base64")
+  const image = { dataUrl: `data:image/png;base64,${base64}`, width: 64, height: 64 }
   const visionEnv = { ...env, FLAPSTACK_DISCUSSION_VISION_MODEL: "local-vision" }
   const request = vi
     .fn()
@@ -123,8 +130,8 @@ it("requires installed vision capability and sends one bounded image outside the
     "/api/show",
     "/api/generate",
   ])
-  expect(request.mock.calls[2][1].body.images).toEqual(["cGl4ZWxz"])
-  expect(request.mock.calls[2][1].body.prompt).not.toContain("cGl4ZWxz")
+  expect(request.mock.calls[2][1].body.images).toEqual([base64])
+  expect(request.mock.calls[2][1].body.prompt).not.toContain(base64)
   expect(request.mock.calls[2][1].body.prompt).toContain("image_available:\ntrue")
   const noVision = vi
     .fn()
@@ -153,4 +160,51 @@ it("requires installed vision capability and sends one bounded image outside the
     }),
   ).rejects.toThrow("Invalid discussion image")
   expect(invalid).not.toHaveBeenCalled()
+})
+
+it("enlarges tiny model crops without changing the saved snapshot and rejects extreme aspect ratios", async () => {
+  const snapshot = async (width: number, height: number) => ({
+    width,
+    height,
+    dataUrl: `data:image/png;base64,${(
+      await sharp({ create: { width, height, channels: 3, background: "green" } })
+        .png()
+        .toBuffer()
+    ).toString("base64")}`,
+  })
+  const original = await snapshot(32, 26),
+    serialized = JSON.stringify(original)
+  const prepared = await prepareDiscussionModelImage(original)
+  expect(Math.min(prepared.width, prepared.height)).toBe(64)
+  expect(Math.max(prepared.width, prepared.height)).toBeLessThanOrEqual(768)
+  expect(prepared.width / prepared.height).toBeCloseTo(32 / 26, 1)
+  expect(JSON.stringify(original)).toBe(serialized)
+  const pixels = await sharp(Buffer.from(prepared.dataUrl.split(",")[1]!, "base64"))
+    .raw()
+    .toBuffer()
+  expect(
+    new Set(
+      Array.from({ length: pixels.length / 3 }, (_, i) =>
+        pixels.subarray(i * 3, i * 3 + 3).toString("hex"),
+      ),
+    ),
+  ).toEqual(new Set(["008000"]))
+  for (const [width, height] of [
+    [768, 1],
+    [1, 768],
+  ]) {
+    const image = await snapshot(width!, height!),
+      request = vi.fn()
+    await expect(
+      generateDiscussionResult({
+        kind: "reply",
+        source,
+        image,
+        schema: discussionReplySchema,
+        env,
+        request,
+      }),
+    ).rejects.toThrow("Select a wider or larger region")
+    expect(request).not.toHaveBeenCalled()
+  }
 })

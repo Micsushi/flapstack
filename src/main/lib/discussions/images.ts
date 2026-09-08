@@ -1,10 +1,15 @@
 import sharp from "sharp"
-import type { DiscussionImagePreview, DiscussionSource } from "../../../shared/discussions"
+import type {
+  DiscussionImagePreview,
+  DiscussionSource,
+  DiscussionImageSnapshot,
+} from "../../../shared/discussions"
 
 export const discussionImageLimits = {
   sourceBytes: 6 * 1024 * 1024,
   pixels: 16_000_000,
   edge: 768,
+  modelMinimumEdge: 64,
   outputBytes: 256 * 1024,
 } as const
 const unavailable = (reason: string): DiscussionImagePreview => ({ available: false, reason })
@@ -110,5 +115,68 @@ export async function cropDiscussionImage(
     }
   } catch {
     return unavailable("Embedded image could not be decoded within the image limits.")
+  }
+}
+
+export class DiscussionImagePreparationError extends Error {}
+
+/** Enlarge only the model input. Nearest-neighbor sampling adds no surrounding image context. */
+export async function prepareDiscussionModelImage(
+  snapshot: DiscussionImageSnapshot,
+): Promise<DiscussionImageSnapshot> {
+  try {
+    const encoded = snapshot.dataUrl.slice("data:image/png;base64,".length)
+    const bytes = Buffer.from(encoded, "base64")
+    if (
+      !snapshot.dataUrl.startsWith("data:image/png;base64,") ||
+      bytes.length > discussionImageLimits.outputBytes ||
+      bytes.toString("base64") !== encoded
+    )
+      throw new Error("Invalid snapshot")
+    const image = sharp(bytes, {
+      limitInputPixels: discussionImageLimits.edge ** 2,
+      failOn: "warning",
+    })
+    const metadata = await image.metadata()
+    const width = metadata.width,
+      height = metadata.height
+    if (
+      metadata.format !== "png" ||
+      !width ||
+      !height ||
+      width !== snapshot.width ||
+      height !== snapshot.height ||
+      Math.max(width, height) > discussionImageLimits.edge ||
+      (metadata.pages ?? 1) > 1
+    )
+      throw new Error("Invalid snapshot")
+    if (Math.min(width, height) >= discussionImageLimits.modelMinimumEdge) return snapshot
+    const scale = discussionImageLimits.modelMinimumEdge / Math.min(width, height)
+    if (Math.round(Math.max(width, height) * scale) > discussionImageLimits.edge)
+      throw new DiscussionImagePreparationError(
+        "This crop is too narrow for the local image model. Select a wider or larger region.",
+      )
+    const result = await image
+      .resize({
+        width: width <= height ? discussionImageLimits.modelMinimumEdge : undefined,
+        height: height < width ? discussionImageLimits.modelMinimumEdge : undefined,
+        kernel: "nearest",
+      })
+      .png()
+      .toBuffer({ resolveWithObject: true })
+    if (result.data.length > discussionImageLimits.outputBytes)
+      throw new DiscussionImagePreparationError(
+        "This crop exceeds the local image size limit after enlargement. Select a larger region with less detail.",
+      )
+    return {
+      dataUrl: `data:image/png;base64,${result.data.toString("base64")}`,
+      width: result.info.width,
+      height: result.info.height,
+    }
+  } catch (error) {
+    if (error instanceof DiscussionImagePreparationError) throw error
+    throw new DiscussionImagePreparationError(
+      "The saved image crop could not be prepared. Select the image region again.",
+    )
   }
 }

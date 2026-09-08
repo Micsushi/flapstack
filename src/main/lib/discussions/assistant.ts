@@ -1,5 +1,9 @@
 import type { DiscussionImageSnapshot } from "../../../shared/discussions"
-import { discussionImageLimits } from "./images"
+import {
+  discussionImageLimits,
+  prepareDiscussionModelImage,
+  DiscussionImagePreparationError,
+} from "./images"
 import { z } from "zod"
 import { getOllamaEndpointConfig } from "../harness/local-model-catalog"
 import { requestOllamaJson } from "../ollama/request-json"
@@ -50,6 +54,7 @@ export async function generateDiscussionResult<T>(input: {
   const request = input.request ?? requestOllamaJson
   busy = true
   try {
+    const modelImage = input.image ? await prepareDiscussionModelImage(input.image) : undefined
     const tags = tagsSchema.parse(
       await request("/api/tags", {
         timeoutMs: 2000,
@@ -70,16 +75,14 @@ export async function generateDiscussionResult<T>(input: {
       )
     }
     if (input.image) {
-      const details = z
-        .object({ capabilities: z.array(z.string()).max(100) })
-        .parse(
-          await request("/api/show", {
-            timeoutMs: 2000,
-            maxBytes: 512 * 1024,
-            baseUrl: config.baseUrl,
-            body: { model },
-          }),
-        )
+      const details = z.object({ capabilities: z.array(z.string()).max(100) }).parse(
+        await request("/api/show", {
+          timeoutMs: 2000,
+          maxBytes: 512 * 1024,
+          baseUrl: config.baseUrl,
+          body: { model },
+        }),
+      )
       if (!details.capabilities.includes("vision"))
         throw new Error("No local discussion model with vision capability is configured.")
     }
@@ -92,7 +95,7 @@ export async function generateDiscussionResult<T>(input: {
           model,
           prompt: discussionAssistantPrompt(input.kind, input.source, Boolean(input.image)),
           ...(input.image
-            ? { images: [input.image.dataUrl.slice("data:image/png;base64,".length)] }
+            ? { images: [modelImage!.dataUrl.slice("data:image/png;base64,".length)] }
             : {}),
           format: discussionOutputFormats[input.kind],
           stream: false,
@@ -110,6 +113,7 @@ export async function generateDiscussionResult<T>(input: {
     if (!parsed.success) throw new Error("Invalid model response")
     return { result: parsed.data, model }
   } catch (error) {
+    if (error instanceof DiscussionImagePreparationError) throw error
     if (error instanceof Error && error.message.startsWith("No local discussion model")) throw error
     throw new Error(
       "The local discussion reply could not be completed. Your source and draft are kept; retry or open the main discussion.",
