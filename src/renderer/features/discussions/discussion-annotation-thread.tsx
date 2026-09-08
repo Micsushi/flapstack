@@ -53,7 +53,9 @@ export function DiscussionAnnotationThread({
       {annotation.followups.map((reply) => (
         <div key={reply.id}>
           <span className="text-xs text-muted-foreground">
-            {reply.role === "user" ? "You" : "Assistant"}
+            {reply.role === "user"
+              ? "You"
+              : `Assistant${reply.model ? ` · ${reply.model} · Ollama` : " · model not recorded"}`}
           </span>
           <p className="text-sm discussion-copy">{reply.body}</p>
         </div>

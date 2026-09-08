@@ -2,6 +2,7 @@ import { useState } from "react"
 import type { DiscussionScope, DiscussionTopic } from "../../../shared/discussions"
 import { Button } from "../../components/ui/button"
 import { cn } from "../../lib/utils"
+import { trpc } from "../../lib/trpc"
 import { DiscussionAssist } from "./discussion-assist"
 import { DiscussionQuestion } from "./discussion-question"
 import { DiscussionAnnotationThread } from "./discussion-annotation-thread"
@@ -36,6 +37,7 @@ function DiscussionsContent({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState("")
   const [showCapture, setShowCapture] = useState(false)
+  const [captureNotice, setCaptureNotice] = useState<string | null>(null)
   const [draft, setDraft, storageError] = useDiscussionDraft(discussionDraftKey(scope, "capture"), {
     title: "",
     body: "",
@@ -48,7 +50,15 @@ function DiscussionsContent({
   )
   const selected = store.topics.find((topic) => topic.id === selectedId && !topic.archived)
   const capture = async () => {
-    const topic = await store.create(draft.title, draft.body, draft.kind)
+    const mixed = draft.kind === "note" ? await store.captureMixed(draft.body, draft.title) : null
+    const topic =
+      draft.kind === "note"
+        ? mixed?.topics.find((item) => !item.archived)
+        : await store.create(draft.title, draft.body, draft.kind)
+    if (mixed)
+      setCaptureNotice(
+        `${mixed.state === "grouped" ? "Thoughts grouped into topics." : "Original saved, awaiting grouping."} ${mixed.warning ?? ""} ${mixed.dedupStatus === "unavailable" ? "Project-record matching unavailable." : "Existing project records checked."}`,
+      )
     if (topic) {
       setDraft({ title: "", body: "", kind: "note" })
       setSelectedId(topic.id)
@@ -89,6 +99,11 @@ function DiscussionsContent({
           </button>
         </p>
       )}
+      {captureNotice && (
+        <p role="status" className="px-4 py-2 text-sm text-muted-foreground">
+          {captureNotice}
+        </p>
+      )}
       {showCapture && (
         <form
           className="space-y-3 border-b p-4"
@@ -113,7 +128,7 @@ function DiscussionsContent({
               className="discussion-field"
               required
               rows={4}
-              maxLength={16384}
+              maxLength={draft.kind === "note" ? 6000 : 16384}
               value={draft.body}
               onChange={(event) => setDraft({ ...draft, body: event.target.value })}
             />
@@ -135,16 +150,22 @@ function DiscussionsContent({
             </label>
             <Button
               type="submit"
-              disabled={store.busy || !draft.title.trim() || !draft.body.trim()}
+              disabled={
+                store.busy ||
+                !draft.title.trim() ||
+                !draft.body.trim() ||
+                (draft.kind === "note" && draft.body.length > 6000)
+              }
             >
-              Save capture
+              {draft.kind === "note" ? "Save and group" : "Save capture"}
             </Button>
             <Button type="button" variant="ghost" onClick={() => setShowCapture(false)}>
               Close
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Original text stays intact. Capturing does not start work.
+            Original text stays intact. Mixed thoughts use the configured assistant to group topics
+            (up to 6,000 characters). Capturing does not start work.
           </p>
           {storageError && (
             <p role="alert">Draft storage unavailable. Save capture before leaving.</p>
@@ -273,6 +294,14 @@ function TopicDetail({
       <Button variant="ghost" onClick={onBack}>
         Back to topics
       </Button>
+      {topic.captureBatch && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {topic.captureBatch.state === "unsorted"
+            ? "Original capture saved, awaiting grouping."
+            : "Grouped capture."}{" "}
+          {topic.captureBatch.warning}
+        </p>
+      )}
       <div className="space-y-3">
         <h2 className="text-lg font-semibold discussion-copy">{topic.title}</h2>
         <div className="flex flex-wrap gap-3 items-center">
@@ -387,6 +416,13 @@ function TopicDetail({
               {capture.source ? ` · ${capture.source.role} source` : ""}
             </span>
             <p className="mt-1 text-sm discussion-copy">{capture.body}</p>
+            {capture.origin && (
+              <OriginalCapture
+                scope={scope}
+                topicId={capture.origin.topicId}
+                captureId={capture.origin.captureId}
+              />
+            )}
           </div>
         ))}
         <form
@@ -496,5 +532,48 @@ function TopicDetail({
         </section>
       )}
     </article>
+  )
+}
+
+function OriginalCapture({
+  scope,
+  topicId,
+  captureId,
+}: {
+  scope: DiscussionScope
+  topicId: string
+  captureId: string
+}) {
+  const [open, setOpen] = useState(false)
+  const original = trpc.discussions.read.useQuery(
+    { scope, id: topicId },
+    { enabled: open, staleTime: Infinity },
+  )
+  const capture = original.data?.captures.find((item) => item.id === captureId)
+  return (
+    <details className="mt-2 text-sm" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="cursor-pointer text-muted-foreground">Original mixed capture</summary>
+      {open &&
+        (original.isLoading ? (
+          <p role="status">Loading original…</p>
+        ) : capture ? (
+          <div className="mt-2 space-y-2">
+            <p className="discussion-copy">{capture.body}</p>
+            {original.data?.captureBatch && (
+              <p className="text-xs text-muted-foreground">
+                {original.data.captureBatch.model
+                  ? `Grouped by ${original.data.captureBatch.model} via Ollama.`
+                  : "No grouping model recorded."}{" "}
+                {original.data.captureBatch.dedupStatus === "available"
+                  ? "Project records checked."
+                  : "Project-record matching unavailable."}{" "}
+                {original.data.captureBatch.warning}
+              </p>
+            )}
+          </div>
+        ) : (
+          <p role="status">Original unavailable. This excerpt remains saved.</p>
+        ))}
+    </details>
   )
 }

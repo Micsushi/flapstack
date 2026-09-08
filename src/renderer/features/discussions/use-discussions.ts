@@ -88,7 +88,20 @@ export function useDiscussions(scope: DiscussionScope) {
       })
       return topic
     })
+  const captureMixed = (body: string, title?: string) =>
+    run(async () => {
+      const result = await trpcClient.discussions.captureMixed.mutate({ scope, body, title })
+      let undo = result.undo
+      const restore = async () => {
+        const restored = await trpcClient.discussions.restoreMixed.mutate(undo)
+        undo = restored.undo
+        await refresh()
+      }
+      recordAppAction({ label: "Capture and group thoughts", undo: restore, redo: restore })
+      return result
+    })
   return {
+    captureMixed,
     topics: query.data?.pages.flatMap((page) => page.topics) ?? [],
     loadMore: () => query.fetchNextPage(),
     hasMore: query.hasNextPage,
