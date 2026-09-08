@@ -50,7 +50,7 @@ export function ProjectRecordsView() {
     document.data ? [document.data] : [],
   ) as ProjectRecordSnapshot[]
   const projects = projectRecordGroups(snapshots)
-  const selectedProject = projects.find((project) => project.id === chosenProject) ?? projects[0]
+  const selectedProject = projects.find((project) => project.id === chosenProject)
   const views = Object.keys(viewLabels) as ProjectRecord["kind"][]
   const selectedView = chosenView
   const [error, setError] = useState<string | null>(null)
@@ -59,37 +59,68 @@ export function ProjectRecordsView() {
     await index.refetch()
     await utils.projectRecords.read.invalidate()
   }
-  const records =
-    selectedProject?.entries.filter(({ record }) =>
-      selectedView === "question"
-        ? record.kind === "question"
-        : selectedView === "outcome"
-          ? record.kind === "outcome" && record.state === "done"
-          : record.kind === "feature" || (record.kind === "outcome" && record.state !== "done"),
-    ) ?? []
+  const visibleProjects = selectedProject ? [selectedProject] : projects
   const groups = useMemo(() => {
-    const result = new Map<string, ProjectRecordEntry[]>()
-    for (const entry of records) {
-      const { record } = entry
-      if (
-        !`${record.id} ${record.title} ${text(record.description)} ${text(record.context)}`
-          .toLocaleLowerCase()
-          .includes(query.toLocaleLowerCase())
-      )
-        continue
-      const group =
-        text(record.group) ||
-        (record.kind === "question"
-          ? "Questions"
-          : record.kind === "outcome"
-            ? record.state === "done"
-              ? "Completed"
-              : "Needs follow-up"
-            : "Features")
-      result.set(group, [...(result.get(group) ?? []), entry])
+    const result: {
+      key: string
+      label: string
+      waiting: boolean
+      entries: ProjectRecordEntry[]
+    }[] = []
+    for (const project of visibleProjects) {
+      const entries = project.entries.filter(({ record }) => {
+        const inView =
+          selectedView === "question"
+            ? record.kind === "question"
+            : selectedView === "outcome"
+              ? record.kind === "outcome" && record.state === "done"
+              : record.kind === "feature" || (record.kind === "outcome" && record.state !== "done")
+        return (
+          inView &&
+          `${record.id} ${record.title} ${text(record.description)} ${text(record.context)} ${project.name}`
+            .toLocaleLowerCase()
+            .includes(query.toLocaleLowerCase())
+        )
+      })
+      if (selectedView === "question") {
+        for (const waiting of [true, false]) {
+          const items = entries.filter(
+            ({ record }) =>
+              !["answered", "resolved_independently"].includes(record.state) === waiting,
+          )
+          if (items.length)
+            result.push({
+              key: `${project.id}:${waiting}`,
+              label: `${project.name}: ${waiting ? "Waiting for your answer" : "Recorded answers and AI resolutions"}`,
+              waiting,
+              entries: items,
+            })
+        }
+      } else {
+        const sections = new Map<string, ProjectRecordEntry[]>()
+        for (const entry of entries) {
+          const group =
+            text(entry.record.group) ||
+            (entry.record.kind === "outcome"
+              ? entry.record.state === "done"
+                ? "Completed"
+                : "Needs follow-up"
+              : "Features")
+          sections.set(group, [...(sections.get(group) ?? []), entry])
+        }
+        for (const [group, items] of sections) {
+          result.push({
+            key: `${project.id}:${group}`,
+            label: `${project.name}: ${group}`,
+            waiting: false,
+            entries: items,
+          })
+        }
+      }
     }
-    return [...result]
-  }, [records, query])
+    // Keep every waiting question above recorded answers, including across projects.
+    return result.sort((a, b) => Number(b.waiting) - Number(a.waiting))
+  }, [visibleProjects, selectedView, query])
   const save = async (
     { record, snapshot: current }: ProjectRecordEntry,
     changes: Record<string, unknown>,
@@ -154,7 +185,7 @@ export function ProjectRecordsView() {
               className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2"
               aria-label="Record project"
             >
-              {!projects.length && <option value="">No projects</option>}
+              <option value="">All projects</option>
               {projects.map((project) => (
                 <option value={project.id} key={project.id}>
                   {project.name}
@@ -176,7 +207,13 @@ export function ProjectRecordsView() {
             />
           </div>
         </div>
-        {selectedProject && (
+        {selectedView === "question" && (
+          <p className="text-sm text-muted-foreground">
+            {selectedProject ? selectedProject.name : "All projects"}: questions waiting for your
+            answer appear first.
+          </p>
+        )}
+        {projects.length > 0 && (
           <nav className="flex flex-wrap gap-2" aria-label="Project record views">
             {views.map((view) => (
               <Button
@@ -213,12 +250,12 @@ export function ProjectRecordsView() {
           <p className="text-sm text-muted-foreground">
             {query
               ? "No matching records."
-              : `No ${viewLabels[selectedView].toLowerCase()} records for this project yet.`}
+              : `No ${viewLabels[selectedView].toLowerCase()} records ${selectedProject ? "for this project" : "across projects"} yet.`}
           </p>
         ) : (
-          groups.map(([group, items]) => (
-            <section key={group} className="mb-6" aria-label={group}>
-              <h2 className="mb-2 text-sm font-semibold">{group}</h2>
+          groups.map(({ key, label, entries: items }) => (
+            <section key={key} className="mb-6" aria-label={label}>
+              <h2 className="mb-2 text-sm font-semibold">{label}</h2>
               <ul className="divide-y border-y">
                 {items.map((entry) => {
                   const { record, snapshot } = entry

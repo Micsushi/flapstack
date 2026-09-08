@@ -77,7 +77,9 @@ FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE=<private token file outside the repository>
 The writer and Flapstack must use the same token. Credentials stay in the app
 backend. No Markdown parser or second records database lives in the renderer.
 
-Select a project, then open **Questions**, **Completed** or **Checklist**. Records
+**Questions** opens across **All projects**, with waiting questions first and
+project headings. Recorded answers and AI resolutions remain visible below.
+Optionally filter a project or open **Completed** or **Checklist**. Records
 use their explicit project assignments even when stored in a shared lane. A
 record shared by several projects keeps one saved answer and history. Unassigned
 lane records appear under **Shared work**. Search the selected view or expand its
