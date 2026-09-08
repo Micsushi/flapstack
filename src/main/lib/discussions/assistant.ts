@@ -22,7 +22,7 @@ let busy = false
 
 /** No tools, cloud fallback, chat append, or execution side effects. One bounded local call. */
 export async function generateDiscussionResult<T>(input: {
-  kind: "summary" | "reply" | "capture" | "capture-review"
+  kind: "summary" | "reply" | "capture" | "capture-review" | "capture-match"
   source: unknown
   image?: DiscussionImageSnapshot
   schema: z.ZodType<T>

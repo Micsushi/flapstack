@@ -10,6 +10,7 @@ import {
   captureMixed,
   refreshDiscussionSummary,
   segmentCaptureSource,
+  projectCaptureTopics,
 } from "../src/main/lib/discussions/mixed-capture"
 import { DiscussionService } from "../src/main/lib/discussions/service"
 import type { generateDiscussionResult } from "../src/main/lib/discussions/assistant"
@@ -61,7 +62,17 @@ function generator(
   ],
 ) {
   return vi.fn().mockImplementation(async (input) => ({
-    result: input.kind === "capture-review" ? { accepted: true, issues: [] } : { topics },
+    result:
+      input.kind === "capture-review"
+        ? { accepted: true, issues: [] }
+        : input.kind === "capture-match"
+          ? {
+              matches: topics.map((topic, index) => ({
+                groupId: `g${index + 1}`,
+                recordIds: topic.recordIds,
+              })),
+            }
+          : { topics: topics.map((topic) => ({ ...topic, recordIds: [] })) },
     model: "test-local",
   })) as unknown as typeof generateDiscussionResult
 }
@@ -197,6 +208,16 @@ it("persists fallback before unavailable model response and rolls back all group
     capture: { body: "Layout", kind: "note" },
   })
   const generate = (async (input) => {
+    if (input.kind === "capture-match")
+      return {
+        model: "test",
+        result: {
+          matches: [
+            { groupId: "g1", recordIds: [] },
+            { groupId: "g2", recordIds: [] },
+          ],
+        },
+      }
     if (input.kind === "capture-review")
       return { model: "test", result: { accepted: true, issues: [] } }
     service.update({
@@ -348,7 +369,12 @@ it("repairs a semantic consolidation failure once and rechecks before saving", a
   const result = await captureMixed(
     service,
     { scope, body: original },
-    { records: async () => records(), generate: generate as typeof generateDiscussionResult },
+    {
+      records: async () => {
+        throw new Error("offline")
+      },
+      generate: generate as typeof generateDiscussionResult,
+    },
   )
   expect(result.state).toBe("grouped")
   expect(result.topics).toHaveLength(2)
@@ -360,7 +386,7 @@ it("repairs a semantic consolidation failure once and rechecks before saving", a
     "capture-review",
   ])
   expect(generate.mock.calls[2]![0].source.reviewIssues).toHaveLength(1)
-  expect(generate.mock.calls[1]![0].source.existingTopics[0].summary).toBe(existing.summary)
+  expect(generate.mock.calls[1]![0].source.projectedTopics[0].priorSummary).toBe(existing.summary)
 })
 
 it("leaves the exact original unsorted when the one semantic repair still fails", async () => {
@@ -374,7 +400,12 @@ it("leaves the exact original unsorted when the one semantic repair still fails"
   const result = await captureMixed(
     service,
     { scope, body },
-    { records: async () => records(), generate: generate as typeof generateDiscussionResult },
+    {
+      records: async () => {
+        throw new Error("offline")
+      },
+      generate: generate as typeof generateDiscussionResult,
+    },
   )
   expect(generate).toHaveBeenCalledTimes(4)
   expect(result.state).toBe("unsorted")
@@ -535,4 +566,102 @@ it("refreshes committed answer meaning with selected labels and free text, never
   })
   expect(undone.questions[0]!.answers).toHaveLength(0)
   expect(undone.summary).toBe("Scope undecided.")
+})
+
+it("separates canonical association from grouping and reviews one materialized update identity", async () => {
+  const existing = service.create({
+    scope,
+    title: "Layout",
+    summary: "Preserve accessibility.",
+    capture: { kind: "note", body: "Layout" },
+  })
+  const client = records()
+  client.read.mockResolvedValue({
+    ...snapshot,
+    document: {
+      ...snapshot.document,
+      records: [
+        {
+          ...snapshot.document.records[0],
+          description: "Repair sidebar layout spacing while preserving accessibility.",
+        },
+      ],
+    },
+  })
+  const generate = generator([
+    { ...group(), existingTopicId: existing.id, recordIds: ["FLAP-layout"] },
+    { ...group("s2"), title: "Themes", kind: "idea" },
+  ])
+  const result = await captureMixed(
+    service,
+    { scope, body },
+    { records: async () => client, generate },
+  )
+  expect(result.state).toBe("grouped")
+  const calls = vi.mocked(generate).mock.calls
+  expect(calls.map((call) => call[0].kind)).toEqual(["capture", "capture-match", "capture-review"])
+  expect(calls[0]![0].source).not.toHaveProperty("canonicalRecords")
+  expect((calls[1]![0].source as any).canonicalRecords[0].description).toContain("accessibility")
+  const projected = (calls[2]![0].source as any).projectedTopics
+  expect(projected.filter((topic: any) => topic.topicId === existing.id)).toHaveLength(1)
+  expect(projected[0].priorSummary).toBe(existing.summary)
+  expect(projected[0].matchedRecords[0].id).toBe("FLAP-layout")
+  expect(calls[2]![0].source).not.toHaveProperty("existingTopics")
+})
+
+it("never spends a fifth call repairing a linked semantic rejection", async () => {
+  const generate = vi.fn(generator()).mockImplementation(async (input: any) => {
+    if (input.kind === "capture-review")
+      return { model: "test", result: { accepted: false, issues: ["Unrelated canonical link"] } }
+    return generator([
+      { ...group(), recordIds: ["FLAP-layout"] },
+      { ...group("s2"), kind: "idea", title: "Themes" },
+    ])(input)
+  }) as typeof generateDiscussionResult
+  const result = await captureMixed(
+    service,
+    { scope, body },
+    { records: async () => records(), generate },
+  )
+  expect(vi.mocked(generate)).toHaveBeenCalledTimes(3)
+  expect(result.state).toBe("unsorted")
+  expect(result.topics[0]!.captures[0]!.body).toBe(body)
+})
+
+it("projects retained failing proposal as one update and a separate future topic without semantic ID guessing", () => {
+  const existing = {
+    id: "retained-topic",
+    title: "Discussion capture and short summaries",
+    summary:
+      "Confirmed correction: preserve original wording. Short summaries must supplement, never replace, original captures.",
+  }
+  const text =
+    "Fix mixed-topic discussion capture and continually updated short summaries. Preserve original wording; summaries must supplement, never replace, the original capture. Later, consider an optional animated snowflake background."
+  const spans = segmentCaptureSource(text)
+  const projected = projectCaptureTopics(
+    [existing],
+    [
+      {
+        title: existing.title,
+        summary: existing.summary,
+        kind: "fix",
+        existingTopicId: existing.id,
+        recordIds: [],
+        spans: spans.slice(0, 2),
+      },
+      {
+        title: "Animated background consideration",
+        summary: "Later, consider an optional animated snowflake background.",
+        kind: "idea",
+        existingTopicId: null,
+        recordIds: [],
+        spans: spans.slice(2),
+      },
+    ],
+    [],
+  )
+  expect(projected).toHaveLength(2)
+  expect(projected.filter((topic) => topic.topicId === existing.id)).toHaveLength(1)
+  expect(projected[0]).toMatchObject({ priorSummary: existing.summary, matchedRecords: [] })
+  expect(spans.map((span) => span.text).join("")).toBe(text)
 })

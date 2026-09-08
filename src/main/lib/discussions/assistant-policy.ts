@@ -9,6 +9,8 @@ export const DISCUSSION_ASSISTANT_POLICY = {
   contextTokens: 4096,
   outputTokens: 900,
   captureRepairAttempts: 1,
+  captureMaxModelCalls: 4,
+  canonicalDescriptionCharacters: 2000,
   captureMaxSpans: 64,
   captureReviewReserveCharacters: 4000,
 } as const
@@ -32,7 +34,23 @@ export const mixedCaptureSuggestionSchema = z
             spanIds: z.array(z.string().min(1).max(32)).min(1).max(64),
             summary: z.string().trim().min(1).max(2_000),
             existingTopicId: z.string().nullable(),
-            recordIds: z.array(z.string()).max(10),
+            recordIds: z.array(z.string()).max(0),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(8),
+  })
+  .strict()
+
+export const mixedCaptureMatchesSchema = z
+  .object({
+    matches: z
+      .array(
+        z
+          .object({
+            groupId: z.string().min(1).max(32),
+            recordIds: z.array(z.string().min(1).max(200)).max(6),
           })
           .strict(),
       )
@@ -85,7 +103,28 @@ export const discussionOutputFormats = {
             spanIds: { type: "array", minItems: 1, maxItems: 64, items: { type: "string" } },
             summary: { type: "string" },
             existingTopicId: { type: ["string", "null"] },
-            recordIds: { type: "array", items: { type: "string" }, maxItems: 10 },
+            recordIds: { type: "array", items: { type: "string" }, maxItems: 0 },
+          },
+        },
+      },
+    },
+  },
+  "capture-match": {
+    type: "object",
+    required: ["matches"],
+    additionalProperties: false,
+    properties: {
+      matches: {
+        type: "array",
+        minItems: 1,
+        maxItems: 8,
+        items: {
+          type: "object",
+          required: ["groupId", "recordIds"],
+          additionalProperties: false,
+          properties: {
+            groupId: { type: "string" },
+            recordIds: { type: "array", maxItems: 6, items: { type: "string" } },
           },
         },
       },

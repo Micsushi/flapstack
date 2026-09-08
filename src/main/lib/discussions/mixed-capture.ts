@@ -16,6 +16,7 @@ import {
   discussionSummarySchema,
   mixedCaptureSuggestionSchema,
   mixedCaptureReviewSchema,
+  mixedCaptureMatchesSchema,
 } from "./assistant-policy"
 import { DiscussionError, DiscussionService } from "./service"
 
@@ -71,6 +72,42 @@ function relevant<T>(rows: T[], original: string, label: (row: T) => string, lim
     .map((item) => item.row)
 }
 
+/** Materialize update identity before semantic review, so an update is never represented as a second topic. */
+export function projectCaptureTopics(
+  existing: Array<{ id: string; title: string; summary: string }>,
+  groups: Array<{
+    title: string
+    summary: string
+    kind: string
+    existingTopicId: string | null
+    recordIds: string[]
+    spans: DiscussionCaptureSpan[]
+  }>,
+  records: Array<{ id: string; title: string; description: string }>,
+) {
+  const projected = groups.map((group, index) => ({
+    topicId: group.existingTopicId ?? `new:g${index + 1}`,
+    changed: true,
+    title: group.title,
+    summary: group.summary,
+    kind: group.kind,
+    priorSummary: existing.find((topic) => topic.id === group.existingTopicId)?.summary ?? null,
+    sourceSpans: group.spans,
+    matchedRecords: group.recordIds.map((id) => records.find((record) => record.id === id)!),
+  }))
+  return [
+    ...projected,
+    ...existing
+      .filter((topic) => !groups.some((group) => group.existingTopicId === topic.id))
+      .map((topic) => ({
+        topicId: topic.id,
+        changed: false,
+        title: topic.title,
+        summary: topic.summary,
+      })),
+  ]
+}
+
 /** Propose, verify meaning, and optionally repair once before the atomic write. */
 export async function captureMixed(
   service: DiscussionService,
@@ -87,7 +124,8 @@ export async function captureMixed(
   let records: Records | undefined
   let recordPath: string | undefined
   let recordRevision: string | undefined
-  let canonicalRecords: Array<{ id: string; title: string; state: string }> = []
+  let canonicalRecords: Array<{ id: string; title: string; state: string; description: string }> =
+    []
   try {
     records = await (options.records ?? configuredProjectRecordsClient)()
     // The exact repository basename must be present in the canonical index. No guessed aliases.
@@ -103,12 +141,18 @@ export async function captureMixed(
       (record) =>
         `${record.title} ${typeof record.description === "string" ? record.description : ""}`,
       candidateLimits.records,
-    ).map((record) => ({ id: record.id, title: record.title, state: record.state }))
+    ).map((record) => {
+      const description = typeof record.description === "string" ? record.description : ""
+      if (description.length > DISCUSSION_ASSISTANT_POLICY.canonicalDescriptionCharacters)
+        throw new Error("Canonical description exceeds bounded matching context")
+      return { id: record.id, title: record.title, state: record.state, description }
+    })
     recordPath = path
     recordRevision = snapshot.revision
     dedupStatus = "available"
   } catch {
     records = undefined
+    canonicalRecords = []
   }
 
   try {
@@ -121,17 +165,8 @@ export async function captureMixed(
     const source = {
       sourceSpans: segmentCaptureSource(input.body),
       existingTopics,
-      canonicalRecords,
-      canonicalComparison: dedupStatus,
     }
     // Drop low-ranked candidates, never silently cut the original or a prior topic summary.
-    while (
-      JSON.stringify(source).length >
-        DISCUSSION_ASSISTANT_POLICY.maxContextCharacters -
-          DISCUSSION_ASSISTANT_POLICY.captureReviewReserveCharacters &&
-      source.canonicalRecords.length
-    )
-      source.canonicalRecords.pop()
     while (
       JSON.stringify(source).length >
         DISCUSSION_ASSISTANT_POLICY.maxContextCharacters -
@@ -139,7 +174,14 @@ export async function captureMixed(
       source.existingTopics.length
     )
       source.existingTopics.pop()
-    const generate = options.generate ?? generateDiscussionResult
+    const generator = options.generate ?? generateDiscussionResult
+    let modelCalls = 0
+    const generate: Generator = async (input) => {
+      if (modelCalls >= DISCUSSION_ASSISTANT_POLICY.captureMaxModelCalls)
+        throw new Error("Capture model budget exhausted")
+      modelCalls++
+      return generator(input)
+    }
     type Proposal = z.infer<typeof mixedCaptureSuggestionSchema>
     let previousProposal: Proposal | undefined
     let reviewIssues: string[] = []
@@ -156,6 +198,11 @@ export async function captureMixed(
         }
       | undefined
     for (let attempt = 0; attempt <= DISCUSSION_ASSISTANT_POLICY.captureRepairAttempts; attempt++) {
+      if (
+        modelCalls + (canonicalRecords.length ? 3 : 2) >
+        DISCUSSION_ASSISTANT_POLICY.captureMaxModelCalls
+      )
+        break
       const generated = await generate({
         kind: "capture",
         source: previousProposal ? { ...source, previousProposal, reviewIssues } : source,
@@ -191,14 +238,6 @@ export async function captureMixed(
               "Use each supplied existing topic once, combining its related quotes",
             )
           if (existing) seenTopics.add(existing.id)
-          if (
-            new Set(group.recordIds).size !== group.recordIds.length ||
-            group.recordIds.some((id) => !canonicalRecords.some((record) => record.id === id))
-          )
-            throw new DiscussionError(
-              "BAD_REQUEST",
-              "Canonical links must be supplied project feature candidates",
-            )
           return { ...group, spans, expectedRevision: existing?.revision }
         })
         const missing = source.sourceSpans.filter((span) => !selectedSpans.has(span.id))
@@ -213,9 +252,43 @@ export async function captureMixed(
         groups = undefined
       }
       if (!groups) continue
+      if (canonicalRecords.length) {
+        const matched = await generate({
+          kind: "capture-match",
+          schema: mixedCaptureMatchesSchema,
+          source: {
+            groups: groups.map((group, index) => ({
+              groupId: `g${index + 1}`,
+              title: group.title,
+              summary: group.summary,
+              sourceSpans: group.spans,
+            })),
+            canonicalRecords,
+          },
+        })
+        const matches = mixedCaptureMatchesSchema.parse(matched.result).matches
+        if (
+          matches.length !== groups.length ||
+          new Set(matches.map((match) => match.groupId)).size !== groups.length
+        )
+          throw new Error("Canonical matching must cover each group exactly once")
+        for (const [index, group] of groups.entries()) {
+          const match = matches.find((match) => match.groupId === `g${index + 1}`)
+          if (
+            !match ||
+            new Set(match.recordIds).size !== match.recordIds.length ||
+            match.recordIds.some((id) => !canonicalRecords.some((record) => record.id === id))
+          )
+            throw new Error("Canonical association contains an unknown group or record")
+          group.recordIds = match.recordIds
+        }
+      }
       const review = await generate({
         kind: "capture-review",
-        source: { ...source, proposal: suggestion },
+        source: {
+          sourceSpans: source.sourceSpans,
+          projectedTopics: projectCaptureTopics(existingTopics, groups, canonicalRecords),
+        },
         schema: mixedCaptureReviewSchema,
       })
       const verdict = mixedCaptureReviewSchema.parse(review.result)
