@@ -1,5 +1,5 @@
 import QRCode from "qrcode"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import type { MobilePairingOffer, MobileResourceRef } from "../../../../shared/mobile-control"
 import { trpc } from "../../../lib/trpc"
@@ -10,8 +10,14 @@ type GrantResourceKind = (typeof resourceKinds)[number]
 
 export function AgentsMobileCompanionTab() {
   const utils = trpc.useUtils()
-  const status = trpc.mobileBridge.getStatus.useQuery()
-  const interfaces = trpc.mobileBridge.listInterfaces.useQuery()
+  const status = trpc.mobileBridge.getStatus.useQuery(undefined, {
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
+  })
+  const interfaces = trpc.mobileBridge.listInterfaces.useQuery(undefined, {
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
+  })
   const devices = trpc.mobileBridge.listDevices.useQuery()
   const grants = trpc.mobileBridge.listGrants.useQuery({})
   const configure = trpc.mobileBridge.configure.useMutation()
@@ -23,6 +29,22 @@ export function AgentsMobileCompanionTab() {
   const [bindAddress, setBindAddress] = useState("")
   const [offer, setOffer] = useState<MobilePairingOffer | null>(null)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
+  const offerGeneration = useRef(0)
+  const [pairingNotice, setPairingNotice] = useState<string | null>(null)
+  const bridge = !status.error && status.data?.state === "running" ? status.data : null
+  const bridgeIdentity = bridge
+    ? JSON.stringify([bridge.bindAddress, bridge.port, bridge.fingerprint])
+    : null
+  const [offerIdentity, setOfferIdentity] = useState<string | null>(null)
+  const displayedOffer = bridgeIdentity && offerIdentity === bridgeIdentity ? offer : null
+  useEffect(() => {
+    offerGeneration.current += 1
+    setOffer(null)
+    setQrDataUrl(null)
+    return () => {
+      offerGeneration.current += 1
+    }
+  }, [bridgeIdentity])
   const [names, setNames] = useState<Record<string, string>>({})
   const [grantDeviceId, setGrantDeviceId] = useState("")
   const [resourceKind, setResourceKind] = useState<GrantResourceKind>("project")
@@ -34,8 +56,8 @@ export function AgentsMobileCompanionTab() {
   )
 
   useEffect(() => {
-    if (status.data?.bindAddress) setBindAddress(status.data.bindAddress)
-    else if (!bindAddress && interfaces.data?.[0]) setBindAddress(interfaces.data[0].address)
+    if (!bindAddress)
+      setBindAddress(status.data?.bindAddress ?? interfaces.data?.[0]?.address ?? "")
   }, [bindAddress, interfaces.data, status.data?.bindAddress])
 
   useEffect(() => {
@@ -43,12 +65,12 @@ export function AgentsMobileCompanionTab() {
   }, [activeDevices, grantDeviceId])
 
   useEffect(() => {
-    if (!offer) {
+    if (!displayedOffer) {
       setQrDataUrl(null)
       return
     }
     let live = true
-    void QRCode.toDataURL(pairingLaunchUrl(offer), {
+    void QRCode.toDataURL(pairingLaunchUrl(displayedOffer), {
       errorCorrectionLevel: "M",
       margin: 2,
       width: 256,
@@ -58,7 +80,7 @@ export function AgentsMobileCompanionTab() {
     return () => {
       live = false
     }
-  }, [offer])
+  }, [displayedOffer])
 
   const refresh = async () => {
     await Promise.all([
@@ -89,11 +111,32 @@ export function AgentsMobileCompanionTab() {
   }
 
   const createOffer = async () => {
+    if (!bridgeIdentity) return
+    const identity = bridgeIdentity
+    const generation = ++offerGeneration.current
+    setPairingNotice(null)
+    setOffer(null)
+    setQrDataUrl(null)
     try {
       const next = await createPairingOffer.mutateAsync()
+      if (generation !== offerGeneration.current) return
+      const endpoint = new URL(next.endpoint)
+      const expected = JSON.parse(identity) as [string, number, string]
+      if (
+        endpoint.hostname.replace(/^\[|\]$/g, "") !== expected[0] ||
+        Number(endpoint.port || 443) !== expected[1] ||
+        next.certificateFingerprint !== expected[2]
+      ) {
+        setPairingNotice("The bridge changed. Refresh its status and create a fresh pairing QR.")
+        return
+      }
+      setOfferIdentity(identity)
       setOffer(next)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Pairing offer could not be created.")
+      if (generation === offerGeneration.current)
+        setPairingNotice(
+          error instanceof Error ? error.message : "Pairing offer could not be created.",
+        )
     }
   }
 
@@ -203,15 +246,38 @@ export function AgentsMobileCompanionTab() {
               Disable bridge
             </Button>
           ) : (
-            <Button disabled={!bindAddress} onClick={() => void setEnabled(true)}>
+            <Button
+              disabled={!bindAddress || Boolean(status.error) || !status.data}
+              onClick={() => void setEnabled(true)}
+            >
               Enable bridge
             </Button>
           )}
           <span className="text-xs text-muted-foreground">
-            {status.data?.state ?? "loading"}
+            {status.error ? "Health unknown" : (status.data?.state ?? "Loading bridge health...")}
             {status.data?.bindAddress ? ` · ${status.data.bindAddress}:${status.data.port}` : ""}
           </span>
         </div>
+        <Button
+          variant="outline"
+          disabled={status.isFetching}
+          onClick={() =>
+            void refresh().catch(() => toast.error("Bridge health could not be refreshed."))
+          }
+        >
+          Refresh bridge health
+        </Button>
+        {status.error && (
+          <p role="alert" className="text-sm">
+            Bridge health is unknown. Refresh to check the current state.
+          </p>
+        )}
+        {!status.error && status.data?.failure && (
+          <p role="alert" className="text-sm">
+            Bridge stopped: {status.data.failure}. Check your private interface before enabling it
+            again.
+          </p>
+        )}
       </section>
 
       <section className="space-y-3" data-settings-id="mobile-companion-pairing">
@@ -222,10 +288,18 @@ export function AgentsMobileCompanionTab() {
             fingerprint on both screens.
           </p>
         </div>
-        <Button disabled={status.data?.state !== "running"} onClick={() => void createOffer()}>
+        <Button
+          disabled={!bridgeIdentity || createPairingOffer.isPending}
+          onClick={() => void createOffer()}
+        >
           Create fresh pairing QR
         </Button>
-        {offer && (
+        {pairingNotice && (
+          <p role="status" className="text-sm">
+            {pairingNotice}
+          </p>
+        )}
+        {displayedOffer && (
           <div className="grid gap-4 rounded-xl border border-border p-4 sm:grid-cols-[auto_1fr]">
             {qrDataUrl ? (
               <img
@@ -245,18 +319,18 @@ export function AgentsMobileCompanionTab() {
               <div>
                 <dt className="font-medium">Certificate fingerprint</dt>
                 <dd className="mt-1 font-mono text-muted-foreground">
-                  {offer.certificateFingerprint}
+                  {displayedOffer.certificateFingerprint}
                 </dd>
               </div>
               <div>
                 <dt className="font-medium">Expires</dt>
                 <dd className="mt-1 text-muted-foreground">
-                  {new Date(offer.expiresAt).toLocaleString()}
+                  {new Date(displayedOffer.expiresAt).toLocaleString()}
                 </dd>
               </div>
               <div>
                 <dt className="font-medium">Endpoint</dt>
-                <dd className="mt-1 font-mono text-muted-foreground">{offer.endpoint}</dd>
+                <dd className="mt-1 font-mono text-muted-foreground">{displayedOffer.endpoint}</dd>
               </div>
             </dl>
           </div>
