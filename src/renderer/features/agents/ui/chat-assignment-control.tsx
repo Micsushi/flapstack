@@ -8,7 +8,7 @@ import { CHAT_ASSIGNED_ROLES, type ChatAssignment } from "../../../../shared/cha
 
 export function ChatAssignmentControl({ subChatId }: { subChatId: string }) {
   const utils = trpc.useUtils()
-  const query = trpc.chats.getAssignment.useQuery({ subChatId }, { refetchInterval: 2_000 })
+  const query = trpc.chats.getAssignment.useQuery({ subChatId }, { refetchOnWindowFocus: true })
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<ChatAssignment | null>(null)
   const [before, setBefore] = useState<ChatAssignment | null>(null)

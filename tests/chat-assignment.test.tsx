@@ -15,6 +15,7 @@ import {
   updateChatAssignment,
 } from "../src/main/lib/chat-assignment"
 import { discussionHostId } from "../src/main/lib/discussions/service"
+import { ChatTitleEditor } from "../src/renderer/features/agents/ui/chat-title-editor"
 import { ChatAssignmentControl } from "../src/renderer/features/agents/ui/chat-assignment-control"
 import {
   clearAppActionHistory,
@@ -38,6 +39,9 @@ vi.mock("../src/renderer/lib/trpc", () => ({
   trpcClient: {
     chats: { updateAssignment: { mutate: async (input: unknown) => api.write(input) } },
   },
+}))
+vi.mock("../src/renderer/components/progressive-overflow-row", () => ({
+  ProgressiveOverflowRow: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const empty: ChatAssignment = { assignedRole: null, leadChatId: null, discussionChatId: null }
@@ -184,6 +188,42 @@ describe("owner chat assignment", () => {
     } finally {
       old.close()
     }
+  })
+
+  it("discards an open draft when switching to another equally unassigned pane", async () => {
+    const container = document.createElement("div")
+    document.body.append(container)
+    const root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <ChatTitleEditor name="Worker" chatId="worker-pane" onSave={async () => undefined} />,
+      ),
+    )
+    await act(async () => container.querySelector("button")!.click())
+    await act(async () => {
+      const select = document.querySelector("select")!
+      select.value = "worker"
+      select.dispatchEvent(new Event("change", { bubbles: true }))
+    })
+    expect(document.querySelector("select")!.value).toBe("worker")
+    // Both parent chats start unassigned, so a stale expected value would pass CAS.
+    await act(async () =>
+      root.render(
+        <ChatTitleEditor name="Foreign" chatId="foreign-pane" onSave={async () => undefined} />,
+      ),
+    )
+    expect(document.querySelector("select")).toBeNull()
+    expect(read("worker").assignment).toEqual(empty)
+    expect(read("foreign").assignment).toEqual(empty)
+    await act(async () => container.querySelector("button")!.click())
+    expect(document.querySelector("select")!.value).toBe("")
+    expect(
+      Array.from(document.querySelectorAll("button")).find(
+        (button) => button.textContent === "Save assignment",
+      )!.disabled,
+    ).toBe(true)
+    expect(getAppActionHistorySnapshot().canUndo).toBe(false)
+    await act(async () => root.unmount())
   })
 
   it("saves from the actual control and applies shared undo/redo without inferring a role", async () => {
