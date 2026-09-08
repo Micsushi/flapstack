@@ -3139,6 +3139,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         repository={repository}
         sandboxId={sandboxId}
         projectPath={projectPath}
+        skillScope={{ subChatId }}
         changedFiles={changedFiles}
         // Subpage navigation state
         showingFilesList={showingFilesList}

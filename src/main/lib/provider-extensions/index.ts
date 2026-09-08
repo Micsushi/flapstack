@@ -140,6 +140,15 @@ function roots(home: string, cwd?: string): ExtensionRoot[] {
         "skill-directories",
       ),
       root(
+        "codex",
+        "skill",
+        "project",
+        path.join(project, ".codex", "skills"),
+        "skill-directories",
+        readOnly("compatibility", "unknown"),
+        ["Compatibility path; .agents/skills is the writable native project root."],
+      ),
+      root(
         "cursor",
         "command",
         "project",

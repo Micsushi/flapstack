@@ -50,10 +50,14 @@ export const skillsProvider = createMentionProvider<SkillData>({
       return { items: [], hasMore: false, timing: 0 }
     }
 
+    if (!context.subChatId) {
+      return { items: [], hasMore: false, warning: "Select a chat to resolve available skills" }
+    }
+
     try {
-      // Use tRPC to list skills
+      // Resolve policy from the exact conversation, including when panes differ.
       const skills = await trpcClient.skills.listEnabled.query({
-        cwd: context.projectPath,
+        subChatId: context.subChatId,
       })
 
       // Map to MentionItem format

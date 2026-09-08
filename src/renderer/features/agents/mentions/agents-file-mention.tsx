@@ -106,6 +106,7 @@ interface AgentsFileMentionProps {
   sandboxId?: string
   branch?: string // For fetching files from specific branch via GitHub API
   projectPath?: string // For fetching files from local project directory (desktop)
+  skillScope?: { subChatId?: string; projectId?: string; taskId?: string; harness?: string }
   changedFiles?: ChangedFile[] // Files changed in current sub-chat (shown at top)
   // Subpage navigation state
   showingFilesList?: boolean
@@ -731,6 +732,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   sandboxId,
   branch,
   projectPath,
+  skillScope,
   changedFiles = [],
   showingFilesList = false,
   showingSkillsList = false,
@@ -747,12 +749,12 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   // Get session info (MCP servers, tools) from atom
   const sessionInfo = useAtomValue(sessionInfoAtom)
 
-  // Fetch skills from filesystem (cached for 5 minutes)
+  // Refresh the policy-aware catalog whenever the picker opens.
   const { data: skills = [], isFetching: isFetchingSkills } = trpc.skills.listEnabled.useQuery(
-    projectPath ? { cwd: projectPath } : undefined,
+    skillScope,
     {
       enabled: isOpen,
-      staleTime: 5 * 60 * 1000, // 5 minutes - skills don't change frequently
+      staleTime: 0,
     },
   )
 

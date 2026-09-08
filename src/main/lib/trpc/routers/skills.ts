@@ -9,6 +9,8 @@ import { isDirentDirectory } from "../../fs/dirent"
 import { getEnabledPlugins } from "./claude-settings"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import { resolveInsideRoot } from "../../path-safety"
+import { getDatabase } from "../../db"
+import { listNativeSkillMentions } from "../../skills/mention-catalog"
 
 export interface FileSkill {
   name: string
@@ -108,6 +110,25 @@ async function scanSkillsDirectory(
   return skills
 }
 
+async function discoverEnabledPluginSkills(): Promise<FileSkill[]> {
+  const [enabledPluginSources, installedPlugins] = await Promise.all([
+    getEnabledPlugins(),
+    discoverInstalledPlugins(),
+  ])
+  const enabledPlugins = installedPlugins.filter((p) => enabledPluginSources.includes(p.source))
+  const pluginSkillsPromises = enabledPlugins.map(async (plugin) => {
+    const paths = getPluginComponentPaths(plugin)
+    try {
+      const skills = await scanSkillsDirectory(paths.skills, "plugin")
+      return skills.map((skill) => ({ ...skill, pluginName: plugin.source }))
+    } catch {
+      return []
+    }
+  })
+
+  return (await Promise.all(pluginSkillsPromises)).flat()
+}
+
 // Shared procedure for listing skills
 const listSkillsProcedure = publicProcedure
   .input(
@@ -138,29 +159,14 @@ const listSkillsProcedure = publicProcedure
       ).then((groups) => dedupeSkills(groups.flat()))
     }
 
-    // Discover plugin skills
-    const [enabledPluginSources, installedPlugins] = await Promise.all([
-      getEnabledPlugins(),
-      discoverInstalledPlugins(),
-    ])
-    const enabledPlugins = installedPlugins.filter((p) => enabledPluginSources.includes(p.source))
-    const pluginSkillsPromises = enabledPlugins.map(async (plugin) => {
-      const paths = getPluginComponentPaths(plugin)
-      try {
-        const skills = await scanSkillsDirectory(paths.skills, "plugin")
-        return skills.map((skill) => ({ ...skill, pluginName: plugin.source }))
-      } catch {
-        return []
-      }
-    })
+    const pluginSkillsPromise = discoverEnabledPluginSkills()
 
     // Scan all directories in parallel
-    const [userSkills, projectSkills, ...pluginSkillsArrays] = await Promise.all([
+    const [userSkills, projectSkills, pluginSkills] = await Promise.all([
       userSkillsPromise,
       projectSkillsPromise,
-      ...pluginSkillsPromises,
+      pluginSkillsPromise,
     ])
-    const pluginSkills = pluginSkillsArrays.flat()
 
     return [...projectSkills, ...userSkills, ...pluginSkills]
   })
@@ -226,10 +232,18 @@ export const skillsRouter = router({
    */
   list: listSkillsProcedure,
 
-  /**
-   * Alias for list - used by @ mention
-   */
-  listEnabled: listSkillsProcedure,
+  /** Enabled composer inventory uses the same native policy resolver as runtime launch. */
+  listEnabled: publicProcedure.input(z.object({
+    cwd: z.string().optional(), // Legacy callers cannot establish scope with cwd alone.
+    subChatId: z.string().optional(),
+    projectId: z.string().optional(),
+    taskId: z.string().optional(),
+    harness: z.string().optional(),
+  }).optional()).query(async ({ input }) => {
+    const native = await listNativeSkillMentions(getDatabase(), input ?? {})
+    const pluginSkills = native.harness === "claude-code" ? await discoverEnabledPluginSkills() : []
+    return [...native.skills, ...dedupeSkills(pluginSkills)]
+  }),
 
   /**
    * Create a new skill
