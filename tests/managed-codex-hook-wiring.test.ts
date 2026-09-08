@@ -45,7 +45,7 @@ import { MainRuntimeLaunchService } from "../src/main/lib/main-run-launcher"
 it("carries lifecycle-approved hooks and extension policy through launcher-owned start/resume/fork parameters", async () => {
   const node =
     process.env.FLAPSTACK_TEST_NODE22 ||
-    (process.versions.node.startsWith("22.") && process.execPath)
+    (process.versions.node.startsWith("22.") && !process.versions.electron && process.execPath)
   if (!node) throw new Error("Set FLAPSTACK_TEST_NODE22 to an installed Node22 executable")
   const directory = mkdtempSync(join(tmpdir(), "flapstack-hook-wiring-"))
   const home = join(directory, "home"),
