@@ -129,7 +129,9 @@ other tasks or remote hosts.
 
 ## Run project context
 
-In a chat's run history, select a run and open **Project context**. The panel reads
+On desktop, open **View details**, then **Runs**. On a narrow screen, open
+**Run history** in the chat header; **Back to chat** or Escape closes it. Select
+a run and open **Project context**. The panel reads
 saved launch evidence only when opened; **Refresh project context** checks the
 last recorded database metadata again. Switching runs closes the panel.
 
