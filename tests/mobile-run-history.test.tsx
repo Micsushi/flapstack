@@ -35,6 +35,7 @@ vi.mock("../src/renderer/features/agents/ui/orchestration-review-panel", () => (
 import { clearAppActionHistory, recordAppAction } from "../src/renderer/lib/app-action-history"
 let root: Root, container: HTMLDivElement
 beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
   flags.orchestration = true
   clearAppActionHistory()
   container = document.createElement("div")
@@ -44,6 +45,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  vi.unstubAllGlobals()
 })
 async function render(chatId: string) {
   await act(async () => root.render(<MobileChatHeader historyChatId={chatId} />))
@@ -66,10 +68,12 @@ it("opens existing history for the exact chat and returns focus on Back to chat"
   )!
   await act(async () => {
     back.click()
-    await new Promise((resolve) => setTimeout(resolve, 0))
   })
   expect(document.querySelector('[role="dialog"]')).toBeNull()
-  expect(document.activeElement).toBe(trigger)
+  // Radix restores focus in its deferred unmount effect after React commits the close.
+  await act(async () => {
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger), { timeout: 1000 })
+  })
 })
 it("closes on chat switch and Escape, never carrying the old open history into the next chat", async () => {
   await render("chat-a")
