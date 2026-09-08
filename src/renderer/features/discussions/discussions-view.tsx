@@ -85,9 +85,8 @@ function DiscussionsContent({
           <h1 id="discussions-heading" className="text-xl font-semibold">
             Topics
           </h1>
-          <p className="text-xs text-muted-foreground break-all">
-            Project {scope.projectId} ·{" "}
-            {scope.chatId ? `Chat ${scope.chatId}` : "All project discussion"} · Host {scope.hostId}
+          <p className="text-xs text-muted-foreground">
+            {scope.chatId ? "Chat topics" : "Project topics"} · This device
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

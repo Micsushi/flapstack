@@ -14,6 +14,7 @@ export const discussionListSchema = z
     scope: discussionScopeSchema,
     limit: z.number().int().min(1).max(20).default(20),
     cursor: z.object({ updatedAt: z.number().int().nonnegative(), id }).strict().optional(),
+    direction: z.literal("forward").optional(),
   })
   .strict()
 export const discussionSourceSchema = z

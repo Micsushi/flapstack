@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
   read: vi.fn(),
+  list: vi.fn(),
   restoreMixed: vi.fn(),
   captureMixed: vi.fn(),
   refresh: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("../src/main/lib/discussions/service", () => ({
     create = mocks.create
     update = mocks.update
     read = mocks.read
+    list = mocks.list
     restoreMixed = mocks.restoreMixed
   },
 }))
@@ -57,11 +59,20 @@ beforeEach(() => {
   mocks.create.mockReturnValue(topic)
   mocks.update.mockReturnValue(topic)
   mocks.read.mockReturnValue(topic)
+  mocks.list.mockReturnValue({ topics: [topic], nextCursor: null })
   mocks.refresh.mockResolvedValue({
     topic: { ...topic, revision: 5 },
     model: "local",
     warning: null,
   })
+})
+
+it("accepts the forward direction added by the infinite query transport", async () => {
+  await expect(caller.list({ scope, direction: "forward" })).resolves.toEqual({
+    topics: [topic],
+    nextCursor: null,
+  })
+  expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ direction: "forward" }))
 })
 
 it("refreshes captures and committed answers from saved snapshots, excluding drafts and other edits", async () => {

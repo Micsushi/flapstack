@@ -234,7 +234,7 @@ function AnnotationEditor({
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        Local to this discussion · {request.role} source · Host {scope.hostId}
+        {request.role === "user" ? "User message" : "Assistant message"} · Local to this chat
       </p>
       {store.error && (
         <p role="alert" className="text-sm text-destructive">
