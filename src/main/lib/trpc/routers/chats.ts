@@ -469,6 +469,10 @@ export const chatsRouter = router({
     return {
       labels: listAgentChatLabels(database),
       waits: listAgentChatWaits(database),
+      runStatuses: getDatabase()
+        .select({ id: subChats.id, chatId: subChats.chatId, runStatus: subChats.runStatus })
+        .from(subChats)
+        .all(),
     }
   }),
 

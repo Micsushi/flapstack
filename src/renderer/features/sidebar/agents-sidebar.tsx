@@ -1,5 +1,6 @@
 "use client"
 
+import { ChatStatusIndicators, ChatStatusProvider } from "../agents/ui/chat-status-indicators"
 import React from "react"
 import { useState, useRef, useMemo, useEffect, useCallback, memo } from "react"
 import { createPortal, flushSync } from "react-dom"
@@ -116,13 +117,11 @@ import {
   PublisherStudioIcon,
   SearchIcon,
   GitHubLogo,
-  LoadingDot,
   ArchiveIcon,
   UnarchiveIcon,
   TrashIcon,
   DiffIcon,
   QuestionCircleIcon,
-  QuestionIcon,
   KeyboardIcon,
   CloudIcon,
 } from "../../components/ui/icons"
@@ -693,23 +692,15 @@ function SidebarCollapsibleContent({
   )
 }
 
-// Component to render chat icon with loading status
+// Chat icon and multi-select checkbox
 const ChatIcon = React.memo(function ChatIcon({
   isSelected,
-  isLoading,
-  hasUnseenChanges = false,
-  hasPendingPlan = false,
-  hasPendingQuestion = false,
   isMultiSelectMode = false,
   isChecked = false,
   onCheckboxClick,
   showIcon = true,
 }: {
   isSelected: boolean
-  isLoading: boolean
-  hasUnseenChanges?: boolean
-  hasPendingPlan?: boolean
-  hasPendingQuestion?: boolean
   isMultiSelectMode?: boolean
   isChecked?: boolean
   onCheckboxClick?: (e: React.MouseEvent) => void
@@ -759,69 +750,6 @@ const ChatIcon = React.memo(function ChatIcon({
       >
         {renderMainIcon()}
       </div>
-      {/* Badge in bottom-right corner: question > loader > amber dot > blue dot - hidden during multi-select or when icon is hidden */}
-      <AnimatePresence mode="wait">
-        {(hasPendingQuestion || isLoading || hasUnseenChanges || hasPendingPlan) &&
-          !isMultiSelectMode &&
-          showIcon && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.5 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.5 }}
-              transition={{ duration: 0.15 }}
-              className={cn(
-                "absolute -bottom-1 -right-1 w-3 h-3 rounded-full flex items-center justify-center",
-                isSelected
-                  ? "bg-[#E8E8E8] dark:bg-[#1B1B1B]"
-                  : "bg-[#F4F4F4] group-hover:bg-[#E8E8E8] dark:bg-[#101010] dark:group-hover:bg-[#1B1B1B]",
-              )}
-            >
-              {/* Priority: question > loader > amber dot (pending plan) > blue dot (unseen) */}
-              <AnimatePresence mode="wait">
-                {hasPendingQuestion ? (
-                  <motion.div
-                    key="question"
-                    initial={{ opacity: 0, scale: 0.5 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.5 }}
-                    transition={{ duration: 0.15 }}
-                  >
-                    <QuestionIcon className="w-2.5 h-2.5 text-blue-500" />
-                  </motion.div>
-                ) : isLoading ? (
-                  <motion.div
-                    key="loading"
-                    initial={{ opacity: 0, scale: 0.5 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.5 }}
-                    transition={{ duration: 0.15 }}
-                  >
-                    <LoadingDot isLoading={true} className="w-2.5 h-2.5 text-muted-foreground" />
-                  </motion.div>
-                ) : hasPendingPlan ? (
-                  <motion.div
-                    key="plan"
-                    initial={{ opacity: 0, scale: 0.5 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.5 }}
-                    transition={{ duration: 0.15 }}
-                    className="w-1.5 h-1.5 rounded-full bg-amber-500"
-                  />
-                ) : (
-                  <motion.div
-                    key="unseen"
-                    initial={{ opacity: 0, scale: 0.5 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.5 }}
-                    transition={{ duration: 0.15 }}
-                  >
-                    <LoadingDot isLoading={false} className="w-2.5 h-2.5 text-muted-foreground" />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
-          )}
-      </AnimatePresence>
     </div>
   )
 })
@@ -1101,7 +1029,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
   const harnessChip = getModelChipMeta(modelLabel, harness)
   const identityChipLabel = harness ? harnessChip.name : null
   const hasProviderIcon = hasProviderChipIcon(harness)
-  const hasInlineStatus = hasPendingQuestion || isLoading || hasUnseenChanges || hasPendingPlan
   const effectiveDragItemId = dragItemId ?? chatId
   const suppressClickRef = useRef(false)
   const handlePointerDragStart = useSidebarPointerDragSource({
@@ -1283,10 +1210,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
               <div className="pt-[2px]">
                 <ChatIcon
                   isSelected={isSelected}
-                  isLoading={isLoading}
-                  hasUnseenChanges={hasUnseenChanges}
-                  hasPendingPlan={hasPendingPlan}
-                  hasPendingQuestion={hasPendingQuestion}
                   isMultiSelectMode={isMultiSelectMode}
                   isChecked={isChecked}
                   onCheckboxClick={(e) => onCheckboxClick(e, chatId)}
@@ -1333,69 +1256,15 @@ const AgentChatItem = React.memo(function AgentChatItem({
                     showPlaceholder={true}
                   />
                 </span>
-                {/* Hover actions or inline loader/status when icon is hidden */}
+                {!isMultiSelectMode && <ChatStatusIndicators chatIds={[chatId]} />}
+                {/* Hover actions */}
                 {!isMultiSelectMode && !isMobileFullscreen && (
                   <div
                     className={cn(
                       "relative flex h-5 flex-shrink-0 items-center justify-end overflow-hidden group-hover:w-[4.25rem] focus-within:w-[4.25rem]",
-                      hasInlineStatus ? "w-5" : "w-0",
+                      "w-0",
                     )}
                   >
-                    {/* Inline loader/status when icon is hidden - always visible, hides on hover */}
-                    {!showIcon &&
-                      (hasPendingQuestion || isLoading || hasUnseenChanges || hasPendingPlan) && (
-                        <div className="absolute right-0 top-0 bottom-0 w-5 flex items-center justify-center transition-opacity duration-150 group-hover:opacity-0">
-                          <AnimatePresence mode="wait">
-                            {hasPendingQuestion ? (
-                              <motion.div
-                                key="question"
-                                initial={{ opacity: 0, scale: 0.5 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.5 }}
-                                transition={{ duration: 0.15 }}
-                              >
-                                <QuestionIcon className="w-2.5 h-2.5 text-blue-500" />
-                                <span className="sr-only">Input required</span>
-                              </motion.div>
-                            ) : isLoading ? (
-                              <motion.div
-                                key="loading"
-                                initial={{ opacity: 0, scale: 0.5 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.5 }}
-                                transition={{ duration: 0.15 }}
-                              >
-                                <LoadingDot
-                                  isLoading={true}
-                                  className="w-2.5 h-2.5 text-muted-foreground"
-                                />
-                              </motion.div>
-                            ) : hasPendingPlan ? (
-                              <motion.div
-                                key="plan"
-                                initial={{ opacity: 0, scale: 0.5 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.5 }}
-                                transition={{ duration: 0.15 }}
-                                className="w-1.5 h-1.5 rounded-full bg-amber-500"
-                              />
-                            ) : (
-                              <motion.div
-                                key="unseen"
-                                initial={{ opacity: 0, scale: 0.5 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.5 }}
-                                transition={{ duration: 0.15 }}
-                              >
-                                <LoadingDot
-                                  isLoading={false}
-                                  className="w-2.5 h-2.5 text-muted-foreground"
-                                />
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                      )}
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <button
@@ -3214,7 +3083,7 @@ const HelpSection = memo(function HelpSection({ isMobile }: HelpSectionProps) {
   )
 })
 
-export function AgentsSidebar({
+function AgentsSidebarInner({
   clerkUser = null,
   onToggleSidebar,
   isMobileFullscreen = false,
@@ -8428,4 +8297,8 @@ export function AgentsSidebar({
       )}
     </>
   )
+}
+
+export function AgentsSidebar(props: AgentsSidebarProps) {
+  return <ChatStatusProvider><AgentsSidebarInner {...props} /></ChatStatusProvider>
 }

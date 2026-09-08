@@ -1,5 +1,6 @@
 "use client"
 
+import { ChatStatusIndicators, ChatStatusProvider } from "./chat-status-indicators"
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 // import { useSearchParams, useRouter } from "next/navigation" // Desktop doesn't use next/navigation
@@ -3175,10 +3176,11 @@ function AgentsContentInner() {
                                 <button
                                   type="button"
                                   aria-current={isActive ? "page" : undefined}
-                                  className="min-w-0 flex-1 truncate text-left font-medium text-foreground"
+                                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left font-medium text-foreground"
                                   onClick={() => handleSelectWorkbenchGroup(group.id)}
                                 >
-                                  {group.name}
+                                  <span className="min-w-0 flex-1 truncate">{group.name}</span>
+                                  <ChatStatusIndicators chatIds={collectChatGroups(group.layout.root).flatMap((pane) => pane.chatIds)} />
                                 </button>
                                 <button
                                   type="button"
@@ -3423,10 +3425,11 @@ function AgentsContentInner() {
                             >
                               <button
                                 type="button"
-                                className="min-w-0 flex-1 truncate text-left"
+                                className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                                 onClick={() => handleSelectMainChatTab(chat.id)}
                               >
-                                {chat.name || "New Chat"}
+                                <span className="min-w-0 flex-1 truncate">{chat.name || "New Chat"}</span>
+                                <ChatStatusIndicators chatIds={[chat.id]} />
                                 {hasUnseenChanges && (
                                   <span className="sr-only">, new response</span>
                                 )}
@@ -3916,17 +3919,19 @@ function AgentsContentInner() {
 
 export function AgentsContent() {
   return (
-    <DictationSessionProvider>
-      <AgentInputPoller />
-      <Suspense
-        fallback={
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Loading…
-          </div>
-        }
-      >
-        <AgentsContentInner />
-      </Suspense>
-    </DictationSessionProvider>
+    <ChatStatusProvider>
+      <DictationSessionProvider>
+        <AgentInputPoller />
+        <Suspense
+          fallback={
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              Loading…
+            </div>
+          }
+        >
+          <AgentsContentInner />
+        </Suspense>
+      </DictationSessionProvider>
+    </ChatStatusProvider>
   )
 }
