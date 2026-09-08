@@ -27,6 +27,12 @@ import {
 } from "../../db"
 import { applyAutomaticChatTags, CHAT_TAG_COLORS, CHAT_TAG_ICONS } from "../../chat-tags"
 import { applyAutomaticAgentChatLabels, listAgentChatLabels } from "../../chat-agent-labels"
+import {
+  getChatAssignment,
+  updateChatAssignment,
+  assertChatAssignmentProjectMove,
+} from "../../chat-assignment"
+import { updateChatAssignmentSchema } from "../../../../shared/chat-assignment"
 import { dismissFailedChatWait, listAgentChatWaits } from "../../chat-waits"
 import { restoreCheckpoint } from "../../checkpoints"
 import { withSubChatRewindGuard } from "../../sub-chat-rewind-guard"
@@ -463,6 +469,14 @@ export const chatsRouter = router({
       .orderBy(chatTags.normalizedName, chatTags.id)
       .all()
   }),
+
+  getAssignment: publicProcedure
+    .input(z.object({ subChatId: z.string().min(1).max(200) }).strict())
+    .query(({ input }) => getChatAssignment(getSqliteDatabase(), input.subChatId)),
+
+  updateAssignment: publicProcedure
+    .input(updateChatAssignmentSchema)
+    .mutation(({ input }) => updateChatAssignment(getSqliteDatabase(), input)),
 
   listAgentMetadata: publicProcedure.query(() => {
     const database = getSqliteDatabase()
@@ -1225,6 +1239,7 @@ export const chatsRouter = router({
       )
 
       if (input.scope === "global") {
+        assertChatAssignmentProjectMove(getSqliteDatabase(), chat.id, null)
         return db
           .update(chats)
           .set({
@@ -1248,6 +1263,7 @@ export const chatsRouter = router({
         if (!input.projectId) throw new Error("Project move requires projectId")
         const project = db.select().from(projects).where(eq(projects.id, input.projectId)).get()
         if (!project) throw new Error("Project not found")
+        assertChatAssignmentProjectMove(getSqliteDatabase(), chat.id, project.id)
 
         return db
           .update(chats)
@@ -1270,6 +1286,7 @@ export const chatsRouter = router({
       if (!task) throw new Error("Task not found")
       const project = db.select().from(projects).where(eq(projects.id, task.projectId)).get()
       if (!project) throw new Error("Project not found")
+      assertChatAssignmentProjectMove(getSqliteDatabase(), chat.id, project.id)
 
       return db
         .update(chats)

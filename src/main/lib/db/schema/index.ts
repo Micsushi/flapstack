@@ -1,5 +1,6 @@
 import {
   check,
+  type AnySQLiteColumn,
   index,
   sqliteTable,
   text,
@@ -1513,6 +1514,14 @@ export const chats = sqliteTable(
     harness: text("harness"),
     model: text("model"),
     runtimePreference: text("runtime_preference"),
+    // Owner assignments are independent of automatic labels and runtime lineage.
+    assignedRole: text("assigned_role", { enum: ["discussion", "lead", "worker"] }),
+    leadChatId: text("lead_chat_id").references((): AnySQLiteColumn => chats.id, {
+      onDelete: "set null",
+    }),
+    discussionChatId: text("discussion_chat_id").references((): AnySQLiteColumn => chats.id, {
+      onDelete: "set null",
+    }),
     // Cross-harness spawning keeps enough durable lineage to reject loops and
     // explain where a thread came from without depending on a live process.
     parentChatId: text("parent_chat_id"),

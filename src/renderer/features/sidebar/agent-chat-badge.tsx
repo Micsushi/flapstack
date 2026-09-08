@@ -50,7 +50,7 @@ export function AgentChatLabelBadge({
 }) {
   const definition = LABELS[label.key]
   const Icon = definition.icon
-  const title = `Agent role · ${definition.label}`
+  const title = `Inferred agent role · ${definition.label}`
   return (
     <span
       title={title}

@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
 } from "react"
+import { ChatAssignmentControl } from "./chat-assignment-control"
 import { cn } from "../../../lib/utils"
 import { Folder, GitBranch } from "lucide-react"
 import { ProviderChipIcon } from "../components/provider-chip-icon"
@@ -96,6 +97,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   name,
   placeholder = "New Chat",
   onSave,
+  chatId,
   isMobile = false,
   disabled = false,
   hasMessages = false,
@@ -226,6 +228,9 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   const hasHeaderTags = Boolean(projectLabel) || auxiliaryTagCount > 0
   const headerActionItems = flattenOverflowChildren(headerActions)
   const headerControlItems = [
+    chatId
+      ? { key: "assignment", node: <ChatAssignmentControl key={chatId} subChatId={chatId} /> }
+      : null,
     localFolderPath
       ? {
           key: "open-in",
