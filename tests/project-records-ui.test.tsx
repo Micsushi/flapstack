@@ -24,6 +24,8 @@ const fixture = vi.hoisted(() => {
           choices: ["Alpha", "Beta"],
           draft: "",
           answer: "",
+          answerSource: "",
+          recommendation: "",
         },
       ],
     },
@@ -90,6 +92,7 @@ it("keeps a newer owner draft when an earlier answer finishes saving", async () 
   await act(async () => finish({ conflict: false, snapshot: fixture.snapshot }))
   expect(fixture.mutate.mock.calls[0][0].changes).toEqual({
     answer: "Alpha",
+    answerSource: "owner",
     draft: "Alpha",
     state: "answered",
   })
@@ -98,4 +101,38 @@ it("keeps a newer owner draft when an earlier answer finishes saving", async () 
   await act(async () => root.unmount())
   container.remove()
   window.localStorage.clear()
+})
+
+it("keeps AI recommendations and resolutions out of the owner's answer draft", async () => {
+  const record = fixture.snapshot.document.records[0]!
+  const original = { ...record }
+  Object.assign(record, {
+    state: "resolved_independently",
+    answer: "AI chose Alpha",
+    answerSource: "ai",
+    recommendation: "Alpha is the recommended default",
+  })
+  const container = document.createElement("div")
+  const root = createRoot(container)
+  const render = () =>
+    act(async () =>
+      root.render(
+        <Provider>
+          <ProjectRecordsView />
+        </Provider>,
+      ),
+    )
+  try {
+    await render()
+    expect(container.querySelector("textarea")!.value).toBe("")
+    expect(container.textContent).toContain("AI resolution: AI chose Alpha")
+    expect(container.textContent).not.toContain("Saved owner answer")
+    record.answerSource = ""
+    await render()
+    expect(container.textContent).toContain("Saved answer (source unverified)")
+    expect(container.textContent).not.toContain("Saved owner answer")
+  } finally {
+    await act(async () => root.unmount())
+    Object.assign(record, original)
+  }
 })

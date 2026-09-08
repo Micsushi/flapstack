@@ -25,9 +25,9 @@ const stateLabel: Record<string, string> = {
   more_work: "More work",
   done: "Done",
   superseded: "Superseded",
-  open: "Open",
-  answered: "Answered",
-  resolved_independently: "Resolved",
+  open: "Waiting for your answer",
+  answered: "Answer recorded",
+  resolved_independently: "AI resolved",
 }
 
 export function ProjectRecordsView() {
@@ -183,7 +183,10 @@ export function ProjectRecordsView() {
                       <div className="min-w-0 flex-1">
                         <h3 className="break-words text-sm font-medium">{record.title}</h3>
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                          {record.id} · {stateLabel[record.state] ?? record.state}
+                          {record.id} ·{" "}
+                          {record.state === "answered" && record.answerSource === "owner"
+                            ? "Owner answered"
+                            : (stateLabel[record.state] ?? record.state)}
                         </p>
                       </div>
                       {record.kind !== "question" && (
@@ -287,7 +290,7 @@ function QuestionAnswer({
   const saveDraft = async (submit: boolean) => {
     const success = await save(
       record,
-      submit ? { answer: draft, draft, state: "answered" } : { draft },
+      submit ? { answer: draft, answerSource: "owner", draft, state: "answered" } : { draft },
     )
     if (success)
       setDrafts((current) => {
@@ -298,10 +301,11 @@ function QuestionAnswer({
       })
   }
   return (
-    <div className="mt-3 max-w-prose space-y-2">
-      {text(record.recommendation) && (
-        <p className="text-sm text-muted-foreground">Suggested: {text(record.recommendation)}</p>
-      )}
+    <div className="mt-3 max-w-prose space-y-3">
+      <p className="text-sm whitespace-pre-wrap break-words">
+        <span className="font-medium">AI recommendation: </span>
+        {text(record.recommendation) || "No recommendation recorded yet."}
+      </p>
       {strings(record.choices).length > 0 && (
         <div
           className="flex flex-wrap gap-2"
@@ -322,17 +326,27 @@ function QuestionAnswer({
       )}
       {text(record.answer) && (
         <p className="whitespace-pre-wrap break-words text-sm">
-          Current answer: {text(record.answer)}
+          <span className="font-medium">
+            {record.answerSource === "owner"
+              ? "Saved owner answer: "
+              : record.answerSource === "ai"
+                ? "AI resolution: "
+                : "Saved answer (source unverified): "}
+          </span>
+          {text(record.answer)}
         </p>
       )}
-      <textarea
-        aria-label={`Answer to ${record.title}`}
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        maxLength={16_384}
-        rows={3}
-        className="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm"
-      />
+      <label className="block space-y-1 text-sm">
+        <span className="font-medium">Your answer</span>
+        <textarea
+          aria-label={`Answer to ${record.title}`}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          maxLength={16_384}
+          rows={3}
+          className="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm"
+        />
+      </label>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" disabled={busy || !draft.trim()} onClick={() => void saveDraft(true)}>
           Submit answer

@@ -67,6 +67,9 @@ The writer and Flapstack must use the same token. Credentials stay in the app
 backend. No Markdown parser or second records database lives in the renderer.
 
 Select a document, search its grouped records, and expand evidence or history.
+Questions distinguish AI recommendations and resolutions from saved owner
+answers. Recommendations never fill your answer automatically. Older answers
+without recorded authorship remain labelled as unverified.
 **Save draft** and **Submit answer** use revision checks. A conflict keeps the
 pending draft and shows the current canonical record for review. **Owner accepted**
 records T3 acceptance only; it does not merge code, publish or deploy.
