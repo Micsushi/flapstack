@@ -7,7 +7,12 @@ import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import { trpc, trpcClient } from "../../lib/trpc"
 import { retainRecordAction } from "./record-action"
-import { projectRecordGroups, type ProjectRecordEntry } from "./project-record-projection"
+import {
+  projectBlockerEntries,
+  projectRecordGroups,
+  type ProjectRecordEntry,
+} from "./project-record-projection"
+import { BlockerDetails } from "./blocker-details"
 
 // Pending text is a recovery draft, never a replacement for the canonical answer.
 const pendingDraftsAtom = atomWithStorage<Record<string, string>>("records:pending-drafts", {})
@@ -29,13 +34,20 @@ const stateLabel: Record<string, string> = {
   open: "Waiting for your answer",
   answered: "Answer recorded",
   resolved_independently: "AI resolved",
+  resolved: "Resolved with evidence",
 }
-const viewLabels = { question: "Questions", outcome: "Completed", feature: "Checklist" } as const
+const viewLabels = {
+  question: "Questions",
+  blocker: "Blockers",
+  outcome: "Completed",
+  feature: "Checklist",
+} as const
 
 export function ProjectRecordsView() {
   const utils = trpc.useUtils()
   const index = trpc.projectRecords.list.useQuery(undefined, {
     refetchOnWindowFocus: true,
+    refetchInterval: 15_000,
     retry: false,
   })
   const [chosenProject, setChosenProject] = useState("")
@@ -43,7 +55,10 @@ export function ProjectRecordsView() {
   const [query, setQuery] = useState("")
   const documents = trpc.useQueries((t) =>
     (index.data?.documents ?? []).map((document) =>
-      t.projectRecords.read({ path: document.path }, { retry: false, refetchOnWindowFocus: true }),
+      t.projectRecords.read(
+        { path: document.path },
+        { retry: false, refetchOnWindowFocus: true, refetchInterval: 15_000 },
+      ),
     ),
   )
   const snapshots = documents.flatMap((document) =>
@@ -65,22 +80,52 @@ export function ProjectRecordsView() {
       key: string
       label: string
       waiting: boolean
+      blocker?: boolean
       entries: ProjectRecordEntry[]
     }[] = []
     for (const project of visibleProjects) {
+      const matches = (record: ProjectRecord) =>
+        JSON.stringify([
+          record.id,
+          record.title,
+          record.description,
+          record.context,
+          record.cause,
+          record.missingPrerequisite,
+          record.ownerAction,
+          record.affectedWork,
+          record.resolutionSteps,
+          project.name,
+        ])
+          .toLocaleLowerCase()
+          .includes(query.toLocaleLowerCase())
+      if (selectedView === "question" || selectedView === "blocker") {
+        const blockers = projectBlockerEntries(project.entries).filter(({ record }) =>
+          matches(record),
+        )
+        for (const active of [true, false]) {
+          if (!active && selectedView === "question") continue
+          const items = blockers.filter(({ record }) => (record.state === "blocked") === active)
+          if (items.length)
+            result.push({
+              key: `${project.id}:blockers:${active}`,
+              label: `${project.name}: ${active ? "Blockers" : "Resolved and superseded blockers"}`,
+              waiting: active,
+              blocker: true,
+              entries: items,
+            })
+        }
+      }
       const entries = project.entries.filter(({ record }) => {
         const inView =
           selectedView === "question"
             ? record.kind === "question"
             : selectedView === "outcome"
               ? record.kind === "outcome" && record.state === "done"
-              : record.kind === "feature" || (record.kind === "outcome" && record.state !== "done")
-        return (
-          inView &&
-          `${record.id} ${record.title} ${text(record.description)} ${text(record.context)} ${project.name}`
-            .toLocaleLowerCase()
-            .includes(query.toLocaleLowerCase())
-        )
+              : selectedView === "feature" &&
+                (record.kind === "feature" ||
+                  (record.kind === "outcome" && record.state !== "done"))
+        return inView && matches(record)
       })
       if (selectedView === "question") {
         for (const waiting of [true, false]) {
@@ -118,9 +163,20 @@ export function ProjectRecordsView() {
         }
       }
     }
-    // Keep every waiting question above recorded answers, including across projects.
-    return result.sort((a, b) => Number(b.waiting) - Number(a.waiting))
+    // Active blockers remain visible even when there are no unanswered questions.
+    return result.sort(
+      (a, b) =>
+        Number(b.blocker ?? false) - Number(a.blocker ?? false) ||
+        Number(b.waiting) - Number(a.waiting),
+    )
   }, [visibleProjects, selectedView, query])
+  const blockerCount = new Set(
+    visibleProjects.flatMap((project) =>
+      projectBlockerEntries(project.entries)
+        .filter(({ record }) => record.state === "blocked")
+        .map(({ record, snapshot }) => `${snapshot.path}:${record.id}`),
+    ),
+  ).size
   const save = async (
     { record, snapshot: current }: ProjectRecordEntry,
     changes: Record<string, unknown>,
@@ -209,8 +265,8 @@ export function ProjectRecordsView() {
         </div>
         {selectedView === "question" && (
           <p className="text-sm text-muted-foreground">
-            {selectedProject ? selectedProject.name : "All projects"}: questions waiting for your
-            answer appear first.
+            {selectedProject ? selectedProject.name : "All projects"}: blockers and questions are
+            kept separately. Only the affected work waits.
           </p>
         )}
         {projects.length > 0 && (
@@ -227,6 +283,14 @@ export function ProjectRecordsView() {
                 }}
               >
                 {viewLabels[view]}
+                {view === "blocker" && (
+                  <span
+                    className="ml-1 tabular-nums"
+                    aria-label={`${blockerCount} active blockers`}
+                  >
+                    {blockerCount}
+                  </span>
+                )}
               </Button>
             ))}
           </nav>
@@ -250,10 +314,12 @@ export function ProjectRecordsView() {
           <p className="text-sm text-muted-foreground">
             {query
               ? "No matching records."
-              : `No ${viewLabels[selectedView].toLowerCase()} records ${selectedProject ? "for this project" : "across projects"} yet.`}
+              : selectedView === "question"
+                ? "No questions or active blockers recorded. Unfinished work remains in Checklist."
+                : `No ${viewLabels[selectedView].toLowerCase()} records ${selectedProject ? "for this project" : "across projects"} yet.`}
           </p>
         ) : (
-          groups.map(({ key, label, entries: items }) => (
+          groups.map(({ key, label, blocker, entries: items }) => (
             <section key={key} className="mb-6" aria-label={label}>
               <h2 className="mb-2 text-sm font-semibold">{label}</h2>
               <ul className="divide-y border-y">
@@ -282,7 +348,7 @@ export function ProjectRecordsView() {
                               : (stateLabel[record.state] ?? record.state)}
                           </p>
                         </div>
-                        {record.kind !== "question" && (
+                        {record.kind !== "question" && record.kind !== "blocker" && !blocker && (
                           <label className="flex items-center gap-2 text-xs">
                             <input
                               type="checkbox"
@@ -308,7 +374,17 @@ export function ProjectRecordsView() {
                           {text(record.description || record.context)}
                         </p>
                       )}
-                      {record.kind === "question" ? (
+                      {blocker ? (
+                        <BlockerDetails
+                          record={record}
+                          openQuestion={(id) => {
+                            setChosenView("question")
+                            setChosenProject("")
+                            setQuery(id)
+                            setError(null)
+                          }}
+                        />
+                      ) : record.kind === "question" ? (
                         <QuestionAnswer
                           record={record}
                           path={snapshot.path}

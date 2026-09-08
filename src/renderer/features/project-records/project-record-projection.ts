@@ -3,6 +3,20 @@ import type { ProjectRecord, ProjectRecordSnapshot } from "../../../shared/proje
 export type ProjectRecordEntry = { record: ProjectRecord; snapshot: ProjectRecordSnapshot }
 export type RecordProject = { id: string; name: string; entries: ProjectRecordEntry[] }
 
+export function projectBlockerEntries(entries: ProjectRecordEntry[]): ProjectRecordEntry[] {
+  const covered = new Set(
+    entries.flatMap(({ record }) =>
+      record.kind === "blocker" && record.state === "blocked" && Array.isArray(record.affectedWork)
+        ? record.affectedWork.filter((id): id is string => typeof id === "string")
+        : [],
+    ),
+  )
+  return entries.filter(
+    ({ record }) =>
+      record.kind === "blocker" || (record.state === "blocked" && !covered.has(record.id)),
+  )
+}
+
 export function projectRecordGroups(snapshots: ProjectRecordSnapshot[]): RecordProject[] {
   const groups = new Map<string, RecordProject>()
   for (const snapshot of snapshots) {

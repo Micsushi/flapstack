@@ -6,6 +6,31 @@ import { expect, it, vi } from "vitest"
 import type { ProjectRecordSnapshot } from "../src/shared/project-records"
 import { ProjectRecordsView } from "../src/renderer/features/project-records/project-records-view"
 
+const blocker = {
+  id: "B1",
+  kind: "blocker" as const,
+  title: "Synthetic provider sign-in",
+  state: "blocked",
+  history: [],
+  category: "credentials",
+  affectedWork: ["F1"],
+  cause: "The isolated session is signed out.",
+  missingPrerequisite: "A test session signed in by the owner.",
+  whyAgentCannotResolve: "Only the account holder can complete sign-in.",
+  resolutionSteps: ["Prepare an isolated login.", "Complete the login in your browser."],
+  attemptedResolutions: ["Checked the isolated login status."],
+  evidence: ["Login status returned signed out."],
+  independentWork: ["Test synthetic tool execution."],
+  ownerAction: "Complete the isolated login.",
+  resolutionVerification: ["Run a harmless marker and verify its hook receipt."],
+  sourceLinks: ["Synthetic login receipt"],
+  questionIds: ["Q1"],
+  projects: [
+    { id: "shared-work", name: "Shared work" },
+    { id: "second", name: "Second project" },
+  ],
+}
+
 const fixture = vi.hoisted(() => {
   const path = "lanes/flapstack/questions.md"
   const snapshot = {
@@ -64,6 +89,148 @@ vi.mock("../src/renderer/features/project-records/record-action", () => ({
   retainRecordAction: vi.fn(),
 }))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+it("shows blockers beside questions, preserves drafts, and separates history and unfinished work", async () => {
+  const original = fixture.extra
+  fixture.extra = [
+    {
+      ...fixture.snapshot,
+      path: "lanes/vault/questions.md",
+      document: {
+        schemaVersion: 1,
+        title: "Shared records",
+        records: [
+          blocker,
+          {
+            ...blocker,
+            id: "B2",
+            title: "Resolved environment",
+            state: "resolved",
+            resolutionEvidence: ["Fresh start passed."],
+          },
+          {
+            ...blocker,
+            id: "B3",
+            title: "Waiting for an external repair",
+            ownerAction: null,
+            category: "external_dependency",
+          },
+          {
+            id: "F1",
+            kind: "feature",
+            title: "Covered blocked feature",
+            state: "blocked",
+            history: [],
+          },
+          {
+            id: "F2",
+            kind: "feature",
+            title: "Deferred monitoring",
+            state: "planned",
+            history: [],
+          },
+          {
+            id: "F3",
+            kind: "outcome",
+            title: "Screenshot evidence gap",
+            state: "more_work",
+            history: [],
+          },
+        ],
+      },
+    },
+  ]
+  const container = document.createElement("div")
+  const root = createRoot(container)
+  const click = (label: string) =>
+    act(async () => {
+      Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent?.startsWith(label))!
+        .click()
+    })
+  try {
+    await act(async () =>
+      root.render(
+        <Provider>
+          <ProjectRecordsView />
+        </Provider>,
+      ),
+    )
+    expect(container.textContent).toContain("Shared work: Blockers")
+    expect(container.textContent).toContain("Destination")
+    expect(container.textContent).toContain("Steps to resolve")
+    expect(container.textContent).toContain("Only the account holder can complete sign-in.")
+    expect(container.textContent).toContain("No owner-specific action is currently established.")
+    expect(container.textContent).not.toContain("Resolved environment")
+    expect(container.textContent).not.toContain("Deferred monitoring")
+    expect(container.textContent).not.toContain("Screenshot evidence gap")
+    expect(container.textContent).not.toContain("Covered blocked feature")
+    expect(container.querySelector('[aria-label="2 active blockers"]')).not.toBeNull()
+    expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
+    await click("Beta")
+    await click("Blockers")
+    expect(container.querySelector("textarea")).toBeNull()
+    expect(container.textContent).toContain("Resolved environment")
+    expect(container.textContent).toContain("Fresh start passed.")
+    await click("Open Q1")
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Beta")
+    expect(container.textContent).not.toContain("Synthetic provider sign-in")
+    // Refreshes update blocker data without creating an owner answer or clearing the draft.
+    fixture.extra[0]!.document.records[0] = { ...blocker, cause: "Updated canonical cause" }
+    await act(async () =>
+      root.render(
+        <Provider>
+          <ProjectRecordsView />
+        </Provider>,
+      ),
+    )
+    await click("Questions")
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Beta")
+  } finally {
+    await act(async () => root.unmount())
+    fixture.extra = original
+    window.localStorage.clear()
+  }
+})
+
+it("keeps legacy blocked work visible without inventing a human prerequisite", async () => {
+  fixture.extra = [
+    {
+      ...fixture.snapshot,
+      path: "projects/flapstack/features.md",
+      document: {
+        schemaVersion: 1,
+        title: "Features",
+        records: [
+          {
+            id: "LEGACY",
+            kind: "feature",
+            title: "Missing blocker details",
+            state: "blocked",
+            history: [],
+          },
+        ],
+      },
+    },
+  ]
+  const container = document.createElement("div")
+  const root = createRoot(container)
+  try {
+    await act(async () =>
+      root.render(
+        <Provider>
+          <ProjectRecordsView />
+        </Provider>,
+      ),
+    )
+    expect(container.textContent).toContain("Missing blocker details")
+    expect(container.textContent).toContain("Human help has not been established as necessary.")
+    expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
+  } finally {
+    await act(async () => root.unmount())
+    fixture.extra = []
+  }
+})
 
 it("keeps a newer owner draft when an earlier answer finishes saving", async () => {
   let finish!: (value: unknown) => void
