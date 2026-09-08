@@ -42,6 +42,99 @@ function save(value: unknown) {
     typeof value === "string" ? value : JSON.stringify(value),
   )
 }
+function indexedGraphFixture() {
+  save({
+    ...manifest(),
+    schemaVersion: 2,
+    graphContext: {
+      schemaVersion: 1,
+      status: "included",
+      projectId: "p",
+      generationId: "launch-generation",
+      selectedNodeIds: ["node"],
+      expansion: { depth: 0, direction: "outgoing", maxNodes: 1 },
+      budget,
+      entries: [
+        {
+          nodeId: "node",
+          stableId: "node",
+          title: "Note",
+          sourcePath: "notes/note.md",
+          contentHash: hash,
+          originalBytes: 10,
+          includedBytes: 10,
+          estimatedTokens: 3,
+          truncated: false,
+          reason: "selected",
+          depth: 0,
+        },
+      ],
+      traversedEdges: [],
+      omissions: [],
+    },
+  })
+  db.prepare(
+    "INSERT INTO project_vault_graph_generations(id,project_id,state,source_fingerprint,note_count,edge_count,created_at,committed_at) VALUES('current','p','committed',?,1,0,1700000000,1700000001)",
+  ).run(hash)
+  db.exec(
+    "INSERT INTO project_vault_graph_state(project_id,current_generation_id,updated_at) VALUES('p','current',1700000001)",
+  )
+  db.prepare(
+    "INSERT INTO project_vault_graph_nodes(generation_id,node_id,project_id,stable_id,relative_path,normalized_path,title,content_hash,byte_length,aliases_json,tags_json,diagnostics_json) VALUES('current','node','p','node','notes/note.md','notes/note.md','Note',?,10,'[]','[]','[]')",
+  ).run(hash)
+}
+
+it("compares exact current graph metadata across generations, using epoch seconds without mutating launch evidence", () => {
+  indexedGraphFixture()
+  const before = db.prepare("SELECT vault_context_manifest FROM agent_runs WHERE id='r'").get()
+  const current = () =>
+    getRunContextHealth(db, input).sources.find((s) => s.kind === "graph")!.current
+  expect(current()).toEqual({
+    status: "unchanged",
+    version: null,
+    contentHash: hash,
+    recordedAt: 1700000001000,
+  })
+  db.prepare("UPDATE project_vault_graph_nodes SET content_hash=?").run("b".repeat(64))
+  expect(current().status).toBe("changed")
+  db.prepare(
+    "UPDATE project_vault_graph_nodes SET content_hash=?,relative_path='notes/renamed.md'",
+  ).run(hash)
+  expect(current().status).toBe("changed")
+  db.exec("DELETE FROM project_vault_graph_nodes")
+  expect(current().status).toBe("missing")
+  expect(getRunContextHealth(db, input)).toMatchObject({
+    graphGenerationId: "launch-generation",
+    filesystemFreshness: "unverified",
+    providerReceipt: "unverified",
+  })
+  expect(db.prepare("SELECT vault_context_manifest FROM agent_runs WHERE id='r'").get()).toEqual(
+    before,
+  )
+})
+it("keeps absent, uncommitted, cross-project and invalid graph metadata unknown", () => {
+  indexedGraphFixture()
+  db.exec("INSERT INTO project_vaults(project_id,root_path) VALUES('other','/never-read-other')")
+  for (const sql of [
+    "DELETE FROM project_vault_graph_state",
+    "UPDATE project_vault_graph_generations SET state='building'",
+    "UPDATE project_vault_graph_generations SET project_id='other'",
+    "UPDATE project_vault_graph_nodes SET project_id='other'",
+    "UPDATE project_vault_graph_generations SET committed_at=-1",
+    "UPDATE project_vault_graph_generations SET committed_at=NULL",
+    "UPDATE project_vault_graph_generations SET committed_at=8640000000001",
+    "UPDATE project_vault_graph_nodes SET content_hash='invalid'",
+    "UPDATE project_vault_graph_nodes SET relative_path=char(10)||'unsafe'",
+    "UPDATE project_vault_graph_nodes SET relative_path='sk-abcdefghijklmnopqrstuvwxyz123456.md'",
+  ]) {
+    db.exec("SAVEPOINT malformed")
+    db.exec(sql)
+    expect(getRunContextHealth(db, input).sources.find((s) => s.kind === "graph")!.current).toEqual(
+      { status: "unknown", version: null, contentHash: null, recordedAt: null },
+    )
+    db.exec("ROLLBACK TO malformed; RELEASE malformed")
+  }
+})
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "flapstack-context-health-"))
   path = join(directory, "test.db")

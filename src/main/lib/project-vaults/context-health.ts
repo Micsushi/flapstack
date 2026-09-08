@@ -276,7 +276,59 @@ export function getRunContextHealth(
       current: comparison,
     }
   })
-  for (const source of parsed.graphContext?.entries ?? [])
+  const graphSources = parsed.graphContext?.entries ?? []
+  // Graph timestamps use epoch seconds, just like section metadata. Only the
+  // current committed generation is evidence; a missing index is not a missing node.
+  const generation = graphSources.length
+    ? db
+        .prepare(
+          "SELECT g.id,g.committed_at FROM project_vault_graph_state s JOIN project_vault_graph_generations g ON g.id=s.current_generation_id WHERE s.project_id=? AND g.project_id=? AND g.state='committed'",
+        )
+        .get(row.project_id, row.project_id)
+    : undefined
+  const safeGeneration = z
+    .object({ id, committed_at: z.number().int().nonnegative().max(8_640_000_000_000) })
+    .safeParse(generation)
+  const currentNodes = safeGeneration.success
+    ? (db
+        .prepare(
+          `SELECT node_id,project_id,relative_path,content_hash FROM project_vault_graph_nodes WHERE generation_id=? AND node_id IN (${graphSources.map(() => "?").join(",")})`,
+        )
+        .all(safeGeneration.data.id, ...graphSources.map((source) => source.nodeId)) as Array<{
+        node_id: string
+        project_id: string
+        relative_path: string
+        content_hash: string
+      }>)
+    : []
+  const nodesById = new Map(currentNodes.map((node) => [node.node_id, node]))
+  for (const source of graphSources) {
+    let current: RunContextHealth["sources"][number]["current"] = unknownCurrent()
+    if (safeGeneration.success) {
+      const node = nodesById.get(source.nodeId)
+      if (!node)
+        current = {
+          ...unknownCurrent(),
+          status: "missing",
+          recordedAt: safeGeneration.data.committed_at * 1000,
+        }
+      else {
+        const safe = z
+          .object({ node_id: id, project_id: id, relative_path: text(2000), content_hash: hash })
+          .safeParse(node)
+        if (safe.success && safe.data.project_id === row.project_id)
+          current = {
+            status:
+              safe.data.relative_path === source.sourcePath &&
+              safe.data.content_hash === source.contentHash
+                ? "unchanged"
+                : "changed",
+            version: null,
+            contentHash: safe.data.content_hash,
+            recordedAt: safeGeneration.data.committed_at * 1000,
+          }
+      }
+    }
     result.sources.push({
       kind: "graph",
       id: source.nodeId,
@@ -288,7 +340,8 @@ export function getRunContextHealth(
       includedBytes: source.includedBytes,
       estimatedTokens: source.estimatedTokens,
       truncated: source.truncated,
-      current: unknownCurrent(),
+      current,
     })
+  }
   return result
 }
