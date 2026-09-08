@@ -9,6 +9,7 @@ import {
   selectedProjectAtom,
   settingsMcpSidebarWidthAtom,
 } from "../../../features/agents/atoms"
+import { useIsMobile } from "../../../lib/hooks/use-mobile"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
 import { Button } from "../../ui/button"
@@ -485,6 +486,7 @@ function CreateMcpServerForm({
 
 // --- Main Component ---
 export function AgentsMcpTab() {
+  const isMobile = useIsMobile()
   const lastSelectedAgentId = useAtomValue(lastSelectedAgentIdAtom)
   const defaultAddProvider: McpProvider = lastSelectedAgentId === "codex" ? "codex" : "claude-code"
   const [selectedServerKey, setSelectedServerKey] = useState<string | null>(null)
@@ -620,12 +622,12 @@ export function AgentsMcpTab() {
 
   // Auto-select first server when data loads (sorted, so connected first)
   useEffect(() => {
-    if (selectedServerKey || isLoadingConfig) return
+    if (isMobile || selectedServerKey || isLoadingConfig) return
     const firstServer = allListedServers[0]
     if (firstServer) {
       setSelectedServerKey(firstServer.key)
     }
-  }, [allListedServers, selectedServerKey, isLoadingConfig])
+  }, [allListedServers, selectedServerKey, isLoadingConfig, isMobile])
 
   // Find selected server
   const selectedServer = useMemo<ListedServer | null>(() => {
@@ -795,7 +797,8 @@ export function AgentsMcpTab() {
     <div className="flex h-full overflow-hidden">
       {/* Left sidebar - server list */}
       <ResizableSidebar
-        isOpen={true}
+        isOpen={!isMobile || (!selectedServer && !showAddForm)}
+        className={isMobile ? "!w-full" : undefined}
         onClose={() => {}}
         widthAtom={settingsMcpSidebarWidthAtom}
         minWidth={200}
@@ -947,87 +950,109 @@ export function AgentsMcpTab() {
       </ResizableSidebar>
 
       {/* Right content - detail panel */}
-      <div className="flex-1 min-w-0 h-full overflow-hidden">
-        {showAddForm ? (
-          <CreateMcpServerForm
-            onCreated={() => {
-              setShowAddForm(false)
-              handleRefresh(true)
-            }}
-            onCancel={() => setShowAddForm(false)}
-            hasProject={!!selectedProject?.path}
-            defaultProvider={defaultAddProvider}
-            projectPath={selectedProject?.path}
-            projectName={selectedProject?.name}
-          />
-        ) : selectedServer ? (
-          <McpServerDetail
-            provider={selectedServer.provider}
-            server={selectedServer.server}
-            onAuth={() =>
-              handleAuth(
-                selectedServer.provider,
-                selectedServer.server.name,
-                selectedServer.projectPath,
-              )
-            }
-            onLogout={
-              selectedServer.provider === "codex" && canCodexLogout(selectedServer.server)
-                ? () =>
-                    handleCodexAuthLogout(selectedServer.server.name, selectedServer.projectPath)
-                : undefined
-            }
-            onDelete={
-              isEditableServer(selectedServer)
-                ? () =>
-                    setDeletingServer({
-                      provider: selectedServer.provider,
-                      server: selectedServer.server,
-                      scope: getScopeFromServer(selectedServer),
-                      projectPath: selectedServer.projectPath,
-                    })
-                : undefined
-            }
-            onToggleEnabled={
-              isToggleableServer(selectedServer)
-                ? (enabled) => handleToggleEnabled(selectedServer, enabled)
-                : undefined
-            }
-            onApproveProjectConfig={
-              selectedServer.provider === "claude-code" &&
-              selectedServer.server.status === "pending-approval"
-                ? () => handleApproveProjectConfig(selectedServer)
-                : undefined
-            }
-            isEditable={isEditableServer(selectedServer)}
-            isToggleable={isToggleableServer(selectedServer)}
-            isToggling={updateMutation.isPending}
-          />
-        ) : isLoadingConfig ? (
-          <div className="flex items-center justify-center h-full">
-            <Loader2 className="h-5 w-5 text-muted-foreground animate-spin" />
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-center px-4">
-            <OriginalMCPIcon className="h-12 w-12 text-border mb-4" />
-            <p className="text-sm text-muted-foreground">
-              {totalServers > 0
-                ? "Select a third-party provider server to view details"
-                : "No third-party MCP servers configured for Claude Code or Codex"}
-            </p>
-            {totalServers === 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-3"
-                onClick={() => setShowAddForm(true)}
-              >
-                <Plus className="h-3.5 w-3.5 mr-1.5" />
-                Add your first server
-              </Button>
-            )}
+      <div
+        className={cn(
+          "flex-1 min-w-0 h-full overflow-hidden flex flex-col",
+          isMobile && !selectedServer && !showAddForm && "hidden",
+        )}
+      >
+        {isMobile && (selectedServer || showAddForm) && (
+          <div className="shrink-0 border-b p-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSelectedServerKey(null)
+                setShowAddForm(false)
+                requestAnimationFrame(() => searchInputRef.current?.focus())
+              }}
+            >
+              Back to servers
+            </Button>
           </div>
         )}
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {showAddForm ? (
+            <CreateMcpServerForm
+              onCreated={() => {
+                setShowAddForm(false)
+                handleRefresh(true)
+              }}
+              onCancel={() => setShowAddForm(false)}
+              hasProject={!!selectedProject?.path}
+              defaultProvider={defaultAddProvider}
+              projectPath={selectedProject?.path}
+              projectName={selectedProject?.name}
+            />
+          ) : selectedServer ? (
+            <McpServerDetail
+              provider={selectedServer.provider}
+              server={selectedServer.server}
+              onAuth={() =>
+                handleAuth(
+                  selectedServer.provider,
+                  selectedServer.server.name,
+                  selectedServer.projectPath,
+                )
+              }
+              onLogout={
+                selectedServer.provider === "codex" && canCodexLogout(selectedServer.server)
+                  ? () =>
+                      handleCodexAuthLogout(selectedServer.server.name, selectedServer.projectPath)
+                  : undefined
+              }
+              onDelete={
+                isEditableServer(selectedServer)
+                  ? () =>
+                      setDeletingServer({
+                        provider: selectedServer.provider,
+                        server: selectedServer.server,
+                        scope: getScopeFromServer(selectedServer),
+                        projectPath: selectedServer.projectPath,
+                      })
+                  : undefined
+              }
+              onToggleEnabled={
+                isToggleableServer(selectedServer)
+                  ? (enabled) => handleToggleEnabled(selectedServer, enabled)
+                  : undefined
+              }
+              onApproveProjectConfig={
+                selectedServer.provider === "claude-code" &&
+                selectedServer.server.status === "pending-approval"
+                  ? () => handleApproveProjectConfig(selectedServer)
+                  : undefined
+              }
+              isEditable={isEditableServer(selectedServer)}
+              isToggleable={isToggleableServer(selectedServer)}
+              isToggling={updateMutation.isPending}
+            />
+          ) : isLoadingConfig ? (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 className="h-5 w-5 text-muted-foreground animate-spin" />
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-center px-4">
+              <OriginalMCPIcon className="h-12 w-12 text-border mb-4" />
+              <p className="text-sm text-muted-foreground">
+                {totalServers > 0
+                  ? "Select a third-party provider server to view details"
+                  : "No third-party MCP servers configured for Claude Code or Codex"}
+              </p>
+              {totalServers === 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => setShowAddForm(true)}
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1.5" />
+                  Add your first server
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       <DeleteServerConfirm
