@@ -29,7 +29,7 @@ import {
 } from "../agents/stores/sub-chat-store"
 import { invokePermissionUiTestControl } from "../agents/lib/permission-ui-test-control"
 import {
-  detailsSidebarOpenAtom,
+  detailsSidebarOpenAtomFamily,
   detailsSidebarTabAtom,
   productMcpAuditOpenChatIdsAtom,
   unifiedSidebarEnabledAtom,
@@ -326,7 +326,7 @@ export function DevTestControlBridge() {
           )
           appStore.set(agentsSettingsDialogOpenAtom, false)
           if (request.showOrchestration) {
-            appStore.set(detailsSidebarOpenAtom, true)
+            appStore.set(detailsSidebarOpenAtomFamily(request.chatId), true)
             appStore.set(detailsSidebarTabAtom, "details")
             const visibilityAtom = widgetVisibilityAtomFamily(request.chatId)
             const visibleWidgets = appStore.get(visibilityAtom)
@@ -399,7 +399,7 @@ export function DevTestControlBridge() {
               subChatId: selectedSubChatId,
               selectedProject: request.project,
               settingsOpen: false,
-              detailsOpen: appStore.get(detailsSidebarOpenAtom),
+              detailsOpen: appStore.get(detailsSidebarOpenAtomFamily(request.chatId)),
               detailsTab: appStore.get(detailsSidebarTabAtom),
               persistedMessageCount: persistedMessages.length,
             },
@@ -695,16 +695,20 @@ export function DevTestControlBridge() {
         return
       }
       if (request.command === "orchestration.get") {
-        const subChatState = useAgentSubChatStore.getState()
         const selectedChatId = appStore.get(selectedAgentChatIdAtom)
-        const detailsOpen = appStore.get(detailsSidebarOpenAtom)
+        const subChatState = selectedChatId
+          ? getMountedAgentSubChatStore(selectedChatId)?.getState()
+          : null
+        const detailsOpen = selectedChatId
+          ? appStore.get(detailsSidebarOpenAtomFamily(selectedChatId))
+          : false
         const detailsTab = appStore.get(detailsSidebarTabAtom)
         window.desktopApi.respondDevRendererControl({
           requestId: request.requestId,
           ok: true,
           state: {
             selectedChatId,
-            activeSubChatId: subChatState.activeSubChatId,
+            activeSubChatId: subChatState?.activeSubChatId ?? null,
             selectedProjectId: appStore.get(selectedProjectAtom)?.id ?? null,
             detailsOpen,
             detailsTab,
@@ -727,7 +731,7 @@ export function DevTestControlBridge() {
           })
           if (open) {
             appStore.set(unifiedSidebarEnabledAtom, true)
-            appStore.set(detailsSidebarOpenAtom, true)
+            appStore.set(detailsSidebarOpenAtomFamily(request.chatId), true)
             appStore.set(detailsSidebarTabAtom, "details")
             const visibilityAtom = widgetVisibilityAtomFamily(request.chatId)
             const visible = appStore.get(visibilityAtom)
@@ -748,7 +752,7 @@ export function DevTestControlBridge() {
           state: {
             chatId: request.chatId,
             selectedChatId: appStore.get(selectedAgentChatIdAtom),
-            detailsOpen: appStore.get(detailsSidebarOpenAtom),
+            detailsOpen: appStore.get(detailsSidebarOpenAtomFamily(request.chatId)),
             detailsTab: appStore.get(detailsSidebarTabAtom),
             mcpVisible: visible.includes("mcp"),
             auditOpen: appStore.get(productMcpAuditOpenChatIdsAtom).has(request.chatId),
