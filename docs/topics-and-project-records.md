@@ -21,8 +21,10 @@ chat to another project or changing a role that other chats link to.
 Use a message's annotation action to select user or assistant text, or an image
 region. Text anchors preserve the exact quote and position. A changed source is
 shown as stale. Follow-ups stay beside the annotation; **Promote to topic**
-creates a linked topic. Local model replies use text and image-region metadata;
-image pixels are not sent to the model.
+creates a linked topic. Embedded images show a selection overlay and preserve the
+selected crop for reopening and local image questions. Edited or missing source
+messages do not replace the saved crop. External image URLs and local file paths
+are not fetched; annotations without saved pixels remain text-note conversations.
 
 Reopen the source message's annotation action to choose a saved annotation.
 **Open promoted topic** opens its linked discussion, including older topics beyond
@@ -36,9 +38,16 @@ Flapstack:
 ```text
 FLAPSTACK_DISCUSSION_OLLAMA_URL=http://127.0.0.1:11434
 FLAPSTACK_DISCUSSION_MODEL=<installed chat model name>
+FLAPSTACK_DISCUSSION_VISION_MODEL=<installed vision model name>
 ```
 
-Mixed grouping and summary refresh use the same model. Generation is bounded to
+Image questions require the selected model to report vision support and send only
+the preserved crop. Supported embedded PNG, JPEG, WebP and static GIF images are
+limited to 6 MiB and 16 million pixels. Crops are resized to at most 768 pixels per
+edge and stored as PNG up to 256 KiB. Unsupported or oversized images show their
+availability limit instead of claiming the model can see them.
+
+Mixed grouping and summary refresh use the text model. Generation is bounded to
 one request at a time and never launches tools or workers. Model suggestions are
 editable. Grouping selects immutable source spans, checks full source coverage
 and supplied record IDs, then asks the model to check meaning. It can correct a
