@@ -5,6 +5,7 @@ import { Button } from "../../components/ui/button"
 import { trpc } from "../../lib/trpc"
 import { quoteOccurrences, selectedMessageQuote } from "./annotation-source"
 import { DiscussionAnnotationThread } from "./discussion-annotation-thread"
+import { TopicDetail } from "./discussions-view"
 import { discussionDraftKey, useDiscussionDraft, useDiscussions } from "./use-discussions"
 import "./discussions.css"
 
@@ -120,6 +121,21 @@ function AnnotationEditor({
   const [topicId, setTopicId] = useState("")
   const [newTopic, setNewTopic] = useState("")
   const [savedId, setSavedId] = useState<string | null>(null)
+  const [promotedId, setPromotedId] = useState<string | null>(null)
+  const promoted = trpc.discussions.read.useQuery(
+    { scope, id: promotedId ?? "" },
+    { enabled: !!promotedId },
+  )
+  const existing = store.topics.flatMap((topic) =>
+    topic.annotations
+      .filter(
+        (annotation) =>
+          annotation.source.messageId === request.messageId &&
+          annotation.source.subChatId === subChatId &&
+          annotation.source.role === request.role,
+      )
+      .map((annotation) => ({ topic, annotation })),
+  )
   const [targetKind, setTargetKind] = useState("text")
   const [occurrence, setOccurrence] = useState("")
   const [body, setBody, storageError] = useDiscussionDraft(
@@ -179,6 +195,36 @@ function AnnotationEditor({
       setBody((current) => (current === body ? "" : current))
     }
   }
+  if (promotedId)
+    return (
+      <div className="space-y-4">
+        {(store.error || promoted.error) && (
+          <p role="alert" className="text-sm text-destructive">
+            {store.error ?? promoted.error?.message}
+          </p>
+        )}
+        {promoted.data ? (
+          <TopicDetail
+            key={promoted.data.id}
+            topic={promoted.data}
+            scope={scope}
+            store={store}
+            onBack={() => setPromotedId(null)}
+            backLabel="Back to annotation"
+            onOpenTopic={setPromotedId}
+          />
+        ) : (
+          <>
+            <Button variant="ghost" onClick={() => setPromotedId(null)}>
+              Back to annotation
+            </Button>
+            <p role="status">
+              {promoted.isLoading ? "Loading promoted topic…" : "Promoted topic unavailable."}
+            </p>
+          </>
+        )}
+      </div>
+    )
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -195,12 +241,55 @@ function AnnotationEditor({
           {store.error}
         </p>
       )}
+      <section className="space-y-2" aria-label="Saved annotations">
+        <h3 className="text-sm font-medium">Saved annotations</h3>
+        {existing.length ? (
+          <ul className="space-y-1">
+            {existing.map((item) => (
+              <li key={item.annotation.id}>
+                <button
+                  type="button"
+                  className="w-full rounded-md border p-2 text-left text-sm hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                  aria-pressed={savedId === item.annotation.id}
+                  onClick={() => {
+                    setTopicId(item.topic.id)
+                    setSavedId(item.annotation.id)
+                  }}
+                >
+                  <span className="block font-medium discussion-copy">{item.topic.title}</span>
+                  <span className="block discussion-copy">{item.annotation.body}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {store.loading ? "Loading saved annotations…" : "No annotations in loaded topics."}
+          </p>
+        )}
+        {store.hasMore && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={store.loadingMore}
+            onClick={() => void store.loadMore()}
+          >
+            Load more saved annotations
+          </Button>
+        )}
+        {savedId && (
+          <Button type="button" variant="ghost" onClick={() => setSavedId(null)}>
+            New annotation
+          </Button>
+        )}
+      </section>
       {annotation && topic ? (
         <DiscussionAnnotationThread
           topic={topic}
           annotation={annotation}
           scope={scope}
           store={store}
+          onOpenTopic={setPromotedId}
         />
       ) : sources.isLoading ? (
         <p role="status">Loading source…</p>

@@ -48,7 +48,11 @@ function DiscussionsContent({
       !topic.archived &&
       `${topic.title} ${topic.summary}`.toLowerCase().includes(filter.toLowerCase()),
   )
-  const selected = store.topics.find((topic) => topic.id === selectedId && !topic.archived)
+  const selectedQuery = trpc.discussions.read.useQuery(
+    { scope, id: selectedId ?? "" },
+    { enabled: !!selectedId },
+  )
+  const selected = selectedQuery.data ?? store.topics.find((topic) => topic.id === selectedId)
   const capture = async () => {
     const mixed = draft.kind === "note" ? await store.captureMixed(draft.body, draft.title) : null
     const topic =
@@ -95,9 +99,9 @@ function DiscussionsContent({
           </Button>
         </div>
       </header>
-      {store.error && (
+      {(store.error || selectedQuery.error) && (
         <p role="alert" className="px-4 py-2 text-sm text-destructive">
-          {store.error}{" "}
+          {store.error ?? selectedQuery.error?.message}{" "}
           <button className="underline" onClick={() => void store.refresh()}>
             Refresh
           </button>
@@ -251,10 +255,15 @@ function DiscussionsContent({
               scope={scope}
               store={store}
               onBack={() => setSelectedId(null)}
+              onOpenTopic={setSelectedId}
             />
           ) : (
             <p className="text-sm text-muted-foreground">
-              Choose a topic to read its current summary, questions, and source notes.
+              {selectedId
+                ? selectedQuery.isLoading
+                  ? "Loading topic�"
+                  : "Topic unavailable. Choose another topic or retry."
+                : "Choose a topic to read its current summary, questions, and source notes."}
             </p>
           )}
         </div>
@@ -262,16 +271,20 @@ function DiscussionsContent({
     </main>
   )
 }
-function TopicDetail({
+export function TopicDetail({
   topic,
   scope,
   store,
   onBack,
+  backLabel = "Back to topics",
+  onOpenTopic,
 }: {
   topic: DiscussionTopic
   scope: DiscussionScope
   store: ReturnType<typeof useDiscussions>
   onBack: () => void
+  backLabel?: string
+  onOpenTopic?: (id: string) => void
 }) {
   const [editingSummary, setEditingSummary] = useState(false)
   const [summary, setSummary, summaryError] = useDiscussionDraft(
@@ -296,7 +309,7 @@ function TopicDetail({
         </p>
       )}
       <Button variant="ghost" onClick={onBack}>
-        Back to topics
+        {backLabel}
       </Button>
       {topic.captureBatch && (
         <p role="status" className="text-sm text-muted-foreground">
@@ -463,6 +476,7 @@ function TopicDetail({
               annotation={annotation}
               scope={scope}
               store={store}
+              onOpenTopic={onOpenTopic}
             />
           ))}
         </section>

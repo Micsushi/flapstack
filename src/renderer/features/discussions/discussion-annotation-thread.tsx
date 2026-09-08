@@ -10,11 +10,13 @@ export function DiscussionAnnotationThread({
   annotation,
   scope,
   store,
+  onOpenTopic,
 }: {
   topic: DiscussionTopic
   annotation: DiscussionTopic["annotations"][number]
   scope: DiscussionScope
   store: ReturnType<typeof useDiscussions>
+  onOpenTopic?: (id: string) => void
 }) {
   const [draft, setDraft, storageError] = useDiscussionDraft(
     discussionDraftKey(scope, annotation.id),
@@ -108,6 +110,16 @@ export function DiscussionAnnotationThread({
       {annotation.promotedTopicId ? (
         <p className="text-xs text-muted-foreground break-all">
           Promoted to topic {annotation.promotedTopicId}
+          {onOpenTopic && (
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-2 block"
+              onClick={() => onOpenTopic(annotation.promotedTopicId!)}
+            >
+              Open promoted topic
+            </Button>
+          )}
         </p>
       ) : promotion === null ? (
         <Button variant="outline" onClick={() => setPromotion(topic.title)}>

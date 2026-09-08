@@ -16,7 +16,12 @@ export function useDiscussions(scope: DiscussionScope) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const lock = useRef(false)
-  const refresh = useCallback(() => utils.discussions.list.invalidate({ scope }), [utils, scope])
+  const refresh = useCallback(async () => {
+    await Promise.all([
+      utils.discussions.list.invalidate({ scope }),
+      utils.discussions.read.invalidate({ scope }),
+    ])
+  }, [utils, scope])
   const run = async <T>(action: () => Promise<T>): Promise<T | undefined> => {
     if (lock.current) return undefined
     lock.current = true
