@@ -52,7 +52,9 @@ function DiscussionsContent({
     { scope, id: selectedId ?? "" },
     { enabled: !!selectedId },
   )
-  const selected = selectedQuery.data ?? store.topics.find((topic) => topic.id === selectedId)
+  const selectedCandidate =
+    selectedQuery.data ?? store.topics.find((topic) => topic.id === selectedId)
+  const selected = selectedCandidate?.archived ? undefined : selectedCandidate
   const capture = async () => {
     const mixed = draft.kind === "note" ? await store.captureMixed(draft.body, draft.title) : null
     const topic =
@@ -261,7 +263,7 @@ function DiscussionsContent({
             <p className="text-sm text-muted-foreground">
               {selectedId
                 ? selectedQuery.isLoading
-                  ? "Loading topic�"
+                  ? "Loading topic…"
                   : "Topic unavailable. Choose another topic or retry."
                 : "Choose a topic to read its current summary, questions, and source notes."}
             </p>

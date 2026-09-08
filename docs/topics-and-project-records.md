@@ -18,9 +18,13 @@ chat to another project or changing a role that other chats link to.
 
 Use a message's annotation action to select user or assistant text, or an image
 region. Text anchors preserve the exact quote and position. A changed source is
-shown as stale. Follow-ups stay beside the annotation; **Promote to discussion**
+shown as stale. Follow-ups stay beside the annotation; **Promote to topic**
 creates a linked topic. Local model replies use text and image-region metadata;
 image pixels are not sent to the model.
+
+Reopen the source message's annotation action to choose a saved annotation.
+**Open promoted topic** opens its linked discussion, including older topics beyond
+the currently loaded page.
 
 ## Local replies
 
