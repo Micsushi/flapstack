@@ -8535,6 +8535,9 @@ Make sure to preserve all functionality from both branches when resolving confli
                       {isMobileFullscreen ? (
                         <MobileChatHeader
                           historyChatId={chatId}
+                          projectId={agentChat?.projectId}
+                          taskId={agentChat?.taskId}
+                          onNavigate={setSelectedChatId}
                           onBackToChats={onBackToChats}
                           onOpenPreview={onOpenPreview}
                           canOpenPreview={canOpenPreview}

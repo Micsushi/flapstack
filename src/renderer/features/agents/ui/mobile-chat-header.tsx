@@ -1,6 +1,6 @@
 "use client"
 
-import { lazy, Suspense, useMemo, useState } from "react"
+import { lazy, Suspense, useMemo, useState, useSyncExternalStore } from "react"
 import { useAtomValue } from "jotai"
 import { loadingSubChatsAtom } from "../atoms"
 import { Play, AlignJustify, FolderDown, History } from "lucide-react"
@@ -21,6 +21,13 @@ import {
   IconTextUndo,
 } from "../../../components/ui/icons"
 import { Button } from "../../../components/ui/button"
+import { useBetaFeatures } from "../../settings/use-beta-features"
+import {
+  getAppActionHistorySnapshot,
+  subscribeAppActionHistory,
+  undoAppAction,
+  redoAppAction,
+} from "../../../lib/app-action-history"
 import { cn } from "../../../lib/utils"
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 
@@ -32,7 +39,13 @@ interface DiffStats {
   hasChanges: boolean
 }
 
-interface MobileChatHeaderProps {
+type ReviewScopeProps = {
+  projectId?: string | null
+  taskId?: string | null
+  onNavigate?: (chatId: string) => void
+}
+
+interface MobileChatHeaderProps extends ReviewScopeProps {
   historyChatId?: string
   onBackToChats?: () => void
   onOpenPreview?: () => void
@@ -51,6 +64,9 @@ interface MobileChatHeaderProps {
 
 export function MobileChatHeader({
   historyChatId,
+  projectId,
+  taskId,
+  onNavigate,
   onBackToChats,
   onOpenPreview,
   canOpenPreview = false,
@@ -124,7 +140,15 @@ export function MobileChatHeader({
           WebkitAppRegion: "no-drag",
         }}
       >
-        {historyChatId && <MobileRunHistory key={historyChatId} chatId={historyChatId} />}
+        {historyChatId && (
+          <MobileRunHistory
+            key={historyChatId}
+            chatId={historyChatId}
+            projectId={projectId}
+            taskId={taskId}
+            onNavigate={onNavigate}
+          />
+        )}
         {/* Open Locally - only for sandbox chats */}
         {showOpenLocally && onOpenLocally && (
           <Button
@@ -206,9 +230,40 @@ const RunHistoryWidget = lazy(() =>
   })),
 )
 
+const ReviewPanel = lazy(() =>
+  import("./orchestration-review-panel").then((module) => ({
+    default: module.OrchestrationReviewPanel,
+  })),
+)
+
 /** The caller keys this local disclosure by chat, so an open history never follows a chat switch. */
-export function MobileRunHistory({ chatId }: { chatId: string }) {
+export function MobileRunHistory({
+  chatId,
+  projectId,
+  taskId,
+  onNavigate,
+}: { chatId: string } & ReviewScopeProps) {
   const [open, setOpen] = useState(false)
+  const [view, setView] = useState<"history" | "reviews">("history")
+  const beta = useBetaFeatures()
+  const canReview = Boolean(beta.orchestration && projectId && taskId && onNavigate)
+  const reviewsOpen = view === "reviews" && canReview
+  const history = useSyncExternalStore(
+    subscribeAppActionHistory,
+    getAppActionHistorySnapshot,
+    getAppActionHistorySnapshot,
+  )
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const applyHistory = async (redo: boolean) => {
+    setHistoryError(null)
+    try {
+      await (redo ? redoAppAction() : undoAppAction())
+    } catch (error) {
+      setHistoryError(
+        `${redo ? "Redo" : "Undo"} failed: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -219,10 +274,67 @@ export function MobileRunHistory({ chatId }: { chatId: string }) {
       <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-3 p-4">
         <DialogTitle className="pr-6">Run history</DialogTitle>
         <DialogDescription>Saved runs and their recorded evidence for this chat.</DialogDescription>
-        <div className="min-h-0 overflow-y-auto overscroll-contain break-words">
+        {canReview && (
+          <div role="group" aria-label="Run history view" className="flex flex-wrap gap-2">
+            <Button
+              variant={reviewsOpen ? "outline" : "secondary"}
+              aria-pressed={!reviewsOpen}
+              onClick={() => setView("history")}
+            >
+              History
+            </Button>
+            <Button
+              variant={reviewsOpen ? "secondary" : "outline"}
+              aria-pressed={reviewsOpen}
+              onClick={() => setView("reviews")}
+            >
+              Run reviews
+            </Button>
+          </div>
+        )}
+        {reviewsOpen && (
+          <div className="space-y-2">
+            <div role="group" aria-label="Shared action history" className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                className="h-auto whitespace-normal break-words text-left"
+                disabled={!history.canUndo}
+                onClick={() => void applyHistory(false)}
+              >
+                {history.undoLabel ? `Undo ${history.undoLabel}` : "Undo"}
+              </Button>
+              <Button
+                variant="outline"
+                className="h-auto whitespace-normal break-words text-left"
+                disabled={!history.canRedo}
+                onClick={() => void applyHistory(true)}
+              >
+                {history.redoLabel ? `Redo ${history.redoLabel}` : "Redo"}
+              </Button>
+            </div>
+            {historyError && (
+              <p role="alert" className="text-sm break-words">
+                {historyError}
+              </p>
+            )}
+          </div>
+        )}
+        <div className="min-h-0 min-w-0 overflow-y-auto overscroll-contain break-words">
           {open && (
             <Suspense fallback={<p role="status">Loading run history…</p>}>
-              <RunHistoryWidget chatId={chatId} />
+              {reviewsOpen && projectId && taskId && onNavigate ? (
+                <ReviewPanel
+                  key={JSON.stringify([projectId, taskId])}
+                  projectId={projectId}
+                  taskId={taskId}
+                  onNavigate={(target) => {
+                    setOpen(false)
+                    onNavigate(target)
+                  }}
+                />
+              ) : (
+                <RunHistoryWidget chatId={chatId} />
+              )}
             </Suspense>
           )}
         </div>
