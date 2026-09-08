@@ -22,11 +22,7 @@ import {
   pendingUserQuestionsAtom,
 } from "../agents/atoms"
 import { readRendererOrchestrationCard } from "../agents/lib/orchestration-test-state"
-import {
-  getAgentSubChatStore,
-  getMountedAgentSubChatStore,
-  useAgentSubChatStore,
-} from "../agents/stores/sub-chat-store"
+import { getMountedAgentSubChatStore, useAgentSubChatStore } from "../agents/stores/sub-chat-store"
 import { invokePermissionUiTestControl } from "../agents/lib/permission-ui-test-control"
 import {
   detailsSidebarOpenAtomFamily,
@@ -315,9 +311,6 @@ export function DevTestControlBridge() {
           )
           validateDevChatSelectionSnapshot(snapshot, request.project.id, request.chatId)
           const persistedMessages = request.persistedMessages
-          const compatibilityStore = getAgentSubChatStore().getState()
-          compatibilityStore.setChatId(null)
-          compatibilityStore.queueNavigation(request.chatId, request.subChatId)
           appStore.set(selectedProjectAtom, request.project)
           appStore.set(selectedAgentChatIdAtom, request.chatId)
           appStore.set(selectedChatIsRemoteAtom, false)

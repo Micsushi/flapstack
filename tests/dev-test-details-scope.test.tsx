@@ -2,6 +2,7 @@
 import React, { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { useProjectSelectionGuard } from "../src/renderer/features/sidebar/use-project-selection-guard"
 import { DevTestControlBridge } from "../src/renderer/features/settings/dev-test-control-bridge"
 import { appStore } from "../src/renderer/lib/jotai-store"
 import { selectedAgentChatIdAtom } from "../src/renderer/features/agents/atoms"
@@ -13,14 +14,32 @@ import {
   AgentSubChatStoreScope,
   getMountedAgentSubChatStore,
   useAgentSubChatStore,
+  projectAgentSubChatStore,
 } from "../src/renderer/features/agents/stores/sub-chat-store"
 
 vi.mock("../src/renderer/lib/trpc", () => {
   const utils = {
-    projects: { list: { invalidate: async () => {}, fetch: async () => [{ id: "project" }] } },
+    projects: {
+      list: {
+        invalidate: async () => {},
+        fetch: async () => [{ id: "project" }, { id: "project-b" }],
+      },
+    },
     chats: {
-      list: { invalidate: async () => {}, fetch: async () => [{ id: "a", projectId: "project" }] },
-      get: { invalidate: async () => {}, fetch: async () => ({ id: "a", projectId: "project" }) },
+      list: {
+        invalidate: async () => {},
+        fetch: async () => [
+          { id: "a", projectId: "project" },
+          { id: "b", projectId: "project-b" },
+        ],
+      },
+      get: {
+        invalidate: async () => {},
+        fetch: async ({ id }: { id: string }) => ({
+          id,
+          projectId: id === "b" ? "project-b" : "project",
+        }),
+      },
     },
   }
   return { trpc: { useUtils: () => utils } }
@@ -130,4 +149,72 @@ it("chat.select opens the exact chat family and returns its mounted pane after v
   expect(appStore.get(detailsSidebarOpenAtomFamily("a"))).toBe(true)
   expect(appStore.get(detailsSidebarOpenAtomFamily("b"))).toBe(true)
   expect(appStore.get(detailsSidebarOpenAtom)).toBe(false)
+})
+
+it("selecting B preserves the previously projected A store and selects B's mounted pane", async () => {
+  const a = getMountedAgentSubChatStore("a")!
+  const b = getMountedAgentSubChatStore("b")!
+  a.setState({ chatId: "a", activeSubChatId: "pane-a", openSubChatIds: ["pane-a"] })
+  b.setState({ chatId: "b", activeSubChatId: "other-pane-b", openSubChatIds: ["other-pane-b"] })
+  projectAgentSubChatStore(a)
+  const group = document.createElement("div")
+  group.dataset.chatGroup = ""
+  group.dataset.activeChatId = "b"
+  const transcript = document.createElement("div")
+  transcript.dataset.chatContainer = ""
+  transcript.dataset.activeSubChatId = "pane-b"
+  transcript.dataset.stage6PerformanceMessageCount = "0"
+  group.append(transcript)
+  container.append(group)
+  const result = await send("chat.select", {
+    chatId: "b",
+    subChatId: "pane-b",
+    project: { id: "project-b", name: "B", path: "/b" },
+    persistedMessages: [],
+    showOrchestration: false,
+  })
+  expect(result).toMatchObject({ chatId: "b", subChatId: "pane-b" })
+  expect(a.getState()).toMatchObject({
+    chatId: "a",
+    activeSubChatId: "pane-a",
+    openSubChatIds: ["pane-a"],
+  })
+  expect(b.getState()).toMatchObject({
+    chatId: "b",
+    activeSubChatId: "pane-b",
+    openSubChatIds: ["other-pane-b", "pane-b"],
+  })
+})
+
+it("preserves explicit cross-project selection but clears stale selection on project-only changes", async () => {
+  let setProject!: React.Dispatch<React.SetStateAction<string | null>>
+  let setChat!: React.Dispatch<React.SetStateAction<string | null>>
+  let currentChat: string | null = null
+  const chats = [
+    { id: "a", projectId: "project" },
+    { id: "b", projectId: "project-b" },
+  ]
+  function Selection() {
+    const [project, updateProject] = React.useState<string | null>(null)
+    const [chat, updateChat] = React.useState<string | null>("a")
+    setProject = updateProject
+    setChat = updateChat
+    currentChat = chat
+    useProjectSelectionGuard(project, chat, false, chats, () => updateChat(null))
+    return <span>{chat}</span>
+  }
+  await act(async () => root.render(<Selection />))
+  expect(currentChat).toBe("a")
+  await act(async () => setProject("project"))
+  expect(currentChat).toBe("a")
+  await act(async () => {
+    setProject("project-b")
+    setChat("b")
+  })
+  expect(currentChat).toBe("b")
+  await act(async () => setProject("project"))
+  expect(currentChat).toBeNull()
+  await act(async () => setChat("a"))
+  await act(async () => setProject(null))
+  expect(currentChat).toBeNull()
 })

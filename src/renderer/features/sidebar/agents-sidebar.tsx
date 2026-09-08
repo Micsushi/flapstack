@@ -2,6 +2,7 @@
 
 import { ChatStatusIndicators, ChatStatusProvider } from "../agents/ui/chat-status-indicators"
 import React from "react"
+import { useProjectSelectionGuard } from "./use-project-selection-guard"
 import { useState, useRef, useMemo, useEffect, useCallback, memo } from "react"
 import { createPortal, flushSync } from "react-dom"
 import { motion, AnimatePresence, useReducedMotion } from "motion/react"
@@ -3878,24 +3879,13 @@ function AgentsSidebarInner({
   })
   replayArchiveChatsBatchRef.current = archiveChatsBatchMutation.mutateAsync
 
-  // Reset selected chat when project changes (but not on initial load)
-  const prevProjectIdRef = useRef<string | null | undefined>(undefined)
-  useEffect(() => {
-    // Skip on initial mount (prevProjectIdRef is undefined)
-    if (prevProjectIdRef.current === undefined) {
-      prevProjectIdRef.current = selectedProject?.id ?? null
-      return
-    }
-    // Only reset if project actually changed from a real value (not from null/initial load)
-    if (
-      prevProjectIdRef.current !== null &&
-      prevProjectIdRef.current !== selectedProject?.id &&
-      selectedChatId
-    ) {
-      setSelectedChatId(null)
-    }
-    prevProjectIdRef.current = selectedProject?.id ?? null
-  }, [selectedProject?.id]) // Don't include selectedChatId in deps to avoid loops
+  useProjectSelectionGuard(
+    selectedProject?.id ?? null,
+    selectedChatId,
+    selectedChatIsRemote,
+    localChats,
+    () => setSelectedChatId(null),
+  )
 
   // Load remote pinned IDs from localStorage. Local chat pins come from chats.pinnedAt.
   useEffect(() => {
