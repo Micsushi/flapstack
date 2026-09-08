@@ -8,6 +8,9 @@ export const DISCUSSION_ASSISTANT_POLICY = {
   maxSummaryCharacters: 2_000,
   contextTokens: 4096,
   outputTokens: 900,
+  captureRepairAttempts: 1,
+  captureMaxSpans: 64,
+  captureReviewReserveCharacters: 4000,
 } as const
 export const discussionSummarySchema = z
   .object({
@@ -26,7 +29,7 @@ export const mixedCaptureSuggestionSchema = z
           .object({
             title: z.string().trim().min(1).max(200),
             kind: z.enum(["fix", "idea", "note"]),
-            quote: z.string().trim().min(1).max(16_384),
+            spanIds: z.array(z.string().min(1).max(32)).min(1).max(64),
             summary: z.string().trim().min(1).max(2_000),
             existingTopicId: z.string().nullable(),
             recordIds: z.array(z.string()).max(10),
@@ -37,6 +40,17 @@ export const mixedCaptureSuggestionSchema = z
       .max(8),
   })
   .strict()
+
+export const mixedCaptureReviewSchema = z
+  .object({
+    accepted: z.boolean(),
+    issues: z.array(z.string().trim().min(1).max(800)).max(8),
+  })
+  .strict()
+  .refine(
+    (value) => value.accepted === (value.issues.length === 0),
+    "A rejected review needs issues; an accepted review must have none",
+  )
 
 // Ollama constrains decoding; the Zod schemas still validate all returned data.
 export const discussionOutputFormats = {
@@ -64,17 +78,26 @@ export const discussionOutputFormats = {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["title", "kind", "quote", "summary", "existingTopicId", "recordIds"],
+          required: ["title", "kind", "spanIds", "summary", "existingTopicId", "recordIds"],
           properties: {
             title: { type: "string" },
             kind: { type: "string", enum: ["fix", "idea", "note"] },
-            quote: { type: "string" },
+            spanIds: { type: "array", minItems: 1, maxItems: 64, items: { type: "string" } },
             summary: { type: "string" },
             existingTopicId: { type: ["string", "null"] },
             recordIds: { type: "array", items: { type: "string" }, maxItems: 10 },
           },
         },
       },
+    },
+  },
+  "capture-review": {
+    type: "object",
+    required: ["accepted", "issues"],
+    additionalProperties: false,
+    properties: {
+      accepted: { type: "boolean" },
+      issues: { type: "array", maxItems: 8, items: { type: "string" } },
     },
   },
 } as const

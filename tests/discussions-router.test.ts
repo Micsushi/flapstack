@@ -64,7 +64,7 @@ beforeEach(() => {
   })
 })
 
-it("refreshes only create and capture append from the actual saved snapshot", async () => {
+it("refreshes captures and committed answers from saved snapshots, excluding drafts and other edits", async () => {
   expect(
     (await caller.create({ scope, title: "Topic", capture: { body: "Note", kind: "note" } }))
       .revision,
@@ -77,6 +77,21 @@ it("refreshes only create and capture append from the actual saved snapshot", as
     change: { type: "capture", capture: { body: "New note", kind: "note" } },
   })
   expect(mocks.refresh).toHaveBeenCalledTimes(2)
+  await caller.update({
+    scope,
+    id: "t",
+    expectedRevision: 3,
+    change: { type: "draft", questionId: "q", answer: { choiceIds: ["a"], text: "Draft" } },
+  })
+  expect(mocks.refresh).toHaveBeenCalledTimes(2)
+  await caller.update({
+    scope,
+    id: "t",
+    expectedRevision: 3,
+    change: { type: "answer", questionId: "q", answer: { choiceIds: ["a"], text: "Committed" } },
+  })
+  expect(mocks.refresh.mock.calls[2]![1]).toBe(topic)
+  expect(mocks.refresh.mock.calls[2]![3]).toEqual({ answeredQuestionId: "q" })
   await caller.update({
     scope,
     id: "t",
@@ -95,7 +110,7 @@ it("refreshes only create and capture append from the actual saved snapshot", as
     expectedRevision: 3,
     change: { type: "link", canonicalRecordId: "FLAP-test" },
   })
-  expect(mocks.refresh).toHaveBeenCalledTimes(2)
+  expect(mocks.refresh).toHaveBeenCalledTimes(3)
 })
 
 it("wires mixed capture and inverse restore without extra summary generation", async () => {

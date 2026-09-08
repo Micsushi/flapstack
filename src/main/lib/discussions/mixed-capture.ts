@@ -3,6 +3,7 @@ import { z } from "zod"
 import {
   captureMixedSchema,
   type DiscussionTopic,
+  type DiscussionCaptureSpan,
   type MixedCaptureResult,
 } from "../../../shared/discussions"
 import {
@@ -14,6 +15,7 @@ import {
   DISCUSSION_ASSISTANT_POLICY,
   discussionSummarySchema,
   mixedCaptureSuggestionSchema,
+  mixedCaptureReviewSchema,
 } from "./assistant-policy"
 import { DiscussionError, DiscussionService } from "./service"
 
@@ -22,6 +24,34 @@ type Records = Pick<ProjectRecordsClient, "list" | "read">
 const candidateLimits = { topics: 3, records: 6 } as const
 const dedupUnavailable =
   "Canonical comparison is unavailable. These groups are not confirmed unique against project records."
+
+/** Lossless sentence/newline segmentation. Coalesce adjacent spans if input is unusually fragmented. */
+export function segmentCaptureSource(text: string): DiscussionCaptureSpan[] {
+  const ranges: Array<{ start: number; end: number }> = []
+  let start = 0
+  for (let end = 1; end <= text.length; end++) {
+    if (
+      (text[end - 1] === "\n" ||
+        (/[.!?]/.test(text[end - 1]!) && (end === text.length || /\s/.test(text[end]!)))) &&
+      text.slice(start, end).trim()
+    ) {
+      ranges.push({ start, end })
+      start = end
+    }
+  }
+  if (start < text.length) {
+    if (text.slice(start).trim() || !ranges.length) ranges.push({ start, end: text.length })
+    else ranges[ranges.length - 1]!.end = text.length
+  }
+  const stride = Math.max(1, Math.ceil(ranges.length / DISCUSSION_ASSISTANT_POLICY.captureMaxSpans))
+  const spans: DiscussionCaptureSpan[] = []
+  for (let index = 0; index < ranges.length; index += stride) {
+    const start = ranges[index]!.start,
+      end = ranges[Math.min(index + stride, ranges.length) - 1]!.end
+    spans.push({ id: `s${spans.length + 1}`, start, end, text: text.slice(start, end) })
+  }
+  return spans
+}
 
 function relevant<T>(rows: T[], original: string, label: (row: T) => string, limit: number) {
   const words = new Set(original.toLocaleLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [])
@@ -41,7 +71,7 @@ function relevant<T>(rows: T[], original: string, label: (row: T) => string, lim
     .map((item) => item.row)
 }
 
-/** One local model proposal; exact identity checks happen before the atomic write. */
+/** Propose, verify meaning, and optionally repair once before the atomic write. */
 export async function captureMixed(
   service: DiscussionService,
   raw: z.input<typeof captureMixedSchema>,
@@ -89,53 +119,121 @@ export async function captureMixed(
       candidateLimits.topics,
     )
     const source = {
-      originalText: input.body,
+      sourceSpans: segmentCaptureSource(input.body),
       existingTopics,
       canonicalRecords,
       canonicalComparison: dedupStatus,
     }
     // Drop low-ranked candidates, never silently cut the original or a prior topic summary.
     while (
-      JSON.stringify(source).length > DISCUSSION_ASSISTANT_POLICY.maxContextCharacters &&
+      JSON.stringify(source).length >
+        DISCUSSION_ASSISTANT_POLICY.maxContextCharacters -
+          DISCUSSION_ASSISTANT_POLICY.captureReviewReserveCharacters &&
       source.canonicalRecords.length
     )
       source.canonicalRecords.pop()
     while (
-      JSON.stringify(source).length > DISCUSSION_ASSISTANT_POLICY.maxContextCharacters &&
+      JSON.stringify(source).length >
+        DISCUSSION_ASSISTANT_POLICY.maxContextCharacters -
+          DISCUSSION_ASSISTANT_POLICY.captureReviewReserveCharacters &&
       source.existingTopics.length
     )
       source.existingTopics.pop()
-    const generated = await (options.generate ?? generateDiscussionResult)({
-      kind: "capture",
-      source,
-      schema: mixedCaptureSuggestionSchema,
-    })
-    const suggestion = mixedCaptureSuggestionSchema.parse(generated.result)
-    const seenQuotes = new Set<string>(),
-      seenTopics = new Set<string>()
-    const groups = suggestion.topics.map((group) => {
-      if (!input.body.includes(group.quote) || seenQuotes.has(group.quote))
-        throw new DiscussionError(
-          "BAD_REQUEST",
-          "Grouped quotes must be distinct exact source substrings",
-        )
-      seenQuotes.add(group.quote)
-      const existing = group.existingTopicId
-        ? existingTopics.find((topic) => topic.id === group.existingTopicId)
-        : undefined
-      if (group.existingTopicId && (!existing || seenTopics.has(group.existingTopicId)))
-        throw new DiscussionError("BAD_REQUEST", "Grouped topic was not a unique scoped candidate")
-      if (existing) seenTopics.add(existing.id)
-      if (
-        new Set(group.recordIds).size !== group.recordIds.length ||
-        group.recordIds.some((id) => !canonicalRecords.some((record) => record.id === id))
+    const generate = options.generate ?? generateDiscussionResult
+    type Proposal = z.infer<typeof mixedCaptureSuggestionSchema>
+    let previousProposal: Proposal | undefined
+    let reviewIssues: string[] = []
+    let approved:
+      | {
+          groups: Array<
+            Proposal["topics"][number] & {
+              expectedRevision?: number
+              spans: DiscussionCaptureSpan[]
+            }
+          >
+          model: string
+          review: { model: string; repairs: number }
+        }
+      | undefined
+    for (let attempt = 0; attempt <= DISCUSSION_ASSISTANT_POLICY.captureRepairAttempts; attempt++) {
+      const generated = await generate({
+        kind: "capture",
+        source: previousProposal ? { ...source, previousProposal, reviewIssues } : source,
+        schema: mixedCaptureSuggestionSchema,
+      })
+      const suggestion = mixedCaptureSuggestionSchema.parse(generated.result)
+      previousProposal = suggestion
+      let groups: NonNullable<typeof approved>["groups"] | undefined
+      try {
+        const selectedSpans = new Set<string>(),
+          seenTopics = new Set<string>()
+        groups = suggestion.topics.map((group) => {
+          if (new Set(group.spanIds).size !== group.spanIds.length)
+            throw new DiscussionError("BAD_REQUEST", "Select each source span once within a topic")
+          const spans = group.spanIds
+            .map((id) => {
+              const span = source.sourceSpans.find((span) => span.id === id)
+              if (!span)
+                throw new DiscussionError(
+                  "BAD_REQUEST",
+                  `Unknown source span ${id}; select only supplied source span IDs`,
+                )
+              selectedSpans.add(id)
+              return span
+            })
+            .sort((a, b) => a.start - b.start)
+          const existing = group.existingTopicId
+            ? existingTopics.find((topic) => topic.id === group.existingTopicId)
+            : undefined
+          if (group.existingTopicId && (!existing || seenTopics.has(group.existingTopicId)))
+            throw new DiscussionError(
+              "BAD_REQUEST",
+              "Use each supplied existing topic once, combining its related quotes",
+            )
+          if (existing) seenTopics.add(existing.id)
+          if (
+            new Set(group.recordIds).size !== group.recordIds.length ||
+            group.recordIds.some((id) => !canonicalRecords.some((record) => record.id === id))
+          )
+            throw new DiscussionError(
+              "BAD_REQUEST",
+              "Canonical links must be supplied project feature candidates",
+            )
+          return { ...group, spans, expectedRevision: existing?.revision }
+        })
+        const missing = source.sourceSpans.filter((span) => !selectedSpans.has(span.id))
+        if (missing.length)
+          throw new DiscussionError(
+            "BAD_REQUEST",
+            `Preserve every source span; missing IDs: ${missing.map((span) => span.id).join(", ")}`,
+          )
+      } catch (error) {
+        if (!(error instanceof DiscussionError)) throw error
+        reviewIssues = [error.message]
+        groups = undefined
+      }
+      if (!groups) continue
+      const review = await generate({
+        kind: "capture-review",
+        source: { ...source, proposal: suggestion },
+        schema: mixedCaptureReviewSchema,
+      })
+      const verdict = mixedCaptureReviewSchema.parse(review.result)
+      if (verdict.accepted) {
+        approved = {
+          groups,
+          model: generated.model,
+          review: { model: review.model, repairs: attempt },
+        }
+        break
+      }
+      reviewIssues = verdict.issues
+    }
+    if (!approved)
+      throw new DiscussionError(
+        "BAD_REQUEST",
+        "Grouping checks still failed after the bounded correction",
       )
-        throw new DiscussionError(
-          "BAD_REQUEST",
-          "Canonical links were not supplied project feature candidates",
-        )
-      return { ...group, expectedRevision: existing?.revision }
-    })
     if (records && recordPath) {
       let latest
       try {
@@ -147,11 +245,12 @@ export async function captureMixed(
       if (latest.revision !== recordRevision)
         throw new DiscussionError("CONFLICT", "Canonical records changed while grouping")
     }
-    return service.applyMixed(original, groups, {
+    return service.applyMixed(original, approved.groups, {
       state: "grouped",
       dedupStatus,
       warning: dedupStatus === "unavailable" ? dedupUnavailable : null,
-      model: generated.model,
+      model: approved.model,
+      review: approved.review,
     })
   } catch {
     const warning = `Grouping could not be completed or validated. The original remains unsorted.${dedupStatus === "unavailable" ? ` ${dedupUnavailable}` : ""}`
@@ -187,11 +286,30 @@ export async function refreshDiscussionSummary(
   service: DiscussionService,
   topic: DiscussionTopic,
   generate: Generator = generateDiscussionResult,
+  context?: { answeredQuestionId: string },
 ) {
   try {
+    const question = context
+      ? topic.questions.find((question) => question.id === context.answeredQuestionId)
+      : undefined
+    const answer = question?.answers.at(-1)
+    if (context && (!question || !answer))
+      return { topic, model: null, warning: "No committed answer is available for the summary." }
     const generated = await generate({
       kind: "summary",
-      source: { currentSummary: topic.summary, latestCapture: topic.captures.at(-1) },
+      source:
+        question && answer
+          ? {
+              currentSummary: topic.summary,
+              committedAnswer: {
+                question: question.prompt,
+                selectedChoices: question.choices.filter((choice) =>
+                  answer.choiceIds.includes(choice.id),
+                ),
+                freeText: answer.text,
+              },
+            }
+          : { currentSummary: topic.summary, latestCapture: topic.captures.at(-1) },
       schema: discussionSummarySchema,
     })
     return {

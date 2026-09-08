@@ -154,7 +154,9 @@ export type MixedCaptureState = {
   warning: string | null
   model: string | null
   topicIds: string[]
+  review?: { model: string; repairs: number }
 }
+export type DiscussionCaptureSpan = { id: string; start: number; end: number; text: string }
 export type MixedCaptureResult = Omit<MixedCaptureState, "topicIds"> & {
   topics: DiscussionTopic[]
   originalTopicId: string

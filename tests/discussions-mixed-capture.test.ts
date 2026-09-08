@@ -6,7 +6,11 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { z } from "zod"
-import { captureMixed, refreshDiscussionSummary } from "../src/main/lib/discussions/mixed-capture"
+import {
+  captureMixed,
+  refreshDiscussionSummary,
+  segmentCaptureSource,
+} from "../src/main/lib/discussions/mixed-capture"
 import { DiscussionService } from "../src/main/lib/discussions/service"
 import type { generateDiscussionResult } from "../src/main/lib/discussions/assistant"
 import { mixedCaptureSuggestionSchema } from "../src/main/lib/discussions/assistant-policy"
@@ -33,10 +37,10 @@ const snapshot = {
   },
 }
 const body = "  Fix layout spacing. Later add themes.  "
-const group = (quote = "Fix layout spacing.") => ({
+const group = (spanId = "s1") => ({
   title: "Layout spacing",
   kind: "fix" as const,
-  quote,
+  spanIds: [spanId],
   summary: "Fix layout spacing now.",
   existingTopicId: null as string | null,
   recordIds: [] as string[],
@@ -50,11 +54,16 @@ function records() {
     read: vi.fn().mockResolvedValue(snapshot),
   }
 }
-function generator(topics: z.infer<typeof mixedCaptureSuggestionSchema>["topics"] = [group()]) {
-  return vi.fn().mockResolvedValue({
-    result: { topics },
+function generator(
+  topics: z.infer<typeof mixedCaptureSuggestionSchema>["topics"] = [
+    group(),
+    { ...group("s2"), title: "Themes", kind: "idea" },
+  ],
+) {
+  return vi.fn().mockImplementation(async (input) => ({
+    result: input.kind === "capture-review" ? { accepted: true, issues: [] } : { topics },
     model: "test-local",
-  }) as unknown as typeof generateDiscussionResult
+  })) as unknown as typeof generateDiscussionResult
 }
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "flapstack-mixed-"))
@@ -88,7 +97,7 @@ it("groups exact quotes into scoped topics, links real canonical IDs, preserves 
       generate: generator([
         { ...group(), existingTopicId: existing.id, recordIds: ["FLAP-layout"] },
         {
-          ...group("Later add themes."),
+          ...group("s2"),
           title: "Themes",
           kind: "idea",
           summary: "Themes are a future idea.",
@@ -109,7 +118,7 @@ it("groups exact quotes into scoped topics, links real canonical IDs, preserves 
   expect(service.read(scope, result.topics[1]!.id).archived).toBe(true)
   service.restoreMixed(undone.undo)
   expect(service.read(scope, result.topics[1]!.id).archived).toBe(false)
-  expect(service.read(scope, existing.id).captures.at(-1)!.body).toBe("Fix layout spacing.")
+  expect(service.read(scope, existing.id).captures.at(-1)!.body.trim()).toBe("Fix layout spacing.")
 })
 
 it("rejects a canonical revision change instead of applying stale duplicate matches", async () => {
@@ -122,7 +131,10 @@ it("rejects a canonical revision change instead of applying stale duplicate matc
     { scope, body },
     {
       records: async () => client,
-      generate: generator([{ ...group(), recordIds: ["FLAP-layout"] }]),
+      generate: generator([
+        { ...group(), recordIds: ["FLAP-layout"] },
+        { ...group("s2"), title: "Themes", kind: "idea" },
+      ]),
     },
   )
   expect(result.state).toBe("unsorted")
@@ -151,7 +163,7 @@ it("keeps canonical unavailability explicit without guessing aliases or uniquene
 })
 
 it.each([
-  { ...group(), quote: "Invented quote" },
+  { ...group(), spanIds: ["missing"] },
   { ...group(), recordIds: ["foreign-record"] },
   { ...group(), existingTopicId: "foreign-topic" },
 ])(
@@ -184,7 +196,9 @@ it("persists fallback before unavailable model response and rolls back all group
     title: "Layout",
     capture: { body: "Layout", kind: "note" },
   })
-  const generate = (async () => {
+  const generate = (async (input) => {
+    if (input.kind === "capture-review")
+      return { model: "test", result: { accepted: true, issues: [] } }
     service.update({
       scope,
       id: existing.id,
@@ -195,7 +209,7 @@ it("persists fallback before unavailable model response and rolls back all group
       model: "test",
       result: {
         topics: [
-          { ...group("Later add themes."), title: "Themes" },
+          { ...group("s2"), title: "Themes" },
           { ...group(), existingTopicId: existing.id },
         ],
       },
@@ -249,4 +263,278 @@ it("refreshes a saved note but cannot overwrite an owner correction, and undo re
   })
   expect(() => service.restoreMixed(capture.undo)).toThrow("changed")
   expect(service.read(scope, topic.id).archived).toBe(false)
+})
+
+it("keeps noncontiguous correction quotes in the reused topic with exact atomic undo", async () => {
+  const existing = service.create({
+    scope,
+    title: "Layout",
+    summary: "Keep accessibility contrast.",
+    capture: { kind: "note", body: "Layout constraints" },
+  })
+  const original = "Fix layout spacing. Later add themes. Keep accessibility contrast."
+  const generate = generator([
+    {
+      ...group(),
+      existingTopicId: existing.id,
+      spanIds: ["s1", "s3"],
+      summary: "Fix layout spacing and keep accessibility contrast.",
+    },
+    {
+      ...group("s2"),
+      title: "Themes",
+      kind: "idea",
+      summary: "Consider themes later.",
+    },
+  ])
+  const result = await captureMixed(
+    service,
+    { scope, body: original },
+    { records: async () => records(), generate },
+  )
+  expect(result.state).toBe("grouped")
+  expect(result.topics).toHaveLength(2)
+  const reused = result.topics.find((topic) => topic.id === existing.id)!
+  expect(reused.captures.slice(-2).map((capture) => capture.body.trim())).toEqual([
+    "Fix layout spacing.",
+    "Keep accessibility contrast.",
+  ])
+  expect(reused.captures.at(-1)!.origin!.start).toBe(segmentCaptureSource(original)[2]!.start)
+  expect(reused.summary).toContain("keep accessibility contrast")
+  expect(result.review).toEqual({ model: "test-local", repairs: 0 })
+  const undone = service.restoreMixed(result.undo)
+  expect(service.read(scope, existing.id).summary).toBe(existing.summary)
+  expect(service.read(scope, existing.id).captures).toEqual(existing.captures)
+  service.restoreMixed(undone.undo)
+  expect(service.read(scope, existing.id).captures).toHaveLength(3)
+})
+
+it("repairs a semantic consolidation failure once and rechecks before saving", async () => {
+  const existing = service.create({
+    scope,
+    title: "Layout",
+    summary: "Keep accessibility contrast.",
+    capture: { kind: "note", body: "Layout constraints" },
+  })
+  const original = "Fix layout spacing. Later add themes. Keep accessibility contrast."
+  const duplicate = [
+    { ...group(), existingTopicId: existing.id },
+    { ...group("s3"), title: "Layout" },
+    { ...group("s2"), title: "Themes", kind: "idea" },
+  ]
+  const repaired = [
+    {
+      ...group(),
+      existingTopicId: existing.id,
+      spanIds: ["s1", "s3"],
+      summary: "Fix layout spacing and keep accessibility contrast.",
+    },
+    { ...group("s2"), title: "Themes", kind: "idea" },
+  ]
+  const generate = vi
+    .fn()
+    .mockResolvedValueOnce({ model: "test", result: { topics: duplicate } })
+    .mockResolvedValueOnce({
+      model: "test",
+      result: {
+        accepted: false,
+        issues: [
+          "The related correction was split into a duplicate topic and omitted from the reused summary.",
+        ],
+      },
+    })
+    .mockResolvedValueOnce({ model: "test", result: { topics: repaired } })
+    .mockResolvedValueOnce({ model: "test", result: { accepted: true, issues: [] } })
+  const result = await captureMixed(
+    service,
+    { scope, body: original },
+    { records: async () => records(), generate: generate as typeof generateDiscussionResult },
+  )
+  expect(result.state).toBe("grouped")
+  expect(result.topics).toHaveLength(2)
+  expect(result.review?.repairs).toBe(1)
+  expect(generate.mock.calls.map((call) => call[0].kind)).toEqual([
+    "capture",
+    "capture-review",
+    "capture",
+    "capture-review",
+  ])
+  expect(generate.mock.calls[2]![0].source.reviewIssues).toHaveLength(1)
+  expect(generate.mock.calls[1]![0].source.existingTopics[0].summary).toBe(existing.summary)
+})
+
+it("leaves the exact original unsorted when the one semantic repair still fails", async () => {
+  const generate = vi.fn().mockImplementation(async (input) => ({
+    model: "test",
+    result:
+      input.kind === "capture-review"
+        ? { accepted: false, issues: ["The proposal drops a correction."] }
+        : { topics: [group(), { ...group("s2"), title: "Themes", kind: "idea" }] },
+  }))
+  const result = await captureMixed(
+    service,
+    { scope, body },
+    { records: async () => records(), generate: generate as typeof generateDiscussionResult },
+  )
+  expect(generate).toHaveBeenCalledTimes(4)
+  expect(result.state).toBe("unsorted")
+  expect(result.topics[0]!.captures[0]!.body).toBe(body)
+  expect(result.topics[0]!.archived).toBe(false)
+  expect(service.list({ scope }).topics).toHaveLength(1)
+})
+
+it("does not merge distinct subjects merely because they share an umbrella canonical ID", async () => {
+  const client = records()
+  client.read.mockResolvedValue({
+    ...snapshot,
+    document: {
+      ...snapshot.document,
+      records: [{ ...snapshot.document.records[0], title: "Layout spacing and themes" }],
+    },
+  })
+  const result = await captureMixed(
+    service,
+    { scope, body },
+    {
+      records: async () => client,
+      generate: generator([
+        { ...group(), recordIds: ["FLAP-layout"] },
+        {
+          ...group("s2"),
+          title: "Themes",
+          kind: "idea",
+          recordIds: ["FLAP-layout"],
+        },
+      ]),
+    },
+  )
+  expect(result.state).toBe("grouped")
+  expect(result.topics).toHaveLength(2)
+  expect(result.topics.map((topic) => topic.canonicalRecordIds)).toEqual([
+    ["FLAP-layout"],
+    ["FLAP-layout"],
+  ])
+})
+
+it("segments complete input within bounds and retains repeated-text occurrence offsets", async () => {
+  const fragmented = "A.\n".repeat(1000)
+  const spans = segmentCaptureSource(fragmented)
+  expect(spans.length).toBeLessThanOrEqual(64)
+  expect(spans.map((span) => span.text).join("")).toBe(fragmented)
+  expect(spans.every((span, index) => span.start === (index ? spans[index - 1]!.end : 0))).toBe(
+    true,
+  )
+  const original = "Repeat.\nRepeat.\nRepeat."
+  const result = await captureMixed(
+    service,
+    { scope, body: original },
+    {
+      records: async () => records(),
+      generate: generator([{ ...group(), kind: "note", spanIds: ["s3", "s1", "s2"] }]),
+    },
+  )
+  expect(result.state).toBe("grouped")
+  const captures = result.topics[0]!.captures
+  expect(captures[1]!.body).toBe(captures[2]!.body)
+  expect(captures[1]!.origin!.start).not.toBe(captures[2]!.origin!.start)
+  expect(captures.map((capture) => capture.body).join("")).toBe(original)
+})
+
+it("allows a source sentence shared by distinct subjects and rejects missing coverage", async () => {
+  const shared = await captureMixed(
+    service,
+    { scope, body: "Fix layout spacing and later add themes." },
+    {
+      records: async () => records(),
+      generate: generator([group(), { ...group(), kind: "idea", title: "Themes" }]),
+    },
+  )
+  expect(shared.state).toBe("grouped")
+  expect(shared.topics).toHaveLength(2)
+  expect(shared.topics[0]!.captures[0]!.origin).toEqual(shared.topics[1]!.captures[0]!.origin)
+  const missing = await captureMixed(
+    service,
+    { scope, body },
+    { records: async () => records(), generate: generator([group()]) },
+  )
+  expect(missing.state).toBe("unsorted")
+  expect(missing.topics[0]!.captures[0]!.body).toBe(body)
+})
+
+it("refreshes committed answer meaning with selected labels and free text, never a draft", async () => {
+  let topic = service.create({
+    scope,
+    title: "Layout",
+    summary: "Scope undecided.",
+    capture: { kind: "note", body: "Choose scope" },
+  })
+  topic = service.update({
+    scope,
+    id: topic.id,
+    expectedRevision: topic.revision,
+    change: {
+      type: "question",
+      question: {
+        prompt: "Which scope?",
+        choices: [
+          { id: "small", label: "Fix sidebar labels only" },
+          { id: "large", label: "Redesign the entire app" },
+        ],
+        blocking: false,
+      },
+    },
+  })
+  const questionId = topic.questions[0]!.id
+  topic = service.update({
+    scope,
+    id: topic.id,
+    expectedRevision: topic.revision,
+    change: {
+      type: "draft",
+      questionId,
+      answer: { choiceIds: ["large"], text: "Uncommitted draft" },
+    },
+  })
+  const generate = vi
+    .fn()
+    .mockResolvedValue({
+      result: { summary: "Fix sidebar labels only; keep the dark theme as a future idea." },
+      model: "test",
+    })
+  await refreshDiscussionSummary(service, topic, generate as typeof generateDiscussionResult, {
+    answeredQuestionId: questionId,
+  })
+  expect(generate).not.toHaveBeenCalled()
+  const beforeAnswer = topic
+  topic = service.update({
+    scope,
+    id: topic.id,
+    expectedRevision: topic.revision,
+    change: {
+      type: "answer",
+      questionId,
+      answer: { choiceIds: ["small"], text: "Keep the dark theme as a future idea." },
+    },
+  })
+  const refreshed = await refreshDiscussionSummary(
+    service,
+    topic,
+    generate as typeof generateDiscussionResult,
+    { answeredQuestionId: questionId },
+  )
+  expect(generate.mock.calls[0]![0].source.committedAnswer).toEqual({
+    question: "Which scope?",
+    selectedChoices: [{ id: "small", label: "Fix sidebar labels only" }],
+    freeText: "Keep the dark theme as a future idea.",
+  })
+  expect(JSON.stringify(generate.mock.calls[0]![0].source)).not.toContain("Uncommitted draft")
+  expect(refreshed.topic.summary).toContain("sidebar labels only")
+  const undone = service.restore({
+    scope,
+    id: topic.id,
+    expectedRevision: refreshed.topic.revision,
+    targetRevision: beforeAnswer.revision,
+  })
+  expect(undone.questions[0]!.answers).toHaveLength(0)
+  expect(undone.summary).toBe("Scope undecided.")
 })

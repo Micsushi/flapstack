@@ -16,7 +16,7 @@ let busy = false
 
 /** No tools, cloud fallback, chat append, or execution side effects. One bounded local call. */
 export async function generateDiscussionResult<T>(input: {
-  kind: "summary" | "reply" | "capture"
+  kind: "summary" | "reply" | "capture" | "capture-review"
   source: unknown
   schema: z.ZodType<T>
   request?: LocalRequest

@@ -15,6 +15,7 @@ import {
   type DiscussionSource,
   type DiscussionTopic,
   type MixedCaptureState,
+  type DiscussionCaptureSpan,
 } from "../../../shared/discussions"
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex")
@@ -160,7 +161,7 @@ export class DiscussionService {
     groups: Array<{
       title: string
       kind: "fix" | "idea" | "note"
-      quote: string
+      spans: DiscussionCaptureSpan[]
       summary: string
       existingTopicId: string | null
       expectedRevision?: number
@@ -175,9 +176,23 @@ export class DiscussionService {
       const changes: z.infer<typeof restoreMixedSchema>["changes"] = []
       const seen = new Set<string>()
       for (const group of groups) {
-        const start = original.captures[0]!.body.indexOf(group.quote)
-        if (start < 0)
-          throw new DiscussionError("BAD_REQUEST", "Grouped quote is not an exact source substring")
+        if (
+          !group.spans.length ||
+          group.spans.length > 64 ||
+          group.spans.some(
+            (span) =>
+              !Number.isInteger(span.start) ||
+              !Number.isInteger(span.end) ||
+              span.start < 0 ||
+              span.end <= span.start ||
+              span.end > original.captures[0]!.body.length ||
+              original.captures[0]!.body.slice(span.start, span.end) !== span.text,
+          )
+        )
+          throw new DiscussionError(
+            "BAD_REQUEST",
+            "Grouped spans must identify exact source ranges",
+          )
         const prior = group.existingTopicId
           ? this.read(original.scope, group.existingTopicId)
           : null
@@ -193,20 +208,33 @@ export class DiscussionService {
               scope: original.scope,
               id: prior.id,
               expectedRevision: prior.revision,
-              change: { type: "capture", capture: { kind: group.kind, body: group.quote } },
+              change: {
+                type: "capture",
+                capture: { kind: group.kind, body: group.spans[0]!.text },
+              },
             })
           : this.create({
               scope: original.scope,
               title: group.title,
               summary: group.summary,
-              capture: { kind: group.kind, body: group.quote },
+              capture: { kind: group.kind, body: group.spans[0]!.text },
             })
         seen.add(topic.id)
-        topic.captures[topic.captures.length - 1]!.origin = {
-          topicId: original.id,
-          captureId: original.captures[0]!.id,
-          start,
-          end: start + group.quote.length,
+        for (const [index, span] of group.spans.entries()) {
+          if (index > 0)
+            topic.captures.push({
+              id: randomUUID(),
+              createdAt: Date.now(),
+              kind: group.kind,
+              body: span.text,
+            })
+          topic.captures[topic.captures.length - 1]!.body = span.text
+          topic.captures[topic.captures.length - 1]!.origin = {
+            topicId: original.id,
+            captureId: original.captures[0]!.id,
+            start: span.start,
+            end: span.end,
+          }
         }
         topic.summary = group.summary
         if (prior) topic.summaryHistory.push({ summary: group.summary, createdAt: Date.now() })

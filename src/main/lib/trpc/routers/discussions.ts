@@ -187,8 +187,17 @@ export const discussionsRouter = router({
     }
     const currentService = service()
     const saved = handle(() => currentService.update(input))
-    return input.change.type === "capture"
-      ? (await refreshDiscussionSummary(currentService, saved)).topic
+    return input.change.type === "capture" || input.change.type === "answer"
+      ? (
+          await refreshDiscussionSummary(
+            currentService,
+            saved,
+            undefined,
+            input.change.type === "answer"
+              ? { answeredQuestionId: input.change.questionId }
+              : undefined,
+          )
+        ).topic
       : saved
   }),
   restore: procedure
