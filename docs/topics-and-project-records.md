@@ -45,7 +45,9 @@ Image questions require the selected model to report vision support and send onl
 the preserved crop. Supported embedded PNG, JPEG, WebP and static GIF images are
 limited to 6 MiB and 16 million pixels. Crops are resized to at most 768 pixels per
 edge and stored as PNG up to 256 KiB. Unsupported or oversized images show their
-availability limit instead of claiming the model can see them.
+availability limit instead of claiming the model can see them. Tiny crops are
+enlarged only for the model; the saved crop stays unchanged. Extremely narrow
+crops may need a wider selection to fit the model's bounded image input.
 
 Mixed grouping and summary refresh use the text model. Generation is bounded to
 one request at a time and never launches tools or workers. Model suggestions are
