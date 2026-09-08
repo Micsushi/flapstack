@@ -3732,3 +3732,20 @@ export const orchestrationRunReviews = sqliteTable(
     check("orchestration_run_reviews_revision_check", sql`${table.revision} > 0`),
   ],
 )
+
+// Manual advisory intentions, with append-only CAS revisions and retained release tombstones.
+export const orchestrationWorktreeDeclarations = sqliteTable(
+  "orchestration_worktree_declarations",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    runId: text("run_id").notNull(),
+    revision: integer("revision").notNull(),
+    declaration: text("declaration"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.taskId, table.runId, table.revision] }),
+    check("orchestration_worktree_declarations_revision_check", sql`${table.revision} > 0`),
+  ],
+)

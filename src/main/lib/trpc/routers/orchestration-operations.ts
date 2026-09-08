@@ -1,3 +1,9 @@
+import { WorktreeDeclarationService } from "../../agent-orchestration/worktree-declarations"
+import {
+  worktreeDeclarationScopeSchema,
+  setWorktreeDeclarationSchema,
+  restoreWorktreeDeclarationSchema,
+} from "../../../../shared/worktree-declarations"
 import { TRPCError } from "@trpc/server"
 import {
   OrchestrationReviewService,
@@ -139,7 +145,25 @@ function reviewOperation<T>(run: (service: OrchestrationReviewService) => T): T 
     throw error
   }
 }
+function declarationOperation<T>(run: (service: WorktreeDeclarationService) => T): T {
+  try {
+    return run(new WorktreeDeclarationService(getSqliteDatabase()))
+  } catch (error) {
+    if (error instanceof OrchestrationReviewError)
+      throw new TRPCError({ code: error.code, message: error.message })
+    throw error
+  }
+}
 export const orchestrationOperationsRouter = router({
+  worktreeDeclarationState: publicProcedure
+    .input(worktreeDeclarationScopeSchema)
+    .query(({ input }) => declarationOperation((service) => service.state(input))),
+  setWorktreeDeclaration: publicProcedure
+    .input(setWorktreeDeclarationSchema)
+    .mutation(({ input }) => declarationOperation((service) => service.set(input))),
+  restoreWorktreeDeclaration: publicProcedure
+    .input(restoreWorktreeDeclarationSchema)
+    .mutation(({ input }) => declarationOperation((service) => service.restore(input))),
   reviewState: publicProcedure
     .input(orchestrationReviewScopeSchema)
     .query(({ input }) => reviewOperation((service) => service.state(input))),
