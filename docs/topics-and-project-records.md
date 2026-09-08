@@ -7,8 +7,14 @@ Failed grouping keeps the original as an unsorted topic.
 
 Topics keep a short editable summary, questions, choices, written answers and
 annotations. Changing a choice or writing an answer saves a recovery draft;
-**Submit answer** records the answer. Reading a topic changes only its read state.
+**Submit answer** records the answer. **Mark read** changes only its read state.
 Topic status, running agents and accepted project work are separate.
+
+In a chat header, **Assign role** gives that chat an explicit discussion, lead or
+worker role. Leads and workers can link to related chats in the same project.
+The control shows the local host. These owner assignments are separate from
+inferred labels and do not start or delegate work. Remove links before moving a
+chat to another project or changing a role that other chats link to.
 
 Use a message's annotation action to select user or assistant text, or an image
 region. Text anchors preserve the exact quote and position. A changed source is
