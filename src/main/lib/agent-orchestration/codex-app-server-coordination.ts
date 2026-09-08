@@ -14,7 +14,7 @@ type Engine = "codex-v2" | "codex-v1"
 type DispatchIdentity = { intentId: string; idempotencyKey: string }
 type RecordValue = Record<string, unknown>
 const POLL_MS = 250
-export const SUPPORTED_CODEX_COORDINATION_VERSION = "0.144.1"
+export const SUPPORTED_CODEX_COORDINATION_VERSION = "0.153.4"
 export type CodexCoordinationRequestMethod =
   | "thread/start"
   | "thread/fork"

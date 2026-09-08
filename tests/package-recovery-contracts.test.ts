@@ -155,18 +155,18 @@ describe("binary download recovery", () => {
 
   it("accepts only the exact OpenAI Codex tag asset URL", () => {
     const exact =
-      "https://github.com/openai/codex/releases/download/rust-v0.144.1/codex-x86_64-pc-windows-msvc.exe"
-    expect(requireCodexReleaseAssetUrl("0.144.1", "codex-x86_64-pc-windows-msvc.exe", exact)).toBe(
+      "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-x86_64-pc-windows-msvc.exe"
+    expect(requireCodexReleaseAssetUrl("0.153.4", "codex-x86_64-pc-windows-msvc.exe", exact)).toBe(
       exact,
     )
     for (const invalid of [
       "https://example.invalid/codex.exe",
-      "https://github.com/attacker/codex/releases/download/rust-v0.144.1/codex-x86_64-pc-windows-msvc.exe",
+      "https://github.com/attacker/codex/releases/download/rust-v0.153.4/codex-x86_64-pc-windows-msvc.exe",
       "https://github.com/openai/codex/releases/download/rust-v0.144.2/codex-x86_64-pc-windows-msvc.exe",
       `${exact}?redirect=1`,
     ]) {
       expect(() =>
-        requireCodexReleaseAssetUrl("0.144.1", "codex-x86_64-pc-windows-msvc.exe", invalid),
+        requireCodexReleaseAssetUrl("0.153.4", "codex-x86_64-pc-windows-msvc.exe", invalid),
       ).toThrow(/Refusing Codex asset URL/)
     }
   })
@@ -310,7 +310,7 @@ describe("binary download recovery", () => {
 
     await expect(
       downloadCodexPlatform(
-        "0.144.1",
+        "0.153.4",
         "win32-x64",
         {
           assets: [
@@ -318,7 +318,7 @@ describe("binary download recovery", () => {
               name: "codex-x86_64-pc-windows-msvc.exe",
               digest: `sha256:${checksum}`,
               browser_download_url:
-                "https://github.com/openai/codex/releases/download/rust-v0.144.1/codex-x86_64-pc-windows-msvc.exe",
+                "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-x86_64-pc-windows-msvc.exe",
               size: replacement.length,
             },
           ],
@@ -357,7 +357,7 @@ describe("binary download recovery", () => {
               )
           : (downloadFile: (_url: string, destination: string) => Promise<void>) =>
               downloadCodexPlatform(
-                "0.144.1",
+                "0.153.4",
                 "win32-x64",
                 {
                   assets: [
@@ -365,7 +365,7 @@ describe("binary download recovery", () => {
                       name: "codex-x86_64-pc-windows-msvc.exe",
                       digest: `sha256:${checksum}`,
                       browser_download_url:
-                        "https://github.com/openai/codex/releases/download/rust-v0.144.1/codex-x86_64-pc-windows-msvc.exe",
+                        "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-x86_64-pc-windows-msvc.exe",
                       size: replacement.length,
                     },
                   ],

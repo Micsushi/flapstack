@@ -488,9 +488,10 @@ function mapItem(
         ),
       ]
     case "mcpToolCall":
+    case "functionCallOutput":
     case "dynamicToolCall": {
       const toolInput = item.arguments ?? item.input
-      const toolOutput = item.result ?? item.error
+      const toolOutput = type === "functionCallOutput" ? item.output : (item.result ?? item.error)
       return [
         {
           ...base,
@@ -503,7 +504,11 @@ function mapItem(
             name: boundedShort(
               type === "mcpToolCall"
                 ? `${string(item.server) ?? "MCP"}/${string(item.tool) ?? "tool"}`
-                : (string(item.tool) ?? "dynamic-tool"),
+                : type === "functionCallOutput"
+                  ? [string(item.namespace), string(item.name) ?? "function"]
+                      .filter(Boolean)
+                      .join("/")
+                  : (string(item.tool) ?? "dynamic-tool"),
             ),
             state: boundedShort(state),
             ...(toolInput === undefined ? {} : { input: fitMetadata(toolInput) }),
@@ -830,6 +835,15 @@ function summarizeChanges(value: unknown): string | null {
 }
 
 function toolResultSummary(item: Record<string, unknown>): string | null {
+  if (item.type === "functionCallOutput") {
+    if (typeof item.output === "string") return item.output
+    return (
+      array(item.output)
+        .filter((part) => record(part).type === "input_text")
+        .map((part) => string(record(part).text) ?? "")
+        .join("\n") || null
+    )
+  }
   const error = record(item.error)
   if (string(error.message)) return string(error.message)
   const result = record(item.result)

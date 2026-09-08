@@ -13,7 +13,7 @@ describe("direct Codex Runtime recovery", () => {
       appendActivity: collectActivity().append,
       resolveThreadParams: (_context, operation) => ({ cwd: "/worktree", operation }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.144.1",
+      getBinaryVersion: async () => "0.153.4",
       createClient: () => {
         const client = new FakeCodexProtocolClient()
         clients.push(client)
@@ -73,7 +73,7 @@ describe("direct Codex Runtime recovery", () => {
         providerThreadId: "thread-1",
       }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.144.1",
+      getBinaryVersion: async () => "0.153.4",
       createClient: () => active,
     })()
     expect(await activeAdapter.reconcile(runtimeContext())).toBe("running")
@@ -95,7 +95,7 @@ describe("direct Codex Runtime recovery", () => {
         providerThreadId: "thread-1",
       }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.144.1",
+      getBinaryVersion: async () => "0.153.4",
       createClient: () => completed,
     })()
     expect(await completedAdapter.reconcile(runtimeContext())).toBe("completed")
@@ -105,7 +105,7 @@ describe("direct Codex Runtime recovery", () => {
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolvePersistedSession: () => null,
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.144.1",
+      getBinaryVersion: async () => "0.153.4",
       createClient: () => new FakeCodexProtocolClient(),
     })()
     expect(await uncertainAdapter.reconcile(runtimeContext())).toBe("uncertain")
@@ -122,7 +122,7 @@ describe("direct Codex Runtime recovery", () => {
       }),
       resolvePersistedTurn: () => ({ providerTurnId: "turn-restart" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.144.1",
+      getBinaryVersion: async () => "0.153.4",
       createClient: () => client,
     })()
 
@@ -150,7 +150,7 @@ describe("direct Codex Runtime recovery", () => {
         providerThreadId: "thread-1",
       }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.144.1",
+      getBinaryVersion: async () => "0.153.4",
       createClient: () => client,
       onDiagnostic: (_context, message) => diagnostics.push(message),
     })()
@@ -168,7 +168,7 @@ describe("direct Codex Runtime recovery", () => {
       requestPermission: async () => await new Promise(() => {}),
       permissionTimeoutMs: 5,
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.144.1",
+      getBinaryVersion: async () => "0.153.4",
       createClient: () => client,
     })()
     const context = runtimeContext()
@@ -197,7 +197,7 @@ describe("direct Codex Runtime recovery", () => {
       appendActivity: collectActivity().append,
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.144.1",
+      getBinaryVersion: async () => "0.153.4",
       createClient: () => client,
     })()
     const context = runtimeContext()
@@ -219,7 +219,7 @@ describe("direct Codex Runtime recovery", () => {
       appendActivity: collectActivity().append,
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.144.1",
+      getBinaryVersion: async () => "0.153.4",
       createClient: () => client,
     })()
     const context = runtimeContext()
@@ -240,7 +240,7 @@ describe("direct Codex Runtime recovery", () => {
       appendActivity: collectActivity().append,
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.144.1",
+      getBinaryVersion: async () => "0.153.4",
       createClient: () => client,
     })()
     const context = runtimeContext()

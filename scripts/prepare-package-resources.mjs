@@ -15,7 +15,7 @@ import { TRANSCRIBE_CPP_VERSION } from "./prepare-stt-sidecar.mjs"
 import { whisperResourceFiles } from "./prepare-whisper-binary.mjs"
 
 export const CLAUDE_VERSION = "2.1.207"
-export const CODEX_VERSION = "0.144.1"
+export const CODEX_VERSION = "0.153.4"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const resourcesDirectory = path.join(root, "resources")

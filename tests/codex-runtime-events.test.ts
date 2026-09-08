@@ -143,6 +143,42 @@ describe("direct Codex Runtime event mapping", () => {
     })
   })
 
+  it.each([
+    ["plain output", "plain output"],
+    [
+      [
+        { type: "input_text", text: "visible output" },
+        { type: "input_image", image_url: "data:image/png;base64,fixture" },
+      ],
+      "visible output",
+    ],
+  ])(
+    "maps current functionCallOutput text and multimodal payloads without losing tool identity",
+    (output, summary) => {
+      const [event] = mapCodexNotification({
+        method: "item/completed",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "functionCallOutput",
+            id: "output-1",
+            namespace: "functions",
+            name: "read",
+            output,
+          },
+        },
+      })
+      expect(event).toMatchObject({
+        kind: "tool",
+        phase: "completed",
+        providerToolId: "output-1",
+        privacyClass: "sensitive",
+        payload: { name: "functions/read", output, outputSummary: summary },
+      })
+    },
+  )
+
   it("preserves current context usage and model window", () => {
     expect(
       mapCodexNotification({

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs"
 import { delimiter, join } from "node:path"
 import { app } from "electron"
 
-export const PINNED_CODEX_APP_SERVER_VERSION = "0.144.1"
+export const PINNED_CODEX_APP_SERVER_VERSION = "0.153.4"
 export const CODEX_RUNTIME_ADAPTER_VERSION = "1"
 
 export function resolveCodexRuntimeCommand(): string {

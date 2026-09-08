@@ -108,7 +108,7 @@ describe("Stage 3 extension capability baseline", () => {
     expect(packageJson.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe("^0.3.207")
     expect(packageJson.dependencies["@agentclientprotocol/codex-acp"]).toBe("1.1.2")
     expect(packageJson.scripts["claude:download"]).toContain("--version=2.1.207")
-    expect(packageJson.scripts["codex:download"]).toContain("--version=0.144.1")
+    expect(packageJson.scripts["codex:download"]).toContain("--version=0.153.4")
     expect(packageLock.packages["node_modules/@anthropic-ai/claude-agent-sdk"].version).toBe(
       "0.3.207",
     )

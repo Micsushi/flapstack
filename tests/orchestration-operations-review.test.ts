@@ -1558,14 +1558,14 @@ describe("Codex durability review invariants", () => {
 describe("direct Codex App Server coordination", () => {
   it("fails capability probing closed on Codex protocol version drift", async () => {
     const transport = fakeCodexProtocol(async () => ({}))
-    vi.mocked(transport.version).mockResolvedValue("0.145.0")
+    vi.mocked(transport.version).mockResolvedValue("0.144.1")
     const client = createCodexAppServerCoordinationClient({ databasePath, transport })
 
     await expect(client.probe("codex-v2")).resolves.toMatchObject({
       available: false,
       reason: {
         code: "engine-unavailable",
-        message: expect.stringContaining("pinned to 0.144.1"),
+        message: expect.stringContaining("pinned to 0.153.4"),
       },
     })
     expect(transport.request).not.toHaveBeenCalled()
@@ -2229,7 +2229,7 @@ function fakeCodexProtocol(
 ): CodexAppServerCoordinationTransportPort & { request: ReturnType<typeof vi.fn> } {
   const request = vi.fn(handler)
   return {
-    version: vi.fn(async () => "0.144.1"),
+    version: vi.fn(async () => "0.153.4"),
     request,
   }
 }
