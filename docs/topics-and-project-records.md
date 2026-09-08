@@ -94,3 +94,23 @@ records T3 acceptance only; it does not merge code, publish or deploy.
 Undo and redo use the shared action history. A newer conflicting edit prevents
 undo from overwriting that work. Cross-device dispatch and history synchronization
 remain a separate phase; the existing mobile companion connects to one desktop.
+
+## Run reviews
+
+Open **Run reviews** in the task's orchestration panel. Select the exact source
+run and a different reviewer run from that task, then choose **Pass**, **Needs
+work** or **Inconclusive** and enter evidence. Pass requires both runs to have
+ended; a completed run or an assigned reviewer role does not create a verdict.
+Without a saved verdict, the source is **Unreviewed**.
+
+**Save verdict**, **Revise verdict** and **Remove saved verdict** affect only the
+review record. Source execution status stays independent. Both run IDs remain
+visible and historical verdicts stay attached to their original runs after retry
+or replacement. **Open source chat** and **Open reviewer chat** use the existing
+chat navigation.
+
+Evidence drafts survive task and source switching. Save conflicts retain the
+draft so you can review the newer result before retrying. Shared **Undo** and
+**Redo** restore review revisions in chronological order; a conflicting outside
+edit is not overwritten. A manually recorded review is not owner acceptance and
+does not start, resume or complete a run.

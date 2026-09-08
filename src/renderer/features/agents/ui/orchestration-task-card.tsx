@@ -44,6 +44,7 @@ import { openOperationWorkspace } from "../../saved-workspaces/operation-navigat
 import { useBetaFeatures } from "../../settings/use-beta-features"
 import { CoordinationEngineLaunchPreviewPanel } from "./coordination-engine-launch-preview"
 import { OrchestrationLineageTree } from "./orchestration-lineage-tree"
+import { OrchestrationReviewPanel } from "./orchestration-review-panel"
 import { OrchestrationWorkflowPanel } from "./orchestration-workflow-panel"
 import { OrchestrationActivityPanel } from "./orchestration-activity-panel"
 import {
@@ -1218,7 +1219,13 @@ export function OrchestrationTaskCard({
             : undefined
         }
       />
-      <div className="px-3 pb-3">
+      <div className="space-y-3 px-3 pb-3">
+        <OrchestrationReviewPanel
+          key={JSON.stringify([projectId, taskQueryId])}
+          projectId={projectId}
+          taskId={taskQueryId}
+          onNavigate={onNavigate}
+        />
         <OrchestrationWorkflowPanel taskId={taskQueryId} />
       </div>
       {editorMode && (
