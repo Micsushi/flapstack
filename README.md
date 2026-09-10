@@ -403,3 +403,7 @@ Flapstack contains modified code from the open-source 1Code project by the
 The base project is Apache-2.0 licensed; see [LICENSE](LICENSE). References to
 Flapstack identify this derivative project and do not imply endorsement by
 21st.dev or the original 1Code authors.
+## Contributor guidance
+
+See [AGENTS.md](AGENTS.md) for the local-first repository boundary, command
+entrypoints, and safe change guidance.
