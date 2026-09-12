@@ -79,7 +79,8 @@ export type McpMutationService = {
 }
 
 export type McpControlResponse<T = unknown> =
-  { ok: true; data: T } | { ok: false; error: { code: McpControlErrorCode; message: string } }
+  | { ok: true; data: T }
+  | { ok: false; error: { code: McpControlErrorCode; message: string; details?: unknown } }
 
 export type McpGateResult = {
   decision: McpGateDecision

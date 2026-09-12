@@ -54,6 +54,7 @@ import { NewChatForm } from "../main/new-chat-form"
 import { ChatView } from "../main/active-chat"
 import { api } from "../../../lib/mock-api"
 import { trpc } from "../../../lib/trpc"
+import { YAP_REVIEW_REQUEST_EVENT, type YapReviewRequest } from "../../../../shared/task-proposals"
 import { useIsMobile } from "../../../lib/hooks/use-mobile"
 import { useDocumentVisible } from "../../../hooks/use-document-visible"
 import { AgentsSidebar } from "../../sidebar/agents-sidebar"
@@ -104,6 +105,7 @@ import {
   type TopNavigationDropIntent,
 } from "../lib/top-navigation-drag"
 import { DictationSessionProvider } from "../voice/dictation-session"
+import { SharedRecordsBoard } from "../../project-records/shared-records-board"
 import { reconcileLiveAgentInputs } from "../lib/agent-input-transport"
 import { appStore } from "../../../lib/jotai-store"
 import { useDesktopNotifications } from "../hooks/use-desktop-notifications"
@@ -403,6 +405,7 @@ function AgentsContentInner() {
     [editableWorkbenchChatIds, workbenchChatIds],
   )
   const [desktopView, setDesktopView] = useAtom(desktopViewAtom)
+  const [yapReview, setYapReview] = useState<YapReviewRequest | null>(null)
   const betaFeatures = useBetaFeatures()
   const effectiveDesktopView =
     (desktopView === "orchestration-fleet" && !betaFeatures.orchestration) ||
@@ -488,6 +491,26 @@ function AgentsContentInner() {
   useEffect(() => {
     if (desktopView !== effectiveDesktopView) setDesktopView(effectiveDesktopView)
   }, [desktopView, effectiveDesktopView, setDesktopView])
+
+  // All proposal entry points hand off to the shared Yap review boundary.
+  // The target is kept in renderer state until the shared controller has
+  // loaded it, so opening review from a tray does not lose its identity.
+  useEffect(() => {
+    const handleYapReview = (event: Event) => {
+      const detail = (event as CustomEvent<YapReviewRequest>).detail
+      if (
+        !detail ||
+        typeof detail !== "object" ||
+        (!detail.proposalId && !detail.inputId && !detail.proposalIds?.length)
+      ) {
+        return
+      }
+      setYapReview({ ...detail, source: detail.source ?? "yap-intake" })
+      setDesktopView("tasks")
+    }
+    window.addEventListener(YAP_REVIEW_REQUEST_EVENT, handleYapReview)
+    return () => window.removeEventListener(YAP_REVIEW_REQUEST_EVENT, handleYapReview)
+  }, [setDesktopView])
 
   // Quick-switch dialog state - Agents (Opt+Ctrl+Tab)
   const [quickSwitchOpen, setQuickSwitchOpen] = useAtom(agentsQuickSwitchOpenAtom)
@@ -2909,7 +2932,11 @@ function AgentsContentInner() {
             <AgentsUsageTab />
           </div>
         ) : effectiveDesktopView === "tasks" ? (
-          <KanbanView />
+          yapReview ? (
+            <SharedRecordsBoard initialView="board" yapReview={yapReview} />
+          ) : (
+            <KanbanView />
+          )
         ) : effectiveDesktopView === "plan" ? (
           <PlanView />
         ) : effectiveDesktopView === "discussions" ? (
@@ -3064,7 +3091,11 @@ function AgentsContentInner() {
               <AgentsUsageTab />
             </div>
           ) : effectiveDesktopView === "tasks" ? (
-            <KanbanView />
+            yapReview ? (
+              <SharedRecordsBoard initialView="board" yapReview={yapReview} />
+            ) : (
+              <KanbanView />
+            )
           ) : effectiveDesktopView === "plan" ? (
             <PlanView />
           ) : effectiveDesktopView === "discussions" ? (

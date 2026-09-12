@@ -90,6 +90,18 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
     toast.error("This artifact has no readable content")
   }
 
+  const viewAttachment = (attachment: (typeof attachments)[number]) => {
+    if (attachment.storedPath) {
+      setFileViewerPath(attachment.storedPath)
+      return
+    }
+    if (attachment.contentText !== null) {
+      setTextPreview({ name: attachment.name, content: attachment.contentText })
+      return
+    }
+    toast.error("This attachment has no readable content")
+  }
+
   if (attachments.length === 0 && taskArtifacts.length === 0 && taskVisuals.length === 0)
     return null
 
@@ -110,6 +122,7 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
               <div
                 key={attachment.id}
                 className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5"
+                title={`${attachment.name} · ${attachment.id}`}
               >
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-xs font-medium text-foreground">
@@ -120,6 +133,21 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
                     {attachment.taskId ? " · task" : " · chat"}
                   </div>
                 </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 shrink-0"
+                      aria-label={`View ${attachment.name}`}
+                      onClick={() => viewAttachment(attachment)}
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>View source attachment</TooltipContent>
+                </Tooltip>
                 <Input
                   value={targetPath}
                   onChange={(event) =>

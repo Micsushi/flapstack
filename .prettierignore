@@ -18,3 +18,5 @@ bun.lockb
 *.gif
 *.webp
 *.svg
+
+.generated

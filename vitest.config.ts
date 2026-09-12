@@ -1,10 +1,18 @@
 import { defineConfig } from "vitest/config"
 import { fileURLToPath } from "node:url"
 
+import { prepareProjectRecordsSource } from "./scripts/lib/project-records-source.mjs"
+const recordsSource = prepareProjectRecordsSource(fileURLToPath(new URL(".", import.meta.url)))
+
 const boundedHost = ["win32", "darwin"].includes(process.platform)
 
 export default defineConfig({
-  resolve: { alias: { "@": fileURLToPath(new URL("./src/renderer", import.meta.url)) } },
+  resolve: {
+    alias: {
+      "@project-records": recordsSource,
+      "@": fileURLToPath(new URL("./src/renderer", import.meta.url)),
+    },
+  },
   plugins: [
     {
       name: "strip-node-shebang-on-windows",

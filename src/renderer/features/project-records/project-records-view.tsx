@@ -3,6 +3,7 @@ import { useAtom } from "jotai"
 import { atomWithStorage } from "jotai/utils"
 import { AlertCircle, CheckCircle2, Circle, RefreshCw, Search } from "lucide-react"
 import type { ProjectRecord, ProjectRecordSnapshot } from "../../../shared/project-records"
+import { questionNeedsOwner, questionReviewState } from "../../../shared/project-records"
 import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import { trpc, trpcClient } from "../../lib/trpc"
@@ -34,6 +35,7 @@ const stateLabel: Record<string, string> = {
   open: "Waiting for your answer",
   answered: "Answer recorded",
   resolved_independently: "AI resolved",
+  agent_research: "Agent is checking",
   resolved: "Resolved with evidence",
 }
 const viewLabels = {
@@ -51,7 +53,7 @@ export function ProjectRecordsView() {
     retry: false,
   })
   const [chosenProject, setChosenProject] = useState("")
-  const [chosenView, setChosenView] = useState<ProjectRecord["kind"]>("question")
+  const [chosenView, setChosenView] = useState<keyof typeof viewLabels>("question")
   const [query, setQuery] = useState("")
   const documents = trpc.useQueries((t) =>
     (index.data?.documents ?? []).map((document) =>
@@ -66,7 +68,7 @@ export function ProjectRecordsView() {
   ) as ProjectRecordSnapshot[]
   const projects = projectRecordGroups(snapshots)
   const selectedProject = projects.find((project) => project.id === chosenProject)
-  const views = Object.keys(viewLabels) as ProjectRecord["kind"][]
+  const views = Object.keys(viewLabels) as (keyof typeof viewLabels)[]
   const selectedView = chosenView
   const [error, setError] = useState<string | null>(null)
   const patch = trpc.projectRecords.patch.useMutation()
@@ -95,6 +97,9 @@ export function ProjectRecordsView() {
           record.ownerAction,
           record.affectedWork,
           record.resolutionSteps,
+          record.answer,
+          record.agentReview,
+          record.followUps,
           project.name,
         ])
           .toLocaleLowerCase()
@@ -129,14 +134,11 @@ export function ProjectRecordsView() {
       })
       if (selectedView === "question") {
         for (const waiting of [true, false]) {
-          const items = entries.filter(
-            ({ record }) =>
-              !["answered", "resolved_independently"].includes(record.state) === waiting,
-          )
+          const items = entries.filter(({ record }) => questionNeedsOwner(record) === waiting)
           if (items.length)
             result.push({
               key: `${project.id}:${waiting}`,
-              label: `${project.name}: ${waiting ? "Waiting for your answer" : "Recorded answers and AI resolutions"}`,
+              label: `${project.name}: ${waiting ? "Waiting for your answer" : "Saved answers and agent follow-up"}`,
               waiting,
               entries: items,
             })
@@ -369,7 +371,7 @@ export function ProjectRecordsView() {
                           </label>
                         )}
                       </div>
-                      {text(record.description || record.context) && (
+                      {record.kind !== "blocker" && text(record.description || record.context) && (
                         <p className="mt-2 max-w-prose whitespace-pre-wrap break-words text-sm">
                           {text(record.description || record.context)}
                         </p>
@@ -447,14 +449,18 @@ function QuestionAnswer({
   path,
   busy,
   save,
+  draftKey,
 }: {
   record: ProjectRecord
   path: string
   busy: boolean
   save: (changes: Record<string, unknown>) => Promise<boolean>
+  draftKey?: string
 }) {
   const [drafts, setDrafts] = useAtom(pendingDraftsAtom)
-  const key = `${path}:${record.id}`
+  const key = draftKey ?? `${path}:${record.id}`
+  const reviewState = questionReviewState(record)
+  const canAnswer = record.state !== "superseded" && record.state !== "agent_research"
   const draft = drafts[key] ?? text(record.draft)
   const setDraft = (value: string) => setDrafts((current) => ({ ...current, [key]: value }))
   const saveDraft = async (submit: boolean) => {
@@ -471,11 +477,14 @@ function QuestionAnswer({
   }
   return (
     <div className="mt-3 max-w-prose space-y-3">
+      {record.state === "agent_research" && (
+        <p className="text-sm">The agent is checking this. No answer is needed from you.</p>
+      )}
       <p className="text-sm whitespace-pre-wrap break-words">
         <span className="font-medium">AI recommendation: </span>
         {text(record.recommendation) || "No recommendation recorded yet."}
       </p>
-      {strings(record.choices).length > 0 && (
+      {canAnswer && strings(record.choices).length > 0 && (
         <div
           className="flex flex-wrap gap-2"
           role="group"
@@ -505,25 +514,87 @@ function QuestionAnswer({
           {text(record.answer)}
         </p>
       )}
-      <label className="block space-y-1 text-sm">
-        <span className="font-medium">Your answer</span>
-        <textarea
-          aria-label={`Answer to ${record.title}`}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          maxLength={16_384}
-          rows={3}
-          className="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm"
-        />
-      </label>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" disabled={busy || !draft.trim()} onClick={() => void saveDraft(true)}>
-          Submit answer
-        </Button>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => void saveDraft(false)}>
-          Save draft
-        </Button>
-      </div>
+      {(text(record.answer) || record.agentReview) && (
+        <div className="space-y-1 text-sm" aria-label={`Agent review for ${record.title}`}>
+          <p className="font-medium">
+            {reviewState === "unrecorded"
+              ? "Agent review not recorded"
+              : reviewState === "stale"
+                ? "Answer changed. Agent needs to review it again."
+                : reviewState === "confirmed"
+                  ? "Agent confirmed this answer"
+                  : "Agent needs clarification"}
+          </p>
+          {record.agentReview && (
+            <p className="whitespace-pre-wrap break-words text-muted-foreground">
+              {reviewState === "stale" && "Previous review: "}
+              {record.agentReview.note}
+            </p>
+          )}
+        </div>
+      )}
+      {canAnswer && (
+        <>
+          <label className="block space-y-1 text-sm">
+            <span className="font-medium">Your answer</span>
+            <textarea
+              aria-label={`Answer to ${record.title}`}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              maxLength={16_384}
+              rows={3}
+              className="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" disabled={busy || !draft.trim()} onClick={() => void saveDraft(true)}>
+              Submit answer
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void saveDraft(false)}
+            >
+              Save draft
+            </Button>
+          </div>
+        </>
+      )}
+      {!!record.followUps?.length && (
+        <section
+          className="space-y-4 border-t pt-4"
+          aria-label={`Follow-up questions for ${record.title}`}
+        >
+          <h4 className="text-sm font-semibold">Follow-up questions</h4>
+          {record.followUps.map((child) => (
+            <div key={child.id} className="space-y-1" role="group" aria-label={child.title}>
+              <h5 className="break-words text-sm font-medium">{child.title}</h5>
+              <p className="text-xs text-muted-foreground">
+                {child.state === "answered" && child.answerSource === "owner"
+                  ? "Owner answered"
+                  : stateLabel[child.state]}
+              </p>
+              {child.context && (
+                <p className="whitespace-pre-wrap break-words text-sm">{child.context}</p>
+              )}
+              <QuestionAnswer
+                record={{ ...child, kind: "question", history: [] }}
+                path={path}
+                draftKey={`followUp:${JSON.stringify([path, record.id, child.id])}`}
+                busy={busy}
+                save={(changes) =>
+                  save({
+                    followUps: record.followUps!.map((current) =>
+                      current.id === child.id ? { ...current, ...changes } : current,
+                    ),
+                  })
+                }
+              />
+            </div>
+          ))}
+        </section>
+      )}
     </div>
   )
 }

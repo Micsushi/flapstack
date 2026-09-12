@@ -41,6 +41,16 @@ export type McpTaskProposalService = {
 export function createMcpTaskProposalService(
   databasePath = process.env.FLAPSTACK_DB_PATH,
 ): McpTaskProposalService {
+  if (process.env.FLAPSTACK_PROJECT_RECORDS_URL) {
+    return {
+      async invoke() {
+        return error(
+          "conflict",
+          "Project records owns task proposals. Use the canonical Records Yap proposal operation.",
+        )
+      },
+    }
+  }
   if (!databasePath) throw new Error("FLAPSTACK_DB_PATH is required for MCP task proposals.")
   const service = new TaskProposalService(databasePath)
   return {

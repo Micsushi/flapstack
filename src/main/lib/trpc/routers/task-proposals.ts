@@ -8,6 +8,7 @@ import { getDatabasePath } from "../../db"
 import { TaskProposalError, TaskProposalService } from "../../task-proposals"
 import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 import { betaProcedure, router } from "../index"
+import { assertLegacyTaskTransitionAllowed } from "../../project-records/legacy-task-boundary"
 
 const publicProcedure = betaProcedure("planning")
 
@@ -58,6 +59,7 @@ export const taskProposalsRouter = router({
     .query(({ input }) => handle(() => service().preview(user, input.proposalId))),
 
   approve: publicProcedure.input(taskProposalApprovalSchema).mutation(({ input }) => {
+    assertLegacyTaskTransitionAllowed()
     const result = handle(() => service().approve(user, input))
     if (result.item.created) {
       publishLocalProductInvalidation({
@@ -80,6 +82,7 @@ export const taskProposalsRouter = router({
       }),
     )
     .mutation(({ input }) => {
+      assertLegacyTaskTransitionAllowed()
       const result = handle(() => service().approveBatch(user, input))
       const created = result.items.filter((item) => item.created)
       if (created.length > 0) {

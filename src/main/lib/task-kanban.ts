@@ -4,6 +4,7 @@ import * as schema from "./db/schema"
 import { agentRuns, chats, projects, tasks } from "./db/schema"
 import { assertTaskStatusTransition, type TaskWorkflowStatus } from "../../shared/plan-kanban"
 import { createRebalancedBoardOrders, type TaskKanbanCard } from "../../shared/task-kanban"
+import { assertLegacyTaskTransitionAllowed } from "./project-records/legacy-task-boundary"
 
 type Database = BetterSQLite3Database<typeof schema>
 
@@ -127,6 +128,7 @@ export function moveTaskKanbanCard(
     beforeTaskId?: string
   },
 ) {
+  assertLegacyTaskTransitionAllowed()
   return database.transaction((tx) => {
     const current = tx
       .select()
@@ -214,6 +216,7 @@ export function archiveTaskKanbanCard(
   database: Database,
   input: { id: string; expectedVersion: number },
 ) {
+  assertLegacyTaskTransitionAllowed()
   const updated = database
     .update(tasks)
     .set({ archivedAt: new Date(), updatedAt: new Date(), version: sql`${tasks.version} + 1` })

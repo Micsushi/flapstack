@@ -10,6 +10,17 @@ export const AI_TASK_PROPOSAL_PENDING_CAP = 20
 export const AI_TASK_PROPOSAL_RATE_CAP = 10
 export const AI_TASK_PROPOSAL_RATE_WINDOW_MS = 60_000
 
+// Proposal entry points share one review boundary. The event payload is
+// intentionally transport-only: the canonical Yap surface re-reads the
+// durable source/proposal before displaying or applying anything.
+export const YAP_REVIEW_REQUEST_EVENT = "flapstack:yap-review-request"
+export type YapReviewRequest = {
+  proposalId?: string
+  proposalIds?: string[]
+  inputId?: string
+  source?: "yap-intake" | "task-proposal-tray"
+}
+
 export const taskProposalContentSchema = z
   .object({
     projectId: z.string().trim().min(1).max(128),

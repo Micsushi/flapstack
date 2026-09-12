@@ -59,7 +59,6 @@ describe("canonical records client", () => {
       expectedRevision: "b".repeat(64),
       recordId: "Q-1",
       changes: { draft: "kept" },
-      actor: "owner",
     })
   })
 

@@ -309,6 +309,9 @@ dictation; no separate Flapstack voice platform is planned.
 
 ## Development
 
+For the integrated Board, Setups, Fleet and Yap workspace, follow
+[Records workspace setup](docs/records-workspace.md) before building.
+
 Prerequisites:
 
 - Node.js 22

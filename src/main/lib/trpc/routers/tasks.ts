@@ -10,9 +10,14 @@ import {
   permissionModes,
   type CustomPermissionToggles,
 } from "../../permissions"
-import { betaProcedure, publicProcedure, router } from "../index"
+import { betaProcedure, middleware, publicProcedure, router } from "../index"
 
-const planningProcedure = betaProcedure("planning")
+const legacyTaskWrites = middleware(({ type, next }) => {
+  if (type === "mutation") assertLegacyTaskTransitionAllowed()
+  return next()
+})
+const planningProcedure = betaProcedure("planning").use(legacyTaskWrites)
+const taskProcedure = publicProcedure.use(legacyTaskWrites)
 import { TRPCError } from "@trpc/server"
 import {
   archiveTaskKanbanCard,
@@ -26,6 +31,7 @@ import {
   type TaskWorkflowStatus,
 } from "../../../../shared/plan-kanban"
 import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
+import { assertLegacyTaskTransitionAllowed } from "../../project-records/legacy-task-boundary"
 
 const permissionModeSchema = z.enum(permissionModes)
 const customPermissionsSchema = z.custom<CustomPermissionToggles>(
@@ -55,6 +61,7 @@ function publishTaskChange(task: { id: string; projectId: string } | undefined):
 }
 
 export async function ensureTaskPrimaryWorktree(taskId: string) {
+  assertLegacyTaskTransitionAllowed()
   const db = getDatabase()
   const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get()
   if (!task) throw new Error("Task not found")
@@ -131,7 +138,7 @@ export const tasksRouter = router({
       }
     }),
 
-  create: publicProcedure
+  create: taskProcedure
     .input(
       z.object({
         projectId: z.string(),
@@ -160,7 +167,7 @@ export const tasksRouter = router({
       return task
     }),
 
-  list: publicProcedure
+  list: taskProcedure
     .input(
       z.object({ projectId: z.string().optional(), includeArchived: z.boolean().default(false) }),
     )
@@ -178,7 +185,7 @@ export const tasksRouter = router({
         .all()
     }),
 
-  listArchived: publicProcedure
+  listArchived: taskProcedure
     .input(z.object({ projectId: z.string().optional() }).optional())
     .query(({ input }) => {
       const db = getDatabase()
@@ -193,12 +200,12 @@ export const tasksRouter = router({
         .all()
     }),
 
-  get: publicProcedure.input(z.object({ id: z.string() })).query(({ input }) => {
+  get: taskProcedure.input(z.object({ id: z.string() })).query(({ input }) => {
     const db = getDatabase()
     return db.select().from(tasks).where(eq(tasks.id, input.id)).get()
   }),
 
-  update: publicProcedure
+  update: taskProcedure
     .input(
       z.object({
         id: z.string(),
@@ -214,6 +221,7 @@ export const tasksRouter = router({
       const db = getDatabase()
       const { id, expectedVersion, ...updates } = input
       if (updates.status !== undefined) {
+        assertLegacyTaskTransitionAllowed()
         const current = db
           .select({ status: tasks.status })
           .from(tasks)
@@ -259,14 +267,14 @@ export const tasksRouter = router({
       return task
     }),
 
-  delete: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
+  delete: taskProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
     const db = getDatabase()
     const task = db.delete(tasks).where(eq(tasks.id, input.id)).returning().get()
     publishTaskChange(task)
     return task
   }),
 
-  pin: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
+  pin: taskProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
     const db = getDatabase()
     const task = db
       .update(tasks)
@@ -278,7 +286,7 @@ export const tasksRouter = router({
     return task
   }),
 
-  unpin: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
+  unpin: taskProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
     const db = getDatabase()
     const task = db
       .update(tasks)
@@ -290,7 +298,7 @@ export const tasksRouter = router({
     return task
   }),
 
-  archive: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
+  archive: taskProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
     const db = getDatabase()
     const task = db
       .update(tasks)
@@ -302,7 +310,7 @@ export const tasksRouter = router({
     return task
   }),
 
-  restore: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
+  restore: taskProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
     const db = getDatabase()
     const task = db
       .update(tasks)
@@ -314,7 +322,7 @@ export const tasksRouter = router({
     return task
   }),
 
-  listChats: publicProcedure.input(z.object({ taskId: z.string() })).query(({ input }) => {
+  listChats: taskProcedure.input(z.object({ taskId: z.string() })).query(({ input }) => {
     const db = getDatabase()
     return db
       .select()
@@ -324,7 +332,7 @@ export const tasksRouter = router({
       .all()
   }),
 
-  ensurePrimaryWorktree: publicProcedure
+  ensurePrimaryWorktree: taskProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input }) => {
       const task = await ensureTaskPrimaryWorktree(input.id)

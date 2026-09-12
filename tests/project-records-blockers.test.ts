@@ -33,6 +33,11 @@ it("accepts canonical blockers without changing legacy records and requires clos
     questionIds: [],
   }
   expect(projectRecordSchema.parse(blocker)).toEqual(blocker)
+  const continuationPrompt = "  Continue B1.\nPrepare <runtime path> and verify startup.  "
+  expect(projectRecordSchema.parse({ ...blocker, continuationPrompt }).continuationPrompt).toBe(
+    continuationPrompt,
+  )
+  expect(projectRecordSchema.safeParse({ ...blocker, continuationPrompt: " " }).success).toBe(false)
   expect(projectRecordSchema.safeParse({ ...blocker, cause: " " }).success).toBe(false)
   expect(projectRecordSchema.safeParse({ ...blocker, resolutionSteps: [] }).success).toBe(false)
   expect(projectRecordSchema.safeParse({ ...blocker, state: "answered" }).success).toBe(false)

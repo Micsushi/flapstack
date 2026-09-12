@@ -36,6 +36,7 @@ resources/bin/
 native/**/target/
 /artifacts/
 /build/generated/
+/.generated/
 /.local-evidence/
 
 # Local agent instructions stay outside the product repository.

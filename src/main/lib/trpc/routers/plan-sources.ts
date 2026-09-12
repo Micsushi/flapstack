@@ -31,6 +31,7 @@ import {
 } from "../../plan-kanban-dev-fixtures"
 import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 import { betaProcedure, router } from "../index"
+import { assertLegacyTaskTransitionAllowed } from "../../project-records/legacy-task-boundary"
 
 const publicProcedure = betaProcedure("planning")
 
@@ -236,6 +237,7 @@ export const planSourcesRouter = router({
     .input(planTaskPromotionConfirmInputSchema)
     .mutation(async ({ input }) => {
       try {
+        assertLegacyTaskTransitionAllowed()
         const snapshot = await readPromotionSnapshot(input.reference)
         const result = promotePlanCandidate(getDatabase(), snapshot, input)
         if (result.created) {

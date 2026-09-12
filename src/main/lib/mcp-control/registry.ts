@@ -72,6 +72,9 @@ export const mcpControlTools: McpControlTool[] = [
     requiredCapabilities: [],
     status: "implemented",
   },
+  // Canonical records_* tools belong to the separate Records MCP server,
+  // whose launcher binds worker credentials to a live task claim and attempt.
+  // Desktop chat/run validation alone cannot grant that Records authority.
   {
     name: "list_projects",
     description: "List caller-visible projects.",

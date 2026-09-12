@@ -1,3 +1,4 @@
+import { assertLegacyTaskTransitionAllowed } from "./project-records/legacy-task-boundary"
 import type Database from "better-sqlite3"
 import { openAppDatabase } from "./db/access"
 import { createHash } from "node:crypto"
@@ -123,6 +124,7 @@ export class TaskProposalService {
     actor: Extract<TaskProposalActor, { type: "agent" }>,
     input: { idempotencyKey: string; proposal: TaskProposalContent },
   ): { record: TaskProposalRecord; created: boolean } {
+    assertLegacyTaskTransitionAllowed()
     const proposal = parseContent(input.proposal)
     const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey)
     return this.withDatabase((database) => {
@@ -179,6 +181,7 @@ export class TaskProposalService {
     actor: Extract<TaskProposalActor, { type: "agent" }>,
     input: { proposalId: string; expectedVersion: number; proposal: TaskProposalContent },
   ): { record: TaskProposalRecord; changed: boolean } {
+    assertLegacyTaskTransitionAllowed()
     const proposal = parseContent(input.proposal)
     return this.withDatabase((database) => {
       const transaction = database.transaction(() => {
@@ -230,6 +233,7 @@ export class TaskProposalService {
     actor: Extract<TaskProposalActor, { type: "agent" }>,
     input: { proposalId: string; expectedVersion: number },
   ): { record: TaskProposalRecord; changed: boolean } {
+    assertLegacyTaskTransitionAllowed()
     return this.withDatabase((database) => {
       const transaction = database.transaction(() => {
         const scope = actorScope(database, actor)!
@@ -280,6 +284,7 @@ export class TaskProposalService {
     }>
     createdCount: number
   } {
+    assertLegacyTaskTransitionAllowed()
     const approvals = input.approvals.map((approval) => taskProposalApprovalSchema.parse(approval))
     if (approvals.length < 1 || approvals.length > AI_TASK_PROPOSAL_BATCH_CAP) {
       fail(
@@ -331,6 +336,7 @@ export class TaskProposalService {
     actor: Extract<TaskProposalActor, { type: "user" }>,
     input: { proposalId: string; expectedVersion: number },
   ): { record: TaskProposalRecord; changed: boolean } {
+    assertLegacyTaskTransitionAllowed()
     return this.withDatabase((database) => {
       const transaction = database.transaction(() => {
         const current = requireRecord(database, input.proposalId)

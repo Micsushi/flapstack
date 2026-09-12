@@ -129,6 +129,16 @@ export const mcpMutationInputShapes: Record<string, z.ZodRawShape | undefined> =
   Object.entries(schemas).map(([key, value]) => [key, value.shape]),
 )
 
+function refuseUnboundRecordsCaller(): McpControlResponse {
+  // The app connection is an owner credential. Native MCP caller validation
+  // does not exchange it for a Records worker grant, so forwarding it would
+  // let an agent manufacture owner responses and bypass record scope.
+  return fail(
+    "permission-denied",
+    "Use the scoped Records MCP server provided to Board-launched agents. Desktop app-control callers cannot use the app's owner Records connection.",
+  )
+}
+
 type Row = Record<string, unknown>
 /**
  * The stdio MCP child cannot call renderer tRPC. This is the shared, main-free
@@ -141,11 +151,17 @@ export function createMcpMutationService(
   if (!databasePath) throw new Error("FLAPSTACK_DB_PATH is required for MCP mutations.")
   return {
     async invoke(operation, caller, rawInput, context) {
+      // Older clients may still call the removed desktop Records tools.
+      // Only the Records launcher owns their claim-bound worker credentials.
+      if (operation.startsWith("records_")) return refuseUnboundRecordsCaller()
       const schema = schemas[operation as keyof typeof schemas]
       if (!schema) return fail("invalid-input", "Unsupported mutation operation.")
       const input = schema.safeParse(rawInput)
       if (!input.success)
         return fail("invalid-input", input.error.issues[0]?.message ?? "Invalid input.")
+      if (operation === "create_task" && process.env.FLAPSTACK_PROJECT_RECORDS_URL) {
+        return refuseUnboundRecordsCaller()
+      }
       if (
         (operation === "create_chat" || operation === "move_chat") &&
         !validateChatDestination(input.data as z.infer<typeof schemas.create_chat>)

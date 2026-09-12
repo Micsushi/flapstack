@@ -10,7 +10,10 @@ import {
 } from "./lib/project-command.mjs"
 import { runWithIsolatedTestGitEnvironment } from "./lib/test-git-environment.mjs"
 
+import { prepareProjectRecordsSource } from "./lib/project-records-source.mjs"
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+prepareProjectRecordsSource(root)
 const node = process.execPath
 const portableLinux = process.argv.includes("--portable-linux")
 const vitestArgs = ["run"]

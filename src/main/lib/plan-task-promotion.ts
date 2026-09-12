@@ -1,3 +1,4 @@
+import { assertLegacyTaskTransitionAllowed } from "./project-records/legacy-task-boundary"
 import { createHash } from "node:crypto"
 import { and, asc, eq, isNull, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
@@ -189,6 +190,7 @@ export function promotePlanCandidate(
   snapshot: ProjectPlanSnapshot,
   input: PlanTaskPromotionConfirmInput,
 ) {
+  assertLegacyTaskTransitionAllowed()
   const { source, candidate } = resolveCandidate(snapshot, input.reference)
   const project = getProject(database, input.targetProjectId)
   const customPermissions = validatePermissions(input)

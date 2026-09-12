@@ -15,6 +15,7 @@ import {
 } from "../agents/atoms"
 import { OrchestrationActivityPanel } from "../agents/ui/orchestration-activity-panel"
 import { writeSavedWorkspaceSelection } from "../saved-workspaces/selection-storage"
+import { SharedRecordsBoard } from "../project-records/shared-records-board"
 
 export type OrchestrationFleetFilters = {
   projectId: string
@@ -81,31 +82,50 @@ export function OrchestrationFleetView() {
   }
 
   return (
-    <OrchestrationFleetPanel
-      data={query.data}
-      filters={filters}
-      isLoading={query.isLoading}
-      isFetching={query.isFetching}
-      error={query.error?.message ?? null}
-      canPrevious={cursorHistory.length > 0}
-      onFiltersChange={updateFilters}
-      onRefresh={() => void query.refetch()}
-      onRetry={() => void query.refetch()}
-      onNext={() => {
-        if (!query.data?.nextCursor) return
-        setCursorHistory((history) => [...history, cursor])
-        setCursor(query.data.nextCursor)
-      }}
-      onPrevious={() => {
-        setCursorHistory((history) => {
-          if (history.length === 0) return history
-          setCursor(history[history.length - 1])
-          return history.slice(0, -1)
-        })
-      }}
-      onOpenChat={openChat}
-      onOpenWorkspace={openWorkspace}
-    />
+    <main className="h-full min-h-0 overflow-y-auto bg-background" aria-label="Fleet">
+      <section className="min-h-[32rem] border-b" aria-labelledby="records-fleet-heading">
+        <div className="sr-only" id="records-fleet-heading">
+          Records runtime fleet
+        </div>
+        <SharedRecordsBoard initialView="fleet" />
+      </section>
+      <details className="border-b px-5 py-4">
+        <summary className="cursor-pointer text-sm font-semibold">
+          Local orchestration fleet
+        </summary>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Native local runs remain separate from Records task attempts and keep their original chat
+          and workspace identity.
+        </p>
+        <div className="mt-3 min-h-[24rem]">
+          <OrchestrationFleetPanel
+            data={query.data}
+            filters={filters}
+            isLoading={query.isLoading}
+            isFetching={query.isFetching}
+            error={query.error?.message ?? null}
+            canPrevious={cursorHistory.length > 0}
+            onFiltersChange={updateFilters}
+            onRefresh={() => void query.refetch()}
+            onRetry={() => void query.refetch()}
+            onNext={() => {
+              if (!query.data?.nextCursor) return
+              setCursorHistory((history) => [...history, cursor])
+              setCursor(query.data.nextCursor)
+            }}
+            onPrevious={() => {
+              if (cursorHistory.length === 0) return
+              setCursorHistory((history) => {
+                setCursor(history[history.length - 1])
+                return history.slice(0, -1)
+              })
+            }}
+            onOpenChat={openChat}
+            onOpenWorkspace={openWorkspace}
+          />
+        </div>
+      </details>
+    </main>
   )
 }
 

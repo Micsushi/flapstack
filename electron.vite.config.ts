@@ -3,8 +3,10 @@ import { resolve } from "path"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "tailwindcss"
 import autoprefixer from "autoprefixer"
+import { prepareProjectRecordsSource } from "./scripts/lib/project-records-source.mjs"
 
 const isDev = process.env.NODE_ENV !== "production"
+const recordsSource = prepareProjectRecordsSource(__dirname)
 
 export default defineConfig({
   main: {
@@ -69,6 +71,7 @@ export default defineConfig({
     resolve: {
       alias: {
         "@": resolve(__dirname, "src/renderer"),
+        "@project-records": recordsSource,
       },
     },
     build: {
