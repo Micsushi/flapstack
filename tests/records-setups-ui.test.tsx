@@ -4,15 +4,12 @@ import { resolve } from "node:path"
 import { expect, it, vi } from "vitest"
 import { mountSetups } from "@project-records/setups.js"
 
-const recordsRoot = resolve(
-  process.cwd(),
-  process.env.FLAPSTACK_PROJECT_RECORDS_SOURCE || "../project-records",
-)
+const recordsRoot = resolve(process.cwd(), ".generated/project-records")
 
 it("ships the canonical saved Setup editor through the shared Records mount", () => {
-  const board = readFileSync(resolve(recordsRoot, "ui/shared/board.js"), "utf8")
-  const editor = readFileSync(resolve(recordsRoot, "ui/shared/setups.js"), "utf8")
-  const template = readFileSync(resolve(recordsRoot, "ui/shared/template.js"), "utf8")
+  const board = readFileSync(resolve(recordsRoot, "board.js"), "utf8")
+  const editor = readFileSync(resolve(recordsRoot, "setups.js"), "utf8")
+  const template = readFileSync(resolve(recordsRoot, "template.js"), "utf8")
   expect(board).toContain('from "./setups.js"')
   expect(template).toContain('id="open-setups"')
   expect(editor).toContain("export function mountSetups")

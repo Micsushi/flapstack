@@ -6,12 +6,14 @@ authenticated HTTP service. Task completion and worker completion are separate.
 
 ## Build and connect
 
-Keep the compatible Project Records checkout alongside Flapstack, or set
-`FLAPSTACK_PROJECT_RECORDS_SOURCE` to its absolute path before building, checking
-or testing. The default is `../project-records`. The build prepares the canonical
-`ui/shared` sources under ignored `.generated/project-records`; edit the original
-sources in Project Records, never the generated copy. The packaged renderer
-contains those sources and does not require the source checkout at runtime.
+Clean checkouts build with a pinned, generated UI snapshot from the companion
+repository. Set `FLAPSTACK_PROJECT_RECORDS_SOURCE` to a compatible Project Records
+checkout for joint development. To update the shipped snapshot after reviewing
+and committing that UI, run `node scripts/sync-project-records-ui.mjs` with that
+variable set. Commit the resulting `resources/project-records-ui.json.gz`.
+The build prepares sources under ignored `.generated/project-records`; edit the
+original `ui/shared` files in Project Records, never the generated copies.
+The packaged renderer does not require either source checkout at runtime.
 
 Run the Project Records service using its documented setup. Configure
 `FLAPSTACK_PROJECT_RECORDS_URL` with its `http://127.0.0.1:PORT` address and
