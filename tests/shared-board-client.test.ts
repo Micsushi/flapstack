@@ -7,14 +7,12 @@ import { TaskProposalService } from "../src/main/lib/task-proposals"
 
 describe("shared canonical board boundary", () => {
   it("forwards exact workflow revisions, worker and evidence; retains rejection details", async () => {
-    const fetch = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ message: "Claimed by another worker" }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        }),
-      )
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ message: "Claimed by another worker" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
     const client = new ProjectRecordsClient({
       endpoint: "http://127.0.0.1:47839",
       token: "private-test-token",

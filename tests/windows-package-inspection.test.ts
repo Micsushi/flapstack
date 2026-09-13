@@ -9,6 +9,10 @@ import {
   readWindowsElectronVersion,
 } from "../scripts/inspect-packaged-binaries.mjs"
 
+const packagedElectronVersion = JSON.parse(
+  readFileSync("package.json", "utf8"),
+).devDependencies.electron.replace(/^[~^]/, "")
+
 function pe() {
   const buffer = Buffer.alloc(256)
   buffer.write("MZ", 0, "ascii")
@@ -75,12 +79,12 @@ describe("Windows package inspection", () => {
     const app = fixture()
     expect(
       inspectWindowsApp(app, "win32-x64", {
-        readVersion: () => "39.8.10.0",
+        readVersion: () => `${packagedElectronVersion}.0`,
       }),
     ).toMatchObject({
       appPath: app,
       platformKey: "win32-x64",
-      electronVersion: "39.8.10.0",
+      electronVersion: `${packagedElectronVersion}.0`,
       binaries: {
         "node-pty-conpty": expect.stringContaining("conpty.node"),
         "node-pty-console-list": expect.stringContaining("conpty_console_list.node"),
@@ -100,8 +104,8 @@ describe("Windows package inspection", () => {
     const app = fixture()
     appendFileSync(join(dirname(app), "resources", "bin", "flapstack-stt-sidecar.exe"), "tampered")
 
-    expect(() => inspectWindowsApp(app, "win32-x64", { readVersion: () => "39.8.10.0" })).toThrow(
-      /SHA256/,
-    )
+    expect(() =>
+      inspectWindowsApp(app, "win32-x64", { readVersion: () => `${packagedElectronVersion}.0` }),
+    ).toThrow(/SHA256/)
   })
 })

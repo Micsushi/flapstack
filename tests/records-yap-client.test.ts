@@ -39,6 +39,35 @@ const proposal = {
 }
 
 describe("bounded Yap Records client", () => {
+  it("allows both bounded inference passes before aborting", async () => {
+    vi.useFakeTimers()
+    try {
+      let signal: AbortSignal | undefined
+      const fetch = vi.fn().mockImplementation(async (_url, options) => {
+        signal = options.signal
+        await new Promise((resolve) => setTimeout(resolve, 600_000))
+        signal?.throwIfAborted()
+        return new Response(JSON.stringify({ ok: true }))
+      })
+      const client = new ProjectRecordsClient({
+        endpoint: "http://127.0.0.1:47831",
+        token: "private-token",
+        fetch,
+      })
+      const result = client.boardRequest({
+        path: "/v1/yap/inference",
+        method: "POST",
+        body: JSON.stringify({ inputId: "input-1" }),
+      })
+      await vi.advanceTimersByTimeAsync(599_000)
+      expect(signal?.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1_000)
+      await expect(result).resolves.toMatchObject({ status: 200 })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("allows chunked source upload and validates typed input/proposal responses", async () => {
     const fetch = vi.fn().mockImplementation(async (url: string) => {
       if (url.includes("/v1/yap/input")) return new Response(JSON.stringify({ input }))
@@ -93,13 +122,11 @@ describe("bounded Yap Records client", () => {
   })
 
   it("forwards embedded inference and cancellation routes through the same allowlist", async () => {
-    const fetch = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ ok: true }), {
-          headers: { "Content-Type": "application/json" },
-        }),
-      )
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
     const client = new ProjectRecordsClient({
       endpoint: "http://127.0.0.1:47831",
       token: "private-token",
