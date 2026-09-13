@@ -407,7 +407,15 @@ The base project is Apache-2.0 licensed; see [LICENSE](LICENSE). References to
 Flapstack identify this derivative project and do not imply endorsement by
 21st.dev or the original 1Code authors.
 
-## Contributor guidance
+## Contributor checks
 
-See [AGENTS.md](AGENTS.md) for the local-first repository boundary, command
-entrypoints, and safe change guidance.
+See [AGENTS.md](AGENTS.md) for the supported Node/npm versions and guarded
+build and development commands. With Node 22, this focused contract check runs
+without installing dependencies, starting a provider, or reading a private vault:
+
+```sh
+node scripts/check-usage-exit-matrix.mjs
+```
+
+It validates the usage-exit scenario matrix and rejects missing required rows.
+Use `npm run check` for the broader repository checks after dependency setup.
