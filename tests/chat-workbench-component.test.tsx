@@ -11,6 +11,8 @@ import { ChatWorkbench } from "../src/renderer/features/agents/workbench/chat-wo
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
+vi.mock("../src/renderer/lib/trpc", () => ({ trpc: {}, trpcClient: {} }))
+
 function dragEvent(
   type: string,
   data: Record<string, string>,

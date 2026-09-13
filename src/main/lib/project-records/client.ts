@@ -114,7 +114,8 @@ export class ProjectRecordsClient {
       this.options.timeoutMs ??
         ((path === "/v1/yap/inference" || path === "/v1/yap/proposal/generate") &&
         body !== undefined
-          ? 270_000
+          ? // The service permits two five-minute passes, plus response/cleanup time.
+            630_000
           : 10_000),
     )
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined

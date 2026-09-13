@@ -6,7 +6,8 @@ export function createRuntimeChatLifecycleDatabase(): Database.Database {
     CREATE TABLE chats (
       id text PRIMARY KEY, name text, project_id text, task_id text, scope text,
       permission_mode text, custom_permissions text, harness text, model text,
-      runtime_preference text, parent_chat_id text, initiator_chat_id text,
+      runtime_preference text, assigned_role text, lead_chat_id text, discussion_chat_id text,
+      parent_chat_id text, initiator_chat_id text,
       parent_run_id text, ancestor_chat_ids text, worktree_path text, branch text,
       base_branch text, mcp_exposure_enabled integer NOT NULL DEFAULT 0,
       created_at integer, updated_at integer, archived_at integer
