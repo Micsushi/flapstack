@@ -107,20 +107,27 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
       .catch((error) => console.warn("[Voice] Legacy playback rate migration failed", error))
   }, [updateSettingsMutation, utils.speech.getSettings, voiceSettings])
 
-  const { isRecording, audioLevel, startRecording, stopRecording, cancelRecording, waitForPcm } =
-    useVoiceRecording({
-      normalizeRecording: voiceSettings?.sttAdapterId !== "local-parakeet",
-      onPcmChunk: async (chunk) => {
-        if (streamStartRef.current) await streamStartRef.current
-        const sessionId = sessionIdRef.current
-        if (!sessionId) return
-        const update = await feedStreamingMutation.mutateAsync({
-          sessionId,
-          pcmBase64: float32ToBase64(chunk),
-        })
-        applyStreamingTranscript(update.committed, update.tentative)
-      },
-    })
+  const {
+    isRecording,
+    error: recordingError,
+    audioLevel,
+    startRecording,
+    stopRecording,
+    cancelRecording,
+    waitForPcm,
+  } = useVoiceRecording({
+    normalizeRecording: voiceSettings?.sttAdapterId !== "local-parakeet",
+    onPcmChunk: async (chunk) => {
+      if (streamStartRef.current) await streamStartRef.current
+      const sessionId = sessionIdRef.current
+      if (!sessionId) return
+      const update = await feedStreamingMutation.mutateAsync({
+        sessionId,
+        pcmBase64: float32ToBase64(chunk),
+      })
+      applyStreamingTranscript(update.committed, update.tentative)
+    },
+  })
 
   useEffect(() => {
     if (!startedAt) return
@@ -214,6 +221,10 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
     voiceSettings?.sttAdapterId,
     waitForPcm,
   ])
+
+  useEffect(() => {
+    if (recordingError && activeTargetRef.current && !startingRef.current) void stop()
+  }, [isStarting, recordingError, stop])
 
   const start = useCallback(
     async (target: DictationTarget) => {

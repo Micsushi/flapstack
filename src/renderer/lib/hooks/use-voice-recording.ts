@@ -234,9 +234,21 @@ export function useVoiceRecording(options: VoiceRecordingOptions = {}): UseVoice
 
         const mediaRecorder = new MediaRecorder(stream, { mimeType })
 
+        const failRecording = (message: string) => {
+          // Ignore delayed events from a cancelled or superseded recorder.
+          if (mediaRecorderRef.current !== mediaRecorder) return
+          cleanup()
+          setIsRecording(false)
+          setError(new Error(message))
+        }
+        mediaRecorder.onerror = () => failRecording("Microphone recording failed. Please retry.")
+        mediaRecorder.onstop = () =>
+          failRecording("Microphone disconnected or stopped. Reconnect it and try again.")
+
         chunksRef.current = []
 
         mediaRecorder.ondataavailable = (event) => {
+          if (mediaRecorderRef.current !== mediaRecorder) return
           if (event.data.size > 0) {
             chunksRef.current.push(event.data)
           }
@@ -276,9 +288,9 @@ export function useVoiceRecording(options: VoiceRecordingOptions = {}): UseVoice
       const mediaRecorder = mediaRecorderRef.current
 
       if (!mediaRecorder || mediaRecorder.state === "inactive") {
-        const error = new Error("No active recording")
-        setError(error)
-        reject(error)
+        const recordingError = error ?? new Error("No active recording")
+        setError(recordingError)
+        reject(recordingError)
         return
       }
 
@@ -311,7 +323,7 @@ export function useVoiceRecording(options: VoiceRecordingOptions = {}): UseVoice
 
       mediaRecorder.stop()
     })
-  }, [cleanup, options.normalizeRecording, queuePcm])
+  }, [cleanup, error, options.normalizeRecording, queuePcm])
 
   return {
     isRecording,
