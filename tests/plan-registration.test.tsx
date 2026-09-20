@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { act } from "react"
 import { createRoot } from "react-dom/client"
+import { QueryClient } from "@tanstack/react-query"
 import { expect, it, vi } from "vitest"
 const state = vi.hoisted(() => ({
+  cancel: vi.fn().mockResolvedValue(undefined),
   register: vi.fn(),
   refresh: vi.fn(),
   project: { id: "project", name: "My project" },
@@ -16,6 +18,7 @@ vi.mock("../src/renderer/features/plan/plan-kanban-dev-fixtures", () => ({
 }))
 vi.mock("../src/renderer/lib/trpc", () => ({
   trpc: {
+    useUtils: () => ({ planSources: { refresh: { cancel: state.cancel } } }),
     planSources: {
       refresh: { useQuery: () => ({ data: null, refetch: state.refresh }) },
       sourceLinks: { useQuery: () => ({ data: [], refetch: vi.fn() }) },
@@ -118,5 +121,82 @@ it("ignores registration completion after switching projects", async () => {
     state.project = { id: "project", name: "My project" }
     await act(async () => root.unmount())
     container.remove()
+  }
+})
+
+it("replaces an initial in-flight read after registering Markdown", async () => {
+  vi.clearAllMocks()
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const key = ["planSources.refresh", { projectId: "project" }]
+  const source = {
+    id: "markdown:docs/plan.md",
+    type: "markdown",
+    path: "docs/plan.md",
+    fingerprint: "new",
+    status: "current",
+    stale: false,
+    candidates: [],
+    limitations: [],
+    errors: [],
+  }
+  const snapshot = {
+    projectId: "project",
+    rootPath: "C:/owned",
+    fingerprint: "new",
+    sources: [source],
+    limitations: [],
+  }
+  let oldRead!: (value: typeof snapshot) => void
+  const read = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          oldRead = resolve
+        }),
+    )
+    .mockResolvedValue(snapshot)
+  const fetch = () => client.fetchQuery({ queryKey: key, queryFn: read })
+  const initial = fetch().catch(() => undefined)
+  state.cancel.mockImplementation(() => client.cancelQueries({ queryKey: key }))
+  state.refresh.mockImplementation(async () => ({ data: await fetch() }))
+  state.register.mockResolvedValue({})
+  const container = document.createElement("div")
+  document.body.append(container)
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<PlanView />))
+    await act(async () =>
+      [...container.querySelectorAll("button")]
+        .find((node) => node.textContent === "Add Markdown plan")!
+        .click(),
+    )
+    const input = document.querySelector<HTMLInputElement>('input[placeholder="docs/plan.md"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        input,
+        "docs/plan.md",
+      )
+      input.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    await act(async () =>
+      document
+        .querySelector("form")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+    )
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('select[aria-label="Plan source"]')?.textContent).toContain(
+      "docs/plan.md",
+    )
+    await act(async () => oldRead({ ...snapshot, sources: [] }))
+    await initial
+    expect(container.querySelector('select[aria-label="Plan source"]')?.textContent).toContain(
+      "docs/plan.md",
+    )
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+    client.clear()
+    state.cancel.mockReset().mockResolvedValue(undefined)
   }
 })

@@ -67,6 +67,7 @@ export function PlanView() {
   const [markdownPath, setMarkdownPath] = useState("")
   const [registrationError, setRegistrationError] = useState<string | null>(null)
   const registerMarkdown = trpc.planSources.registerMarkdown.useMutation()
+  const utils = trpc.useUtils()
   const [state, dispatch] = useReducer(planViewReducer, INITIAL_STATE)
   const [liveSnapshot, setLiveSnapshot] = useState<ProjectPlanSnapshot | null>(null)
   const [watchError, setWatchError] = useState<string | null>(null)
@@ -116,7 +117,8 @@ export function PlanView() {
   trpc.planSources.watch.useSubscription(
     { projectId },
     {
-      enabled: Boolean(projectId),
+      // Restart with the saved registrations so newly added files are watched.
+      enabled: Boolean(projectId) && !registerMarkdown.isPending,
       onData: (event) => {
         setLiveSnapshot(event.snapshot)
         setWatchError(null)
@@ -478,6 +480,9 @@ export function PlanView() {
               setRegistrationError(null)
               try {
                 await registerMarkdown.mutateAsync({ projectId, relativePath: markdownPath.trim() })
+                if (currentProjectId.current !== projectId) return
+                // Do not join an initial read with pre-registration configuration.
+                await utils.planSources.refresh.cancel({ projectId })
                 if (currentProjectId.current !== projectId) return
                 setMarkdownPath("")
                 setRegistrationOpen(false)
