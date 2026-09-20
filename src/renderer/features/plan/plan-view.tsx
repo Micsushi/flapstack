@@ -762,7 +762,7 @@ function PlanTreeNode({
                     linkedTask
                       ? "This plan item already has a durable task"
                       : onPromote
-                        ? "Review task and chat preview"
+                        ? "Review task proposal"
                         : "Refresh this source first"
                   }
                   onClick={() => onPromote?.(node.candidate)}
