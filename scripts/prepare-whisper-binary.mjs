@@ -10,6 +10,7 @@ import {
   assertAllowlistedRegularFiles,
   assertBundledBinary,
   ensureRealDirectory,
+  recoverInterruptedDirectoryReplacement,
   replaceDirectoryAtomically,
 } from "./lib/packaged-binary.mjs"
 
@@ -40,9 +41,16 @@ export function whisperResourceFiles(platformKey) {
     : [".whisper-version", "whisper-cli", "whisper.cpp-LICENSE"]
 }
 
-export function validateWhisperDirectory(directory, platformKey) {
+export function validateWhisperDirectory(directory, platformKey, allowOtherFiles = false) {
   const files = whisperResourceFiles(platformKey)
-  assertAllowlistedRegularFiles(directory, files)
+  if (allowOtherFiles && fs.lstatSync(directory).isSymbolicLink()) {
+    throw new Error(`${directory}: must be a real directory, not a symlink`)
+  }
+  assertAllowlistedRegularFiles(
+    directory,
+    files,
+    allowOtherFiles ? fs.readdirSync(directory) : files,
+  )
   const marker = path.join(directory, ".whisper-version")
   if (fs.readFileSync(marker, "utf8").trim() !== RECIPE_VERSION) {
     throw new Error(`${marker}: expected ${RECIPE_VERSION}`)
@@ -51,6 +59,26 @@ export function validateWhisperDirectory(directory, platformKey) {
     path.join(directory, platformKey === "win32-x64" ? "whisper-cli.exe" : "whisper-cli"),
     platformKey,
   )
+}
+
+export function installWhisperDirectory(stagingDir, outputDir, platformKey) {
+  // Validate downloaded content before adding existing sibling resources.
+  validateWhisperDirectory(stagingDir, platformKey)
+  recoverInterruptedDirectoryReplacement(outputDir)
+  ensureRealDirectory(outputDir)
+  const ownedFiles = new Set(whisperResourceFiles(platformKey))
+  for (const name of fs.readdirSync(outputDir)) {
+    if (ownedFiles.has(name)) continue
+    const source = path.join(outputDir, name)
+    const stat = fs.lstatSync(source)
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`${source}: sibling resource must be a regular file, not a symlink`)
+    }
+    fs.copyFileSync(source, path.join(stagingDir, name), fs.constants.COPYFILE_EXCL)
+  }
+  validateWhisperDirectory(stagingDir, platformKey, true)
+  replaceDirectoryAtomically(stagingDir, outputDir)
+  validateWhisperDirectory(outputDir, platformKey, true)
 }
 
 function run(command, args, options = {}) {
@@ -159,8 +187,9 @@ async function prepare(platformKey) {
   if (!supported) throw new Error(`No pinned whisper.cpp packaging recipe for ${platformKey}`)
   const binRoot = outputRoot()
   const outputDir = path.join(binRoot, platformKey)
+  recoverInterruptedDirectoryReplacement(outputDir)
   try {
-    validateWhisperDirectory(outputDir, platformKey)
+    validateWhisperDirectory(outputDir, platformKey, true)
     console.log(`whisper.cpp ${VERSION} already prepared for ${platformKey}`)
     return
   } catch {
@@ -175,9 +204,7 @@ async function prepare(platformKey) {
     if (platformKey === "win32-x64") await prepareWindowsX64(stagingDir, tempDir)
     else await prepareSourceBuild(platformKey, stagingDir, tempDir)
     fs.writeFileSync(path.join(stagingDir, ".whisper-version"), `${RECIPE_VERSION}\n`)
-    validateWhisperDirectory(stagingDir, platformKey)
-    replaceDirectoryAtomically(stagingDir, outputDir)
-    validateWhisperDirectory(outputDir, platformKey)
+    installWhisperDirectory(stagingDir, outputDir, platformKey)
     console.log(`Prepared whisper.cpp ${VERSION} for ${platformKey}`)
   } finally {
     fs.rmSync(stagingDir, { recursive: true, force: true })
