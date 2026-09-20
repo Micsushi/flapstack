@@ -22,7 +22,7 @@ export type CodexProtocolServerRequest = CodexProtocolNotification & {
 export type CodexProtocolRequestHandler = (request: CodexProtocolServerRequest) => Promise<unknown>
 
 export interface CodexProtocolClient {
-  request(method: string, params?: Record<string, unknown>): Promise<unknown>
+  request(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<unknown>
   notifications(): AsyncIterable<CodexProtocolNotification>
   setRequestHandler(handler: CodexProtocolRequestHandler): void
   diagnostics(): string
@@ -148,7 +148,11 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
     })
   }
 
-  async request(method: string, params?: Record<string, unknown>): Promise<unknown> {
+  async request(
+    method: string,
+    params?: Record<string, unknown>,
+    timeoutMs = this.requestTimeoutMs,
+  ): Promise<unknown> {
     if (!this.alive) throw new Error(`[codex-runtime] Cannot call ${method}; process exited.`)
     if (this.pending.size >= MAX_PENDING_REQUESTS) {
       throw new Error(`[codex-runtime] Too many pending App Server requests.`)
@@ -157,8 +161,8 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
     return await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error(`[codex-runtime] ${method} timed out after ${this.requestTimeoutMs} ms.`))
-      }, this.requestTimeoutMs)
+        reject(new Error(`[codex-runtime] ${method} timed out after ${timeoutMs} ms.`))
+      }, timeoutMs)
       this.pending.set(id, { method, resolve, reject, timeout })
       try {
         this.write({ jsonrpc: "2.0", id, method, ...(params ? { params } : {}) })

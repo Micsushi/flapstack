@@ -195,8 +195,22 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       let response: Record<string, unknown>
       try {
         response = record(await state.client.request("thread/resume", { ...params, threadId }))
-      } catch {
-        await state.client.request("thread/unarchive", { threadId })
+      } catch (resumeError) {
+        if (
+          !(resumeError instanceof Error) ||
+          !resumeError.message.includes(`session ${threadId} is archived.`)
+        ) {
+          throw resumeError
+        }
+        try {
+          // Restoring the persisted rollout can outlast ordinary protocol requests.
+          await state.client.request("thread/unarchive", { threadId }, 60_000)
+        } catch (restoreError) {
+          throw new Error(
+            `${String(restoreError)} (initial resume rejection: ${resumeError.message})`,
+            { cause: restoreError },
+          )
+        }
         response = record(await state.client.request("thread/resume", { ...params, threadId }))
       }
       this.captureThread(state, response, "thread/resume")

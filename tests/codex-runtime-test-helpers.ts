@@ -45,7 +45,11 @@ class NotificationQueue implements AsyncIterable<CodexProtocolNotification> {
 }
 
 export class FakeCodexProtocolClient implements CodexProtocolClient {
-  readonly requests: Array<{ method: string; params?: Record<string, unknown> }> = []
+  readonly requests: Array<{
+    method: string
+    params?: Record<string, unknown>
+    timeoutMs?: number
+  }> = []
   readonly responses = new Map<string, unknown>()
   readonly queue = new NotificationQueue()
   closed = false
@@ -80,8 +84,12 @@ export class FakeCodexProtocolClient implements CodexProtocolClient {
     this.responses.set("turn/interrupt", {})
   }
 
-  async request(method: string, params?: Record<string, unknown>): Promise<unknown> {
-    this.requests.push({ method, params })
+  async request(
+    method: string,
+    params?: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<unknown> {
+    this.requests.push({ method, params, ...(timeoutMs === undefined ? {} : { timeoutMs }) })
     const response = this.responses.get(method)
     if (response instanceof Error) throw response
     if (typeof response === "function") {
