@@ -96,6 +96,33 @@ describe("provider extension contracts", () => {
     )
   })
 
+  it("keeps nested Codex MCP tables out of server policy names", async () => {
+    const home = temporaryRoot()
+    const config = [
+      "[mcp_servers.flapstack_dev] # server",
+      'command = "synthetic-command"',
+      "[mcp_servers.flapstack_dev.env]",
+      'SYNTHETIC_VALUE = "not-a-server"',
+      '[mcp_servers."literal.dot"]',
+      'command = "synthetic-command"',
+      '[mcp_servers."literal.dot".env]',
+      'SYNTHETIC_VALUE = "also-not-a-server"',
+      "[mcp_servers.'single.dot']",
+      'url = "https://example.invalid/mcp"',
+      "[mcp_servers.'single.dot'.http_headers]",
+      'Accept = "application/json"',
+      "",
+    ].join("\n")
+    const file = join(home, ".codex", "config.toml")
+    write(file, config)
+
+    const names = (await discoverProviderExtensions({ homeDir: home }))
+      .filter((item) => item.provider === "codex" && item.kind === "mcp")
+      .map((item) => item.name)
+    expect(names.sort()).toEqual(["flapstack_dev", "literal.dot", "single.dot"])
+    expect(readFileSync(file, "utf8")).toBe(config)
+  })
+
   it("refresh removes stale entries without touching provider files", async () => {
     const home = temporaryRoot()
     const file = join(home, ".agents", "skills", "release", "SKILL.md")

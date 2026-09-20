@@ -519,9 +519,12 @@ async function discoverMcpConfig(config: {
       return [mcpFailure(config, "MCP config is not valid JSON; mutation is disabled.")]
     }
   } else {
-    names = [...raw.matchAll(/^\s*\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_.-]+))\]\s*$/gm)].map(
-      (match) => (match[1] ?? match[2])!,
-    )
+    // Only direct server tables: an unquoted dot starts a nested TOML table.
+    names = [
+      ...raw.matchAll(
+        /^\s*\[mcp_servers\.(?:"([^"\\]+)"|'([^']+)'|([A-Za-z0-9_-]+))\]\s*(?:#.*)?$/gm,
+      ),
+    ].map((match) => (match[1] ?? match[2] ?? match[3])!)
   }
   return names.map((name) =>
     createProviderExtensionManifest({
