@@ -31,6 +31,29 @@ npm ci --legacy-peer-deps
 
 `preinstall` runs the same preflight automatically. It reports every missing or
 unsupported prerequisite in one pass and does not modify machine software.
+
+For an isolated checkout, keep native speech build caches in that checkout's
+owned cache directory. The upstream Rust dependency creates a CMake junction
+under `LOCALAPPDATA`; an unusable shared junction can otherwise fail preparation
+with an invalid-directory or missing-file error. From PowerShell:
+
+```powershell
+$previousLocalAppData = $env:LOCALAPPDATA
+$nativeCache = Join-Path (Get-Location) '.local-evidence/native-build-cache'
+New-Item -ItemType Directory -Path $nativeCache -Force | Out-Null
+try {
+  $env:LOCALAPPDATA = $nativeCache
+  npm run stt:prepare
+} finally {
+  $env:LOCALAPPDATA = $previousLocalAppData
+}
+```
+
+Use the same owned cache environment when starting that isolated development
+instance. This does not require clearing an existing personal cache. Preparation
+needs public dependencies on its first run; an already populated Cargo cache
+can be checked offline by setting `CARGO_NET_OFFLINE=true` for the command.
+
 The same root commands are supported when the checkout path contains spaces,
 Unicode, ampersands, parentheses, or percent signs. Keep using argument arrays
 in new Node scripts: project package bins are launched through their JavaScript
