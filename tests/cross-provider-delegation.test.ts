@@ -133,9 +133,9 @@ describe("cross-provider Runtime delegation", () => {
   it("keeps a completed plain-text result successful without requesting structured extraction", async () => {
     const fixture = createFixture("claude-code")
     const runtime = new RuntimeStub()
-    const readStructuredOutput = vi.spyOn(runtime, "readStructuredOutput").mockRejectedValue(
-      new Error("Completed Runtime output is not valid JSON."),
-    )
+    const readStructuredOutput = vi
+      .spyOn(runtime, "readStructuredOutput")
+      .mockRejectedValue(new Error("Completed Runtime output is not valid JSON."))
     const service = new CrossProviderDelegationService(fixture.path, runtime)
     const request = {
       sourceChatId: "source",
