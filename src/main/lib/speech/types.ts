@@ -9,6 +9,7 @@ export type SpeechAdapterAvailability = {
 }
 
 export type SttInput = {
+  signal?: AbortSignal
   audioBuffer: Buffer
   format: "webm" | "wav" | "mp3" | "m4a" | "ogg"
   language?: string

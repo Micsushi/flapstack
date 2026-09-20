@@ -35,6 +35,62 @@ describe("separate dictation controls", () => {
     container = null
   })
 
+  it("offers cancellation while transcription is finishing", () => {
+    const stop = vi.fn()
+    container = document.createElement("div")
+    document.body.appendChild(container)
+    root = createRoot(container)
+    act(() =>
+      root!.render(
+        createElement(
+          TooltipProvider,
+          null,
+          createElement(AgentVoiceButton, {
+            isRecording: false,
+            isTranscribing: true,
+            canCancelTranscription: true,
+            voiceInputReady: false,
+            onStart: vi.fn(),
+            onStop: stop,
+          }),
+        ),
+      ),
+    )
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Cancel transcription"]',
+    )!
+    expect(button.disabled).toBe(false)
+    act(() => button.click())
+    expect(stop).toHaveBeenCalledOnce()
+  })
+
+  it("keeps streaming finalization unavailable for unsupported cancellation", () => {
+    const stop = vi.fn()
+    container = document.createElement("div")
+    root = createRoot(container)
+    act(() =>
+      root!.render(
+        createElement(
+          TooltipProvider,
+          null,
+          createElement(AgentVoiceButton, {
+            isRecording: false,
+            isTranscribing: true,
+            voiceInputReady: true,
+            onStart: vi.fn(),
+            onStop: stop,
+          }),
+        ),
+      ),
+    )
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Finishing dictation"]',
+    )!
+    expect(button.disabled).toBe(true)
+    act(() => button.click())
+    expect(stop).not.toHaveBeenCalled()
+  })
+
   it("keeps pause and send as separate buttons while recording", () => {
     const start = vi.fn()
     const stop = vi.fn()
@@ -173,7 +229,8 @@ describe("background dictation send ownership", () => {
       "utf8",
     )
     expect(contentSource).toContain("<DictationSessionProvider>")
-    expect(sessionSource).toContain('aria-label="Stop background dictation"')
+    expect(sessionSource).toContain('"Stop background dictation"')
+    expect(sessionSource).toContain("disabled={isTranscribing && !value.canCancelTranscription}")
     expect(sessionSource).toContain("Go back")
     expect(sessionSource).not.toContain('window.addEventListener("blur"')
     expect(sessionSource).not.toContain('document.addEventListener("visibilitychange"')

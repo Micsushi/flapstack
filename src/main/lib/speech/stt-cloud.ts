@@ -83,7 +83,9 @@ async function transcribeWithWhisper({
   format,
   language,
   vocabularyHints,
+  signal,
 }: SttInput): Promise<string> {
+  signal?.throwIfAborted()
   const key = getOpenAIApiKey()
   if (!key) throw new Error("OpenAI API key not configured.")
   if (audioBuffer.length > MAX_AUDIO_SIZE) {
@@ -110,7 +112,7 @@ async function transcribeWithWhisper({
       method: "POST",
       headers: { Authorization: `Bearer ${key}` },
       body: formData,
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
     })
     if (!response.ok) {
       if (response.status === 401) throw new Error("Invalid OpenAI API key.")
@@ -120,6 +122,7 @@ async function transcribeWithWhisper({
     }
     return cleanTranscribedText(await response.text())
   } catch (error) {
+    signal?.throwIfAborted()
     if (error instanceof Error && error.name === "AbortError")
       throw new Error("Transcription timed out.")
     throw error

@@ -2,13 +2,15 @@
 
 import { act, createElement } from "react"
 import { createRoot } from "react-dom/client"
-import { expect, it, vi } from "vitest"
+import { beforeEach, expect, it, vi } from "vitest"
 
 const state = vi.hoisted(() => ({
   error: null as Error | null,
   start: vi.fn(),
   cancel: vi.fn(),
   finalize: vi.fn(),
+  stopRecording: vi.fn(),
+  transcribe: vi.fn(),
   mutation: { mutate: vi.fn(), mutateAsync: vi.fn() },
   settings: { sttAdapterId: "local-parakeet" },
   utils: { speech: { getSettings: { invalidate: vi.fn() } } },
@@ -25,24 +27,33 @@ vi.mock("../src/renderer/lib/trpc", () => ({
       cancelStreaming: { useMutation: () => ({ mutateAsync: state.cancel, mutate: state.cancel }) },
       finalizeStreaming: { useMutation: () => ({ mutateAsync: state.finalize }) },
       feedStreaming: { useMutation: () => state.mutation },
-      transcribe: { useMutation: () => state.mutation },
+      transcribe: { useMutation: () => ({ mutateAsync: state.transcribe }) },
     },
   },
 }))
 vi.mock("../src/renderer/lib/hooks/use-voice-recording", () => ({
+  blobToBase64: async () => "audio-fixture",
+  getAudioFormat: () => "wav",
   useVoiceRecording: () => ({
     error: state.error,
     isRecording: !state.error,
     audioLevel: 0,
     startRecording: async () => {},
-    stopRecording: async () => {
-      throw state.error
-    },
+    stopRecording: () => state.stopRecording(),
     cancelRecording: () => {},
     waitForPcm: async () => {},
   }),
 }))
-vi.mock("sonner", () => ({ toast: { error: vi.fn() } }))
+vi.mock("sonner", () => ({ toast: { error: vi.fn(), info: vi.fn(), warning: vi.fn() } }))
+import { toast } from "sonner"
+beforeEach(() => {
+  vi.clearAllMocks()
+  state.error = null
+  state.settings.sttAdapterId = "local-parakeet"
+  state.stopRecording.mockImplementation(async () => {
+    throw state.error
+  })
+})
 
 import {
   DictationSessionProvider,
@@ -100,3 +111,79 @@ it("cancels the owned streaming session after microphone failure during pending 
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT
   }
 })
+
+it.each(["normalizing", "transcribing", "completed", "streaming-completed"])(
+  "handles batch cancellation while %s without losing the draft",
+  async (phase) => {
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    state.settings.sttAdapterId =
+      phase === "streaming-completed" ? "local-parakeet" : "local-whisper"
+    state.start.mockResolvedValue(undefined)
+    state.cancel.mockResolvedValue({ cancelled: !phase.endsWith("completed") })
+    let finish!: () => void
+    const blob = new Blob(["a".repeat(2000)], { type: "audio/wav" })
+    if (phase === "normalizing")
+      state.stopRecording.mockReturnValue(
+        new Promise((resolve) => {
+          finish = () => resolve(blob)
+        }),
+      )
+    else {
+      state.stopRecording.mockResolvedValue(blob)
+      const transcribe = phase === "streaming-completed" ? state.finalize : state.transcribe
+      transcribe.mockReturnValue(
+        new Promise((resolve) => {
+          finish = () => resolve({ text: "new words", historySaved: true })
+        }),
+      )
+    }
+    let session!: ReturnType<typeof useDictationSession>
+    function Harness() {
+      session = useDictationSession()
+      return null
+    }
+    const root = createRoot(document.createElement("div"))
+    const commitText = vi.fn()
+    try {
+      await act(async () =>
+        root.render(createElement(DictationSessionProvider, null, createElement(Harness))),
+      )
+      await act(async () =>
+        session.start({
+          key: "batch",
+          projectLabel: "Fixture",
+          chatLabel: "Fixture",
+          getText: () => "existing draft",
+          commitText,
+          showText: vi.fn(),
+        }),
+      )
+      let stopping!: Promise<void>, cancelling!: Promise<void>
+      await act(async () => {
+        stopping = session.stop()
+      })
+      expect(session.isTranscribing).toBe(true)
+      await act(async () => {
+        cancelling = session.stop()
+      })
+      await act(async () => {
+        finish()
+        await Promise.all([stopping, cancelling])
+      })
+      if (phase === "normalizing" || phase === "streaming-completed")
+        expect(state.transcribe).not.toHaveBeenCalled()
+      else
+        expect(state.transcribe).toHaveBeenCalledWith(
+          expect.objectContaining({ sessionId: expect.any(String), audio: "audio-fixture" }),
+        )
+      if (phase.endsWith("completed"))
+        expect(commitText).toHaveBeenLastCalledWith("existing draft new words")
+      else expect(commitText).toHaveBeenCalledExactlyOnceWith("existing draft")
+      expect(toast.error).not.toHaveBeenCalled()
+      expect(session.isTranscribing).toBe(false)
+    } finally {
+      await act(async () => root.unmount())
+      delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT
+    }
+  },
+)

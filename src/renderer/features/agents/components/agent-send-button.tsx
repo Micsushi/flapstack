@@ -52,6 +52,7 @@ interface AgentVoiceButtonProps {
   isRecording: boolean
   isStarting?: boolean
   isTranscribing: boolean
+  canCancelTranscription?: boolean
   voiceInputReady: boolean
   voiceStatusLabel?: string
   onUnavailableClick?: () => void
@@ -63,6 +64,7 @@ export function AgentVoiceButton({
   isRecording,
   isStarting = false,
   isTranscribing,
+  canCancelTranscription = false,
   voiceInputReady,
   voiceStatusLabel,
   onUnavailableClick,
@@ -71,7 +73,9 @@ export function AgentVoiceButton({
 }: AgentVoiceButtonProps) {
   const voiceHotkey = useResolvedHotkeyDisplay("voice-input")
   const label = isTranscribing
-    ? "Finishing dictation"
+    ? canCancelTranscription
+      ? "Cancel transcription"
+      : "Finishing dictation"
     : isStarting
       ? "Starting dictation"
       : isRecording
@@ -90,11 +94,11 @@ export function AgentVoiceButton({
             "h-7 w-7 rounded-full outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
             isRecording && "bg-muted text-foreground",
           )}
-          disabled={isTranscribing}
+          disabled={isTranscribing && !canCancelTranscription}
           type="button"
           onClick={() => {
-            if (!voiceInputReady) onUnavailableClick?.()
-            else if (isRecording || isStarting) onStop()
+            if (isTranscribing || isRecording || isStarting) onStop()
+            else if (!voiceInputReady) onUnavailableClick?.()
             else onStart()
           }}
           aria-label={label}

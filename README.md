@@ -307,7 +307,12 @@ under their Codex project or are archived while idle. Hidden tasks are restored
 automatically before the next message so Flapstack conversations remain resumable.
 
 Stage 2 owns Flapstack's in-app STT/TTS. Handy covers standalone system-wide
-dictation; no separate Flapstack voice platform is planned.
+dictation; no separate Flapstack voice platform is planned. While Local Whisper
+is finishing, use **Cancel transcription** to stop processing and keep the
+existing draft. Accepted cancellation saves no new transcript. If completion
+already won, its transcript remains available in the draft and Voice History.
+Cancelling a transcription does not remove a shared model download. Microphone
+dictation remains local-only.
 
 ## Development
 

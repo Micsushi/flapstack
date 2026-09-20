@@ -3049,6 +3049,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                       isRecording={isVoiceRecording}
                       isStarting={isVoiceStarting}
                       isTranscribing={isTranscribing}
+                      canCancelTranscription={dictation.canCancelTranscription}
                       voiceInputReady={isVoiceReady}
                       voiceStatusLabel={voiceStatusLabel}
                       onUnavailableClick={showVoiceSetup}
