@@ -442,25 +442,9 @@ const FileDiffCard = memo(function FileDiffCard({
           return
         }
         const displayPath = file.newPath || file.oldPath || "file"
-        const ext = displayPath.split(".").pop()?.toLowerCase() || ""
-        const langMap: Record<string, string> = {
-          ts: "typescript",
-          tsx: "tsx",
-          js: "javascript",
-          jsx: "jsx",
-          css: "css",
-          json: "json",
-          md: "markdown",
-          html: "html",
-          py: "python",
-          rs: "rust",
-          go: "go",
-          rb: "ruby",
-        }
-        const lang = langMap[ext] || ext || undefined
         const result = parseDiffFromFile(
-          { name: file.oldPath || displayPath, contents: oldContent, lang: lang as any },
-          { name: file.newPath || displayPath, contents: fileContent, lang: lang as any },
+          { name: file.oldPath || displayPath, contents: oldContent },
+          { name: file.newPath || displayPath, contents: fileContent },
         )
         setFileDiffMeta(result)
       } catch {

@@ -8,6 +8,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const scripts = path.join(root, "scripts")
 const steps = [
   {
+    label: "Electron tRPC async iterator compatibility patch",
+    command: process.execPath,
+    args: [path.join(scripts, "patch-trpc-electron.mjs")],
+    cwd: root,
+  },
+  {
     label: "node-pty macOS descriptor patch",
     command: process.execPath,
     args: [path.join(scripts, "patch-node-pty-macos.mjs")],
