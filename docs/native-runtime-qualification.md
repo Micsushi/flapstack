@@ -100,8 +100,19 @@ the approved prompt at creation and accepted completed public text after the
 successful result barrier, using the existing assistant-history persistence.
 Stream fragments, private/redacted output and rejected results are excluded from
 that assistant projection. Already-terminal children created before this repair
-are not backfilled; their broker result remains available. Actual-app validation
-of the repaired child transcript remains pending.
+are not backfilled; their broker result remains available.
+
+Actual-app verification of the repair passed at
+`807b046af9da5441325fe1d6a84a721b44b956c2`. Exactly one fresh production delegation
+turn completed with 45 persisted activity events, GPT-5.5, requested Codex
+Enhanced resolved to Codex, read-only authority, two discovered MCP servers
+disabled, and no tool activity. The child displayed the approved prompt and exact
+accepted reply before and after a full owned-profile restart. Its two persisted
+messages retained the exact prompt/run linkage; source history, parent/project
+lineage, successful result and single-run/single-attempt counts stayed unchanged.
+There were no page errors or replay, and the hidden app closed cleanly. The
+qualification used the existing child-only unverified-runtime flag; it does not
+change release defaults or establish installed-package acceptance.
 
 | Source task | Evidence and remaining boundary                                                                                                                                                                                                                               |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
