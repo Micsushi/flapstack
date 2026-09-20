@@ -678,13 +678,13 @@ export class CrossProviderDelegationService {
     const before = this.requireAttempt(attemptId)
     if (isTerminal(String(before.status))) return referenceFromRow(before, false)
     const runId = String(before.run_id)
-    const structured =
-      state === "completed" && this.runtime.readStructuredOutput
-        ? await this.runtime.readStructuredOutput(runId)
-        : null
     const taskEnvelope = crossProviderTaskEnvelopeSchema.parse(
       JSON.parse(String(before.task_envelope)),
     )
+    const structured =
+      state === "completed" && taskEnvelope.outputSchema && this.runtime.readStructuredOutput
+        ? await this.runtime.readStructuredOutput(runId)
+        : null
     let acceptedStructuredOutput = structured?.value ?? null
     const outputLimitations: string[] = []
     let barrierFailed = false

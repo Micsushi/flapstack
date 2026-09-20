@@ -130,6 +130,56 @@ afterEach(() => {
 })
 
 describe("cross-provider Runtime delegation", () => {
+  it("keeps a completed plain-text result successful without requesting structured extraction", async () => {
+    const fixture = createFixture("claude-code")
+    const runtime = new RuntimeStub()
+    const readStructuredOutput = vi.spyOn(runtime, "readStructuredOutput").mockRejectedValue(
+      new Error("Completed Runtime output is not valid JSON."),
+    )
+    const service = new CrossProviderDelegationService(fixture.path, runtime)
+    const request = {
+      sourceChatId: "source",
+      targetHarness: "codex" as const,
+      targetModel: "gpt-5.5",
+      preference: "codex-enhanced" as const,
+      requestId: "plain-text-completion",
+      objective: "Reply with the requested plain-text marker.",
+    }
+    const preview = service.preview(request)
+    const created = service.delegate({ ...request, confirmedPreviewDigest: preview.digest })
+    const db = new Database(fixture.path)
+    try {
+      db.prepare(
+        `INSERT INTO agent_activity_events (
+          event_id, run_id, chat_id, sub_chat_id, runtime, harness, provider, sequence,
+          kind, phase, display_class, privacy_class, redaction_state, received_at,
+          payload_json, created_at
+        ) VALUES ('plain-result', ?, ?, ?, 'codex', 'codex', 'openai', 1,
+          'agent-text', 'completed', 'provider-visible', 'public', 'none', 1,
+          '{"text":"DELEGATED-plain-text"}', 1)`,
+      ).run(created.runId, created.childChatId, created.childSubChatId)
+      db.prepare("UPDATE agent_runs SET status = 'success', completed_at = 2 WHERE id = ?").run(
+        created.runId,
+      )
+    } finally {
+      db.close()
+    }
+    runtime.state = "completed"
+
+    const result = await service.reconcile(created.attemptId)
+    expect(result.result).toMatchObject({
+      status: "success",
+      structuredOutput: null,
+      visibleSummary: "DELEGATED-plain-text",
+      partial: false,
+      terminalEvidence: { providerTerminalState: "completed" },
+    })
+    expect(readStructuredOutput).not.toHaveBeenCalled()
+    const restarted = new CrossProviderDelegationService(fixture.path, runtime)
+    expect((await restarted.reconcile(created.attemptId)).result).toEqual(result.result)
+    expect(runtime.launches).toHaveLength(1)
+  })
+
   it.each([
     ["codex", "claude-code", "codex", "claude-provider-to-codex-contract"],
     ["claude-code", "codex", "claude-code", "codex-provider-to-claude-contract"],
