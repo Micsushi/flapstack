@@ -32,6 +32,13 @@ import {
 import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 import { betaProcedure, router } from "../index"
 import { assertLegacyTaskTransitionAllowed } from "../../project-records/legacy-task-boundary"
+import { configuredProjectRecordsClient } from "../../project-records/client"
+import {
+  planDestinations,
+  proposePlanCandidate,
+  recordsPlanLinks,
+  recordsPlanPromotionSchema,
+} from "../../project-records/plan-promotion"
 
 const publicProcedure = betaProcedure("planning")
 
@@ -101,6 +108,20 @@ async function readPromotionSnapshot(reference: {
 }
 
 export const planSourcesRouter = router({
+  recordsMode: publicProcedure.query(() => Boolean(process.env.FLAPSTACK_PROJECT_RECORDS_URL)),
+  recordsDestinations: publicProcedure.query(async () =>
+    planDestinations(await configuredProjectRecordsClient()),
+  ),
+  proposeCandidate: publicProcedure
+    .input(recordsPlanPromotionSchema)
+    .mutation(async ({ input }) => {
+      try {
+        const snapshot = await readPromotionSnapshot(input.reference)
+        return await proposePlanCandidate(await configuredProjectRecordsClient(), snapshot, input)
+      } catch (error) {
+        promotionError(error)
+      }
+    }),
   devFixtureStatus: publicProcedure
     .input(devFixtureInput)
     .query(({ input }) => devFixtureOperation(input.projectId, getPlanKanbanDevFixtureStatus)),
@@ -219,6 +240,8 @@ export const planSourcesRouter = router({
     .input(z.object({ projectId: z.string().min(1) }))
     .query(async ({ input }) => {
       const snapshot = await readProjectPlanSources(getProjectPlanSourceConfig(input.projectId))
+      if (process.env.FLAPSTACK_PROJECT_RECORDS_URL)
+        return recordsPlanLinks(await configuredProjectRecordsClient(), snapshot)
       return listPlanSourceLinks(getDatabase(), snapshot)
     }),
 

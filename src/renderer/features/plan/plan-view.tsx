@@ -309,6 +309,13 @@ export function PlanView() {
             {watchError && (
               <StateNotice kind="warning" title="Automatic refresh paused" detail={watchError} />
             )}
+            {sourceLinksQuery.isError && (
+              <StateNotice
+                kind="warning"
+                title="Task links could not be refreshed"
+                detail={sourceLinksQuery.error.message}
+              />
+            )}
 
             <section
               className="rounded-lg border border-border bg-card"

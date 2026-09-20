@@ -33,3 +33,17 @@ Workers started by the Records Board receive their own scoped Records tools.
 Ordinary desktop chats do not inherit the desktop's Records authority. Historical
 SQLite task data is retained; when Records is connected, legacy task mutations
 are refused so two editable task systems cannot diverge.
+
+In Plan, promoting an incomplete item opens a Records project selector and then
+the existing Yap review. The source is checked before capture; repeated requests
+for the same source version and destination reopen one proposal. Approval in Yap
+creates a planned task without starting a conversation, worktree or run. Local
+project identities are not assumed to match Records projects: choose the Records
+destination explicitly. Destinations combine existing task documents with
+projects represented in task or feature documents.
+
+Plan comparisons show captured proposal and canonical task provenance, including
+later source changes. A proposal is a captured snapshot: editing the source after
+capture does not modify or revoke it. Review the captured content in Yap before
+approval; cancel it there if it is obsolete. Task documents and their revisions
+remain owned by Records.

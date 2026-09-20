@@ -33,7 +33,11 @@ export function PlanSourceComparisonDialog({
             {describePlanSourceLinkStatus(link.status)}
           </Badge>
           <span className="text-muted-foreground">
-            {link.kind} version {link.entity.version} · {link.entity.status}
+            {link.kind}{" "}
+            {link.entity.revision
+              ? `revision ${link.entity.revision.slice(0, 12)}`
+              : `version ${link.entity.version}`}{" "}
+            · {link.entity.status}
           </span>
         </div>
 
