@@ -88,6 +88,28 @@ describe("Agent Runtime continuation", () => {
   })
   afterEach(() => database.close())
 
+  it("retains the reviewed child model when selecting Enhanced before its first run", () => {
+    const { chatId } = seedRuntimeChat(database, {
+      harness: "claude-code",
+      messages: [{ role: "assistant", parts: [{ type: "text", text: "Synthetic source" }] }],
+    })
+    const service = createService(database)
+    const request = {
+      sourceChatId: chatId, targetHarness: "codex", targetModel: "gpt-5.5",
+      preference: "codex" as const, requestId: "reviewed-model-child",
+    }
+    const preview = service.previewContinuation(request)
+    const child = service.continueWithRuntime({ ...request, confirmedPreviewDigest: preview.digest })
+    const before = database.prepare("SELECT messages FROM sub_chats WHERE id = ?").get(child.subChatId)
+    service.setEmptyChatPreference({ chatId: child.chatId, preference: "codex-enhanced" })
+    expect(database.prepare("SELECT harness, model, runtime_preference FROM chats WHERE id = ?").get(child.chatId))
+      .toEqual({ harness: "codex", model: "gpt-5.5", runtime_preference: "codex-enhanced" })
+    expect(database.prepare("SELECT model FROM sub_chats WHERE id = ?").get(child.subChatId))
+      .toEqual({ model: "gpt-5.5" })
+    expect(database.prepare("SELECT messages FROM sub_chats WHERE id = ?").get(child.subChatId)).toEqual(before)
+    expect(database.prepare("SELECT count(*) AS count FROM agent_runs").get()).toEqual({ count: 0 })
+  })
+
   it("creates exactly one new sidebar chat with visible labeled context and no copied session", () => {
     const { chatId } = seedRuntimeChat(database, {
       sessionId: "source-session",

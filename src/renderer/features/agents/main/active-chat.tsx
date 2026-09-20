@@ -154,6 +154,7 @@ import {
   subChatFilesAtom,
   agentsSidebarOpenAtom,
   subChatCodexModelIdAtomFamily,
+  initializeSubChatCodexModelAtom,
   subChatCodexReasoningAtomFamily,
   subChatCursorModelIdAtomFamily,
   subChatOpencodeModelsAtomFamily,
@@ -7412,6 +7413,14 @@ Make sure to preserve all functionality from both branches when resolving confli
       const targetWorktreePath = appStore.get(selectedTargetWorktreePathAtomFamily(subChatId))
       const runWorktreePath = targetWorktreePath || worktreePath || globalRuntimePath
       const desiredSubChat = agentSubChats.find((sc) => sc.id === subChatId)
+      const savedConversation = desiredSubChat as { harness?: string; model?: string | null } | undefined
+      const savedChat = agentChat as { harness?: string; model?: string | null }
+      if ((savedConversation?.harness || savedChat.harness) === "codex") {
+        appStore.set(initializeSubChatCodexModelAtom, {
+          subChatId,
+          model: savedConversation?.model || savedChat.model,
+        })
+      }
       const rawDesiredMessages = desiredSubChat?.messages
       const readDesiredMessages = () =>
         sanitizePersistedHarnessMessages(

@@ -444,6 +444,18 @@ const subChatCodexModelIdsStorageAtom = atomWithStorage<Record<string, string>>(
   { getOnInit: true },
 )
 
+// A persisted Chat target precedes the global default, but never replaces an
+// explicit selection already made for this conversation.
+export const initializeSubChatCodexModelAtom = atom(
+  null,
+  (get, set, input: { subChatId: string; model: string | null | undefined }) => {
+    if (!input.model || !input.subChatId) return
+    const current = get(subChatCodexModelIdsStorageAtom)
+    if (current[input.subChatId] !== undefined) return
+    set(subChatCodexModelIdsStorageAtom, { ...current, [input.subChatId]: input.model })
+  },
+)
+
 export const subChatCodexModelIdAtomFamily = atomFamily((subChatId: string) =>
   atom(
     (get) => {
