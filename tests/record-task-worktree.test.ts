@@ -2,7 +2,15 @@ import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { execFileSync } from "node:child_process"
-import { mkdtempSync, mkdirSync, rmSync, realpathSync, statSync } from "node:fs"
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+  unlinkSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve, dirname, basename } from "node:path"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
@@ -57,7 +65,13 @@ const service = () =>
     "http://127.0.0.1:1234",
     join(directory, "worktrees"),
     create,
+    register,
   )
+async function open(value = input) {
+  const current = service()
+  const preview = await current.preview(value)
+  return current.open({ ...value, expectedTarget: preview.expectedTarget })
+}
 beforeEach(() => {
   directory = realpathSync(mkdtempSync(join(tmpdir(), "flapstack-record-worktree-")))
   repo = join(directory, "repo")
@@ -102,10 +116,10 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true })
 })
 it("coalesces concurrent clicks, reopens after restart and uses the isolated native run target", async () => {
-  const [first, second] = await Promise.all([service().open(input), service().open(input)])
+  const [first, second] = await Promise.all([open(input), open(input)])
   expect(second).toEqual(first)
   expect(create).toHaveBeenCalledTimes(1)
-  expect(await service().open(input)).toEqual(first)
+  expect(await open(input)).toEqual(first)
   const chat = sqlite.prepare("SELECT * FROM chats WHERE id=?").get(first.chatId) as Record<
     string,
     unknown
@@ -117,31 +131,57 @@ it("coalesces concurrent clicks, reopens after restart and uses the isolated nat
   expect(git(["worktree", "list", "--porcelain"])).toContain(
     first.worktreePath.replaceAll("\\", "/"),
   )
+  sqlite.prepare("DELETE FROM projects WHERE id='local'").run()
+  expect(
+    (sqlite.prepare("SELECT count(*) n FROM record_task_worktrees").get() as { n: number }).n,
+  ).toBe(0)
+  expect(git(["worktree", "list", "--porcelain"])).toContain(
+    first.worktreePath.replaceAll("\\", "/"),
+  )
+})
+it("previews the exact local target without writes and rejects a changed starting commit", async () => {
+  const current = service()
+  const preview = await current.preview(input)
+  expect(preview.projectPath).toBe(repo)
+  expect(preview.branch).toMatch(/^codex\/record-/)
+  expect(
+    (sqlite.prepare("SELECT count(*) n FROM record_task_worktrees").get() as { n: number }).n,
+  ).toBe(0)
+  git([
+    "-c",
+    "user.name=Fixture User",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "Changed base",
+  ])
+  await expect(current.open({ ...input, expectedTarget: preview.expectedTarget })).rejects.toThrow(
+    "target changed",
+  )
+  expect(create).not.toHaveBeenCalled()
 })
 it("fails stale revisions and changed claims before any Git or chat creation", async () => {
-  await expect(service().open({ ...input, expectedRevision: "b".repeat(64) })).rejects.toThrow(
-    "task changed",
-  )
-  await expect(service().open({ ...input, claimId: "another-claim" })).rejects.toThrow(
-    "claim is stale",
-  )
+  await expect(open({ ...input, expectedRevision: "b".repeat(64) })).rejects.toThrow("task changed")
+  await expect(open({ ...input, claimId: "another-claim" })).rejects.toThrow("claim is stale")
   client.operation.mockResolvedValueOnce({
     path: input.path,
     recordId: input.recordId,
     revision: input.expectedRevision,
     readiness: { currentClaim: false, claim: { id: input.claimId } },
   })
-  await expect(service().open(input)).rejects.toThrow("claim is stale")
+  await expect(open(input)).rejects.toThrow("claim is stale")
   expect(create).not.toHaveBeenCalled()
   expect((sqlite.prepare("SELECT count(*) n FROM chats").get() as { n: number }).n).toBe(0)
 })
 it("retains failed isolation for retry and refuses an occupied branch without Git mutation", async () => {
   create.mockRejectedValueOnce(new Error("Isolation unavailable"))
-  await expect(service().open(input)).rejects.toThrow("Isolation unavailable")
+  await expect(open(input)).rejects.toThrow("Isolation unavailable")
   const link = sqlite.prepare("SELECT * FROM record_task_worktrees").get() as { branch: string }
   expect((sqlite.prepare("SELECT count(*) n FROM chats").get() as { n: number }).n).toBe(0)
   git(["branch", link.branch])
-  await expect(service().open(input)).rejects.toThrow("occupied")
+  await expect(open(input)).rejects.toThrow("occupied")
   expect(create).toHaveBeenCalledTimes(1)
 })
 it("recovers a worktree created before a crash without duplicating chats or Git mutations", async () => {
@@ -152,14 +192,23 @@ it("recovers a worktree created before a crash without duplicating chats or Git 
       windowsHide: true,
       stdio: "pipe",
     })
-    register(path)
     throw new Error("Simulated interruption after Git")
   })
-  await expect(service().open(input)).rejects.toThrow("Simulated interruption")
-  const recovered = await service().open(input)
+  await expect(open(input)).rejects.toThrow("Simulated interruption")
+  const pending = sqlite.prepare("SELECT worktree_path FROM record_task_worktrees").get() as {
+    worktree_path: string
+  }
+  const marker = join(pending.worktree_path, "unowned.txt")
+  writeFileSync(marker, "Preserve changed work")
+  await expect(open(input)).rejects.toThrow("interrupted worktree changed")
+  expect(
+    sqlite
+      .prepare("SELECT path FROM filesystem_root_registrations WHERE path=?")
+      .get(pending.worktree_path),
+  ).toBeUndefined()
+  unlinkSync(marker)
+  const recovered = await open(input)
   expect(recovered.chatId).toBeTruthy()
   expect(create).toHaveBeenCalledTimes(1)
-  await expect(service().open({ ...input, localProjectId: "missing" })).rejects.toThrow(
-    "Select an active",
-  )
+  await expect(open({ ...input, localProjectId: "missing" })).rejects.toThrow("Select an active")
 })

@@ -4,7 +4,7 @@ CREATE TABLE `record_task_worktrees` (
   `record_path` text NOT NULL,
   `record_id` text NOT NULL,
   `canonical_project_id` text NOT NULL,
-  `local_project_id` text NOT NULL REFERENCES `projects`(`id`) ON DELETE RESTRICT,
+  `local_project_id` text NOT NULL REFERENCES `projects`(`id`) ON DELETE CASCADE,
   `source_revision` text NOT NULL,
   `claim_id` text NOT NULL,
   `chat_id` text UNIQUE REFERENCES `chats`(`id`) ON DELETE SET NULL,

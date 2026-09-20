@@ -2,6 +2,12 @@
 import { act } from "react"
 import { createRoot } from "react-dom/client"
 import { expect, it, vi } from "vitest"
+import { getDefaultStore } from "jotai"
+import {
+  selectedChatIsRemoteAtom,
+  selectedDraftIdAtom,
+  selectedChatScopeAtom,
+} from "../src/renderer/features/agents/atoms"
 import { SharedRecordsBoard } from "../src/renderer/features/project-records/shared-records-board"
 
 const fixture = vi.hoisted(() => {
@@ -49,6 +55,18 @@ vi.mock("../src/renderer/lib/trpc", () => ({
   trpcClient: {
     projectRecords: {
       openTaskChat: { mutate: fixture.open },
+      previewTaskChat: {
+        query: async () => ({
+          projectId: "local-id",
+          projectName: "Local",
+          projectPath: "/local-repository",
+          branch: "codex/record-preview",
+          baseCommit: "c".repeat(40),
+          worktreePath: "/isolated",
+          expectedTarget: "d".repeat(64),
+          existingChatId: null,
+        }),
+      },
       boardRequest: {
         mutate: async ({ path }: { path: string }) => ({
           status: 200,
@@ -79,6 +97,9 @@ vi.mock("../src/renderer/features/agents/atoms", async () => {
     selectedAgentChatIdAtom: atom<string | null>(null),
     openAgentChatIdsAtom: atom<string[]>([]),
     showNewChatFormAtom: atom(true),
+    selectedChatIsRemoteAtom: atom(true),
+    selectedDraftIdAtom: atom<string | null>("remote-draft"),
+    selectedChatScopeAtom: atom<unknown>(null),
   }
 })
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -107,6 +128,24 @@ it("the actual shared Board forwards canonical identity and the explicit local p
     expect(open).toBeTruthy()
     expect(open.disabled).toBe(false)
     await act(async () => open.click())
+    expect(fixture.open).not.toHaveBeenCalled()
+    expect((shadow.querySelector("#record-dialog") as HTMLDialogElement).open).toBe(false)
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("/local-repository")
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("codex/record-preview")
+    const cancel = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent === "Cancel",
+    )!
+    await act(async () => cancel.click())
+    expect(fixture.open).not.toHaveBeenCalled()
+    await act(async () => card.click())
+    const reopened = Array.from(shadow.querySelectorAll("button")).find(
+      (button) => button.textContent === "Open worktree Chat",
+    )!
+    await act(async () => reopened.click())
+    const confirm = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent === "Create and open Chat",
+    )!
+    await act(async () => confirm.click())
     expect(fixture.open).toHaveBeenCalledWith({
       path: fixture.path,
       recordId: "TASK-1",
@@ -114,6 +153,13 @@ it("the actual shared Board forwards canonical identity and the explicit local p
       localProjectId: "local-id",
       expectedRevision: fixture.revision,
       claimId: "claim-1",
+      expectedTarget: "d".repeat(64),
+    })
+    expect(getDefaultStore().get(selectedChatIsRemoteAtom)).toBe(false)
+    expect(getDefaultStore().get(selectedDraftIdAtom)).toBeNull()
+    expect(getDefaultStore().get(selectedChatScopeAtom)).toMatchObject({
+      type: "project",
+      id: "local-id",
     })
     expect(fixture.utils.chats.invalidate).toHaveBeenCalled()
   } finally {

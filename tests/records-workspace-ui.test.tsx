@@ -10,6 +10,7 @@ vi.mock("@project-records/board.js", () => ({
   mountBoard: vi.fn(() => () => undefined),
 }))
 vi.mock("../src/renderer/lib/trpc", () => ({
+  trpc: { useUtils: () => ({ chats: { invalidate: vi.fn() } }) },
   trpcClient: { projectRecords: { boardRequest: { mutate: vi.fn() } } },
 }))
 

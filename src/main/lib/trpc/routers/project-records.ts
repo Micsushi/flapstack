@@ -10,22 +10,32 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { getSqliteDatabase } from "../../db"
 import { createWorktree } from "../../git/worktree"
+import { bindFilesystemRootIdentity } from "../../git/security/path-validation"
 import {
   openRecordChatSchema,
+  previewRecordChatSchema,
   RecordTaskWorktreeService,
 } from "../../project-records/task-worktree"
 
+async function taskWorktrees() {
+  const client = await configuredProjectRecordsClient()
+  return new RecordTaskWorktreeService(
+    getSqliteDatabase(),
+    client,
+    client.endpoint,
+    join(homedir(), ".flapstack", "worktrees", "records"),
+    createWorktree,
+    bindFilesystemRootIdentity,
+  )
+}
+
 export const projectRecordsRouter = router({
-  openTaskChat: publicProcedure.input(openRecordChatSchema).mutation(async ({ input }) => {
-    const client = await configuredProjectRecordsClient()
-    return new RecordTaskWorktreeService(
-      getSqliteDatabase(),
-      client,
-      client.endpoint,
-      join(homedir(), ".flapstack", "worktrees", "records"),
-      createWorktree,
-    ).open(input)
-  }),
+  previewTaskChat: publicProcedure
+    .input(previewRecordChatSchema)
+    .query(async ({ input }) => (await taskWorktrees()).preview(input)),
+  openTaskChat: publicProcedure
+    .input(openRecordChatSchema)
+    .mutation(async ({ input }) => (await taskWorktrees()).open(input)),
   yapProposals: publicProcedure
     .input(z.object({ projectId: z.string().optional() }).default({}))
     .query(async ({ input }) => {

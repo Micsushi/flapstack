@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3"
-import { randomUUID } from "node:crypto"
+import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { lstat, realpath } from "node:fs/promises"
@@ -13,7 +13,7 @@ import { assertRegisteredFilesystemRoot } from "../git/security/path-validation"
 import { projectRecordPathSchema } from "../../../shared/project-records"
 import type { ProjectRecordsClient } from "./client"
 
-export const openRecordChatSchema = z
+export const previewRecordChatSchema = z
   .object({
     path: projectRecordPathSchema,
     recordId: z.string().min(1).max(200),
@@ -23,7 +23,10 @@ export const openRecordChatSchema = z
     claimId: z.string().min(1).max(200),
   })
   .strict()
-type Input = z.infer<typeof openRecordChatSchema>
+export const openRecordChatSchema = previewRecordChatSchema.extend({
+  expectedTarget: z.string().regex(/^[a-f0-9]{64}$/),
+})
+type Input = z.infer<typeof previewRecordChatSchema>
 type Link = {
   id: string
   local_project_id: string
@@ -64,9 +67,10 @@ export class RecordTaskWorktreeService {
       path: string,
       base: string,
     ) => Promise<unknown>,
+    private readonly registerRoot: (path: string) => void,
   ) {}
 
-  open(value: Input) {
+  open(value: z.infer<typeof openRecordChatSchema>) {
     const input = openRecordChatSchema.parse(value)
     const pending = queue.then(() => this.openLocked(input))
     queue = pending.then(
@@ -74,6 +78,31 @@ export class RecordTaskWorktreeService {
       () => undefined,
     )
     return pending
+  }
+
+  async preview(value: Input) {
+    const prepared = await this.prepare(previewRecordChatSchema.parse(value))
+    return this.targetPreview(prepared)
+  }
+
+  private targetPreview({
+    project,
+    repo,
+    link,
+  }: Awaited<ReturnType<RecordTaskWorktreeService["prepare"]>>) {
+    const target = {
+      projectId: project.id,
+      projectName: project.name,
+      projectPath: repo,
+      worktreePath: link.worktree_path,
+      branch: link.branch,
+      baseCommit: link.base_commit,
+    }
+    return {
+      ...target,
+      existingChatId: link.chat_id,
+      expectedTarget: createHash("sha256").update(JSON.stringify(target)).digest("hex"),
+    }
   }
 
   private async validate(input: Input) {
@@ -113,7 +142,7 @@ export class RecordTaskWorktreeService {
     return record
   }
 
-  private async openLocked(input: Input) {
+  private async prepare(input: Input) {
     const record = await this.validate(input)
     const db = drizzle(this.sqlite, { schema })
     const project = db.select().from(projects).where(eq(projects.id, input.localProjectId)).get()
@@ -131,10 +160,14 @@ export class RecordTaskWorktreeService {
       throw new Error(
         "This task belongs to another local project or worker claim. Open its existing Chat from the sidebar; do not take over its worktree.",
       )
+    const exists = Boolean(link)
     if (!link) {
       // Resolve before any mutation: unborn repositories must not be bootstrapped.
       const base = await git(repo, ["rev-parse", "--verify", "HEAD^{commit}"])
-      const id = randomUUID()
+      const id = createHash("sha256")
+        .update(JSON.stringify([...key, project.id]))
+        .digest("hex")
+        .slice(0, 32)
       link = {
         id,
         local_project_id: project.id,
@@ -144,6 +177,16 @@ export class RecordTaskWorktreeService {
         base_commit: base,
         claim_id: input.claimId,
       }
+    }
+    return { record, db, project, repo, key, link, exists }
+  }
+
+  private async openLocked(input: z.infer<typeof openRecordChatSchema>) {
+    const prepared = await this.prepare(input)
+    const { record, db, project, repo, key, link, exists } = prepared
+    if (this.targetPreview(prepared).expectedTarget !== input.expectedTarget)
+      throw new Error("The local worktree target changed. Review its preview again.")
+    const reserve = () => {
       this.sqlite
         .prepare(
           `INSERT INTO record_task_worktrees
@@ -152,14 +195,14 @@ export class RecordTaskWorktreeService {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
-          id,
+          link.id,
           ...key,
           project.id,
           input.expectedRevision,
           input.claimId,
           link.worktree_path,
           link.branch,
-          base,
+          link.base_commit,
         )
     }
     const entries = (await git(repo, ["worktree", "list", "--porcelain", "-z"]))
@@ -175,7 +218,8 @@ export class RecordTaskWorktreeService {
       (entry) => entry.path && samePath(entry.path, link!.worktree_path),
     )
     if (existing) {
-      assertRegisteredFilesystemRoot(link.worktree_path, db)
+      if (!exists)
+        throw new Error("The task worktree path or branch is occupied. No Git changes were made.")
       if (
         existing.branch !== link.branch ||
         !samePath(await realpath(link.worktree_path), link.worktree_path)
@@ -183,6 +227,37 @@ export class RecordTaskWorktreeService {
         throw new Error(
           "The recorded worktree identity changed. Repair it before reopening this task.",
         )
+      const registered = db
+        .select()
+        .from(schema.filesystemRootRegistrations)
+        .where(eq(schema.filesystemRootRegistrations.path, link.worktree_path))
+        .get()
+      if (!registered && !link.chat_id) {
+        // A crash between Git add and filesystem registration is recoverable
+        // only for the exact reserved, untouched branch in this repository.
+        const root = await git(link.worktree_path, ["rev-parse", "--show-toplevel"])
+        const common = await realpath(
+          resolve(
+            link.worktree_path,
+            await git(link.worktree_path, ["rev-parse", "--git-common-dir"]),
+          ),
+        )
+        const expectedCommon = await realpath(
+          resolve(repo, await git(repo, ["rev-parse", "--git-common-dir"])),
+        )
+        if (
+          !samePath(root, link.worktree_path) ||
+          !samePath(common, expectedCommon) ||
+          (await git(link.worktree_path, ["rev-parse", "HEAD"])) !== link.base_commit ||
+          (await git(link.worktree_path, ["status", "--porcelain", "--untracked-files=all"]))
+        )
+          throw new Error(
+            "The interrupted worktree changed. Preserve it and resolve its identity before reopening.",
+          )
+        await this.validate(input)
+        this.registerRoot(link.worktree_path)
+      }
+      assertRegisteredFilesystemRoot(link.worktree_path, db)
     } else {
       if (link.chat_id)
         throw new Error(
@@ -200,6 +275,7 @@ export class RecordTaskWorktreeService {
       if (destination || branches)
         throw new Error("The task worktree path or branch is occupied. No Git changes were made.")
       await this.validate(input)
+      if (!exists) reserve()
       await this.createWorktree(repo, link.branch, link.worktree_path, link.base_commit)
     }
     // If Records changed during Git, keep the reserved worktree for recovery, but

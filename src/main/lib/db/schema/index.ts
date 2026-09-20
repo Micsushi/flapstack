@@ -59,7 +59,7 @@ export const recordTaskWorktrees = sqliteTable(
     canonicalProjectId: text("canonical_project_id").notNull(),
     localProjectId: text("local_project_id")
       .notNull()
-      .references(() => projects.id, { onDelete: "restrict" }),
+      .references(() => projects.id, { onDelete: "cascade" }),
     sourceRevision: text("source_revision").notNull(),
     claimId: text("claim_id").notNull(),
     chatId: text("chat_id")

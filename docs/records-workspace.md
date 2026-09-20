@@ -49,7 +49,9 @@ approval; cancel it there if it is obsolete. Task documents and their revisions
 remain owned by Records.
 
 In the desktop Board, select a local project in the sidebar and use **Open
-worktree Chat** on a claimed task. The task must belong to one canonical project
+worktree Chat** on a claimed task. Review the local repository, branch, starting
+commit and worktree path, then confirm creation. Cancel leaves no local link or
+Git changes. A changed target requires a fresh preview. The task must belong to one canonical project
 and have current authority, readiness and claim. The desktop checks its exact
 document revision and claim before creating an isolated Git worktree. It creates
 one ordinary project Chat and retains the canonical task, project, source
@@ -61,5 +63,7 @@ Opening the Chat does not start an agent, copy the desktop Records credential,
 push or merge. The Chat inherits local project permissions. Use normal Chat
 archive/restore to hide or restore it; the association and worktree remain.
 Failed isolation never falls back to the main checkout. An interrupted operation
-retains its reserved worktree for retry; an occupied branch, changed target or
+retains its reserved worktree for retry. If interrupted before filesystem
+registration, recovery requires the exact reserved branch, repository and
+starting commit with a clean worktree. An occupied branch, changed target or
 missing linked worktree reports a conflict without deleting user work.
