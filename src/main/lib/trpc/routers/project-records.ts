@@ -6,8 +6,26 @@ import {
 } from "../../../../shared/project-records"
 import { configuredProjectRecordsClient } from "../../project-records/client"
 import { publicProcedure, router } from "../index"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { getSqliteDatabase } from "../../db"
+import { createWorktree } from "../../git/worktree"
+import {
+  openRecordChatSchema,
+  RecordTaskWorktreeService,
+} from "../../project-records/task-worktree"
 
 export const projectRecordsRouter = router({
+  openTaskChat: publicProcedure.input(openRecordChatSchema).mutation(async ({ input }) => {
+    const client = await configuredProjectRecordsClient()
+    return new RecordTaskWorktreeService(
+      getSqliteDatabase(),
+      client,
+      client.endpoint,
+      join(homedir(), ".flapstack", "worktrees", "records"),
+      createWorktree,
+    ).open(input)
+  }),
   yapProposals: publicProcedure
     .input(z.object({ projectId: z.string().optional() }).default({}))
     .query(async ({ input }) => {

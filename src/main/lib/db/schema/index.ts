@@ -48,6 +48,37 @@ export const discussionRevisions = sqliteTable(
   (table) => [primaryKey({ columns: [table.topicId, table.revision] })],
 )
 
+// Local execution links only; task state and claims remain in Project Records.
+export const recordTaskWorktrees = sqliteTable(
+  "record_task_worktrees",
+  {
+    id: text("id").primaryKey(),
+    endpoint: text("endpoint").notNull(),
+    recordPath: text("record_path").notNull(),
+    recordId: text("record_id").notNull(),
+    canonicalProjectId: text("canonical_project_id").notNull(),
+    localProjectId: text("local_project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    sourceRevision: text("source_revision").notNull(),
+    claimId: text("claim_id").notNull(),
+    chatId: text("chat_id")
+      .unique()
+      .references(() => chats.id, { onDelete: "set null" }),
+    worktreePath: text("worktree_path").notNull().unique(),
+    branch: text("branch").notNull(),
+    baseCommit: text("base_commit").notNull(),
+  },
+  (table) => [
+    uniqueIndex("record_task_worktrees_canonical_idx").on(
+      table.endpoint,
+      table.recordPath,
+      table.recordId,
+      table.canonicalProjectId,
+    ),
+  ],
+)
+
 // ============ PROJECTS ============
 export const projects = sqliteTable("projects", {
   id: text("id")

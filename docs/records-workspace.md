@@ -47,3 +47,19 @@ later source changes. A proposal is a captured snapshot: editing the source afte
 capture does not modify or revoke it. Review the captured content in Yap before
 approval; cancel it there if it is obsolete. Task documents and their revisions
 remain owned by Records.
+
+In the desktop Board, select a local project in the sidebar and use **Open
+worktree Chat** on a claimed task. The task must belong to one canonical project
+and have current authority, readiness and claim. The desktop checks its exact
+document revision and claim before creating an isolated Git worktree. It creates
+one ordinary project Chat and retains the canonical task, project, source
+revision and claim association across restarts; no duplicate local task is made.
+Repeated clicks reopen that Chat. A different claim or local project cannot
+silently take it over. Refresh the Board after a stale-state rejection.
+
+Opening the Chat does not start an agent, copy the desktop Records credential,
+push or merge. The Chat inherits local project permissions. Use normal Chat
+archive/restore to hide or restore it; the association and worktree remain.
+Failed isolation never falls back to the main checkout. An interrupted operation
+retains its reserved worktree for retry; an occupied branch, changed target or
+missing linked worktree reports a conflict without deleting user work.

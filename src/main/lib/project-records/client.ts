@@ -92,7 +92,7 @@ export function projectRecordsEndpoint(value: string): string {
 }
 
 export class ProjectRecordsClient {
-  private readonly endpoint: string
+  readonly endpoint: string
   constructor(
     private readonly options: {
       endpoint: string

@@ -505,6 +505,13 @@
       "when": 1788862420575,
       "tag": "0071_worktree_declarations",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "6",
+      "when": 1789900000000,
+      "tag": "0072_record_task_worktrees",
+      "breakpoints": true
     }
   ]
 }

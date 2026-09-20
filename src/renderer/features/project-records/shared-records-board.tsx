@@ -1,9 +1,15 @@
 import { useEffect, useRef } from "react"
-import { atom, useAtom, useSetAtom } from "jotai"
+import { atom, useAtom, useAtomValue, useSetAtom } from "jotai"
 import type { BoardNavigation, BoardView } from "@project-records/board"
 import { mountBoard } from "@project-records/board"
-import { trpcClient } from "../../lib/trpc"
-import { desktopViewAtom } from "../agents/atoms"
+import { trpc, trpcClient } from "../../lib/trpc"
+import {
+  desktopViewAtom,
+  selectedProjectAtom,
+  selectedAgentChatIdAtom,
+  openAgentChatIdsAtom,
+  showNewChatFormAtom,
+} from "../agents/atoms"
 import type { YapReviewRequest } from "../../../shared/task-proposals"
 
 export const recordsNavigationAtom = atom<BoardNavigation | null>(null)
@@ -23,6 +29,13 @@ export function SharedRecordsBoard({
   const navigationRef = useRef(navigation)
   navigationRef.current = navigation
   const setDesktopView = useSetAtom(desktopViewAtom)
+  const selectedProject = useAtomValue(selectedProjectAtom)
+  const projectRef = useRef(selectedProject)
+  projectRef.current = selectedProject
+  const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
+  const setOpenChatIds = useSetAtom(openAgentChatIdsAtom)
+  const setShowNewChatForm = useSetAtom(showNewChatFormAtom)
+  const utils = trpc.useUtils()
   useEffect(() => {
     if (!host.current) return
     const destination = navigationRef.current
@@ -48,6 +61,22 @@ export function SharedRecordsBoard({
         setNavigation(next)
         setDesktopView(next.view === "fleet" ? "orchestration-fleet" : "tasks")
       },
+      onOpenTaskChat: async (task) => {
+        const project = projectRef.current
+        if (!project)
+          throw new Error("Select a local project in the sidebar, then open the task again.")
+        const result = await trpcClient.projectRecords.openTaskChat.mutate({
+          ...task,
+          localProjectId: project.id,
+        })
+        await utils.chats.invalidate()
+        setOpenChatIds((current) =>
+          current.includes(result.chatId) ? current : [...current, result.chatId],
+        )
+        setSelectedChatId(result.chatId)
+        setShowNewChatForm(false)
+        setDesktopView(null)
+      },
       request: async (path, options = {}) => {
         const result = await trpcClient.projectRecords.boardRequest.mutate({
           path,
@@ -62,7 +91,16 @@ export function SharedRecordsBoard({
     })
     // The shared controller owns navigation and in-progress form drafts until
     // the native route changes. Remounting for every callback loses those drafts.
-  }, [initialView, setDesktopView, setNavigation, yapReview])
+  }, [
+    initialView,
+    setDesktopView,
+    setNavigation,
+    yapReview,
+    setSelectedChatId,
+    setOpenChatIds,
+    setShowNewChatForm,
+    utils,
+  ])
   return (
     <div
       ref={host}
