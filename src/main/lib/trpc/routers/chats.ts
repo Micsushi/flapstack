@@ -52,6 +52,7 @@ import { readFileInsideRoot } from "../../path-safety"
 import type { WorktreeSetupResult } from "../../git/worktree-config"
 import { gitCache } from "../../git/cache"
 import { splitUnifiedDiffByFile } from "../../git/diff-parser"
+import { readDiffReview } from "../../diff-annotations/review"
 import { execWithShellEnv } from "../../git/shell-env"
 import { applyRollbackStash } from "../../git/stash"
 import { checkInternetConnection, checkOllamaStatus } from "../../ollama"
@@ -2174,6 +2175,65 @@ export const chatsRouter = router({
 
     return { diff: result.diff || "" }
   }),
+
+  // A one-shot subscription lets the IPC transport abort work when the view closes.
+  getDiffReview: publicProcedure
+    .input(
+      z.object({
+        chatId: z.string(),
+        diffHash: z.string().regex(/^[a-f0-9]{64}$/),
+        fileKey: z.string().max(8192),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .max(8 * 1024 * 1024)
+          .default(0),
+      }),
+    )
+    .subscription(async function* ({ input, signal }) {
+      signal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)])
+      const db = getDatabase()
+      const chat = db.select().from(chats).where(eq(chats.id, input.chatId)).get()
+      if (!chat?.worktreePath || chat.archivedAt) throw new Error("Review scope is unavailable")
+      const root = assertRegisteredFilesystemRoot(chat.worktreePath, db)
+      const current = await getWorktreeDiff(root.canonicalPath, undefined, {
+        onlyUncommitted: true,
+        signal,
+      })
+      signal?.throwIfAborted()
+      if (
+        !current.success ||
+        current.diff === undefined ||
+        createHash("sha256").update(current.diff).digest("hex") !== input.diffHash
+      )
+        throw new Error("Diff changed. Refresh before loading this section.")
+      const result = await readDiffReview(
+        root.canonicalPath,
+        current.diff,
+        input.fileKey,
+        input.offset,
+        signal,
+      )
+      if (result.kind === "image") {
+        const after = await getWorktreeDiff(root.canonicalPath, undefined, {
+          onlyUncommitted: true,
+          signal,
+        })
+        if (!after.success || after.diff !== current.diff)
+          throw new Error("Image diff changed while loading. Refresh the review.")
+      }
+      signal.throwIfAborted()
+      const latest = db.select().from(chats).where(eq(chats.id, input.chatId)).get()
+      if (
+        latest?.worktreePath !== chat.worktreePath ||
+        latest.archivedAt ||
+        latest.projectId !== chat.projectId
+      )
+        throw new Error("Review scope changed")
+      assertRegisteredFilesystemRoot(chat.worktreePath, db)
+      yield result
+    }),
 
   /**
    * Get parsed diff with prefetched file contents

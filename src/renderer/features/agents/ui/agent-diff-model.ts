@@ -1,3 +1,4 @@
+import { decodeGitPath, gitDiffHeaderPaths } from "../../../../shared/git-diff-paths"
 import { atomWithStorage } from "jotai/utils"
 
 export type DiffViewMode = "unified" | "split"
@@ -65,17 +66,19 @@ export function splitUnifiedDiffByFile(diffText: string): ParsedDiffFile[] {
     let deletions = 0
     for (const line of blockText.split("\n")) {
       if (line.startsWith("diff --git ")) {
-        const match = line.match(/^diff --git a\/(.+) b\/(.+)$/)
-        if (match) [oldPath, newPath] = [oldPath || match[1]!, newPath || match[2]!]
+        const match = gitDiffHeaderPaths(line)
+        if (match) [oldPath, newPath] = [oldPath || match[0]!, newPath || match[1]!]
       } else if (line.startsWith("Binary files ") && line.endsWith(" differ")) {
         isBinary = true
       } else if (line.startsWith("--- ")) {
-        const raw = line.slice(4).trim()
+        const raw = decodeGitPath(line.slice(4).trim())
         oldPath = raw.startsWith("a/") ? raw.slice(2) : raw
       } else if (line.startsWith("+++ ")) {
-        const raw = line.slice(4).trim()
+        const raw = decodeGitPath(line.slice(4).trim())
         newPath = raw.startsWith("b/") ? raw.slice(2) : raw
       }
+      if (line.startsWith("rename from ")) oldPath = decodeGitPath(line.slice(12))
+      if (line.startsWith("rename to ")) newPath = decodeGitPath(line.slice(10))
       if (line.startsWith("+") && !line.startsWith("+++ ")) additions += 1
       else if (line.startsWith("-") && !line.startsWith("--- ")) deletions += 1
     }

@@ -56,7 +56,7 @@ Each Git stdout/stderr stream is capped at the remaining budget; an overflow or
 30-second collection deadline returns an error, never a partial successful diff.
 The main review and annotation paths share this collector. Git external diff and
 text-conversion drivers are disabled, with no shell or optional index refresh;
-this is not an OS sandbox or user-cancellable large-diff acceptance. Branch/base
+this is not an OS sandbox. Branch/base
 comparison retains its separate existing collector. No persistent
 content index, automatic relocation, agent permission bypass or alternate audit
 system is introduced.
@@ -115,3 +115,24 @@ fixtures, disabled-beta routes, scoped cancellation, UI retry/remount and storag
 failure. Isolated Chromium checks cover desktop and narrow layouts using a mocked
 transport. Live provider, remote-mobile authorization and full end-to-end acceptance
 remain open; these changes do not complete S7-F3-T2 or promote its Tier 2 checkbox.
+
+Large desktop diffs offer **Review large diff** instead of requiring an external
+editor. This loads 200 plain-text patch rows at a time with original before/after
+line numbers. Previous/Next section replaces only that file's preview, retaining
+the surrounding file tree. Lines longer than 2,000 characters are visibly shortened
+and cannot receive comments from this view. Ordinary complete lines use the same
+scoped comment editor and save-time identity checks as small diffs.
+
+Binary changes offer an explicit **Preview images** action for PNG, JPEG, GIF and
+WebP. Before comes from a pinned HEAD commit and After from the current registered
+worktree; additions/deletions show the missing side explicitly. Each displayed
+side retains a SHA-256 file identity under Image identity. These are snapshots,
+not live image viewers: reload to inspect later changes. The preview allows at most
+4 MiB per side, dimensions no greater than 8,192 pixels per edge, and 16 megapixels.
+Unrecognized dimensions and other binary formats fail with a readable explanation.
+Image comments remain unavailable.
+
+Loading uses an IPC subscription: **Cancel loading**, closing a file, or replacing
+the displayed diff unsubscribes and aborts its Git collection. The existing 8 MiB
+whole-diff collection limit and 30-second deadline still apply; this does not stream
+arbitrarily large repositories or establish whole-stage performance acceptance.

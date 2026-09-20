@@ -1,3 +1,4 @@
+import { decodeGitPath, gitDiffHeaderPaths } from "../../../shared/git-diff-paths"
 /**
  * Diff Parser - Server-side parsing of unified diff format
  *
@@ -180,24 +181,27 @@ export function splitUnifiedDiffByFile(diffText: string): ParsedDiffFile[] {
       if (line.startsWith("diff --git ")) {
         // Fallback: parse paths from "diff --git a/path b/path"
         // Needed for binary files that don't have ---/+++ lines
-        const match = line.match(/^diff --git a\/(.+) b\/(.+)$/)
+        const match = gitDiffHeaderPaths(line)
         if (match) {
-          if (!oldPath) oldPath = match[1]!
-          if (!newPath) newPath = match[2]!
+          if (!oldPath) oldPath = match[0]!
+          if (!newPath) newPath = match[1]!
         }
       }
+
+      if (line.startsWith("rename from ")) oldPath = decodeGitPath(line.slice(12))
+      if (line.startsWith("rename to ")) newPath = decodeGitPath(line.slice(10))
 
       if (line.startsWith("Binary files ") && line.endsWith(" differ")) {
         isBinary = true
       }
 
       if (line.startsWith("--- ")) {
-        const raw = line.slice(4).trim()
+        const raw = decodeGitPath(line.slice(4).trim())
         oldPath = raw.startsWith("a/") ? raw.slice(2) : raw
       }
 
       if (line.startsWith("+++ ")) {
-        const raw = line.slice(4).trim()
+        const raw = decodeGitPath(line.slice(4).trim())
         newPath = raw.startsWith("b/") ? raw.slice(2) : raw
       }
 

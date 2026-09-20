@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { afterProcessClose } from "./closed-process"
 import { randomBytes } from "node:crypto"
 import { lstat, mkdir, readFile, realpath, stat, unlink } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
@@ -1000,25 +1001,32 @@ export async function createWorktreeForChat(
 }
 
 /** Shared review collection: bounded streams and no partial-success result. */
-async function getBoundedUncommittedDiff(worktreePath: string): Promise<string> {
+async function getBoundedUncommittedDiff(
+  worktreePath: string,
+  signal?: AbortSignal,
+): Promise<string> {
   const limit = 8 * 1024 * 1024
   let remaining = limit
   const deadline = Date.now() + 30_000
   const run = async (args: string[], allowDifference = false) => {
+    signal?.throwIfAborted()
     const timeout = deadline - Date.now()
     if (timeout <= 0) throw new Error("Review diff reached the 30 second collection limit")
     if (remaining <= 0) throw new Error("Review diff exceeds the 8 MiB collection limit")
     let output: { stdout: string; stderr: string }
     try {
-      output = await execFileAsync("git", ["--no-pager", "-c", "core.fsmonitor=false", ...args], {
-        cwd: worktreePath,
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-        encoding: "utf8",
-        windowsHide: true,
-        maxBuffer: remaining,
-        timeout,
-        killSignal: "SIGKILL",
-      })
+      output = await afterProcessClose(
+        execFileAsync("git", ["--no-pager", "-c", "core.fsmonitor=false", ...args], {
+          cwd: worktreePath,
+          env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+          encoding: "utf8",
+          windowsHide: true,
+          maxBuffer: remaining,
+          signal,
+          timeout,
+          killSignal: "SIGKILL",
+        }),
+      )
     } catch (error) {
       if (
         allowDifference &&
@@ -1079,11 +1087,11 @@ async function getBoundedUncommittedDiff(worktreePath: string): Promise<string> 
 export async function getWorktreeDiff(
   worktreePath: string,
   baseBranch?: string,
-  options?: { onlyUncommitted?: boolean },
+  options?: { onlyUncommitted?: boolean; signal?: AbortSignal },
 ): Promise<{ success: boolean; diff?: string; error?: string }> {
   try {
     if (options?.onlyUncommitted) {
-      return { success: true, diff: await getBoundedUncommittedDiff(worktreePath) }
+      return { success: true, diff: await getBoundedUncommittedDiff(worktreePath, options.signal) }
     }
     const git = simpleGit(worktreePath)
     const status = await git.status()

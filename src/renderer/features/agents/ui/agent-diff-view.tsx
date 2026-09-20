@@ -30,6 +30,7 @@ import { APP_META } from "../../../../shared/external-apps"
 import { PatchDiff, FileDiff } from "@pierre/diffs/react"
 import { parseDiffFromFile, type SelectedLineRange } from "@pierre/diffs"
 import { DiffComments, type DiffCommentDraft } from "./diff-comments"
+import { BoundedDiffReview } from "./bounded-diff-review"
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import { useBetaFeatures } from "../../settings/use-beta-features"
 import { diffAnnotationAnchorSchema } from "../../../../shared/diff-annotations"
@@ -789,36 +790,13 @@ const FileDiffCard = memo(function FileDiffCard({
       {/* Content area */}
       {!isCollapsed && (
         <div>
-          {file.isBinary ? (
-            <div className="px-3 py-2 text-xs text-muted-foreground">
-              Binary file diff can't be rendered.
-            </div>
-          ) : isLargeDiff ? (
-            <div className="px-3 py-3 text-xs text-muted-foreground">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0 flex-1">File is too large to display here</div>
-                {absolutePath && (
-                  <div className="flex shrink-0 items-center gap-0 text-xs">
-                    <button
-                      type="button"
-                      onClick={handleRevealInFinder}
-                      className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                    >
-                      <FolderIcon className="size-3.5" />
-                      {getFileManagerName()}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleOpenInPreferredEditor}
-                      className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                    >
-                      <ExternalLinkIcon className="size-3.5" />
-                      {editorMeta.label}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
+          {file.isBinary || isLargeDiff ? (
+            <BoundedDiffReview
+              key={`${chatId}:${file.observedDiffHash}:${file.key}`}
+              chatId={chatId}
+              file={file}
+              onComment={file.isBinary ? undefined : onComment}
+            />
           ) : !file.isValid ? (
             <div className="flex items-center gap-2 px-3 py-2 text-xs text-yellow-600 dark:text-yellow-500 bg-yellow-50 dark:bg-yellow-950/30">
               <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
