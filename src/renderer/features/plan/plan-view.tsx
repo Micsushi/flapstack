@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react"
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
 import { useAtomValue } from "jotai"
 import {
   AlertTriangle,
@@ -17,6 +17,14 @@ import {
 import { toast } from "sonner"
 import { Badge } from "../../components/ui/badge"
 import { Button } from "../../components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../components/ui/dialog"
 import { Input } from "../../components/ui/input"
 import { cn } from "../../lib/utils"
 import { trpc } from "../../lib/trpc"
@@ -53,6 +61,12 @@ const STATUS_FILTERS: Array<{ value: PlanStatusFilter; label: string }> = [
 export function PlanView() {
   const selectedProject = useAtomValue(selectedProjectAtom)
   const projectId = selectedProject?.id ?? ""
+  const currentProjectId = useRef(projectId)
+  currentProjectId.current = projectId
+  const [registrationOpen, setRegistrationOpen] = useState(false)
+  const [markdownPath, setMarkdownPath] = useState("")
+  const [registrationError, setRegistrationError] = useState<string | null>(null)
+  const registerMarkdown = trpc.planSources.registerMarkdown.useMutation()
   const [state, dispatch] = useReducer(planViewReducer, INITIAL_STATE)
   const [liveSnapshot, setLiveSnapshot] = useState<ProjectPlanSnapshot | null>(null)
   const [watchError, setWatchError] = useState<string | null>(null)
@@ -84,6 +98,9 @@ export function PlanView() {
   })
 
   useEffect(() => {
+    setRegistrationOpen(false)
+    setMarkdownPath("")
+    setRegistrationError(null)
     dispatch({ type: "reset-project" })
     setLiveSnapshot(null)
     setWatchError(null)
@@ -116,7 +133,8 @@ export function PlanView() {
   const refresh = useCallback(async () => {
     setWatchError(null)
     const result = await refreshQuery.refetch()
-    if (result.data) setLiveSnapshot(result.data)
+    if (result.data && result.data.projectId === currentProjectId.current)
+      setLiveSnapshot(result.data)
   }, [refreshQuery])
 
   const openSource = useCallback(
@@ -171,8 +189,7 @@ export function PlanView() {
               Plan
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Plan sources stay read-only. Promotion creates a reviewed task and chat without
-              editing the source.
+              Plan sources stay read-only. Review a candidate before creating a task.
             </p>
           </div>
           <div
@@ -241,7 +258,15 @@ export function PlanView() {
             </span>
           </label>
 
-          <div className="flex items-end">
+          <div className="flex flex-wrap items-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9"
+              onClick={() => setRegistrationOpen(true)}
+            >
+              Add Markdown plan
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -431,6 +456,73 @@ export function PlanView() {
           </div>
         )}
       </div>
+      <Dialog
+        open={registrationOpen}
+        onOpenChange={(open) => {
+          if (!registerMarkdown.isPending) setRegistrationOpen(open)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Markdown plan</DialogTitle>
+            <DialogDescription>
+              Choose an existing Markdown file within {selectedProject.name}. Its contents remain
+              read-only.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={async (event) => {
+              event.preventDefault()
+              if (!markdownPath.trim() || registerMarkdown.isPending) return
+              setRegistrationError(null)
+              try {
+                await registerMarkdown.mutateAsync({ projectId, relativePath: markdownPath.trim() })
+                if (currentProjectId.current !== projectId) return
+                setMarkdownPath("")
+                setRegistrationOpen(false)
+                await refresh()
+              } catch (error) {
+                if (currentProjectId.current === projectId)
+                  setRegistrationError(
+                    error instanceof Error ? error.message : "Could not add Markdown plan",
+                  )
+              }
+            }}
+          >
+            <label className="grid gap-2 text-sm font-medium">
+              Path relative to {selectedProject.name}
+              <Input
+                value={markdownPath}
+                onChange={(event) => setMarkdownPath(event.target.value)}
+                placeholder="docs/plan.md"
+                disabled={registerMarkdown.isPending}
+                required
+                aria-invalid={Boolean(registrationError)}
+                aria-describedby={registrationError ? "markdown-plan-error" : undefined}
+              />
+            </label>
+            {registrationError && (
+              <p id="markdown-plan-error" role="alert" className="text-sm text-destructive">
+                {registrationError}
+              </p>
+            )}
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={registerMarkdown.isPending}
+                onClick={() => setRegistrationOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={!markdownPath.trim() || registerMarkdown.isPending}>
+                {registerMarkdown.isPending ? "Adding..." : "Add plan"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       {promotionTarget && (
         <PlanPromotionDialog
           sourceProjectId={projectId}

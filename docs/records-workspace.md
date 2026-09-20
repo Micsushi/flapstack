@@ -34,6 +34,10 @@ Ordinary desktop chats do not inherit the desktop's Records authority. Historica
 SQLite task data is retained; when Records is connected, legacy task mutations
 are refused so two editable task systems cannot diverge.
 
+In Plan, use **Add Markdown plan** to register an existing file by its path relative
+to the selected local project, such as `docs/plan.md`. Registration keeps the file
+read-only; rejected paths remain available to correct and retry.
+
 In Plan, promoting an incomplete item opens a Records project selector and then
 the existing Yap review. The source is checked before capture; repeated requests
 for the same source version and destination reopen one proposal. Approval in Yap
