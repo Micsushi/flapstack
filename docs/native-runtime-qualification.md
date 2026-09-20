@@ -88,6 +88,21 @@ or source-deletion behavior. Those broader boundaries have fixture coverage.
 
 ## Remaining acceptance by source task
 
+The later production delegation check used a labeled synthetic Claude source and
+one real read-only Codex Enhanced target, with GPT-5.5 and discovered MCP servers
+disabled through the owned project policy. Its successful broker result and exact
+run identity survived a full restart without replay. This does not establish a
+live authenticated Claude source or reverse delegation.
+
+That check exposed an empty child transcript: the broker persisted the prompt in
+the run and output in activity, but neither in child messages. The repair writes
+the approved prompt at creation and accepted completed public text after the
+successful result barrier, using the existing assistant-history persistence.
+Stream fragments, private/redacted output and rejected results are excluded from
+that assistant projection. Already-terminal children created before this repair
+are not backfilled; their broker result remains available. Actual-app validation
+of the repaired child transcript remains pending.
+
 | Source task | Evidence and remaining boundary                                                                                                                                                                                                                               |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | S4-F11-T4   | Actual pinned adapter and production-app completion, resumed cancellation, persisted identity and restart above; fixture event/drift/permission coverage. Installed-package smoke and every live event variant remain unverified.                             |

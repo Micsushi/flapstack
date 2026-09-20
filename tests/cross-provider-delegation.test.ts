@@ -148,6 +148,7 @@ describe("cross-provider Runtime delegation", () => {
     const preview = service.preview(request)
     const created = service.delegate({ ...request, confirmedPreviewDigest: preview.digest })
     const db = new Database(fixture.path)
+    const sourceBefore = db.prepare("SELECT messages FROM sub_chats WHERE chat_id = 'source'").all()
     try {
       db.prepare(
         `INSERT INTO agent_activity_events (
@@ -158,6 +159,30 @@ describe("cross-provider Runtime delegation", () => {
           'agent-text', 'completed', 'provider-visible', 'public', 'none', 1,
           '{"text":"DELEGATED-plain-text"}', 1)`,
       ).run(created.runId, created.childChatId, created.childSubChatId)
+      for (const [index, phase, privacy, redaction, text] of [
+        [2, "delta", "public", "none", "STREAM-FRAGMENT"],
+        [3, "completed", "private", "none", "PRIVATE-OUTPUT"],
+        [4, "completed", "public", "redacted", "REDACTED-OUTPUT"],
+      ] as const) {
+        db.prepare(
+          `INSERT INTO agent_activity_events (
+            event_id, run_id, chat_id, sub_chat_id, runtime, harness, provider, sequence,
+            kind, phase, display_class, privacy_class, redaction_state, received_at,
+            payload_json, created_at
+          ) VALUES (?, ?, ?, ?, 'codex', 'codex', 'openai', ?,
+            'agent-text', ?, 'provider-visible', ?, ?, 1, ?, 1)`,
+        ).run(
+          `text-${index}`,
+          created.runId,
+          created.childChatId,
+          created.childSubChatId,
+          index,
+          phase,
+          privacy,
+          redaction,
+          JSON.stringify({ text }),
+        )
+      }
       db.prepare("UPDATE agent_runs SET status = 'success', completed_at = 2 WHERE id = ?").run(
         created.runId,
       )
@@ -170,7 +195,7 @@ describe("cross-provider Runtime delegation", () => {
     expect(result.result).toMatchObject({
       status: "success",
       structuredOutput: null,
-      visibleSummary: "DELEGATED-plain-text",
+      visibleSummary: "DELEGATED-plain-text\nSTREAM-FRAGMENT",
       partial: false,
       terminalEvidence: { providerTerminalState: "completed" },
     })
@@ -178,6 +203,39 @@ describe("cross-provider Runtime delegation", () => {
     const restarted = new CrossProviderDelegationService(fixture.path, runtime)
     expect((await restarted.reconcile(created.attemptId)).result).toEqual(result.result)
     expect(runtime.launches).toHaveLength(1)
+    const reopenedDb = new Database(fixture.path)
+    try {
+      const run = reopenedDb
+        .prepare("SELECT prompt_message_id, initial_prompt FROM agent_runs WHERE id = ?")
+        .get(created.runId) as { prompt_message_id: string; initial_prompt: string }
+      const { messages } = reopenedDb
+        .prepare("SELECT messages FROM sub_chats WHERE id = ?")
+        .get(created.childSubChatId) as { messages: string }
+      expect(JSON.parse(messages)).toEqual([
+        {
+          id: run.prompt_message_id,
+          role: "user",
+          parts: [{ type: "text", text: run.initial_prompt }],
+          metadata: {
+            kind: "runtime-delegation-task",
+            sourceChatId: "source",
+            runId: created.runId,
+            previewDigest: preview.digest,
+          },
+        },
+        {
+          id: expect.any(String),
+          role: "assistant",
+          parts: [{ type: "text", text: "DELEGATED-plain-text" }],
+          metadata: expect.objectContaining({ runId: created.runId, transport: "codex-runtime" }),
+        },
+      ])
+      expect(
+        reopenedDb.prepare("SELECT messages FROM sub_chats WHERE chat_id = 'source'").all(),
+      ).toEqual(sourceBefore)
+    } finally {
+      reopenedDb.close()
+    }
   })
 
   it.each([
@@ -1014,8 +1072,15 @@ describe("cross-provider Runtime delegation", () => {
       const persisted = persistedDb
         .prepare("SELECT result_envelope FROM runtime_composition_attempts WHERE attempt_id = ?")
         .get(created.attemptId) as { result_envelope: string }
+      const history = persistedDb
+        .prepare("SELECT messages FROM sub_chats WHERE id = ?")
+        .get(created.childSubChatId) as { messages: string }
       persistedDb.close()
       expect(persisted.result_envelope).not.toContain("sk-proj-abcdefghijklmnopqrstuv")
+      expect(JSON.parse(history.messages).map((message: { role: string }) => message.role)).toEqual(
+        ["user"],
+      )
+      expect(history.messages).not.toContain("sk-proj-abcdefghijklmnopqrstuv")
     },
   )
 })

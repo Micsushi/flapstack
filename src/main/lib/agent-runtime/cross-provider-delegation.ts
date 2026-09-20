@@ -21,6 +21,7 @@ import {
   type RuntimeCompositionPreview,
 } from "../../../shared/runtime-composition"
 import { isProductMcpEnabledByDefault } from "../mcp-control/exposure"
+import { publishLocalProductInvalidation } from "../mcp-control/invalidation-bridge"
 import {
   assertNoSecretText,
   PORTABLE_SECRET_PLACEHOLDER,
@@ -43,6 +44,7 @@ import {
   type RuntimeContinuationPreview,
 } from "./chat-lifecycle"
 import { productRuntimeForHarness } from "./compatibility"
+import { persistInteractiveRuntimeAssistantFallback } from "./interactive-chat"
 
 type Row = Record<string, unknown>
 
@@ -388,6 +390,23 @@ export class CrossProviderDelegationService {
             "",
             "Return only visible task output. Do not request or reconstruct private reasoning, credentials, provider session state, or hidden tool state.",
           ].join("\n")
+          const promptMessageId = `runtime-delegation-${identities.attemptId}`
+          db.prepare("UPDATE sub_chats SET messages = ? WHERE id = ?").run(
+            JSON.stringify([
+              {
+                id: promptMessageId,
+                role: "user",
+                parts: [{ type: "text", text: prompt }],
+                metadata: {
+                  kind: "runtime-delegation-task",
+                  sourceChatId: input.sourceChatId,
+                  runId: identities.runId,
+                  previewDigest: preview.digest,
+                },
+              },
+            ]),
+            identities.subChatId,
+          )
           db.prepare(
             `INSERT INTO agent_runs (
               id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
@@ -406,7 +425,7 @@ export class CrossProviderDelegationService {
             preview.authorityCeiling.permissionMode,
             customPermissions ? JSON.stringify(customPermissions) : null,
             preview.worktreeLease.path,
-            `runtime-delegation-${identities.attemptId}`,
+            promptMessageId,
             prompt,
             ...runtimeSnapshotSqlValues(runtimeSnapshot),
             now,
@@ -716,7 +735,7 @@ export class CrossProviderDelegationService {
     }
     const db = this.open()
     try {
-      return db
+      const reference = db
         .transaction(() => {
           const current = requireAttempt(db, attemptId)
           if (isTerminal(String(current.status))) return referenceFromRow(current, false)
@@ -809,6 +828,12 @@ export class CrossProviderDelegationService {
             )
             .run(status, JSON.stringify(result), now, now, attemptId)
           if (update.changes === 0) return referenceFromRow(requireAttempt(db, attemptId), false)
+          if (status === "success") {
+            const completedText = readVisibleSummary(db, runId, true)
+            if (isDelegationValueSecretSafe(completedText, "visible-summary")) {
+              persistInteractiveRuntimeAssistantFallback(db, runId, completedText)
+            }
+          }
           db.prepare(`UPDATE sub_chats SET run_status = ?, updated_at = ? WHERE id = ?`).run(
             status,
             now,
@@ -817,6 +842,14 @@ export class CrossProviderDelegationService {
           return referenceFromRow(requireAttempt(db, attemptId), false)
         })
         .immediate()
+      publishLocalProductInvalidation({
+        version: 1,
+        source: "product-mcp",
+        domains: ["runs", "chats"],
+        chatIds: [reference.childChatId],
+        runIds: [runId],
+      })
+      return reference
     } finally {
       db.close()
     }
@@ -1156,15 +1189,17 @@ function delegationIdentities(sourceChatId: string, requestId: string) {
   }
 }
 
-function readVisibleSummary(db: Database.Database, runId: string): string {
+function readVisibleSummary(db: Database.Database, runId: string, completedOnly = false): string {
   if (!tableExists(db, "agent_activity_events")) return ""
   const rows = db
     .prepare(
       `SELECT payload_json FROM agent_activity_events
        WHERE run_id = ? AND kind = 'agent-text' AND privacy_class = 'public'
+         AND redaction_state = 'none' AND display_class IN ('provider-visible', 'summary')
+         AND (? = 0 OR phase = 'completed')
        ORDER BY sequence`,
     )
-    .all(runId) as Array<{ payload_json: string }>
+    .all(runId, completedOnly ? 1 : 0) as Array<{ payload_json: string }>
   return rows
     .flatMap((row) => {
       try {
