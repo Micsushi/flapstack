@@ -448,11 +448,17 @@ const subChatCodexModelIdsStorageAtom = atomWithStorage<Record<string, string>>(
 // explicit selection already made for this conversation.
 export const initializeSubChatCodexModelAtom = atom(
   null,
-  (get, set, input: { subChatId: string; model: string | null | undefined }) => {
-    if (!input.model || !input.subChatId) return
+  (get, set, input: {
+    subChatId: string
+    model: string | null | undefined
+    parentHarness?: string
+    parentModel?: string | null
+  }) => {
+    const model = input.model || (input.parentHarness === "codex" ? input.parentModel : null)
+    if (!model || !input.subChatId) return
     const current = get(subChatCodexModelIdsStorageAtom)
     if (current[input.subChatId] !== undefined) return
-    set(subChatCodexModelIdsStorageAtom, { ...current, [input.subChatId]: input.model })
+    set(subChatCodexModelIdsStorageAtom, { ...current, [input.subChatId]: model })
   },
 )
 

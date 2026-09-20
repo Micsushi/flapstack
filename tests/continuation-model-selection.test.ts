@@ -72,4 +72,18 @@ describe("persisted continuation model", () => {
     appStore.set(initializeSubChatCodexModelAtom, { subChatId: "without-model", model: null })
     expect(appStore.get(subChatCodexModelIdAtomFamily("without-model"))).toBe("gpt-5.6-sol")
   })
+
+  it("only inherits a parent model from the same harness", () => {
+    appStore.set(lastSelectedCodexModelIdAtom, "gpt-5.6-sol")
+    appStore.set(initializeSubChatCodexModelAtom, {
+      subChatId: "mixed-parent", model: null,
+      parentHarness: "claude-code", parentModel: "claude-opus-4-6",
+    })
+    expect(appStore.get(subChatCodexModelIdAtomFamily("mixed-parent"))).toBe("gpt-5.6-sol")
+    appStore.set(initializeSubChatCodexModelAtom, {
+      subChatId: "codex-parent", model: null,
+      parentHarness: "codex", parentModel: "gpt-5.5",
+    })
+    expect(appStore.get(subChatCodexModelIdAtomFamily("codex-parent"))).toBe("gpt-5.5")
+  })
 })

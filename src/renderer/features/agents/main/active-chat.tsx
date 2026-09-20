@@ -7418,7 +7418,9 @@ Make sure to preserve all functionality from both branches when resolving confli
       if ((savedConversation?.harness || savedChat.harness) === "codex") {
         appStore.set(initializeSubChatCodexModelAtom, {
           subChatId,
-          model: savedConversation?.model || savedChat.model,
+          model: savedConversation?.model,
+          parentHarness: savedChat.harness,
+          parentModel: savedChat.model,
         })
       }
       const rawDesiredMessages = desiredSubChat?.messages
