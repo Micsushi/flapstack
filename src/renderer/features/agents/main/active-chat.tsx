@@ -7728,7 +7728,7 @@ Make sure to preserve all functionality from both branches when resolving confli
   )
 
   const handleProviderChange = useCallback(
-    (subChatId: string, nextProvider: AgentProviderId) => {
+    async (subChatId: string, nextProvider: AgentProviderId) => {
       // Provider switch is only allowed for brand new sub-chats.
       const activeChat = agentChatStore.get(subChatId) as any
       let messageCount = Array.isArray(activeChat?.messages) ? activeChat.messages.length : 0
@@ -7748,19 +7748,21 @@ Make sure to preserve all functionality from both branches when resolving confli
         }
       }
 
-      if (messageCount > 0) return
-
-      appStore.set(lastSelectedAgentIdAtom, nextProvider)
-      setSubChatProviderOverrides((prev) => ({
-        ...prev,
-        [subChatId]: nextProvider,
-      }))
-
-      // Force transport recreation with the newly selected provider.
-      agentChatStore.delete(subChatId)
-      forceUpdate({})
+      if (activeChat?.status === "streaming" || activeChat?.status === "submitted") return
+      if ((agentChat as any)?.hasProviderIntent ?? messageCount > 0) return
+      try {
+        await trpcClient.chats.setIdleProvider.mutate({ chatId, subChatId, harness: nextProvider })
+        await trpcUtils.chats.getMetadata.invalidate({ id: chatId })
+        appStore.set(lastSelectedAgentIdAtom, nextProvider)
+        setSubChatProviderOverrides((prev) => ({ ...prev, [subChatId]: nextProvider }))
+        // Preserve saved context while recreating only the idle provider transport.
+        agentChatStore.delete(subChatId)
+        forceUpdate({})
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not change provider.")
+      }
     },
-    [agentSubChats],
+    [agentSubChats, agentChat, chatId, trpcUtils],
   )
 
   // Handle creating a new sub-chat

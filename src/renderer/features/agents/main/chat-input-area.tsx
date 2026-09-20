@@ -517,6 +517,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         await setRuntimePreferenceMutation.mutateAsync({ chatId: parentChatId, preference })
         await Promise.all([
           trpcUtils.chats.get.invalidate({ id: parentChatId }),
+          trpcUtils.chats.getMetadata.invalidate({ id: parentChatId }),
           trpcUtils.chats.list.invalidate(),
         ])
         toast.success(`Runtime changed to ${runtimePreferenceLabel(preference)}`)
@@ -536,6 +537,7 @@ export const ChatInputArea = memo(function ChatInputArea({
       runtimePreference,
       setRuntimePreferenceMutation,
       trpcUtils.chats.get,
+      trpcUtils.chats.getMetadata,
       trpcUtils.chats.list,
     ],
   )
@@ -1402,7 +1404,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     runtimeChat?.worktreePath,
     setStoredTargetWorktreePath,
   ])
-  const hasStartedChat = messageTokenData.messageCount > 0
+  const hasStartedChat = runtimeChat?.hasProviderIntent ?? messageTokenData.messageCount > 0
   const canSwitchProvider = !hasStartedChat && !isStreaming && !sandboxId
 
   // MCP status - from getAllMcpConfig query (provides global/local grouping)

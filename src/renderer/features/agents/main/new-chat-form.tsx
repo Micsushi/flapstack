@@ -1260,6 +1260,8 @@ export function NewChatForm({
         { id: data.id },
         {
           ...data,
+          // This first user message is already submitted for automatic dispatch.
+          hasProviderIntent: true,
           subChats: data.subChats.map(({ messages: _messages, ...subChat }) => subChat),
         },
       )

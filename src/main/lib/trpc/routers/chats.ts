@@ -632,7 +632,13 @@ export const chatsRouter = router({
         ? await ensureGlobalChatRuntimePath(app.getPath("userData"), chat.id)
         : null
 
-    return { ...chat, subChats: chatSubChats, project, globalRuntimePath }
+    return {
+      ...chat,
+      subChats: chatSubChats,
+      project,
+      globalRuntimePath,
+      hasProviderIntent: createRuntimeChatLifecycleService(db).hasProviderIntent(input.id),
+    }
   }),
 
   getTranscript: publicProcedure
@@ -1545,6 +1551,18 @@ export const chatsRouter = router({
     }),
 
   // ============ Sub-chat procedures ============
+
+  setIdleProvider: publicProcedure
+    .input(
+      z.object({
+        chatId: z.string().trim().min(1).max(200),
+        subChatId: z.string().trim().min(1).max(200),
+        harness: z.enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt", "local"]),
+      }),
+    )
+    .mutation(({ input }) =>
+      createRuntimeChatLifecycleService(getDatabase()).setEmptyChatProvider(input),
+    ),
 
   setRuntimePreference: publicProcedure
     .input(
