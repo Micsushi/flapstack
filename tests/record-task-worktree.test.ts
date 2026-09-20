@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os"
 import { join, resolve, dirname, basename } from "node:path"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { shouldAutoGenerateInitialResponse } from "../src/renderer/features/agents/main/chat-message-hydration"
 import { RecordTaskWorktreeService } from "../src/main/lib/project-records/task-worktree"
 
 let directory: string, repo: string, sqlite: Database.Database
@@ -31,6 +32,9 @@ const record = {
   kind: "task" as const,
   state: "in_progress",
   history: [],
+  description: "Keep canonical ownership",
+  workSpec: { acceptance: ["One isolated Chat"], verification: ["Concurrent open fixture"] },
+  executionAuthorization: { secret: "never-copy-authority" },
   projects: [{ id: "flapstack" }],
 }
 const client = { read: vi.fn(), operation: vi.fn() }
@@ -127,6 +131,46 @@ it("coalesces concurrent clicks, reopens after restart and uses the isolated nat
   expect(chat.worktree_path).toBe(first.worktreePath)
   expect(chat.task_id).toBeNull()
   expect(chat.project_id).toBe("local")
+  const saved = sqlite
+    .prepare("SELECT messages, run_status FROM sub_chats WHERE chat_id=?")
+    .get(first.chatId) as { messages: string; run_status: string | null }
+  const messages = JSON.parse(saved.messages)
+  expect(messages).toHaveLength(1)
+  const text = messages[0].parts[0].text
+  for (const value of [
+    input.path,
+    input.recordId,
+    input.canonicalProjectId,
+    input.expectedRevision,
+    "One isolated Chat",
+    "Concurrent open fixture",
+    "Keep canonical ownership",
+  ])
+    expect(text).toContain(value)
+  expect(text).not.toContain("never-copy-authority")
+  expect(saved.run_status).toBeNull()
+  expect(
+    shouldAutoGenerateInitialResponse({
+      messages,
+      status: "ready",
+      pendingInitialGeneration: false,
+    }),
+  ).toBe(false)
+  expect((sqlite.prepare("SELECT count(*) n FROM agent_runs").get() as { n: number }).n).toBe(0)
+  const edited = JSON.stringify([
+    ...messages,
+    { id: "user-followup", role: "user", parts: [{ type: "text", text: "Preserve my followup" }] },
+  ])
+  sqlite.prepare("UPDATE sub_chats SET messages=? WHERE chat_id=?").run(edited, first.chatId)
+  await open(input)
+  expect(
+    (
+      sqlite.prepare("SELECT messages FROM sub_chats WHERE chat_id=?").get(first.chatId) as {
+        messages: string
+      }
+    ).messages,
+  ).toBe(edited)
+
   expect((sqlite.prepare("SELECT count(*) n FROM chats").get() as { n: number }).n).toBe(1)
   expect(git(["worktree", "list", "--porcelain"])).toContain(
     first.worktreePath.replaceAll("\\", "/"),

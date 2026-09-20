@@ -56,7 +56,10 @@ and have current authority, readiness and claim. The desktop checks its exact
 document revision and claim before creating an isolated Git worktree. It creates
 one ordinary project Chat and retains the canonical task, project, source
 revision and claim association across restarts; no duplicate local task is made.
-Repeated clicks reopen that Chat. A different claim or local project cannot
+The idle Chat includes a quoted snapshot of the canonical task locator, revision,
+description, work specification and acceptance checks. Re-read the Board before
+acting; the snapshot grants no worker access. Reopening preserves conversation
+history. Repeated clicks reopen that Chat. A different claim or local project cannot
 silently take it over. Refresh the Board after a stale-state rejection.
 
 Opening the Chat does not start an agent, copy the desktop Records credential,
