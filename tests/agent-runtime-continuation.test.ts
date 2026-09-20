@@ -95,18 +95,32 @@ describe("Agent Runtime continuation", () => {
     })
     const service = createService(database)
     const request = {
-      sourceChatId: chatId, targetHarness: "codex", targetModel: "gpt-5.5",
-      preference: "codex" as const, requestId: "reviewed-model-child",
+      sourceChatId: chatId,
+      targetHarness: "codex",
+      targetModel: "gpt-5.5",
+      preference: "codex" as const,
+      requestId: "reviewed-model-child",
     }
     const preview = service.previewContinuation(request)
-    const child = service.continueWithRuntime({ ...request, confirmedPreviewDigest: preview.digest })
-    const before = database.prepare("SELECT messages FROM sub_chats WHERE id = ?").get(child.subChatId)
+    const child = service.continueWithRuntime({
+      ...request,
+      confirmedPreviewDigest: preview.digest,
+    })
+    const before = database
+      .prepare("SELECT messages FROM sub_chats WHERE id = ?")
+      .get(child.subChatId)
     service.setEmptyChatPreference({ chatId: child.chatId, preference: "codex-enhanced" })
-    expect(database.prepare("SELECT harness, model, runtime_preference FROM chats WHERE id = ?").get(child.chatId))
-      .toEqual({ harness: "codex", model: "gpt-5.5", runtime_preference: "codex-enhanced" })
-    expect(database.prepare("SELECT model FROM sub_chats WHERE id = ?").get(child.subChatId))
-      .toEqual({ model: "gpt-5.5" })
-    expect(database.prepare("SELECT messages FROM sub_chats WHERE id = ?").get(child.subChatId)).toEqual(before)
+    expect(
+      database
+        .prepare("SELECT harness, model, runtime_preference FROM chats WHERE id = ?")
+        .get(child.chatId),
+    ).toEqual({ harness: "codex", model: "gpt-5.5", runtime_preference: "codex-enhanced" })
+    expect(
+      database.prepare("SELECT model FROM sub_chats WHERE id = ?").get(child.subChatId),
+    ).toEqual({ model: "gpt-5.5" })
+    expect(
+      database.prepare("SELECT messages FROM sub_chats WHERE id = ?").get(child.subChatId),
+    ).toEqual(before)
     expect(database.prepare("SELECT count(*) AS count FROM agent_runs").get()).toEqual({ count: 0 })
   })
 

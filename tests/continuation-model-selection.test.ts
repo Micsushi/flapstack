@@ -49,13 +49,29 @@ describe("persisted continuation model", () => {
     appStore.set(initializeSubChatCodexModelAtom, { subChatId, model: "gpt-5.5" })
     expect(appStore.get(subChatCodexModelIdAtomFamily(subChatId))).toBe("gpt-5.5")
     expect(appStore.get(lastSelectedCodexModelIdAtom)).toBe("gpt-5.6-sol")
-    mocks.launch.mockResolvedValue(new ReadableStream({ start(controller) { controller.close() } }))
+    mocks.launch.mockResolvedValue(
+      new ReadableStream({
+        start(controller) {
+          controller.close()
+        },
+      }),
+    )
     await new ACPChatTransport({
-      chatId: "child", subChatId, cwd: "/owned", mode: "write", provider: "codex",
-    }).sendMessages({ messages: [{ id: "send", role: "user", parts: [{ type: "text", text: "Synthetic" }] }] })
-    expect(mocks.launch).toHaveBeenLastCalledWith(expect.objectContaining({
-      chatId: "child", subChatId, model: "gpt-5.5",
-    }))
+      chatId: "child",
+      subChatId,
+      cwd: "/owned",
+      mode: "write",
+      provider: "codex",
+    }).sendMessages({
+      messages: [{ id: "send", role: "user", parts: [{ type: "text", text: "Synthetic" }] }],
+    })
+    expect(mocks.launch).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        chatId: "child",
+        subChatId,
+        model: "gpt-5.5",
+      }),
+    )
   })
 
   it("preserves explicit child edits across metadata refresh, Runtime change and reopening", () => {
@@ -64,7 +80,9 @@ describe("persisted continuation model", () => {
     appStore.set(subChatCodexModelIdAtomFamily(subChatId), "gpt-5.6-sol")
     appStore.set(initializeSubChatCodexModelAtom, { subChatId, model: "gpt-5.5" })
     expect(appStore.get(subChatCodexModelIdAtomFamily(subChatId))).toBe("gpt-5.6-sol")
-    expect(JSON.parse(localStorage.getItem("agents:subChatCodexModelIds")!)[subChatId]).toBe("gpt-5.6-sol")
+    expect(JSON.parse(localStorage.getItem("agents:subChatCodexModelIds")!)[subChatId]).toBe(
+      "gpt-5.6-sol",
+    )
   })
 
   it("leaves model-less conversations on the existing default", () => {
@@ -76,13 +94,17 @@ describe("persisted continuation model", () => {
   it("only inherits a parent model from the same harness", () => {
     appStore.set(lastSelectedCodexModelIdAtom, "gpt-5.6-sol")
     appStore.set(initializeSubChatCodexModelAtom, {
-      subChatId: "mixed-parent", model: null,
-      parentHarness: "claude-code", parentModel: "claude-opus-4-6",
+      subChatId: "mixed-parent",
+      model: null,
+      parentHarness: "claude-code",
+      parentModel: "claude-opus-4-6",
     })
     expect(appStore.get(subChatCodexModelIdAtomFamily("mixed-parent"))).toBe("gpt-5.6-sol")
     appStore.set(initializeSubChatCodexModelAtom, {
-      subChatId: "codex-parent", model: null,
-      parentHarness: "codex", parentModel: "gpt-5.5",
+      subChatId: "codex-parent",
+      model: null,
+      parentHarness: "codex",
+      parentModel: "gpt-5.5",
     })
     expect(appStore.get(subChatCodexModelIdAtomFamily("codex-parent"))).toBe("gpt-5.5")
   })
