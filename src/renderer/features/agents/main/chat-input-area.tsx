@@ -857,6 +857,13 @@ export const ChatInputArea = memo(function ChatInputArea({
     subChatReasoningEnabledAtomFamily(subChatId),
   )
   const localModelPicker = useLocalModelPickerSurface()
+  const localModelMissing =
+    provider === "local" &&
+    !(
+      runtimeChat?.subChats.find((chat) => chat.id === subChatId)?.model ||
+      runtimeChat?.model ||
+      localModelPicker.selectedModelId
+    )
 
   const selectedModelContextWindow = useMemo(() => {
     if (provider === "claude-code") return selectedModel?.contextWindow
@@ -1747,6 +1754,10 @@ export const ChatInputArea = memo(function ChatInputArea({
   // Editor submit handler - handles Enter key with queue logic
   // If input is empty and queue has items, stop stream and send first from queue
   const handleEditorSubmit = useCallback(async () => {
+    if (localModelMissing) {
+      toast.error("Choose a local model before sending.")
+      return
+    }
     if (worktreeBlockedReason) {
       toast.error(worktreeWasReplaced ? "Checkout was replaced" : "Checkout unavailable", {
         description: worktreeBlockedReason,
@@ -1787,6 +1798,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     finishVoiceBeforeSend,
     worktreeBlockedReason,
     worktreeWasReplaced,
+    localModelMissing,
   ])
 
   // Mention select handler
@@ -2933,6 +2945,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                           (diffTextContexts?.length ?? 0) === 0 &&
                           queueLength === 0) ||
                         isUploading ||
+                        localModelMissing ||
                         Boolean(runtimeBlockedReason) ||
                         Boolean(worktreeBlockedReason)
                       }
@@ -3070,6 +3083,11 @@ export const ChatInputArea = memo(function ChatInputArea({
                 )}
               </PromptInputActions>
             </PromptInput>
+            {localModelMissing ? (
+              <p role="status" className="mt-2 px-2 text-xs text-muted-foreground">
+                Choose a local model before sending. Saved messages remain available.
+              </p>
+            ) : null}
             {runtimeBlockedReason ? (
               <p role="alert" className="mt-2 px-2 text-xs text-amber-600 dark:text-amber-300">
                 {runtimeBlockedReason} Continue with Flapstack Native to launch now.

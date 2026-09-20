@@ -16,26 +16,35 @@ export type LocalModelChatTransportConfig = {
   cwd: string
   projectPath?: string
   endpoint: string
-  model: string
+  model: string | null
 }
 
 export class LocalModelChatTransport implements ChatTransport<UIMessage> {
-  constructor(private readonly config: LocalModelChatTransportConfig) {}
+  constructor(private config: LocalModelChatTransportConfig) {}
 
   getConfig(): Readonly<LocalModelChatTransportConfig> {
     return this.config
+  }
+
+  updateConfig(config: Partial<LocalModelChatTransportConfig>): void {
+    this.config = { ...this.config, ...config }
   }
 
   async sendMessages(options: {
     messages: UIMessage[]
     abortSignal?: AbortSignal
   }): Promise<ReadableStream<UIMessageChunk>> {
+    const config = this.config
+    const model = config.model
+    if (!model?.trim()) {
+      throw new Error("Choose a local model before sending.")
+    }
     const lastUser = [...options.messages].reverse().find((message) => message.role === "user")
     const prompt = extractChatMessageText(lastUser)
     const mode = normalizeChatMode(
-      getAgentSubChatStore(this.config.chatId)
+      getAgentSubChatStore(config.chatId)
         .getState()
-        .allSubChats.find((subChat) => subChat.id === this.config.subChatId)?.mode,
+        .allSubChats.find((subChat) => subChat.id === config.subChatId)?.mode,
     )
 
     return new ReadableStream({
@@ -49,21 +58,21 @@ export class LocalModelChatTransport implements ChatTransport<UIMessage> {
         let streamClosed = false
         const subscription = trpcClient.localModels.chat.subscribe(
           {
-            chatId: this.config.chatId,
-            subChatId: this.config.subChatId,
+            chatId: config.chatId,
+            subChatId: config.subChatId,
             runId,
             prompt,
             mode,
-            model: this.config.model,
-            endpoint: this.config.endpoint,
-            cwd: this.config.cwd,
-            ...(this.config.projectPath ? { projectPath: this.config.projectPath } : {}),
+            model,
+            endpoint: config.endpoint,
+            cwd: config.cwd,
+            ...(config.projectPath ? { projectPath: config.projectPath } : {}),
           },
           createAgentChatSubscriptionObserver(
             controller,
             {
-              chatId: this.config.chatId,
-              subChatId: this.config.subChatId,
+              chatId: config.chatId,
+              subChatId: config.subChatId,
             },
             undefined,
             () => {

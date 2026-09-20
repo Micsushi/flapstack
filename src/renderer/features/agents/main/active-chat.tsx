@@ -5535,6 +5535,8 @@ function ChatViewScoped({
   const isFullscreen = useAtomValue(isFullscreenAtom)
   const sidebarOpen = useAtomValue(agentsSidebarOpenAtom)
   const selectedOllamaModel = useAtomValue(selectedOllamaModelAtom)
+  const selectedLocalModelId = useAtomValue(selectedLocalModelIdAtom)
+  const localModelEndpoint = useAtomValue(localModelEndpointAtom)
   const chatTitleGenerationEnabled = useAtomValue(chatTitleGenerationEnabledAtom)
   const chatTitleStyle = useAtomValue(chatTitleStyleAtom)
   const chatAutoTaggingEnabled = useAtomValue(chatAutoTaggingEnabledAtom)
@@ -7433,6 +7435,19 @@ Make sure to preserve all functionality from both branches when resolving confli
         if (isRemoteChat) return existing
 
         const existingOpencodeTransport = (existing as any)?.transport
+        if (
+          existingOpencodeTransport instanceof LocalModelChatTransport &&
+          existing.status !== "streaming" &&
+          existing.status !== "submitted"
+        ) {
+          existingOpencodeTransport.updateConfig({
+            model:
+              (desiredSubChat as any)?.model || (agentChat as any)?.model || selectedLocalModelId,
+            endpoint: localModelEndpoint,
+            cwd: runWorktreePath ?? existingOpencodeTransport.getConfig().cwd,
+            projectPath,
+          })
+        }
         const overrideProvider = subChatProviderOverrides[subChatId]
         if (!(existingOpencodeTransport instanceof OpencodeChatTransport) && !overrideProvider) {
           return existing
@@ -7524,20 +7539,15 @@ Make sure to preserve all functionality from both branches when resolving confli
         })
       } else if (runWorktreePath) {
         if (chatProvider === "local") {
-          const model =
-            (subChat as any)?.model ||
-            (agentChat as any)?.model ||
-            appStore.get(selectedLocalModelIdAtom)
-          if (model) {
-            transport = new LocalModelChatTransport({
-              chatId,
-              subChatId,
-              cwd: runWorktreePath,
-              projectPath,
-              endpoint: appStore.get(localModelEndpointAtom),
-              model,
-            })
-          }
+          const model = (subChat as any)?.model || (agentChat as any)?.model || selectedLocalModelId
+          transport = new LocalModelChatTransport({
+            chatId,
+            subChatId,
+            cwd: runWorktreePath,
+            projectPath,
+            endpoint: localModelEndpoint,
+            model,
+          })
         } else if (chatProvider === "openrouter" || chatProvider === "nanogpt") {
           const fallbackModel =
             chatProvider === "openrouter" ? "openrouter/tencent/hy3:free" : "nanogpt/deepseek-chat"
@@ -7704,6 +7714,8 @@ Make sure to preserve all functionality from both branches when resolving confli
       chatId,
       currentMode,
       inferProviderFromMessages,
+      selectedLocalModelId,
+      localModelEndpoint,
       subChatProviderOverrides,
       setSubChatUnseenChanges,
       selectedChatId,
@@ -7875,16 +7887,14 @@ Make sure to preserve all functionality from both branches when resolving confli
     } else if (chatWorkingDir) {
       if (chatProvider === "local") {
         const model = appStore.get(selectedLocalModelIdAtom)
-        if (model) {
-          newSubChatTransport = new LocalModelChatTransport({
-            chatId,
-            subChatId: newId,
-            cwd: chatWorkingDir,
-            projectPath,
-            endpoint: appStore.get(localModelEndpointAtom),
-            model,
-          })
-        }
+        newSubChatTransport = new LocalModelChatTransport({
+          chatId,
+          subChatId: newId,
+          cwd: chatWorkingDir,
+          projectPath,
+          endpoint: appStore.get(localModelEndpointAtom),
+          model,
+        })
       } else if (chatProvider === "openrouter" || chatProvider === "nanogpt") {
         const fallbackModel =
           chatProvider === "openrouter" ? "openrouter/tencent/hy3:free" : "nanogpt/deepseek-chat"

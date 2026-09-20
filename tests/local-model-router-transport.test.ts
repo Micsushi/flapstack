@@ -55,6 +55,7 @@ import { queueChatRun, drainPendingMcpRuns } from "../src/main/lib/run-launch-se
 import { DiffAnnotationService } from "../src/main/lib/diff-annotations/service"
 import { DiffFeedbackService } from "../src/main/lib/diff-annotations/feedback"
 import { LocalModelChatTransport } from "../src/renderer/features/agents/lib/local-model-chat-transport"
+import { Chat } from "@ai-sdk/react"
 import {
   LOCAL_MODEL_CATALOG_CACHE_VERSION,
   type LocalModelCatalogSnapshot,
@@ -673,6 +674,54 @@ describe("local model router bridge", () => {
 })
 
 describe("local model renderer transport", () => {
+  it("retains idle history without a model and rejects sends before subscribing", async () => {
+    const transport = new LocalModelChatTransport({
+      chatId: "chat-idle",
+      subChatId: "sub-idle",
+      cwd: canonicalPath,
+      endpoint,
+      model: null,
+    })
+    const messages = [
+      {
+        id: "context",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "Canonical task context" }],
+      },
+    ]
+    const chat = new Chat({ id: "sub-idle", messages, transport })
+    expect(chat.messages).toEqual(messages)
+    expect(chat.status).toBe("ready")
+    await expect(transport.sendMessages({ messages })).rejects.toThrow("Choose a local model")
+    expect(transportMocks.subscribe).not.toHaveBeenCalled()
+    expect(transportMocks.cancel).not.toHaveBeenCalled()
+  })
+
+  it("uses the configured model on the same idle transport without changing the prior request", async () => {
+    transportMocks.subscribe.mockReturnValue({ unsubscribe: vi.fn() })
+    const transport = new LocalModelChatTransport({
+      chatId: "chat-configure",
+      subChatId: "sub-configure",
+      cwd: canonicalPath,
+      endpoint,
+      model: null,
+    })
+    const messages = [
+      { id: "user", role: "user" as const, parts: [{ type: "text" as const, text: "Hello" }] },
+    ]
+    transport.updateConfig({ model })
+    await transport.sendMessages({ messages })
+    const request = transportMocks.subscribe.mock.calls[0]![0]
+    expect(request).toMatchObject({ model, endpoint })
+    transport.updateConfig({ model: "next-model", endpoint: "http://localhost:1234" })
+    expect(request).toMatchObject({ model, endpoint })
+    await transport.sendMessages({ messages })
+    expect(transportMocks.subscribe.mock.calls[1]![0]).toMatchObject({
+      model: "next-model",
+      endpoint: "http://localhost:1234",
+    })
+  })
+
   it("does not subscribe when the request is already aborted", async () => {
     const transport = new LocalModelChatTransport({
       chatId: "chat-aborted",
