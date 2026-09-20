@@ -61,6 +61,7 @@ import { visualCaptureRouter } from "./visual-capture"
 import { projectRecordsRouter } from "./project-records"
 import { discussionsRouter } from "./discussions"
 import { mobileBridgeRouter } from "./mobile-bridge"
+import { mobileClientRouter } from "./mobile-client"
 import {
   createFeatureVisibilityRouter,
   FEATURE_VISIBILITY_CHANGED_EVENT,
@@ -152,6 +153,7 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     betaFeatures: betaFeaturesRouter,
     visualCapture: visualCaptureRouter,
     mobileBridge: mobileBridgeRouter,
+    mobileClient: mobileClientRouter,
     featureVisibility: createFeatureVisibilityRouter({
       path: join(app.getPath("userData"), "data", "feature-visibility.json"),
       freshProfilePreset:

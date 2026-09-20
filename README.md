@@ -256,6 +256,8 @@ commands live in the [Windows development guide](docs/windows-development.md).
 - One Agent Profile concept with reusable versioned Markdown personalities,
   universal new-chat/sub-agent selection, and honest effort/speed compatibility.
 - Secure cross-agent mobile companion over a default-off local PWA bridge.
+- A [native remote-computer client](docs/native-remote-computer.md) for scoped
+  work viewing and agent clarification answers through the same private bridge.
 - Visual context capture, redaction, artifacts, agent context, and standalone helper.
 - Saved multi-pane Chat groups with up to four fully interactive panes,
   VS Code-style pointer-positioned split previews with generous edge targets,
