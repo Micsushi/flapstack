@@ -271,6 +271,7 @@ import {
 } from "../utils/pr-message"
 import { ChatInputArea } from "./chat-input-area"
 import { IsolatedMessagesSection, type MessageVirtualizerHandle } from "./isolated-messages-section"
+import { ChatRuntimeActivity } from "../runtime-activity/chat-runtime-activity"
 import { RuntimeActivityFixtureControls } from "../runtime-activity/runtime-activity-fixture-controls"
 // import { selectedTeamIdAtom } from "@/lib/atoms/team"
 const selectedTeamIdAtom = atom<string | null>(null)
@@ -5244,6 +5245,11 @@ const ChatViewInner = memo(function ChatViewInner({
                     projectId={projectId ?? null}
                     chatId={parentChatId}
                     subChatId={subChatId}
+                  />
+                  <ChatRuntimeActivity
+                    key={parentChatId}
+                    chatId={parentChatId}
+                    live={isStreaming}
                   />
                   <IsolatedMessagesSection
                     key={subChatId}

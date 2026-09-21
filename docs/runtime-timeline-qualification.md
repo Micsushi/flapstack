@@ -63,3 +63,13 @@ the app exited cleanly. The built-app screenshot has an empty message transcript
 because the fixture seeds activity only: it proves query/IPC consistency, not
 visual rendering of the full app transcript. Timeline rendering is covered by the
 separate component fixture above.
+
+## Active Chat entry point
+
+Open **Runtime activity** above the Chat's messages to inspect persisted events.
+The expandable section uses the same privacy-aware timeline, loads 500 events per
+page, and offers **Load earlier activity** for older history. Search, copy and
+export apply to the loaded activity. Existing messages and the composer remain
+available. Each window's activity invalidation refreshes the opened history;
+closed sections do not start a history query. Provider calls are not required to
+read saved events.
