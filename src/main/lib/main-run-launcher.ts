@@ -32,7 +32,10 @@ import {
   RuntimeStructuredOutputError,
 } from "../../shared/agent-runtime"
 import { isAgentHarness } from "../../shared/harness-types"
-import { LEGACY_RUNTIME_CAPABILITIES } from "./agent-runtime/snapshot"
+import {
+  LEGACY_RUNTIME_CAPABILITIES,
+  resolvedLaunchFromSnapshotRow,
+} from "./agent-runtime/snapshot"
 import {
   RuntimeLaunchCancelledError,
   RuntimeLaunchCoordinator,
@@ -305,7 +308,7 @@ export class MainRuntimeLaunchService {
         { runtime: "flapstack-native", factory: nativeFactory },
       ])
     this.coordinator = new RuntimeLaunchCoordinator(this.registry, {
-      persistIntent: (request) => this.persistIntent(request.runId),
+      persistIntent: (request) => this.persistIntent(request.runId, request.launch),
       persistSession: (request, session) => this.persistSession(request.runId, session),
       persistTurn: (request, session, turn) => this.persistTurn(request.runId, session, turn),
       onLifecycle: (request, lifecycle, detail) =>
@@ -833,14 +836,31 @@ export class MainRuntimeLaunchService {
     }
   }
 
-  private persistIntent(runId: string): void {
+  private persistIntent(runId: string, launch: ResolvedRuntimeLaunch): void {
     const db = this.open()
     try {
       db.transaction(() => {
-        const row = db.prepare("SELECT status FROM agent_runs WHERE id = ?").get(runId) as
-          { status: string } | undefined
+        const row = db.prepare("SELECT * FROM agent_runs WHERE id = ?").get(runId) as
+          Record<string, unknown> | undefined
         if (!row || row.status !== "running") {
           throw new Error("Runtime launch intent has no claimed durable running row.")
+        }
+        if (launch.preferenceSource !== "legacy") {
+          const identity = JSON.stringify({
+            schemaVersion: 1,
+            runtime: launch.resolvedRuntime,
+            harness: launch.harness,
+            versions: launch.versions,
+          })
+          resolvedLaunchFromSnapshotRow({ ...row, runtime_launch_identity: identity })
+          if (row.runtime_launch_identity != null && row.runtime_launch_identity !== identity) {
+            throw new Error("Runtime launch identity changed after provider intent.")
+          }
+          if (row.runtime_launch_identity == null) {
+            db.prepare(
+              "UPDATE agent_runs SET runtime_launch_identity=? WHERE id=? AND runtime_launch_identity IS NULL",
+            ).run(identity, runId)
+          }
         }
         this.appendActivityWithDatabase(db, runId, [
           lifecycleActivity("intent-persisted", "intent-persisted"),

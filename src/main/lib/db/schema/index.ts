@@ -1765,6 +1765,9 @@ export const agentRuns = sqliteTable(
     resolvedRuntime: text("resolved_runtime").notNull().default("flapstack-native"),
     runtimeAdapterVersion: text("runtime_adapter_version").notNull().default("legacy-stage3"),
     runtimeProtocolVersion: text("runtime_protocol_version").notNull().default("legacy-stage3"),
+    // Actual probed adapter versions, captured once with provider intent.
+    // The earlier selection snapshot remains immutable, including unprobed provenance.
+    runtimeLaunchIdentity: text("runtime_launch_identity"),
     runtimeCapabilitySnapshot: text("runtime_capability_snapshot")
       .notNull()
       .default('{"schemaVersion":1,"status":"legacy"}'),
