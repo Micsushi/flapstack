@@ -17,6 +17,12 @@ import {
 
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 const MAX_TOKEN_BYTES = 4096
+const PAIR_PATHS = new Set([
+  "/v1/yap/chat-pair/read",
+  "/v1/yap/chat-pair/prepare",
+  "/v1/yap/chat-pair/commit",
+  "/v1/yap/chat-pair/abort",
+])
 const BOARD_PATHS = new Set([
   "/v1/documents",
   "/v1/workflow",
@@ -297,7 +303,11 @@ export class ProjectRecordsClient {
    */
   async operation(path: string, body?: unknown): Promise<unknown> {
     const url = new URL(path, "http://127.0.0.1")
-    if (url.origin !== "http://127.0.0.1" || url.hash || !BOARD_PATHS.has(url.pathname))
+    if (
+      url.origin !== "http://127.0.0.1" ||
+      url.hash ||
+      (!BOARD_PATHS.has(url.pathname) && !PAIR_PATHS.has(url.pathname))
+    )
       throw new Error("Project records operation is unsupported.")
     const allowedQuery = new Set(
       url.pathname === "/v1/records" || url.pathname === "/v1/records/search"
@@ -349,6 +359,7 @@ export class ProjectRecordsClient {
       "/v1/yap/inference/read",
     ])
     const postOnly = new Set([
+      ...PAIR_PATHS,
       "/v1/record/create",
       "/v1/agents/start",
       "/v1/agents/stop",

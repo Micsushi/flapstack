@@ -64,8 +64,12 @@ export function RecordsPlanPromotionDialog({
   const preview = trpc.planSources.previewPair.useQuery(pairInput, {
     enabled: Boolean(selected && selectedLocal),
     retry: false,
+    staleTime: 0,
   })
   const proposal = trpc.planSources.confirmPair.useMutation({
+    onError: async () => {
+      await utils.planSources.previewPair.invalidate(pairInput)
+    },
     onSuccess: async (result) => {
       await Promise.all([
         utils.chats.invalidate(),

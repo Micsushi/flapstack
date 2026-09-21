@@ -104,3 +104,29 @@ describe("canonical records client", () => {
     await expect(client.read(path)).rejects.toThrow("unavailable")
   })
 })
+
+it("sends only the native pair receipt operations without exposing them through the Board proxy", async () => {
+  const fetch = vi.fn().mockImplementation(async () => response(200, { status: "prepared" }))
+  const client = new ProjectRecordsClient({
+    endpoint: "http://127.0.0.1:47831",
+    token: "fixture",
+    fetch,
+  })
+  const body = { proposalId: "owned-proposal", receiptId: "owned-receipt" }
+  for (const operation of ["read", "prepare", "commit", "abort"]) {
+    const path = `/v1/yap/chat-pair/${operation}`
+    expect(await client.operation(path, body)).toEqual({ status: "prepared" })
+    expect(fetch).toHaveBeenLastCalledWith(
+      `http://127.0.0.1:47831${path}`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify(body), redirect: "error" }),
+    )
+    await expect(client.operation(path)).rejects.toThrow("method")
+    await expect(
+      client.boardRequest({ path, method: "POST", body: JSON.stringify(body) }),
+    ).rejects.toThrow()
+  }
+  await expect(client.operation("/v1/yap/chat-pair/unreviewed", body)).rejects.toThrow(
+    "unsupported",
+  )
+  expect(fetch).toHaveBeenCalledTimes(4)
+})

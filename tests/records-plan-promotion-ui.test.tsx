@@ -11,6 +11,10 @@ import {
 
 const state = vi.hoisted(() => ({
   mutate: vi.fn(),
+  preview: vi.fn(),
+  previewInvalidate: vi.fn(),
+  error: undefined as undefined | (() => Promise<void>),
+  target: "a".repeat(64),
   invalidate: vi.fn(),
   success: undefined as undefined | ((result: { chatId: string; subChatId: string }) => void),
 }))
@@ -18,7 +22,10 @@ vi.mock("../src/renderer/lib/trpc", () => ({
   trpc: {
     useUtils: () => ({
       chats: { invalidate: state.invalidate },
-      planSources: { sourceLinks: { invalidate: state.invalidate } },
+      planSources: {
+        sourceLinks: { invalidate: state.invalidate },
+        previewPair: { invalidate: state.previewInvalidate },
+      },
     }),
     projects: {
       list: {
@@ -37,11 +44,18 @@ vi.mock("../src/renderer/lib/trpc", () => ({
         }),
       },
       previewPair: {
-        useQuery: () => ({ data: { projectPath: "/fixture", expectedTarget: "a".repeat(64) } }),
+        useQuery: (input: unknown, options: unknown) => {
+          state.preview(input, options)
+          return { data: { projectPath: "/fixture", expectedTarget: state.target } }
+        },
       },
       confirmPair: {
-        useMutation: (options: { onSuccess: typeof state.success }) => {
+        useMutation: (options: {
+          onSuccess: typeof state.success
+          onError: typeof state.error
+        }) => {
           state.success = options.onSuccess
+          state.error = options.onError
           return { mutate: state.mutate, isPending: false }
         },
       },
@@ -118,6 +132,28 @@ describe("Plan task and idle Chat pair", () => {
         }),
       )
       expect(close).not.toHaveBeenCalled()
+      expect(state.preview).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ staleTime: 0 }),
+      )
+      await act(async () => state.error?.())
+      expect(state.previewInvalidate).toHaveBeenCalledWith(
+        expect.objectContaining({ localProjectId: "local-project", projectId: "flapstack" }),
+      )
+      expect(close).not.toHaveBeenCalled()
+      state.target = "b".repeat(64)
+      await act(async () => {
+        select.value = ""
+        select.dispatchEvent(new Event("change", { bubbles: true }))
+      })
+      await act(async () => {
+        select.value = "lanes/flapstack/tasks.md:flapstack"
+        select.dispatchEvent(new Event("change", { bubbles: true }))
+      })
+      await act(async () => button.click())
+      expect(state.mutate).toHaveBeenLastCalledWith(
+        expect.objectContaining({ expectedTarget: "b".repeat(64) }),
+      )
       expect(document.body.textContent).toContain("Existing checkout: /fixture")
       expect(document.body.textContent).toContain("Permission: read-only")
       await act(async () => state.success?.({ chatId: "saved-chat", subChatId: "saved-subchat" }))
