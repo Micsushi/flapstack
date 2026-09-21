@@ -78,6 +78,7 @@ export type TtsAdapterInfo = {
 export type VoiceSettings = {
   voiceSettingsVersion: 2
   sttAdapterId: string
+  cloudTranscriptionEnabled: boolean
   parakeetModelId: "parakeet-unified-en-q8"
   retainDictationAudio: boolean
   sttModelUnloadMinutes: number
@@ -95,6 +96,7 @@ export type WhisperModelId = "tiny" | "base" | "small"
 export const defaultVoiceSettings: VoiceSettings = {
   voiceSettingsVersion: 2,
   sttAdapterId: "local-parakeet",
+  cloudTranscriptionEnabled: false,
   parakeetModelId: "parakeet-unified-en-q8",
   retainDictationAudio: true,
   sttModelUnloadMinutes: 5,

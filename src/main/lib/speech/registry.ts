@@ -1,14 +1,17 @@
 import os from "node:os"
+import { cloudWhisperAdapter } from "./stt-cloud"
 import { whisperCppAdapter } from "./stt-whisper-cpp"
 import { parakeetStreamingAdapter } from "./stt-parakeet-streaming"
 import { kokoroTtsAdapter } from "./tts-kokoro"
 import { nativeTtsAdapter, resolveLinuxTtsCommand } from "./tts-native"
 import type { SttAdapter, SttAdapterInfo, TtsAdapter, TtsAdapterInfo, VoiceSettings } from "./types"
 
-// Stage 2 is local-only for dictation. Keep Cloud Whisper's credential helpers
-// in the Models surface for future provider work, but never register it as a
-// microphone adapter or transmit recorded audio off-device.
-export const sttAdapterImplementations: SttAdapter[] = [parakeetStreamingAdapter, whisperCppAdapter]
+// Local remains the default; cloud requires both consent and explicit selection.
+export const sttAdapterImplementations: SttAdapter[] = [
+  parakeetStreamingAdapter,
+  whisperCppAdapter,
+  cloudWhisperAdapter,
+]
 export const ttsAdapterImplementations: TtsAdapter[] = [kokoroTtsAdapter, nativeTtsAdapter]
 
 export const sttAdapters: SttAdapterInfo[] = sttAdapterImplementations.map(toSttInfo)

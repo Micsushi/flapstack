@@ -36,6 +36,17 @@ beforeEach(() => {
   state.available.mockResolvedValue({ available: true })
   state.history.mockResolvedValue({})
 })
+it("records cloud engine provenance without retaining batch audio", async () => {
+  state.transcribe.mockResolvedValue({ text: "cloud words", adapterId: "openai-whisper" })
+  expect(await caller(1).transcribe(input)).toMatchObject({
+    text: "cloud words",
+    historySaved: true,
+  })
+  expect(state.history).toHaveBeenCalledWith(
+    expect.objectContaining({ adapterId: "openai-whisper", modelId: "whisper-1" }),
+  )
+  expect(state.history.mock.calls[0][0]).not.toHaveProperty("audioWav")
+})
 it("aborts only the owning window and rejects a late result before history", async () => {
   let finish!: (value: { text: string; adapterId: string }) => void
   let signal!: AbortSignal

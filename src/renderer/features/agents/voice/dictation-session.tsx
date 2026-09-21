@@ -339,7 +339,9 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
       isRecording,
       isStarting,
       isTranscribing,
-      canCancelTranscription: voiceSettings?.sttAdapterId === "local-whisper",
+      canCancelTranscription:
+        voiceSettings?.sttAdapterId === "local-whisper" ||
+        voiceSettings?.sttAdapterId === "openai-whisper",
       audioLevel,
       start,
       stop,

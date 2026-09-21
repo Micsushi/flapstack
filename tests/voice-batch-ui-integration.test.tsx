@@ -62,77 +62,82 @@ import {
   useDictationSession,
 } from "../src/renderer/features/agents/voice/dictation-session"
 
-it("cancels finishing batch dictation through the button and provider without replacing the draft", async () => {
-  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-  let complete!: (result: { text: string; historySaved: boolean }) => void
-  transport.transcribe.mockReturnValue(new Promise((resolve) => (complete = resolve)))
-  transport.cancel.mockResolvedValue({ cancelled: true })
-  function ComposerFixture() {
-    const session = useDictationSession()
-    const [draft, setDraft] = useState("existing draft")
-    return (
-      <div data-testid="composer">
-        <output>{draft}</output>
-        <AgentVoiceButton
-          isRecording={session.isRecording}
-          isStarting={session.isStarting}
-          isTranscribing={session.isTranscribing}
-          canCancelTranscription={session.canCancelTranscription}
-          voiceInputReady
-          onStart={() =>
-            void session.start({
-              key: "owned-composer",
-              projectLabel: "Fixture",
-              chatLabel: "Fixture",
-              getText: () => draft,
-              commitText: setDraft,
-              showText: setDraft,
-            })
-          }
-          onStop={() => void session.stop()}
-        />
-        <span data-testid="owner">{session.activeTargetKey ?? "idle"}</span>
-      </div>
-    )
-  }
-  const container = document.createElement("div")
-  document.body.appendChild(container)
-  const root = createRoot(container)
-  const button = (label: string) => {
-    const found = container.querySelector<HTMLButtonElement>(
-      `[data-testid="composer"] button[aria-label="${label}"]`,
-    )
-    expect(found).not.toBeNull()
-    expect(found!.disabled).toBe(false)
-    return found!
-  }
-  try {
-    await act(async () =>
-      root.render(
-        <TooltipProvider>
-          <DictationSessionProvider>
-            <ComposerFixture />
-          </DictationSessionProvider>
-        </TooltipProvider>,
-      ),
-    )
-    await act(async () => button("Start dictation").click())
-    await act(async () => button("Pause dictation").click())
-    expect(transport.transcribe).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ sessionId: expect.any(String), audio: "owned-synthetic-audio" }),
-    )
-    await act(async () => button("Cancel transcription").click())
-    expect(transport.cancel).toHaveBeenCalledExactlyOnceWith({
-      sessionId: transport.transcribe.mock.calls[0][0].sessionId,
-    })
-    await act(async () => complete({ text: "late unwanted words", historySaved: false }))
-    expect(container.querySelector("output")?.textContent).toBe("existing draft")
-    expect(container.querySelector('[data-testid="owner"]')?.textContent).toBe("idle")
-    button("Start dictation")
-    expect(container.querySelector('[aria-label="Cancel transcription"]')).toBeNull()
-  } finally {
-    await act(async () => root.unmount())
-    container.remove()
-    delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT
-  }
-})
+it.each(["local-whisper", "openai-whisper"])(
+  "cancels finishing %s dictation without replacing the draft",
+  async (adapterId) => {
+    transport.settings.sttAdapterId = adapterId
+    vi.clearAllMocks()
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    let complete!: (result: { text: string; historySaved: boolean }) => void
+    transport.transcribe.mockReturnValue(new Promise((resolve) => (complete = resolve)))
+    transport.cancel.mockResolvedValue({ cancelled: true })
+    function ComposerFixture() {
+      const session = useDictationSession()
+      const [draft, setDraft] = useState("existing draft")
+      return (
+        <div data-testid="composer">
+          <output>{draft}</output>
+          <AgentVoiceButton
+            isRecording={session.isRecording}
+            isStarting={session.isStarting}
+            isTranscribing={session.isTranscribing}
+            canCancelTranscription={session.canCancelTranscription}
+            voiceInputReady
+            onStart={() =>
+              void session.start({
+                key: "owned-composer",
+                projectLabel: "Fixture",
+                chatLabel: "Fixture",
+                getText: () => draft,
+                commitText: setDraft,
+                showText: setDraft,
+              })
+            }
+            onStop={() => void session.stop()}
+          />
+          <span data-testid="owner">{session.activeTargetKey ?? "idle"}</span>
+        </div>
+      )
+    }
+    const container = document.createElement("div")
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const button = (label: string) => {
+      const found = container.querySelector<HTMLButtonElement>(
+        `[data-testid="composer"] button[aria-label="${label}"]`,
+      )
+      expect(found).not.toBeNull()
+      expect(found!.disabled).toBe(false)
+      return found!
+    }
+    try {
+      await act(async () =>
+        root.render(
+          <TooltipProvider>
+            <DictationSessionProvider>
+              <ComposerFixture />
+            </DictationSessionProvider>
+          </TooltipProvider>,
+        ),
+      )
+      await act(async () => button("Start dictation").click())
+      await act(async () => button("Pause dictation").click())
+      expect(transport.transcribe).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ sessionId: expect.any(String), audio: "owned-synthetic-audio" }),
+      )
+      await act(async () => button("Cancel transcription").click())
+      expect(transport.cancel).toHaveBeenCalledExactlyOnceWith({
+        sessionId: transport.transcribe.mock.calls[0][0].sessionId,
+      })
+      await act(async () => complete({ text: "late unwanted words", historySaved: false }))
+      expect(container.querySelector("output")?.textContent).toBe("existing draft")
+      expect(container.querySelector('[data-testid="owner"]')?.textContent).toBe("idle")
+      button("Start dictation")
+      expect(container.querySelector('[aria-label="Cancel transcription"]')).toBeNull()
+    } finally {
+      await act(async () => root.unmount())
+      container.remove()
+      delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT
+    }
+  },
+)

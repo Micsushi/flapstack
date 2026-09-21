@@ -95,7 +95,7 @@ export function clearPlanCache(): void {}
 export const voiceRouter = router({
   /**
    * Transcribe audio to text
-   * Local-only: browser audio is transcribed by whisper.cpp.
+   * The explicitly selected adapter owns local/cloud consent and availability.
    */
   transcribe: publicProcedure
     .input(
@@ -163,9 +163,11 @@ export const voiceRouter = router({
               text: result.text,
               adapterId: result.adapterId,
               modelId:
-                result.adapterId === "local-whisper"
-                  ? settings.whisperModelId
-                  : settings.parakeetModelId,
+                result.adapterId === "openai-whisper"
+                  ? "whisper-1"
+                  : result.adapterId === "local-whisper"
+                    ? settings.whisperModelId
+                    : settings.parakeetModelId,
               originKind: input.originKind,
               originId: input.originId,
               originLabel: input.originLabel,

@@ -2,6 +2,9 @@ import { afterEach, expect, it, vi } from "vitest"
 vi.mock("../src/main/lib/credential-service", () => ({
   getCredentialService: () => ({ resolve: () => "sk-owned-test-fixture" }),
 }))
+vi.mock("../src/main/lib/speech/settings", () => ({
+  getVoiceSettings: () => ({ cloudTranscriptionEnabled: true, sttAdapterId: "openai-whisper" }),
+}))
 import { cloudWhisperAdapter } from "../src/main/lib/speech/stt-cloud"
 afterEach(() => {
   vi.unstubAllGlobals()

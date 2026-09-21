@@ -312,7 +312,13 @@ is finishing, use **Cancel transcription** to stop processing and keep the
 existing draft. Accepted cancellation saves no new transcript. If completion
 already won, its transcript remains available in the draft and Voice History.
 Cancelling a transcription does not remove a shared model download. Microphone
-dictation remains local-only.
+dictation defaults to local engines. To use cloud transcription, explicitly enable it in
+Voice settings, configure an OpenAI API key, and select OpenAI Whisper. Local failure
+never uploads audio automatically. Cloud requests send recordings to OpenAI; its
+retention terms apply. Flapstack retains the resulting transcript in Voice History,
+not the cloud recording. Disabling cloud transcription stops active requests and
+returns selection to the local default; Cancel transcription also stops an owned
+request. Failed requests are not retried automatically.
 
 ## Development
 
