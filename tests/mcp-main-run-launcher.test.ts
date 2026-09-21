@@ -142,35 +142,50 @@ describe("MCP main run launcher", () => {
       enableLocalProviderCodexContract: true,
     })
     const probe = await service.probe("codex", "local")
-    const run = {
-      ...queuedRun("translated-local", "local"),
+    const runtimeLaunch = {
+      schemaVersion: 1 as const,
+      harness: "local",
       model: "local-tools",
-      runtimeLaunch: {
-        schemaVersion: 1 as const,
+      requestedPreference: "codex" as const,
+      preferenceSource: "chat" as const,
+      resolvedRuntime: "codex" as const,
+      compatibility: {
+        compatible: true as const,
         harness: "local",
-        model: "local-tools",
-        requestedPreference: "codex" as const,
-        preferenceSource: "chat" as const,
-        resolvedRuntime: "codex" as const,
-        compatibility: {
-          compatible: true as const,
-          harness: "local",
-          runtime: "codex" as const,
-          reason: null,
-        },
-        versions: probe.versions,
-        capabilities: probe.capabilities,
-        controls: {
-          schemaVersion: 1 as const,
-          modelEffort: null,
-          serviceTier: null,
-          modelThinking: false,
-          reasoningDisplay: false,
-          subagentActivity: false,
-          hookDiagnostics: false,
-        },
-        permission: { mode: "full-access" as const },
+        runtime: "codex" as const,
+        reason: null,
       },
+      versions: probe.versions,
+      capabilities: probe.capabilities,
+      controls: {
+        schemaVersion: 1 as const,
+        modelEffort: null,
+        serviceTier: null,
+        modelThinking: false,
+        reasoningDisplay: false,
+        subagentActivity: false,
+        hookDiagnostics: false,
+      },
+      permission: { mode: "full-access" as const },
+    }
+    const mismatchedRun = {
+      ...queuedRun("translated-local-mismatch", "local"),
+      model: "local-tools",
+      runtimeLaunch,
+    }
+    await expect(service.launch(mismatchedRun)).rejects.toThrow(
+      "Runtime launch identity does not match its selection snapshot.",
+    )
+    expect(harnessMocks.localChat).not.toHaveBeenCalled()
+    expect(
+      sqlite
+        .prepare("SELECT runtime_launch_identity FROM agent_runs WHERE id = ?")
+        .get(mismatchedRun.runId),
+    ).toEqual({ runtime_launch_identity: null })
+    const run = {
+      ...queuedRun("translated-local", "local", runtimeLaunch),
+      model: "local-tools",
+      runtimeLaunch,
     }
     harnessMocks.localCatalog.mockResolvedValue(localCatalog(false))
 
@@ -181,7 +196,7 @@ describe("MCP main run launcher", () => {
 
     harnessMocks.localCatalog.mockResolvedValue(localCatalog(true))
     const supportedRun = {
-      ...queuedRun("translated-local-tools", "local"),
+      ...queuedRun("translated-local-tools", "local", runtimeLaunch),
       model: "local-tools",
       runtimeLaunch: run.runtimeLaunch,
     }
@@ -189,6 +204,17 @@ describe("MCP main run launcher", () => {
     expect(harnessMocks.localChat).toHaveBeenCalledWith(
       expect.objectContaining({ runId: "translated-local-tools", model: "local-tools" }),
     )
+    const persisted = sqlite
+      .prepare("SELECT resolved_runtime, runtime_launch_identity FROM agent_runs WHERE id = ?")
+      .get(supportedRun.runId) as { resolved_runtime: string; runtime_launch_identity: string }
+    expect(persisted.resolved_runtime).toBe("codex")
+    expect(JSON.parse(persisted.runtime_launch_identity)).toEqual({
+      schemaVersion: 1,
+      runtime: "codex",
+      harness: "local",
+      versions: probe.versions,
+    })
+    expect(harnessMocks.codex).not.toHaveBeenCalled()
   })
 
   it("dispatches NanoGPT queued runs through the normal OpenCode router", async () => {
@@ -909,7 +935,11 @@ describe("MCP main run launcher", () => {
   })
 })
 
-function queuedRun(runId: string, harness: QueuedAgentRun["harness"]): QueuedAgentRun {
+function queuedRun(
+  runId: string,
+  harness: QueuedAgentRun["harness"],
+  runtimeLaunch?: QueuedAgentRun["runtimeLaunch"],
+): QueuedAgentRun {
   sqlite
     .prepare(
       `INSERT OR IGNORE INTO chats
@@ -940,9 +970,20 @@ function queuedRun(runId: string, harness: QueuedAgentRun["harness"]): QueuedAge
       harness,
       `mcp-${runId}`,
       Date.now(),
-      ...testRuntimeSnapshotSqlValues(
-        harness === "claude-code" ? "claude-code" : harness === "local" ? "local" : "codex",
-      ),
+      ...(runtimeLaunch
+        ? [
+            1,
+            runtimeLaunch.requestedPreference,
+            runtimeLaunch.preferenceSource,
+            runtimeLaunch.resolvedRuntime,
+            runtimeLaunch.versions.adapterVersion,
+            runtimeLaunch.versions.protocolVersion,
+            JSON.stringify(runtimeLaunch.capabilities),
+            JSON.stringify(runtimeLaunch.controls),
+          ]
+        : testRuntimeSnapshotSqlValues(
+            harness === "claude-code" ? "claude-code" : harness === "local" ? "local" : "codex",
+          )),
     )
   return {
     runId,
