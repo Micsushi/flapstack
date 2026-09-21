@@ -8,7 +8,13 @@ import {
   planTaskPromotionConfirmInputSchema,
   planTaskPromotionPreviewInputSchema,
 } from "../../../../shared/plan-task-promotion"
-import { getDatabase, getDatabasePath, planSourceRegistrations, projects } from "../../db"
+import {
+  getDatabase,
+  getDatabasePath,
+  getSqliteDatabase,
+  planSourceRegistrations,
+  projects,
+} from "../../db"
 import { IS_DEV } from "../../../constants"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import {
@@ -39,6 +45,12 @@ import {
   recordsPlanLinks,
   recordsPlanPromotionSchema,
 } from "../../project-records/plan-promotion"
+
+import {
+  RecordsPlanPairService,
+  planPairInputSchema,
+  confirmPlanPairSchema,
+} from "../../project-records/plan-pair"
 
 const publicProcedure = betaProcedure("planning")
 
@@ -108,6 +120,29 @@ async function readPromotionSnapshot(reference: {
 }
 
 export const planSourcesRouter = router({
+  previewPair: publicProcedure.input(planPairInputSchema).query(async ({ input }) => {
+    const service = new RecordsPlanPairService(
+      getSqliteDatabase(),
+      await configuredProjectRecordsClient(),
+    )
+    return service.preview(await readPromotionSnapshot(input.reference), input)
+  }),
+  confirmPair: publicProcedure.input(confirmPlanPairSchema).mutation(async ({ input }) => {
+    const service = new RecordsPlanPairService(
+      getSqliteDatabase(),
+      await configuredProjectRecordsClient(),
+    )
+    const result =
+      (await service.reopen(input)) ??
+      (await service.confirm(await readPromotionSnapshot(input.reference), input))
+    publishLocalProductInvalidation({
+      version: 1,
+      source: "product-mcp",
+      domains: ["chats", "plan-sources"],
+      projectIds: [input.localProjectId],
+    })
+    return result
+  }),
   recordsMode: publicProcedure.query(() => Boolean(process.env.FLAPSTACK_PROJECT_RECORDS_URL)),
   recordsDestinations: publicProcedure.query(async () =>
     planDestinations(await configuredProjectRecordsClient()),

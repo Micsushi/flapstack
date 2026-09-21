@@ -49,6 +49,16 @@ export const discussionRevisions = sqliteTable(
 )
 
 // Local execution links only; task state and claims remain in Project Records.
+export const recordsPlanPairs = sqliteTable("records_plan_pairs", {
+  id: text("id").primaryKey(),
+  endpoint: text("endpoint").notNull(),
+  projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
+  status: text("status").notNull(),
+  preparedChat: text("prepared_chat").notNull(),
+  error: text("error"),
+  updatedAt: integer("updated_at").notNull(),
+})
+
 export const recordTaskWorktrees = sqliteTable(
   "record_task_worktrees",
   {

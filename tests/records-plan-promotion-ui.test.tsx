@@ -3,16 +3,30 @@ import { act } from "react"
 import { createRoot } from "react-dom/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { RecordsPlanPromotionDialog } from "../src/renderer/features/plan/records-plan-promotion-dialog"
-import { YAP_REVIEW_REQUEST_EVENT } from "../src/shared/task-proposals"
+import { getDefaultStore } from "jotai"
+import {
+  selectedAgentChatIdAtom,
+  selectedChatIsRemoteAtom,
+} from "../src/renderer/features/agents/atoms"
 
 const state = vi.hoisted(() => ({
   mutate: vi.fn(),
   invalidate: vi.fn(),
-  success: undefined as undefined | ((result: { proposalId: string }) => void),
+  success: undefined as undefined | ((result: { chatId: string; subChatId: string }) => void),
 }))
 vi.mock("../src/renderer/lib/trpc", () => ({
   trpc: {
-    useUtils: () => ({ planSources: { sourceLinks: { invalidate: state.invalidate } } }),
+    useUtils: () => ({
+      chats: { invalidate: state.invalidate },
+      planSources: { sourceLinks: { invalidate: state.invalidate } },
+    }),
+    projects: {
+      list: {
+        useQuery: () => ({
+          data: [{ id: "local-project", name: "Local fixture", path: "/fixture" }],
+        }),
+      },
+    },
     planSources: {
       recordsDestinations: {
         useQuery: () => ({
@@ -22,7 +36,10 @@ vi.mock("../src/renderer/lib/trpc", () => ({
           ],
         }),
       },
-      proposeCandidate: {
+      previewPair: {
+        useQuery: () => ({ data: { projectPath: "/fixture", expectedTarget: "a".repeat(64) } }),
+      },
+      confirmPair: {
         useMutation: (options: { onSuccess: typeof state.success }) => {
           state.success = options.onSuccess
           return { mutate: state.mutate, isPending: false }
@@ -39,8 +56,8 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-describe("Plan to Yap review", () => {
-  it("requires explicit canonical selection and navigates only after a saved proposal", async () => {
+describe("Plan task and idle Chat pair", () => {
+  it("requires explicit canonical selection and navigates only after finalized pair", async () => {
     const host = document.createElement("div")
     document.body.append(host)
     const root = createRoot(host)
@@ -49,8 +66,7 @@ describe("Plan to Yap review", () => {
       host.remove()
     }
     const close = vi.fn()
-    const review = vi.fn()
-    window.addEventListener(YAP_REVIEW_REQUEST_EVENT, review)
+    getDefaultStore().set(selectedChatIsRemoteAtom, true)
     try {
       const candidate = {
         id: "candidate",
@@ -85,7 +101,7 @@ describe("Plan to Yap review", () => {
         ),
       )
       const button = [...document.querySelectorAll("button")].find(
-        (item) => item.textContent === "Review in Yap",
+        (item) => item.textContent === "Create task and idle Chat",
       )!
       expect(button.disabled).toBe(true)
       const select = document.querySelector("select")!
@@ -102,15 +118,14 @@ describe("Plan to Yap review", () => {
         }),
       )
       expect(close).not.toHaveBeenCalled()
-      expect(review).not.toHaveBeenCalled()
-      await act(async () => state.success?.({ proposalId: "saved-proposal" }))
-      expect(review.mock.calls[0]![0].detail).toMatchObject({
-        proposalId: "saved-proposal",
-        source: "plan",
-      })
+      expect(document.body.textContent).toContain("Existing checkout: /fixture")
+      expect(document.body.textContent).toContain("Permission: read-only")
+      await act(async () => state.success?.({ chatId: "saved-chat", subChatId: "saved-subchat" }))
+      expect(getDefaultStore().get(selectedAgentChatIdAtom)).toBe("saved-chat")
+      expect(getDefaultStore().get(selectedChatIsRemoteAtom)).toBe(false)
       expect(close).toHaveBeenCalledOnce()
     } finally {
-      window.removeEventListener(YAP_REVIEW_REQUEST_EVENT, review)
+      getDefaultStore().set(selectedAgentChatIdAtom, null)
     }
   })
 })

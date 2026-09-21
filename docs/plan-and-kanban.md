@@ -16,6 +16,24 @@ registered OpenSpec and Markdown sources.
   Denial is terminal. Approval creates the reviewed pair and never launches a
   run.
 
+## Canonical Task and Chat confirmation
+
+In Records mode, select the canonical Records destination and local Chat project,
+then confirm **Create task and idle Chat**. The preview shows the existing checkout
+and read-only permission. The captured candidate becomes one canonical Task and
+one idle Chat; no legacy task row, Git worktree, claim, provider session or run is
+created. Source text is quoted context, not execution authority.
+
+A pending SQLite receipt holds the complete reserved Chat before it appears in
+normal Chat lists. Records commits the Task and its reserved Chat IDs through its
+existing Yap journal. Flapstack then materializes the Chat in one local transaction.
+Before that decision, a failed preparation can abort without publishing either
+object. After that decision, recovery finishes the same reserved Chat; it never
+claims to roll back an already committed canonical Task. A connection failure
+leaves an explicit recovery message. Startup and reopening retry the receipt.
+Deleting a project is blocked only while its pair is pending; deleting a finalized
+Chat does not cause later retries to resurrect its history.
+
 ## Recovery and concurrency
 
 Task moves, proposal decisions, and source-linked actions use optimistic

@@ -109,6 +109,23 @@ function initializeDatabase(maintenanceLease?: string) {
 
     sqlite = nextSqlite
     db = nextDb
+    if (process.env.FLAPSTACK_PROJECT_RECORDS_URL && !process.env.FLAPSTACK_DB_PATH) {
+      void Promise.all([
+        import("../project-records/plan-pair"),
+        import("../project-records/client"),
+      ])
+        .then(async ([{ RecordsPlanPairService }, { configuredProjectRecordsClient }]) => {
+          const recovery = await new RecordsPlanPairService(
+            nextSqlite,
+            await configuredProjectRecordsClient(),
+          ).recover()
+          if (recovery.some((result) => !result.recovered))
+            console.warn("[Records] Some Task/Chat pairs await receipt reconciliation.")
+        })
+        .catch(() =>
+          console.warn("[Records] Task/Chat pair recovery awaits the canonical connection."),
+        )
+    }
     return db
   } catch (error) {
     console.error("[DB] Migration error:", error)

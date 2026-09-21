@@ -44,6 +44,7 @@ export async function proposePlanCandidate(
   client: ProjectRecordsClient,
   snapshot: ProjectPlanSnapshot,
   input: z.infer<typeof recordsPlanPromotionSchema>,
+  pairReceiptId?: string,
 ) {
   const { source, candidate } = resolveCandidate(snapshot, input.reference)
   const destination = (await planDestinations(client)).find(
@@ -52,7 +53,14 @@ export async function proposePlanCandidate(
   if (!destination) throw new Error("Select an existing Records project and task destination.")
   // One immutable source/destination pair has one proposal, even across windows.
   const key = createHash("sha256")
-    .update(JSON.stringify([input.reference, input.destinationPath, input.projectId]))
+    .update(
+      JSON.stringify([
+        input.reference,
+        input.destinationPath,
+        input.projectId,
+        ...(pairReceiptId ? [pairReceiptId] : []),
+      ]),
+    )
     .digest("hex")
   const proposalId = `plan-${key}`
   const visible = z

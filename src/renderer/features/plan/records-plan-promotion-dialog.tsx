@@ -1,4 +1,15 @@
 import { useState } from "react"
+import { useSetAtom } from "jotai"
+import {
+  desktopViewAtom,
+  selectedAgentChatIdAtom,
+  openAgentChatIdsAtom,
+  showNewChatFormAtom,
+  selectedChatIsRemoteAtom,
+  selectedChatScopeAtom,
+  selectedDraftIdAtom,
+  selectedProjectAtom,
+} from "../agents/atoms"
 import { trpc } from "../../lib/trpc"
 import { Button } from "../../components/ui/button"
 import { Label } from "../../components/ui/label"
@@ -10,7 +21,6 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog"
 import type { PlanCandidate, PlanSourceSnapshot } from "../../../shared/plan-sources"
-import { YAP_REVIEW_REQUEST_EVENT } from "../../../shared/task-proposals"
 
 export function RecordsPlanPromotionDialog({
   sourceProjectId,
@@ -25,19 +35,68 @@ export function RecordsPlanPromotionDialog({
 }) {
   const destinations = trpc.planSources.recordsDestinations.useQuery()
   const [selection, setSelection] = useState("")
+  const localProjects = trpc.projects.list.useQuery()
+  const [localProjectId, setLocalProjectId] = useState(sourceProjectId)
+  const selectedLocal = localProjects.data?.find((project) => project.id === localProjectId)
+  const setDesktopView = useSetAtom(desktopViewAtom)
+  const setSelectedChat = useSetAtom(selectedAgentChatIdAtom)
+  const setOpenChats = useSetAtom(openAgentChatIdsAtom)
+  const setNewChat = useSetAtom(showNewChatFormAtom)
+  const setRemote = useSetAtom(selectedChatIsRemoteAtom)
+  const setScope = useSetAtom(selectedChatScopeAtom)
+  const setDraft = useSetAtom(selectedDraftIdAtom)
+  const setProject = useSetAtom(selectedProjectAtom)
   const utils = trpc.useUtils()
-  const proposal = trpc.planSources.proposeCandidate.useMutation({
-    onSuccess: (result) => {
-      void utils.planSources.sourceLinks.invalidate({ projectId: sourceProjectId })
-      window.dispatchEvent(
-        new CustomEvent(YAP_REVIEW_REQUEST_EVENT, {
-          detail: { proposalId: result.proposalId, source: "plan" },
-        }),
-      )
+  const selected = destinations.data?.find((item) => `${item.path}:${item.projectId}` === selection)
+  const pairInput = {
+    reference: {
+      sourceProjectId,
+      sourceId: source.id,
+      sourcePath: source.path,
+      sourceFingerprint: source.fingerprint,
+      candidateId: candidate.id,
+      candidateFingerprint: candidate.fingerprint,
+    },
+    destinationPath: selected?.path ?? "lanes/vault/tasks.md",
+    projectId: selected?.projectId ?? "",
+    localProjectId,
+  }
+  const preview = trpc.planSources.previewPair.useQuery(pairInput, {
+    enabled: Boolean(selected && selectedLocal),
+    retry: false,
+  })
+  const proposal = trpc.planSources.confirmPair.useMutation({
+    onSuccess: async (result) => {
+      await Promise.all([
+        utils.chats.invalidate(),
+        utils.planSources.sourceLinks.invalidate({ projectId: sourceProjectId }),
+      ])
+      if (selectedLocal) {
+        setProject({
+          id: selectedLocal.id,
+          name: selectedLocal.name,
+          path: selectedLocal.path,
+          gitRemoteUrl: selectedLocal.gitRemoteUrl,
+          gitOwner: selectedLocal.gitOwner,
+          gitRepo: selectedLocal.gitRepo,
+          gitProvider:
+            selectedLocal.gitProvider === "github" ||
+            selectedLocal.gitProvider === "gitlab" ||
+            selectedLocal.gitProvider === "bitbucket"
+              ? selectedLocal.gitProvider
+              : null,
+        })
+        setScope({ type: "project", id: selectedLocal.id, name: selectedLocal.name })
+      }
+      setRemote(false)
+      setDraft(null)
+      setOpenChats((ids) => (ids.includes(result.chatId) ? ids : [...ids, result.chatId]))
+      setSelectedChat(result.chatId)
+      setNewChat(false)
+      setDesktopView(null)
       onClose()
     },
   })
-  const selected = destinations.data?.find((item) => `${item.path}:${item.projectId}` === selection)
   return (
     <Dialog open onOpenChange={(open) => !open && !proposal.isPending && onClose()}>
       <DialogContent
@@ -46,7 +105,7 @@ export function RecordsPlanPromotionDialog({
         showCloseButton={!proposal.isPending}
       >
         <DialogHeader>
-          <DialogTitle>Propose task in Yap</DialogTitle>
+          <DialogTitle>Create task and idle Chat</DialogTitle>
         </DialogHeader>
         <div className="grid min-w-0 gap-4">
           <div>
@@ -76,6 +135,36 @@ export function RecordsPlanPromotionDialog({
               ))}
             </select>
           </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="records-plan-local-project">Local Chat project</Label>
+            <select
+              id="records-plan-local-project"
+              className="h-9 min-w-0 w-full rounded-md border border-input bg-background px-3 text-sm"
+              value={localProjectId}
+              disabled={proposal.isPending}
+              onChange={(event) => setLocalProjectId(event.target.value)}
+            >
+              <option value="">Choose a local project</option>
+              {localProjects.data?.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          {preview.data && (
+            <p className="break-all text-sm">
+              Existing checkout: {preview.data.projectPath}
+              <br />
+              Permission: read-only. No worktree or run will start.
+            </p>
+          )}
+          {preview.isFetching && <p role="status">Checking source and destination�</p>}
+          {preview.error && (
+            <p role="alert" className="text-sm text-destructive">
+              {preview.error.message}
+            </p>
+          )}
           {destinations.isLoading && <p role="status">Loading Records projects…</p>}
           {destinations.isSuccess && destinations.data.length === 0 && (
             <p role="status">
@@ -93,9 +182,9 @@ export function RecordsPlanPromotionDialog({
             </Button>
           )}
           <p className="text-sm text-muted-foreground">
-            Review and approve this captured plan in Yap before a task is created. Later source
-            edits appear in Plan comparisons; they do not update the proposal. No conversation,
-            worktree, or run starts here.
+            One confirmation creates the canonical task and an idle Chat with this source context.
+            Later source edits remain visible in Plan comparisons. Claim and execution permissions
+            require separate approval.
           </p>
         </div>
         <DialogFooter>
@@ -103,24 +192,19 @@ export function RecordsPlanPromotionDialog({
             Cancel
           </Button>
           <Button
-            disabled={!selected || proposal.isPending}
+            disabled={
+              !selected ||
+              !preview.data ||
+              preview.isFetching ||
+              preview.isError ||
+              proposal.isPending
+            }
             onClick={() => {
-              if (selected)
-                proposal.mutate({
-                  reference: {
-                    sourceProjectId,
-                    sourceId: source.id,
-                    sourcePath: source.path,
-                    sourceFingerprint: source.fingerprint,
-                    candidateId: candidate.id,
-                    candidateFingerprint: candidate.fingerprint,
-                  },
-                  destinationPath: selected.path,
-                  projectId: selected.projectId,
-                })
+              if (selected && preview.data)
+                proposal.mutate({ ...pairInput, expectedTarget: preview.data.expectedTarget })
             }}
           >
-            {proposal.isPending ? "Saving proposal…" : "Review in Yap"}
+            {proposal.isPending ? "Creating…" : "Create task and idle Chat"}
           </Button>
         </DialogFooter>
       </DialogContent>
