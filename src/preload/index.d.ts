@@ -1,3 +1,4 @@
+import type { AgentActivityInvalidation } from "../shared/agent-activity"
 import type {
   DevMcpSettingsInvalidation,
   DevRendererControlRequest,
@@ -214,6 +215,7 @@ export interface DesktopApi {
     callback: (payload: import("../shared/dev-agent-input").DevAgentInputPayload) => void,
   ) => () => void
   onDevMcpSettingsChanged: (callback: (payload: DevMcpSettingsInvalidation) => void) => () => void
+  onAgentActivityInvalidated: (callback: (payload: AgentActivityInvalidation) => void) => () => void
   onProductMcpInvalidation: (
     callback: (payload: ProductMcpRendererInvalidation) => void,
   ) => () => void

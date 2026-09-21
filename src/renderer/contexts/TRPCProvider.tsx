@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { getQueryKey } from "@trpc/react-query"
+import { useEffect, useState } from "react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ipcLink } from "trpc-electron/renderer"
 import { trpc } from "../lib/trpc"
@@ -35,6 +36,20 @@ export function TRPCProvider({ children }: TRPCProviderProps) {
     globalQueryClient = client
     return client
   })
+
+  useEffect(() => {
+    return window.desktopApi?.onAgentActivityInvalidated?.(({ chatId, runId }) => {
+      void queryClient.invalidateQueries({
+        queryKey: getQueryKey(trpc.agentActivity.list, { chatId }, "query"),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: getQueryKey(trpc.agentActivity.list, { runId }, "query"),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: getQueryKey(trpc.agentActivity.replayRun, { runId }, "query"),
+      })
+    })
+  }, [queryClient])
 
   const [trpcClient] = useState(() => {
     const client = trpc.createClient({
