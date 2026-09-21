@@ -5089,17 +5089,21 @@ const ChatViewInner = memo(function ChatViewInner({
             preview.availability.reason ?? "The selected delegation target is unavailable.",
           )
         }
+        const modelName =
+          formatModelDisplayName(preview.targetSnapshot.model) ?? "the provider default model"
+        const worktreePath = preview.authorityCeiling.worktreePath
+        const worktreeName = worktreePath?.split(/[\\/]/).filter(Boolean).at(-1) ?? "None"
         const confirmed = window.confirm(
           [
-            "Confirm exact cross-provider delegation",
+            `Delegate to ${modelName}?`,
             "",
             `Task: ${objective}`,
-            `Target: ${preview.targetSnapshot.harness} / ${preview.targetSnapshot.runtime} / ${preview.targetSnapshot.model ?? "provider default"}`,
+            `Provider: ${preview.targetSnapshot.harness}`,
+            `Runtime: ${preview.targetSnapshot.runtime} (${preview.targetSnapshot.runtimeMode})`,
             `Visible messages: ${preview.visibleMessageCount}`,
             `Permission ceiling: ${preview.authorityCeiling.permissionMode}`,
             `Network: ${preview.authorityCeiling.network ? "allowed" : "blocked"}`,
-            `Worktree: ${preview.authorityCeiling.worktreePath ?? "none"}`,
-            `Preview digest: ${preview.digest}`,
+            `Worktree: ${worktreeName}`,
             "",
             "A distinct child Chat/run will own the task. Hidden provider state and private reasoning are not transferred.",
           ].join("\n"),
