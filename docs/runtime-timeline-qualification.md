@@ -47,3 +47,19 @@ announced cursor from a separate SQLite connection and compares announcements
 with all persisted activity sequences. Failed intent writes emit nothing, and a
 closing renderer cannot fail a committed write or prevent other windows receiving
 the update. Producer, receiver and broadcast suites pass together (40 tests).
+
+Final checks on 2026-09-21 passed with the feed's complete `outerHTML` checked for
+private sentinels: initial render 160 ms and two-window update 216 ms. The receipt
+is `runtime-timeline-ui/1789979948734-49824` with a successful cleanup record.
+
+Built app `554e6dea149875efdbf793514a00108b73321d17` also passed the owned idle
+query/IPC replay (`runtime-idle-invalidation/1789980103990-19156`): its active Chat
+query moved from zero to 25 public events in 195 ms; a separate non-owning window
+received the production invalidation and queried the same 26 stored event IDs.
+Owner reload and full app restart preserved activity and Chat history. Three
+terminal fixture runs were seeded through an issued Stage 4 fixture handle; no
+provider was launched. Both windows stayed hidden, no page errors occurred, and
+the app exited cleanly. The built-app screenshot has an empty message transcript
+because the fixture seeds activity only: it proves query/IPC consistency, not
+visual rendering of the full app transcript. Timeline rendering is covered by the
+separate component fixture above.
