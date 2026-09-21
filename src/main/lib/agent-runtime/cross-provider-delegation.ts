@@ -2,6 +2,7 @@ import Database from "better-sqlite3"
 import { createHash } from "node:crypto"
 import {
   runtimeAdapterForPreference,
+  RuntimeStructuredOutputError,
   type AgentRuntimePreference,
   type ResolvedAgentRuntime,
   type RuntimeAdapterProbe,
@@ -700,19 +701,27 @@ export class CrossProviderDelegationService {
     const taskEnvelope = crossProviderTaskEnvelopeSchema.parse(
       JSON.parse(String(before.task_envelope)),
     )
-    const structured =
-      state === "completed" && taskEnvelope.outputSchema && this.runtime.readStructuredOutput
-        ? await this.runtime.readStructuredOutput(runId)
-        : null
-    let acceptedStructuredOutput = structured?.value ?? null
     const outputLimitations: string[] = []
     let barrierFailed = false
+    let structured: Awaited<
+      ReturnType<NonNullable<RuntimeDelegationLaunchPort["readStructuredOutput"]>>
+    > = null
+    if (state === "completed" && taskEnvelope.outputSchema && this.runtime.readStructuredOutput) {
+      try {
+        structured = await this.runtime.readStructuredOutput(runId)
+      } catch (error) {
+        if (!(error instanceof RuntimeStructuredOutputError)) throw error
+        barrierFailed = true
+        outputLimitations.push("Required structured output could not be safely extracted.")
+      }
+    }
+    let acceptedStructuredOutput = structured?.value ?? null
     if (state === "completed") {
       if (structured && !isDelegationValueSecretSafe(structured.value, "structured-output")) {
         barrierFailed = true
         acceptedStructuredOutput = null
         outputLimitations.push("Secret-bearing structured output was blocked.")
-      } else if (taskEnvelope.outputSchema && !structured) {
+      } else if (taskEnvelope.outputSchema && !structured && !barrierFailed) {
         barrierFailed = true
         outputLimitations.push("Required structured output was absent.")
       } else if (taskEnvelope.outputSchema && structured) {

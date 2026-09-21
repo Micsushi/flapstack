@@ -18,6 +18,17 @@ import {
   type QueuedAgentRun,
 } from "../src/main/lib/run-launch-service"
 import type { ResolvedAgentRuntime, RuntimeAdapterProbe } from "../src/shared/agent-runtime"
+import {
+  getMainRuntimeLaunchService,
+  resetMainRuntimeLaunchServicesForTests,
+} from "../src/main/lib/main-run-launcher"
+
+vi.mock("../src/main/lib/trpc/routers", () => ({
+  createAppRouter: () => ({ createCaller: () => ({}) }),
+}))
+vi.mock("../src/main/lib/mcp-control/invalidation-bridge", () => ({
+  publishLocalProductInvalidation: vi.fn(),
+}))
 
 class RuntimeStub implements RuntimeDelegationLaunchPort {
   launches: QueuedAgentRun[] = []
@@ -126,10 +137,109 @@ class RuntimeStub implements RuntimeDelegationLaunchPort {
 const roots: string[] = []
 
 afterEach(() => {
+  resetMainRuntimeLaunchServicesForTests()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
 describe("cross-provider Runtime delegation", () => {
+  it("fails malformed required output through the production parser without losing completed truth on restart", async () => {
+    const fixture = createFixture("claude-code")
+    const runtime = new RuntimeStub()
+    const parser = getMainRuntimeLaunchService(fixture.path)
+    const extract = vi
+      .spyOn(runtime, "readStructuredOutput")
+      .mockImplementation((runId) => parser.readStructuredOutput(runId))
+    const service = new CrossProviderDelegationService(fixture.path, runtime)
+    const request = {
+      sourceChatId: "source",
+      targetHarness: "codex" as const,
+      targetModel: "gpt-5.5",
+      preference: "codex-enhanced" as const,
+      requestId: "malformed-required-output",
+      objective: "Return the requested result.",
+      outputSchema: { type: "object" },
+    }
+    const preview = service.preview(request)
+    const created = service.delegate({ ...request, confirmedPreviewDigest: preview.digest })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const db = new Database(fixture.path)
+    try {
+      db.prepare("UPDATE agent_runs SET status = 'success', completed_at = 2 WHERE id = ?").run(
+        created.runId,
+      )
+      const insert = db.prepare(`INSERT INTO agent_activity_events (
+        event_id, run_id, chat_id, sub_chat_id, runtime, harness, provider, sequence,
+        kind, phase, display_class, privacy_class, redaction_state, received_at,
+        dedup_key, payload_json, created_at
+      ) VALUES (?, ?, ?, ?, 'codex', 'codex', ?, ?, ?, 'completed', ?, 'public', 'none', 1, ?, ?, 1)`)
+      insert.run(
+        "malformed-output",
+        created.runId,
+        created.childChatId,
+        created.childSubChatId,
+        "openai",
+        1,
+        "agent-text",
+        "provider-visible",
+        null,
+        JSON.stringify({ text: "not-json" }),
+      )
+      insert.run(
+        "completed-output",
+        created.runId,
+        created.childChatId,
+        created.childSubChatId,
+        "runtime",
+        2,
+        "lifecycle",
+        "status",
+        "runtime:runtime:lifecycle:completed",
+        JSON.stringify({ state: "completed", detail: null }),
+      )
+    } finally {
+      db.close()
+    }
+    runtime.state = "completed"
+    await expect(parser.readStructuredOutput(created.runId)).rejects.toThrow("not valid JSON")
+    const infrastructureFailure = new Error("synthetic database temporarily unavailable")
+    extract.mockRejectedValueOnce(infrastructureFailure)
+    await expect(service.reconcile(created.attemptId)).rejects.toBe(infrastructureFailure)
+    const pending = new Database(fixture.path)
+    try {
+      expect(
+        pending
+          .prepare(
+            "SELECT status, result_envelope FROM runtime_composition_attempts WHERE attempt_id = ?",
+          )
+          .get(created.attemptId),
+      ).toEqual({ status: "running", result_envelope: null })
+    } finally {
+      pending.close()
+    }
+    const result = await service.reconcile(created.attemptId)
+    expect(result.result).toMatchObject({
+      status: "failure",
+      structuredOutput: null,
+      limitations: ["Required structured output could not be safely extracted."],
+      terminalEvidence: { providerTerminalState: "completed" },
+    })
+    const launches = runtime.launches.length
+    const restarted = new CrossProviderDelegationService(fixture.path, runtime)
+    await restarted.recoverRunningAttempts()
+    expect(await restarted.reconcile(created.attemptId)).toEqual(result)
+    expect(runtime.launches).toHaveLength(launches)
+    const readback = new Database(fixture.path)
+    try {
+      expect(
+        readback.prepare("SELECT status FROM agent_runs WHERE id = ?").get(created.runId),
+      ).toEqual({ status: "success" })
+      expect(
+        readback.prepare("SELECT count(*) AS count FROM runtime_composition_attempts").get(),
+      ).toEqual({ count: 1 })
+    } finally {
+      readback.close()
+    }
+  })
   it("keeps a completed plain-text result successful without requesting structured extraction", async () => {
     const fixture = createFixture("claude-code")
     const runtime = new RuntimeStub()

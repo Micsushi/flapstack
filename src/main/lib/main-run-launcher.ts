@@ -27,7 +27,10 @@ import type {
   RuntimeAdapterSession,
   RuntimeAdapterTurn,
 } from "../../shared/agent-runtime"
-import { usesFlapstackRuntimeEnhancements } from "../../shared/agent-runtime"
+import {
+  usesFlapstackRuntimeEnhancements,
+  RuntimeStructuredOutputError,
+} from "../../shared/agent-runtime"
 import { isAgentHarness } from "../../shared/harness-types"
 import { LEGACY_RUNTIME_CAPABILITIES } from "./agent-runtime/snapshot"
 import {
@@ -1885,7 +1888,9 @@ function readStructuredOutput(
     output.redaction_state !== "none" ||
     output.provider === "runtime"
   ) {
-    throw new Error("Completed Runtime output is not public provider-visible activity.")
+    throw new RuntimeStructuredOutputError(
+      "Completed Runtime output is not public provider-visible activity.",
+    )
   }
 
   const terminal = db
@@ -1897,7 +1902,10 @@ function readStructuredOutput(
        ORDER BY sequence ASC LIMIT 1`,
     )
     .get(runId, output.sequence) as StructuredOutputEventRow | undefined
-  if (!terminal) throw new Error("Completed Runtime output has no authoritative terminal event.")
+  if (!terminal)
+    throw new RuntimeStructuredOutputError(
+      "Completed Runtime output has no authoritative terminal event.",
+    )
   assertStructuredOutputIdentity(run, terminal)
   if (
     terminal.display_class !== "status" ||
@@ -1906,7 +1914,7 @@ function readStructuredOutput(
     terminal.provider !== "runtime" ||
     terminal.dedup_key !== "runtime:runtime:lifecycle:completed"
   ) {
-    throw new Error("Runtime completion activity is not authoritative.")
+    throw new RuntimeStructuredOutputError("Runtime completion activity is not authoritative.")
   }
   const terminalPayload = parseActivityPayload(terminal.payload_json)
   if (
@@ -1914,12 +1922,12 @@ function readStructuredOutput(
     terminalPayload.detail !== null ||
     Object.keys(terminalPayload).some((key) => key !== "state" && key !== "detail")
   ) {
-    throw new Error("Runtime completion activity is corrupt.")
+    throw new RuntimeStructuredOutputError("Runtime completion activity is corrupt.")
   }
 
   const payload = parseActivityPayload(output.payload_json)
   if (typeof payload.text !== "string" || Object.keys(payload).some((key) => key !== "text")) {
-    throw new Error("Completed Runtime output activity is corrupt.")
+    throw new RuntimeStructuredOutputError("Completed Runtime output activity is corrupt.")
   }
   const value = parseStructuredRuntimeText(payload.text)
   assertStructuredRuntimeValue(value)
@@ -1947,20 +1955,22 @@ function assertStructuredOutputIdentity(
     !Number.isInteger(event.sequence) ||
     event.sequence < 1
   ) {
-    throw new Error("Runtime structured output identity is corrupt.")
+    throw new RuntimeStructuredOutputError("Runtime structured output identity is corrupt.")
   }
 }
 
 function parseActivityPayload(payloadJson: string): Record<string, unknown> {
   if (Buffer.byteLength(payloadJson, "utf8") > MAX_AGENT_ACTIVITY_PAYLOAD_BYTES) {
-    throw new Error("Runtime structured output activity exceeds its size bound.")
+    throw new RuntimeStructuredOutputError(
+      "Runtime structured output activity exceeds its size bound.",
+    )
   }
   try {
     const value = JSON.parse(payloadJson) as unknown
-    if (!isPlainRecord(value)) throw new Error("not an object")
+    if (!isPlainRecord(value)) throw new RuntimeStructuredOutputError("not an object")
     return value
   } catch {
-    throw new Error("Runtime structured output activity is corrupt.")
+    throw new RuntimeStructuredOutputError("Runtime structured output activity is corrupt.")
   }
 }
 
@@ -1969,12 +1979,12 @@ function parseStructuredRuntimeText(text: string): unknown {
   const fenced = /^```json\s*([\s\S]*?)\s*```$/i.exec(trimmed)
   const candidate = fenced?.[1]?.trim() ?? trimmed
   if (!candidate || Buffer.byteLength(candidate, "utf8") > MAX_AGENT_ACTIVITY_PAYLOAD_BYTES) {
-    throw new Error("Completed Runtime output exceeds its size bound.")
+    throw new RuntimeStructuredOutputError("Completed Runtime output exceeds its size bound.")
   }
   try {
     return JSON.parse(candidate) as unknown
   } catch {
-    throw new Error("Completed Runtime output is not valid JSON.")
+    throw new RuntimeStructuredOutputError("Completed Runtime output is not valid JSON.")
   }
 }
 
@@ -1989,17 +1999,19 @@ function visitStructuredRuntimeValue(
   budget: { entries: number },
 ): void {
   if (depth > MAX_AGENT_ACTIVITY_METADATA_DEPTH) {
-    throw new Error("Completed Runtime output exceeds its depth bound.")
+    throw new RuntimeStructuredOutputError("Completed Runtime output exceeds its depth bound.")
   }
   if (value === null || typeof value === "boolean") return
   if (typeof value === "number") {
     if (!Number.isFinite(value))
-      throw new Error("Completed Runtime output contains an invalid number.")
+      throw new RuntimeStructuredOutputError("Completed Runtime output contains an invalid number.")
     return
   }
   if (typeof value === "string") {
     if (Buffer.byteLength(value, "utf8") > MAX_AGENT_ACTIVITY_METADATA_STRING) {
-      throw new Error("Completed Runtime output contains an oversized string.")
+      throw new RuntimeStructuredOutputError(
+        "Completed Runtime output contains an oversized string.",
+      )
     }
     return
   }
@@ -2009,16 +2021,21 @@ function visitStructuredRuntimeValue(
     for (const item of value) visitStructuredRuntimeValue(item, depth + 1, budget)
     return
   }
-  if (!isPlainRecord(value)) throw new Error("Completed Runtime output contains an invalid value.")
+  if (!isPlainRecord(value))
+    throw new RuntimeStructuredOutputError("Completed Runtime output contains an invalid value.")
   const entries = Object.entries(value)
   budget.entries += entries.length
   assertStructuredRuntimeEntryBudget(budget)
   for (const [key, item] of entries) {
     if (["__proto__", "prototype", "constructor"].includes(key)) {
-      throw new Error("Completed Runtime output contains an unsafe object key.")
+      throw new RuntimeStructuredOutputError(
+        "Completed Runtime output contains an unsafe object key.",
+      )
     }
     if (Buffer.byteLength(key, "utf8") > 512) {
-      throw new Error("Completed Runtime output contains an oversized object key.")
+      throw new RuntimeStructuredOutputError(
+        "Completed Runtime output contains an oversized object key.",
+      )
     }
     visitStructuredRuntimeValue(item, depth + 1, budget)
   }
@@ -2026,7 +2043,7 @@ function visitStructuredRuntimeValue(
 
 function assertStructuredRuntimeEntryBudget(budget: { entries: number }): void {
   if (budget.entries > MAX_AGENT_ACTIVITY_METADATA_ENTRIES) {
-    throw new Error("Completed Runtime output exceeds its entry bound.")
+    throw new RuntimeStructuredOutputError("Completed Runtime output exceeds its entry bound.")
   }
 }
 
