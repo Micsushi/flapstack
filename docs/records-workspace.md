@@ -74,3 +74,10 @@ retains its reserved worktree for retry. If interrupted before filesystem
 registration, recovery requires the exact reserved branch, repository and
 starting commit with a clean worktree. An occupied branch, changed target or
 missing linked worktree reports a conflict without deleting user work.
+
+For a saved Yap proposal with one new task action, **Create task and idle Chat**
+opens an explicit review of its canonical destination and the selected local
+repository. Confirmation creates the reviewed task and one read-only Chat with
+its captured context. It starts no run and creates no Git worktree. Repeated
+confirmation or recovery opens the same pair. Other actions and proposals already
+approved for Records-only application retain **Apply approved changes**.

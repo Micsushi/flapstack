@@ -69,6 +69,35 @@ const snapshot = (): ProjectPlanSnapshot => ({
 })
 const client = {
   endpoint: "http://127.0.0.1:1234",
+  list: vi.fn(async () => ({ documents: [{ path: "lanes/vault/tasks.md" }] })),
+  readYapProposal: vi.fn(async () => ({
+    proposalId: "ai-proposal",
+    version: 1,
+    status: "proposed",
+    inputId: "ai-source",
+    inputDigest: "b".repeat(64),
+    rows: [
+      {
+        id: "row",
+        projectId: "canonical",
+        interpretedRequest: "Reviewed AI task",
+        uncertainty: false,
+      },
+    ],
+    actions: [
+      {
+        id: "action",
+        kind: "create",
+        recordKind: "task",
+        rowIds: ["row"],
+        destination: { path: "lanes/vault/tasks.md" },
+        record: {
+          description: "Keep AI acceptance",
+          workSpec: { acceptance: ["Result stays visible"] },
+        },
+      },
+    ],
+  })),
   read: vi.fn(async () => ({ revision: "a".repeat(64) })),
   operation: vi.fn(async (path: string, payload: any) => {
     if (offline) throw new Error("offline")
@@ -293,4 +322,55 @@ it("a conversation reassigned to another Chat cannot be returned as the original
   await expect(service().reopen(input)).rejects.toThrow("association changed")
   expect(commits).toBe(1)
   expect(count("sub_chats")).toBe(1)
+})
+
+it("pairs an existing AI proposal once and retains honest reviewed source context without a Plan reference", async () => {
+  const current = service()
+  const input = { proposalId: "ai-proposal", expectedVersion: 1, localProjectId: "local" }
+  const preview = await current.previewProposal(input)
+  const confirmed = { ...input, expectedTarget: preview.expectedTarget }
+  const [a, b] = await Promise.all([
+    current.confirmProposal(confirmed),
+    current.confirmProposal(confirmed),
+  ])
+  expect(a).toEqual(b)
+  expect(commits).toBe(1)
+  expect(count("chats")).toBe(1)
+  const chat = sqlite
+    .prepare("SELECT messages, permission_mode FROM sub_chats WHERE id=?")
+    .get(a.subChatId) as { messages: string; permission_mode: string }
+  expect(chat.permission_mode).toBe("read-only")
+  expect(chat.messages).toContain("ai-source")
+  expect(chat.messages).toContain("Result stays visible")
+  expect(chat.messages).not.toContain('"planSource"')
+  expect(await service().confirmProposal(confirmed)).toEqual(a)
+})
+
+it("refuses stale AI proposal versions, changed destinations and unsupported actions before local intent", async () => {
+  const current = service()
+  const input = { proposalId: "ai-proposal", expectedVersion: 1, localProjectId: "local" }
+  await expect(current.previewProposal({ ...input, expectedVersion: 2 })).rejects.toThrow("changed")
+  const preview = await current.previewProposal(input)
+  vi.mocked(client.read).mockResolvedValueOnce({ revision: "c".repeat(64) } as never)
+  await expect(
+    current.confirmProposal({ ...input, expectedTarget: preview.expectedTarget }),
+  ).rejects.toThrow("changed")
+  const proposal = await client.readYapProposal(input.proposalId)
+  vi.mocked(client.readYapProposal).mockResolvedValueOnce({
+    ...proposal,
+    actions: [...proposal.actions, ...proposal.actions],
+  })
+  await expect(current.previewProposal(input)).rejects.toThrow("one create-task")
+  vi.mocked(client.readYapProposal).mockResolvedValueOnce({
+    ...proposal,
+    actions: [{ ...proposal.actions[0]!, destination: { path: "projects/canonical/features.md" } }],
+  })
+  await expect(current.previewProposal(input)).rejects.toThrow("canonical tasks document")
+  vi.mocked(client.readYapProposal).mockResolvedValueOnce({
+    ...proposal,
+    sourceValidity: { valid: false, invalidAttachmentIds: ["missing"] },
+  })
+  await expect(current.previewProposal(input)).rejects.toThrow("valid proposal sources")
+  expect(count("records_plan_pairs")).toBe(0)
+  expect(count("chats")).toBe(0)
 })

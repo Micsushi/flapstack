@@ -17,6 +17,13 @@ import {
   RecordTaskWorktreeService,
 } from "../../project-records/task-worktree"
 
+import {
+  RecordsPlanPairService,
+  yapPairInputSchema,
+  confirmYapPairSchema,
+} from "../../project-records/plan-pair"
+import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
+
 async function taskWorktrees() {
   const client = await configuredProjectRecordsClient()
   return new RecordTaskWorktreeService(
@@ -30,6 +37,27 @@ async function taskWorktrees() {
 }
 
 export const projectRecordsRouter = router({
+  previewProposalChat: publicProcedure
+    .input(yapPairInputSchema)
+    .query(async ({ input }) =>
+      new RecordsPlanPairService(
+        getSqliteDatabase(),
+        await configuredProjectRecordsClient(),
+      ).previewProposal(input),
+    ),
+  confirmProposalChat: publicProcedure.input(confirmYapPairSchema).mutation(async ({ input }) => {
+    const result = await new RecordsPlanPairService(
+      getSqliteDatabase(),
+      await configuredProjectRecordsClient(),
+    ).confirmProposal(input)
+    publishLocalProductInvalidation({
+      version: 1,
+      source: "product-mcp",
+      domains: ["chats", "plan-sources", "task-proposals"],
+      projectIds: [input.localProjectId],
+    })
+    return result
+  }),
   previewTaskChat: publicProcedure
     .input(previewRecordChatSchema)
     .query(async ({ input }) => (await taskWorktrees()).preview(input)),

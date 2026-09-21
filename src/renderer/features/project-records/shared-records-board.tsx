@@ -53,6 +53,10 @@ export function SharedRecordsBoard({
     request: BoardTaskChatRequest & { localProjectId: string }
     preview: Awaited<ReturnType<typeof trpcClient.projectRecords.previewTaskChat.query>>
   } | null>(null)
+  const [proposalPair, setProposalPair] = useState<{
+    request: { proposalId: string; expectedVersion: number; localProjectId: string }
+    preview: Awaited<ReturnType<typeof trpcClient.projectRecords.previewProposalChat.query>>
+  } | null>(null)
   const [opening, setOpening] = useState(false)
   const [openError, setOpenError] = useState<string | null>(null)
   const utils = trpc.useUtils()
@@ -81,6 +85,15 @@ export function SharedRecordsBoard({
         setNavigation(next)
         setDesktopView(next.view === "fleet" ? "orchestration-fleet" : "tasks")
       },
+      onCreateProposalChat: async (proposal) => {
+        const project = projectRef.current
+        if (!project)
+          throw new Error("Select a local project in the sidebar before creating the Chat.")
+        const request = { ...proposal, localProjectId: project.id }
+        const preview = await trpcClient.projectRecords.previewProposalChat.query(request)
+        setOpenError(null)
+        setProposalPair({ request, preview })
+      },
       onOpenTaskChat: async (task) => {
         const project = projectRef.current
         if (!project)
@@ -106,21 +119,26 @@ export function SharedRecordsBoard({
     // the native route changes. Remounting for every callback loses those drafts.
   }, [initialView, setDesktopView, setNavigation, yapReview])
   const openChat = async () => {
-    if (!pending || opening) return
+    if ((!pending && !proposalPair) || opening) return
     setOpening(true)
     setOpenError(null)
     try {
-      const result = await trpcClient.projectRecords.openTaskChat.mutate({
-        ...pending.request,
-        expectedTarget: pending.preview.expectedTarget,
-      })
+      const result = proposalPair
+        ? await trpcClient.projectRecords.confirmProposalChat.mutate({
+            ...proposalPair.request,
+            expectedTarget: proposalPair.preview.expectedTarget,
+          })
+        : await trpcClient.projectRecords.openTaskChat.mutate({
+            ...pending!.request,
+            expectedTarget: pending!.preview.expectedTarget,
+          })
       await utils.chats.invalidate()
       setRemote(false)
       setDraft(null)
       setScope({
         type: "project",
-        id: pending.preview.projectId,
-        name: pending.preview.projectName,
+        id: proposalPair?.request.localProjectId ?? pending!.preview.projectId,
+        name: proposalPair ? (projectRef.current?.name ?? "Project") : pending!.preview.projectName,
       })
       setOpenChatIds((current) =>
         current.includes(result.chatId) ? current : [...current, result.chatId],
@@ -128,9 +146,10 @@ export function SharedRecordsBoard({
       setSelectedChatId(result.chatId)
       setShowNewChatForm(false)
       setPending(null)
+      setProposalPair(null)
       setDesktopView(null)
     } catch (error) {
-      setOpenError(error instanceof Error ? error.message : "Could not open the worktree Chat.")
+      setOpenError(error instanceof Error ? error.message : "Could not open the Chat.")
     } finally {
       setOpening(false)
     }
@@ -143,9 +162,12 @@ export function SharedRecordsBoard({
         aria-label="Project records workspace"
       />
       <Dialog
-        open={Boolean(pending)}
+        open={Boolean(pending || proposalPair)}
         onOpenChange={(open) => {
-          if (!open && !opening) setPending(null)
+          if (!open && !opening) {
+            setPending(null)
+            setProposalPair(null)
+          }
         }}
       >
         <DialogContent
@@ -155,9 +177,34 @@ export function SharedRecordsBoard({
         >
           <DialogHeader>
             <DialogTitle>
-              {pending?.preview.existingChatId ? "Open worktree Chat" : "Create worktree Chat"}
+              {proposalPair
+                ? "Create task and idle Chat"
+                : pending?.preview.existingChatId
+                  ? "Open worktree Chat"
+                  : "Create worktree Chat"}
             </DialogTitle>
           </DialogHeader>
+          {proposalPair && (
+            <div className="grid min-w-0 gap-2 text-sm">
+              <p>{proposalPair.preview.title}</p>
+              <p className="break-all">Local repository: {proposalPair.preview.projectPath}</p>
+              <p className="break-all">
+                Canonical destination: {proposalPair.preview.destinationPath} ·{" "}
+                {proposalPair.preview.projectId}
+              </p>
+              <p>One task and one read-only Chat. No run or Git worktree is created.</p>
+              <details>
+                <summary>Reviewed task and source context</summary>
+                <pre className="whitespace-pre-wrap break-words">
+                  {JSON.stringify(
+                    { action: proposalPair.preview.action, rows: proposalPair.preview.rows },
+                    null,
+                    2,
+                  )}
+                </pre>
+              </details>
+            </div>
+          )}
           {pending && (
             <dl className="grid min-w-0 gap-2 text-sm">
               <dt className="font-medium">Local repository</dt>
@@ -176,15 +223,24 @@ export function SharedRecordsBoard({
             </p>
           )}
           <DialogFooter>
-            <Button variant="outline" disabled={opening} onClick={() => setPending(null)}>
+            <Button
+              variant="outline"
+              disabled={opening}
+              onClick={() => {
+                setPending(null)
+                setProposalPair(null)
+              }}
+            >
               Cancel
             </Button>
             <Button disabled={opening} onClick={() => void openChat()}>
               {opening
                 ? "Opening…"
-                : pending?.preview.existingChatId
-                  ? "Open Chat"
-                  : "Create and open Chat"}
+                : proposalPair
+                  ? "Create task and Chat"
+                  : pending?.preview.existingChatId
+                    ? "Open Chat"
+                    : "Create and open Chat"}
             </Button>
           </DialogFooter>
         </DialogContent>
