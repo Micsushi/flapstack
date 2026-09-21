@@ -1,6 +1,7 @@
 "use client"
 
 import { stripEmojis } from "../../../components/chat-markdown-renderer"
+import { formatModelDisplayName } from "../../../../shared/model-catalog"
 import { Button } from "../../../components/ui/button"
 import {
   AgentIcon,
@@ -5009,26 +5010,22 @@ const ChatViewInner = memo(function ChatViewInner({
           preference,
           requestId,
         })
-        const exactTarget = [
-          `${preview.targetSnapshot.harness} / ${preview.targetSnapshot.runtime}`,
-          preview.targetSnapshot.model ?? "provider default model",
-          preview.targetSnapshot.runtimeMode,
-        ].join(" · ")
-        const exactAuthority = [
-          preview.authorityCeiling.permissionMode,
-          preview.authorityCeiling.network ? "network allowed" : "network blocked",
-          preview.authorityCeiling.worktreePath ?? "no worktree",
-        ].join(" · ")
+        const modelName =
+          formatModelDisplayName(preview.targetSnapshot.model) ?? "the provider default model"
+        const worktreePath = preview.authorityCeiling.worktreePath
+        const worktreeName = worktreePath?.split(/[\\/]/).filter(Boolean).at(-1) ?? "None"
         const confirmed = window.confirm(
           [
-            "Confirm exact cross-provider continuation",
+            `Continue with ${modelName}?`,
             "",
-            `Target: ${exactTarget}`,
-            `Visible messages: ${preview.visibleMessageCount}`,
-            `Authority: ${exactAuthority}`,
-            `Preview digest: ${preview.digest}`,
+            `Provider: ${preview.targetSnapshot.harness}`,
+            `Runtime: ${preview.targetSnapshot.runtime} (${preview.targetSnapshot.runtimeMode})`,
+            `Messages to include: ${preview.visibleMessageCount}`,
+            `Permission: ${preview.authorityCeiling.permissionMode}`,
+            `Network: ${preview.authorityCeiling.network ? "Allowed" : "Blocked"}`,
+            `Worktree: ${worktreeName}`,
             "",
-            "A fresh child Chat and provider session will be created. The source Chat remains unchanged.",
+            "Creates a new child Chat and provider session. Your source Chat stays unchanged.",
           ].join("\n"),
         )
         if (!confirmed) {

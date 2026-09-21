@@ -10,7 +10,7 @@ const activeChatSource = readFileSync(
 describe("renderer cross-provider continuation authority", () => {
   it("uses the durable top-level Runtime continuation endpoint", () => {
     const start = activeChatSource.indexOf("const handleContinueWithProvider = useCallback")
-    const end = activeChatSource.indexOf("  return (", start)
+    const end = activeChatSource.indexOf("const handleDelegateWithProvider", start)
     const handler = activeChatSource.slice(start, end)
 
     expect(start).toBeGreaterThan(-1)
@@ -19,7 +19,15 @@ describe("renderer cross-provider continuation authority", () => {
     expect(handler).toContain("continueWithRuntime")
     expect(handler).toContain("targetModel")
     expect(handler).toContain("confirmedPreviewDigest: preview.digest")
-    expect(handler).toContain("Confirm exact cross-provider continuation")
+    expect(handler).toContain("Continue with ${modelName}?")
+    expect(handler).toContain("formatModelDisplayName(preview.targetSnapshot.model)")
+    expect(handler).toContain("Provider: ${preview.targetSnapshot.harness}")
+    expect(handler).toContain("Messages to include:")
+    expect(handler).toContain("Permission:")
+    expect(handler).toContain("Network:")
+    expect(handler).toContain("Worktree: ${worktreeName}")
+    expect(handler).not.toContain("Preview digest:")
+    expect(handler).toContain("if (!confirmed)")
     expect(handler).not.toContain("writePastedText")
     expect(handler).not.toContain("createSubChat")
     expect(handler).not.toContain("pendingChatHistoryAtom")
