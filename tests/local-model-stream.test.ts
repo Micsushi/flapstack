@@ -670,6 +670,7 @@ function setup() {
       runtime_protocol_version text NOT NULL DEFAULT 'legacy-stage3',
       runtime_capability_snapshot text NOT NULL DEFAULT '{"schemaVersion":1,"status":"legacy"}',
       runtime_control_snapshot text NOT NULL DEFAULT '{"schemaVersion":1}',
+      runtime_launch_identity text,
       provider_account_id text NOT NULL DEFAULT 'legacy-system-default',
       provider_auth_mode text NOT NULL DEFAULT 'legacy',
       provider_runtime_target text NOT NULL DEFAULT 'local',
