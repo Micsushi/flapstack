@@ -1,3 +1,5 @@
+import type { AgentActivityInvalidation } from "../../shared/agent-activity"
+import { broadcastAgentActivityInvalidation } from "./agent-runtime/activity-service"
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { existsSync } from "node:fs"
@@ -614,8 +616,9 @@ export class MainRuntimeLaunchService {
 
   private persistPendingCancellation(runId: string, reason: string): boolean {
     const db = this.open()
+    let activityInvalidation: AgentActivityInvalidation | undefined
     try {
-      return db
+      const cancelled = db
         .transaction(() => {
           const run = db.prepare("SELECT sub_chat_id FROM agent_runs WHERE id = ?").get(runId) as
             { sub_chat_id: string | null } | undefined
@@ -638,12 +641,14 @@ export class MainRuntimeLaunchService {
                ), 'cancelled'), updated_at = ? WHERE id = ?`,
             ).run(run.sub_chat_id, runId, now, run.sub_chat_id)
           }
-          this.appendActivityWithDatabase(db, runId, [
+          activityInvalidation = this.appendActivityWithDatabase(db, runId, [
             lifecycleActivity("cancelled", "lifecycle:cancelled", undefined, undefined, reason),
           ])
           return true
         })
         .immediate()
+      if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
+      return cancelled
     } finally {
       db.close()
     }
@@ -838,6 +843,7 @@ export class MainRuntimeLaunchService {
 
   private persistIntent(runId: string, launch: ResolvedRuntimeLaunch): void {
     const db = this.open()
+    let activityInvalidation: AgentActivityInvalidation | undefined
     try {
       db.transaction(() => {
         const row = db.prepare("SELECT * FROM agent_runs WHERE id = ?").get(runId) as
@@ -862,10 +868,11 @@ export class MainRuntimeLaunchService {
             ).run(identity, runId)
           }
         }
-        this.appendActivityWithDatabase(db, runId, [
+        activityInvalidation = this.appendActivityWithDatabase(db, runId, [
           lifecycleActivity("intent-persisted", "intent-persisted"),
         ])
       }).immediate()
+      if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
     } finally {
       db.close()
     }
@@ -873,6 +880,7 @@ export class MainRuntimeLaunchService {
 
   private async persistSession(runId: string, session: RuntimeAdapterSession): Promise<void> {
     const db = this.open()
+    let activityInvalidation: AgentActivityInvalidation | undefined
     try {
       db.transaction(() => {
         const run = this.requireRunRow(db, runId)
@@ -887,10 +895,11 @@ export class MainRuntimeLaunchService {
             run.sub_chat_id,
           )
         }
-        this.appendActivityWithDatabase(db, runId, [
+        activityInvalidation = this.appendActivityWithDatabase(db, runId, [
           lifecycleActivity("session-started", "session-started", session),
         ])
       }).immediate()
+      if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
     } finally {
       db.close()
     }
@@ -902,10 +911,12 @@ export class MainRuntimeLaunchService {
     turn: RuntimeAdapterTurn,
   ): Promise<void> {
     const db = this.open()
+    let activityInvalidation: AgentActivityInvalidation | undefined
     try {
-      this.appendActivityWithDatabase(db, runId, [
+      activityInvalidation = this.appendActivityWithDatabase(db, runId, [
         lifecycleActivity("turn-started", "turn-started", session, turn),
       ])
+      if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
     } finally {
       db.close()
     }
@@ -917,6 +928,7 @@ export class MainRuntimeLaunchService {
     detail?: string | null,
   ): Promise<void> {
     const db = this.open()
+    let activityInvalidation: AgentActivityInvalidation | undefined
     let chatId: string | undefined
     try {
       db.transaction(() => {
@@ -958,10 +970,11 @@ export class MainRuntimeLaunchService {
           }
         }
         const dedupKey = ["paused", "resumed"].includes(lifecycle) ? null : `lifecycle:${lifecycle}`
-        this.appendActivityWithDatabase(db, runId, [
+        activityInvalidation = this.appendActivityWithDatabase(db, runId, [
           lifecycleActivity(lifecycle, dedupKey, undefined, undefined, detail),
         ])
       }).immediate()
+      if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
     } finally {
       db.close()
     }
@@ -1000,8 +1013,10 @@ export class MainRuntimeLaunchService {
     events: readonly AgentActivityAppend[],
   ): Promise<void> {
     const db = this.open()
+    let activityInvalidation: AgentActivityInvalidation | undefined
     try {
-      this.appendActivityWithDatabase(db, runId, events)
+      activityInvalidation = this.appendActivityWithDatabase(db, runId, events)
+      if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
     } finally {
       db.close()
     }
@@ -1011,17 +1026,23 @@ export class MainRuntimeLaunchService {
     db: Database.Database,
     runId: string,
     events: readonly AgentActivityAppend[],
-  ): void {
+  ): AgentActivityInvalidation | undefined {
+    let invalidation: AgentActivityInvalidation | undefined
     const agent = db
       .prepare("SELECT id FROM orchestration_agents WHERE run_id = ? LIMIT 1")
       .get(runId) as { id: string } | undefined
-    createAgentActivityStore(db).appendBatch(
+    createAgentActivityStore(db, {
+      onInvalidated: (value) => {
+        invalidation = value
+      },
+    }).appendBatch(
       runId,
       events.map((event) => ({
         ...event,
         orchestrationAgentId: event.orchestrationAgentId ?? agent?.id ?? null,
       })),
     )
+    return invalidation
   }
 
   private referenceActivity(runId: string): void {

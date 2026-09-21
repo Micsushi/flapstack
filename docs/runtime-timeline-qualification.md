@@ -40,3 +40,10 @@ refresh, disabled observers become stale without fetching, unrelated Chats remai
 untouched, and unmount removes the listener. This is query-boundary evidence;
 actual app owner-window reload and separate observer-window consistency still
 require the combined built-app replay.
+
+The production launcher now captures the store's inserted-event cursor and emits
+it only after the owning transaction commits. A launcher regression reads every
+announced cursor from a separate SQLite connection and compares announcements
+with all persisted activity sequences. Failed intent writes emit nothing, and a
+closing renderer cannot fail a committed write or prevent other windows receiving
+the update. Producer, receiver and broadcast suites pass together (40 tests).

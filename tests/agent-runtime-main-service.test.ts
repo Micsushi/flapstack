@@ -31,6 +31,10 @@ import { updateProjectVaultContextSelection } from "../src/main/lib/project-vaul
 vi.mock("../src/main/lib/trpc/routers", () => ({
   createAppRouter: () => ({ createCaller: () => ({}) }),
 }))
+const activityInvalidation = vi.hoisted(() => vi.fn())
+vi.mock("../src/main/lib/agent-runtime/activity-service", () => ({
+  broadcastAgentActivityInvalidation: activityInvalidation,
+}))
 const invalidation = vi.hoisted(() => vi.fn())
 vi.mock("../src/main/lib/mcp-control/invalidation-bridge", () => ({
   publishLocalProductInvalidation: invalidation,
@@ -42,6 +46,7 @@ let sqlite: Database.Database
 
 beforeEach(() => {
   invalidation.mockReset()
+  activityInvalidation.mockReset()
   resetMainRuntimeLaunchServicesForTests()
   directory = mkdtempSync(join(tmpdir(), "flapstack-runtime-main-service-"))
   path = join(directory, "agents.db")
@@ -57,6 +62,42 @@ afterEach(() => {
 })
 
 describe("process-wide Runtime launch service", () => {
+  it("broadcasts production activity only after its owning transaction commits", async () => {
+    const runId = "activity-commit"
+    seedDirectRun(runId)
+    const value = directAdapter()
+    value.streamActivity = async function* () {
+      yield {
+        provider: "openai",
+        kind: "agent-text",
+        phase: "completed",
+        displayClass: "provider-visible",
+        privacyClass: "public",
+        payload: { text: "Public answer" },
+      }
+    }
+    activityInvalidation.mockImplementation((event) => {
+      // This independent connection cannot see uncommitted writer changes.
+      const persisted = sqlite
+        .prepare("SELECT sequence FROM agent_activity_events WHERE storage_id = ? AND run_id = ?")
+        .get(event.lastStorageId, runId) as { sequence: number } | undefined
+      expect(persisted?.sequence).toBe(event.lastSequence)
+      expect(event.chatId).toBe(`chat-${runId}`)
+    })
+    await getMainRuntimeLaunchService(path, {
+      codexFactory: () => value,
+      enableCodex: true,
+    }).launch(queued(runId))
+    expect(activityInvalidation.mock.calls.length).toBeGreaterThanOrEqual(4)
+    const announced = activityInvalidation.mock.calls.flatMap(([event]) =>
+      Array.from({ length: event.insertedCount }, (_, index) => event.firstSequence + index),
+    )
+    const persisted = sqlite
+      .prepare("SELECT sequence FROM agent_activity_events WHERE run_id = ? ORDER BY sequence")
+      .all(runId) as { sequence: number }[]
+    expect(announced).toEqual(persisted.map((row) => row.sequence))
+  })
+
   it("projects a completed direct feedback answer into its durable conversation", async () => {
     const runId = "feedback-answer"
     seedDirectRun(runId)
@@ -919,6 +960,7 @@ describe("process-wide Runtime launch service", () => {
 
     await expect(service.launch(queued("intent-failure"))).rejects.toThrow()
     expect(value.startSession).not.toHaveBeenCalled()
+    expect(activityInvalidation).not.toHaveBeenCalled()
   })
 
   it("persists the crash window identity and fails without replay", async () => {

@@ -18,11 +18,28 @@ vi.mock("../src/main/lib/db", () => ({ getDatabase: vi.fn() }))
 import { broadcastAgentActivityInvalidation } from "../src/main/lib/agent-runtime/activity-service"
 
 beforeEach(() => {
-  send.mockClear()
+  send.mockReset()
   sendDestroyed.mockClear()
 })
 
 describe("Agent activity multi-window invalidation", () => {
+  it("continues notifying live windows when one renderer closes during delivery", () => {
+    send.mockImplementationOnce(() => {
+      throw new Error("renderer closed")
+    })
+    expect(() =>
+      broadcastAgentActivityInvalidation({
+        reason: "append",
+        runId: "run-1",
+        chatId: "chat-1",
+        firstSequence: 1,
+        lastSequence: 1,
+        lastStorageId: 1,
+        insertedCount: 1,
+      }),
+    ).not.toThrow()
+    expect(send).toHaveBeenCalledTimes(2)
+  })
   it("broadcasts the durable cursor to every live window", () => {
     const invalidation = {
       reason: "append" as const,

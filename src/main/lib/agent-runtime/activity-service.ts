@@ -17,7 +17,12 @@ export function getAgentActivityStore(): AgentActivityStore {
 export function broadcastAgentActivityInvalidation(invalidation: AgentActivityInvalidation): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (window.isDestroyed()) continue
-    window.webContents.send("agent-activity:invalidated", invalidation)
+    try {
+      window.webContents.send("agent-activity:invalidated", invalidation)
+    } catch {
+      // A closing renderer must not fail an already committed activity write.
+      continue
+    }
   }
 }
 
