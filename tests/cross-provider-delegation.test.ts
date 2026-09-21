@@ -142,6 +142,104 @@ afterEach(() => {
 })
 
 describe("cross-provider Runtime delegation", () => {
+  it.each([2, 1001])(
+    "retains bounded child-only reference IDs after restart and source deletion (%i records)",
+    async (count) => {
+      const fixture = createFixture("claude-code")
+      const runtime = new RuntimeStub()
+      const service = new CrossProviderDelegationService(fixture.path, runtime)
+      const request = {
+        sourceChatId: "source",
+        targetHarness: "codex" as const,
+        targetModel: "gpt-5.5",
+        preference: "codex-enhanced" as const,
+        requestId: "reference-child",
+        objective: "Inspect the owned fixture.",
+      }
+      const preview = service.preview(request)
+      const created = service.delegate({ ...request, confirmedPreviewDigest: preview.digest })
+      const otherRequest = { ...request, requestId: "other-child" }
+      const otherPreview = service.preview(otherRequest)
+      const other = service.delegate({
+        ...otherRequest,
+        confirmedPreviewDigest: otherPreview.digest,
+      })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const db = new Database(fixture.path)
+      db.pragma("foreign_keys = ON")
+      try {
+        const change = db.prepare(
+          "INSERT INTO file_change_manifests (id, run_id, file_path, change_type) VALUES (?, ?, ?, 'modified')",
+        )
+        const checkpoint = db.prepare(
+          "INSERT INTO checkpoints (id, run_id, kind, worktree_path, git_status_json) VALUES (?, ?, 'fixture', ?, ?)",
+        )
+        db.transaction(() => {
+          for (let index = 0; index < count; index++) {
+            const suffix = String(index).padStart(4, "0")
+            change.run(`change-${suffix}`, created.runId, "PRIVATE-RAW-PATH")
+            checkpoint.run(
+              `checkpoint-${suffix}`,
+              created.runId,
+              "PRIVATE-WORKTREE-PATH",
+              "PRIVATE-STATUS",
+            )
+          }
+          change.run("other-change", other.runId, "OTHER-PRIVATE-PATH")
+          checkpoint.run("other-checkpoint", other.runId, "OTHER-PRIVATE-PATH", "OTHER-STATUS")
+        })()
+      } finally {
+        db.close()
+      }
+      runtime.state = "completed"
+      const result = await service.reconcile(created.attemptId)
+      expect(result.result?.artifactAndChangeRefs).toEqual(
+        Array.from(
+          { length: Math.min(count, 1000) },
+          (_, i) => `change-${String(i).padStart(4, "0")}`,
+        ),
+      )
+      expect(result.result?.checkpointRefs).toEqual(
+        Array.from(
+          { length: Math.min(count, 1000) },
+          (_, i) => `checkpoint-${String(i).padStart(4, "0")}`,
+        ),
+      )
+      expect(JSON.stringify(result.result)).not.toMatch(
+        /PRIVATE|OTHER-STATUS|other-change|other-checkpoint/,
+      )
+      if (count > 1000)
+        expect(result.result?.limitations).toContain(
+          "Result references are limited to 1000 per kind; inspect the child run for remaining records.",
+        )
+      const deletion = new Database(fixture.path)
+      deletion.pragma("foreign_keys = ON")
+      try {
+        deletion.prepare("DELETE FROM chats WHERE id = 'source'").run()
+      } finally {
+        deletion.close()
+      }
+      const launches = runtime.launches.length
+      const restarted = new CrossProviderDelegationService(fixture.path, runtime)
+      expect(await restarted.reconcile(created.attemptId)).toEqual(result)
+      expect(runtime.launches).toHaveLength(launches)
+      const readback = new Database(fixture.path)
+      try {
+        expect(
+          readback
+            .prepare("SELECT COUNT(*) count FROM runtime_composition_attempts WHERE attempt_id = ?")
+            .get(created.attemptId),
+        ).toEqual({ count: 1 })
+        expect(
+          readback
+            .prepare("SELECT parent_chat_id FROM chats WHERE id = ?")
+            .get(created.childChatId),
+        ).toEqual({ parent_chat_id: "source" })
+      } finally {
+        readback.close()
+      }
+    },
+  )
   it("fails malformed required output through the production parser without losing completed truth on restart", async () => {
     const fixture = createFixture("claude-code")
     const runtime = new RuntimeStub()

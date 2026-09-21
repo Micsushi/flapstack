@@ -794,6 +794,17 @@ export class CrossProviderDelegationService {
                 ? "failure"
                 : state
           const cancellationRequestedAt = epochIso(current.cancellation_requested_at)
+          const changeRefs = db
+            .prepare("SELECT id FROM file_change_manifests WHERE run_id = ? ORDER BY id LIMIT 1001")
+            .all(runId) as { id: string }[]
+          const checkpointRefs = db
+            .prepare("SELECT id FROM checkpoints WHERE run_id = ? ORDER BY id LIMIT 1001")
+            .all(runId) as { id: string }[]
+          if (changeRefs.length > 1000 || checkpointRefs.length > 1000) {
+            outputLimitations.push(
+              "Result references are limited to 1000 per kind; inspect the child run for remaining records.",
+            )
+          }
           const result = crossProviderResultEnvelopeSchema.parse({
             version: 1,
             taskEnvelopeVersion: 1,
@@ -808,8 +819,8 @@ export class CrossProviderDelegationService {
             status,
             structuredOutput: acceptedStructuredOutput,
             visibleSummary: summary,
-            artifactAndChangeRefs: [],
-            checkpointRefs: [],
+            artifactAndChangeRefs: changeRefs.slice(0, 1000).map((record) => record.id),
+            checkpointRefs: checkpointRefs.slice(0, 1000).map((record) => record.id),
             usageRefs,
             activityRefs: [{ runId, afterSequence: highWater }],
             partial: status !== "success" && Boolean(summary),
