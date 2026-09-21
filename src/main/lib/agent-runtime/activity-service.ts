@@ -15,6 +15,7 @@ export function getAgentActivityStore(): AgentActivityStore {
 }
 
 export function broadcastAgentActivityInvalidation(invalidation: AgentActivityInvalidation): void {
+  if (typeof BrowserWindow?.getAllWindows !== "function") return
   for (const window of BrowserWindow.getAllWindows()) {
     if (window.isDestroyed()) continue
     try {
