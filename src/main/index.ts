@@ -170,6 +170,7 @@ try {
   console.error("[App] Hidden runtime profile validation failed.")
   app.exit(1)
 }
+const IS_ISOLATED_VERIFICATION = IS_STAGE6_PERFORMANCE || IS_HEADLESS_PERFORMANCE
 const IS_CONTROL_DEV = IS_DEV || IS_STAGE6_PERFORMANCE
 const PROTOCOL = resolveFlapstackProtocol(IS_CONTROL_DEV, IS_PREVIEW)
 const APP_DISPLAY_NAME = IS_CONTROL_DEV
@@ -322,6 +323,7 @@ export async function handleAuthCode(code: string): Promise<void> {
 
 // Handle deep link
 function handleDeepLink(url: string, source: ProtocolReceiptSource): void {
+  if (IS_HEADLESS_PERFORMANCE) return
   const receipt = recordProtocolReceipt(url, PROTOCOL, source)
   if (!receipt.accepted) {
     console.warn("[DeepLink] Rejected protocol callback:", receipt.protocol ?? "invalid")
@@ -358,7 +360,7 @@ console.log("[Protocol] process argument count:", process.argv.length)
  * Launch Services caches protocol handlers and may need time to update.
  */
 function registerProtocol(): boolean {
-  if (IS_STAGE6_PERFORMANCE) return false
+  if (IS_ISOLATED_VERIFICATION) return false
   let success = false
 
   if (process.defaultApp) {
@@ -660,6 +662,7 @@ if (gotTheLock) {
 
   // Handle second instance launch (also handles deep links on Windows/Linux)
   app.on("second-instance", (_event, commandLine, workingDirectory, additionalData) => {
+    if (IS_HEADLESS_PERFORMANCE) return
     // Check for deep link in command line args
     const url = commandLine.find((arg) => arg.startsWith(`${PROTOCOL}://`))
     if (url) {
@@ -695,7 +698,7 @@ if (gotTheLock) {
   // App ready
   app.whenReady().then(async () => {
     if (IS_HEADLESS_PERFORMANCE) app.dock?.hide()
-    if (!IS_STAGE6_PERFORMANCE) {
+    if (!IS_ISOLATED_VERIFICATION) {
       initializeSleepPrevention(() => ({
         agentWork: hasActiveAgentSessions() || hasActiveMainRuntimeRuns(),
         terminals: terminalManager.getLiveSessionCount(),
@@ -706,7 +709,7 @@ if (gotTheLock) {
     }
 
     try {
-      const migration = IS_STAGE6_PERFORMANCE
+      const migration = IS_ISOLATED_VERIFICATION
         ? { migrated: 0, deferred: 0 }
         : await migrateClaudeMcpSecretFiles()
       if (migration.migrated > 0) {
@@ -1372,7 +1375,7 @@ if (gotTheLock) {
             {
               name: "Usage startup catch-up",
               run: () => {
-                if (IS_STAGE6_PERFORMANCE) return
+                if (IS_ISOLATED_VERIFICATION) return
                 void withDatabaseOperation(() =>
                   runStartupCatchUp({
                     db: initDatabase(),
@@ -1441,7 +1444,7 @@ if (gotTheLock) {
     // Warm up MCP cache 3 seconds after startup (background, non-blocking)
     // This populates the cache so all future sessions can use filtered MCP servers
     setTimeout(async () => {
-      if (IS_STAGE6_PERFORMANCE) return
+      if (IS_ISOLATED_VERIFICATION) return
       try {
         const results = await Promise.allSettled([
           getAllMcpConfigHandler(),
@@ -1467,6 +1470,7 @@ if (gotTheLock) {
 
     // macOS: Re-create window when dock icon is clicked
     app.on("activate", () => {
+      if (IS_HEADLESS_PERFORMANCE) return
       if (BrowserWindow.getAllWindows().length === 0) {
         restoreNextDormantWorkbenchWindow() ?? tryCreateWindowWithRendererChoice()
       }

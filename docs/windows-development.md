@@ -126,6 +126,25 @@ profile, and `release-preview` output. Inspection verifies PE/x64 architecture f
 the app, agent binaries, speech sidecars, better-sqlite3, and every node-pty native
 output, plus the app archive, licenses, and Electron file version.
 
+For an isolated, hidden bridge lifecycle check, launch the Preview executable
+with `FLAPSTACK_PREVIEW_HEADLESS=1`, a fresh
+`FLAPSTACK_PREVIEW_INSTANCE=preview-bridge-<timestamp>-<random>` and matching
+`FLAPSTACK_PREVIEW_RUN_TOKEN=pb-<timestamp>-<random>-<12 lowercase hex digits>`.
+The timestamp is decimal and random suffix is lowercase alphanumeric. Keep
+that identity for a restart check; never reuse a personal Preview profile.
+The token identifies the test run; it is not bridge authentication.
+
+This mode requires a packaged Preview executable and embedded Preview channel
+and product-name provenance, rejects Dev profile flags
+and Dev test-control opt-in, and keeps the normal isolated Preview userData
+name. It renders offscreen, ignores deep links and second-instance activation,
+and skips protocol registration, sleep prevention, credential migration,
+usage catch-up and MCP warmup. It does not enable the bridge or a test server.
+Exercise the normal bridge settings: default disabled, enable on an active
+approved private interface, disable, then enable and quit. Loopback remains
+rejected. Package binary smoke alone does not verify that listener lifecycle;
+an unsigned unpacked Preview check does not certify signed installation.
+
 ## Signed release
 
 Keep certificate material outside the repository:
