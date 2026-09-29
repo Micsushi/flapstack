@@ -35,6 +35,7 @@ function fixture() {
     app,
     join(bin, "claude.exe"),
     join(bin, "codex.exe"),
+    join(bin, "codex-code-mode-host.exe"),
     join(bin, "whisper-cli.exe"),
     join(bin, "flapstack-stt-sidecar.exe"),
     join(unpacked, "better-sqlite3", "build", "Release", "better_sqlite3.node"),
@@ -57,6 +58,11 @@ function fixture() {
   writeFileSync(
     join(bin, ".stt-sidecar.sha256"),
     `${createHash("sha256").update(readFileSync(sidecar)).digest("hex")}\n`,
+  )
+  const codeModeHost = join(bin, "codex-code-mode-host.exe")
+  writeFileSync(
+    join(bin, ".codex-code-mode-host.sha256"),
+    `${createHash("sha256").update(readFileSync(codeModeHost)).digest("hex")}\n`,
   )
   writeFileSync(join(resources, "app.asar"), "asar")
   return app
@@ -86,6 +92,7 @@ describe("Windows package inspection", () => {
       platformKey: "win32-x64",
       electronVersion: `${packagedElectronVersion}.0`,
       binaries: {
+        "Codex code-mode host": expect.stringContaining("codex-code-mode-host.exe"),
         "node-pty-conpty": expect.stringContaining("conpty.node"),
         "node-pty-console-list": expect.stringContaining("conpty_console_list.node"),
         "node-pty-winpty-agent": expect.stringContaining("winpty-agent.exe"),
@@ -103,6 +110,15 @@ describe("Windows package inspection", () => {
   it("rejects a sidecar changed after package-resource preparation", () => {
     const app = fixture()
     appendFileSync(join(dirname(app), "resources", "bin", "flapstack-stt-sidecar.exe"), "tampered")
+
+    expect(() =>
+      inspectWindowsApp(app, "win32-x64", { readVersion: () => `${packagedElectronVersion}.0` }),
+    ).toThrow(/SHA256/)
+  })
+
+  it("rejects a Codex code-mode host changed after package-resource preparation", () => {
+    const app = fixture()
+    appendFileSync(join(dirname(app), "resources", "bin", "codex-code-mode-host.exe"), "tampered")
 
     expect(() =>
       inspectWindowsApp(app, "win32-x64", { readVersion: () => `${packagedElectronVersion}.0` }),

@@ -406,6 +406,7 @@ describe("Windows package security report", () => {
     expect(isAllowedNativePath("resources/app.asar.unpacked/node_modules/vendor/claude.exe")).toBe(
       false,
     )
+    expect(isAllowedNativePath("resources/bin/codex-code-mode-host.exe")).toBe(true)
     expect(isAllowedNativePath("resources/elevate.exe")).toBe(true)
     expect(() =>
       assertNativePackageInventory([

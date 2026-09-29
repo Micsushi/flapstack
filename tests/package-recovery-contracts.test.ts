@@ -101,6 +101,21 @@ function peX64(payload = "") {
   return buffer
 }
 
+function codexWindowsRelease(codex: Buffer, codeModeHost = codex) {
+  const asset = (name: string, bytes: Buffer) => ({
+    name,
+    digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    browser_download_url: `https://github.com/openai/codex/releases/download/rust-v0.153.4/${name}`,
+    size: bytes.length,
+  })
+  return {
+    assets: [
+      asset("codex-x86_64-pc-windows-msvc.exe", codex),
+      asset("codex-code-mode-host-x86_64-pc-windows-msvc.exe", codeModeHost),
+    ],
+  }
+}
+
 function deferred() {
   let resolvePromise!: () => void
   const promise = new Promise<void>((resolve) => {
@@ -125,8 +140,10 @@ async function runConcurrentDownloads(
       await secondWritten.promise
       return
     }
-    secondWritten.resolve()
-    await releaseSecond.promise
+    if (call === 2) {
+      secondWritten.resolve()
+      await releaseSecond.promise
+    }
   }
 
   const first = download(downloadFile)
@@ -306,31 +323,15 @@ describe("binary download recovery", () => {
     const previous = peX64("previous")
     writeFileSync(target, previous)
     const replacement = peX64("replacement")
-    const checksum = createHash("sha256").update(replacement).digest("hex")
 
     await expect(
-      downloadCodexPlatform(
-        "0.153.4",
-        "win32-x64",
-        {
-          assets: [
-            {
-              name: "codex-x86_64-pc-windows-msvc.exe",
-              digest: `sha256:${checksum}`,
-              browser_download_url:
-                "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-x86_64-pc-windows-msvc.exe",
-              size: replacement.length,
-            },
-          ],
+      downloadCodexPlatform("0.153.4", "win32-x64", codexWindowsRelease(replacement), {
+        binDirectory,
+        downloadFile: async (_url, destination) => {
+          writeFileSync(destination, replacement.subarray(0, 20))
+          throw new Error("offline")
         },
-        {
-          binDirectory,
-          downloadFile: async (_url, destination) => {
-            writeFileSync(destination, replacement.subarray(0, 20))
-            throw new Error("offline")
-          },
-        },
-      ),
+      }),
     ).rejects.toThrow(/offline/)
 
     expect(readFileSync(target)).toEqual(previous)
@@ -338,6 +339,66 @@ describe("binary download recovery", () => {
       false,
     )
     expect(existsSync(`${target}.candidate`)).toBe(false)
+  })
+
+  it("downloads and revalidates the matching Windows Codex code-mode host", async () => {
+    const binDirectory = temporaryDirectory()
+    const codex = peX64("codex")
+    const codeModeHost = peX64("code-mode-host")
+    const release = codexWindowsRelease(codex, codeModeHost)
+    const downloadFile = vi.fn(async (url: string, destination: string) => {
+      writeFileSync(destination, url.includes("code-mode-host") ? codeModeHost : codex)
+    })
+
+    await expect(
+      downloadCodexPlatform("0.153.4", "win32-x64", release, {
+        binDirectory,
+        downloadFile,
+      }),
+    ).resolves.toBe(true)
+
+    const targetDirectory = join(binDirectory, "win32-x64")
+    const hostPath = join(targetDirectory, "codex-code-mode-host.exe")
+    const markerPath = join(targetDirectory, ".codex-code-mode-host.sha256")
+    expect(readFileSync(hostPath)).toEqual(codeModeHost)
+    expect(readFileSync(markerPath, "utf8").trim()).toBe(
+      createHash("sha256").update(codeModeHost).digest("hex"),
+    )
+    expect(downloadFile).toHaveBeenCalledTimes(2)
+
+    await expect(
+      downloadCodexPlatform("0.153.4", "win32-x64", release, {
+        binDirectory,
+        downloadFile: async () => {
+          throw new Error("verified cache should not download")
+        },
+      }),
+    ).resolves.toBe(true)
+
+    renameSync(hostPath, `${hostPath}.replacement-backup`)
+    await expect(
+      downloadCodexPlatform("0.153.4", "win32-x64", release, {
+        binDirectory,
+        downloadFile: async () => {
+          throw new Error("recovered cache should not download")
+        },
+      }),
+    ).resolves.toBe(true)
+    expect(readFileSync(hostPath)).toEqual(codeModeHost)
+    expect(existsSync(`${hostPath}.replacement-backup`)).toBe(false)
+
+    writeFileSync(hostPath, peX64("tampered"))
+    const repair = vi.fn(async (url: string, destination: string) => {
+      writeFileSync(destination, url.includes("code-mode-host") ? codeModeHost : codex)
+    })
+    await expect(
+      downloadCodexPlatform("0.153.4", "win32-x64", release, {
+        binDirectory,
+        downloadFile: repair,
+      }),
+    ).resolves.toBe(true)
+    expect(repair).toHaveBeenCalledTimes(2)
+    expect(readFileSync(hostPath)).toEqual(codeModeHost)
   })
 
   it.each(["claude", "codex"] as const)(
@@ -356,22 +417,10 @@ describe("binary download recovery", () => {
                 { binDirectory, downloadFile },
               )
           : (downloadFile: (_url: string, destination: string) => Promise<void>) =>
-              downloadCodexPlatform(
-                "0.153.4",
-                "win32-x64",
-                {
-                  assets: [
-                    {
-                      name: "codex-x86_64-pc-windows-msvc.exe",
-                      digest: `sha256:${checksum}`,
-                      browser_download_url:
-                        "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-x86_64-pc-windows-msvc.exe",
-                      size: replacement.length,
-                    },
-                  ],
-                },
-                { binDirectory, downloadFile },
-              )
+              downloadCodexPlatform("0.153.4", "win32-x64", codexWindowsRelease(replacement), {
+                binDirectory,
+                downloadFile,
+              })
 
       await runConcurrentDownloads(download, replacement)
 

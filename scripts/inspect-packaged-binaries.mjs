@@ -172,6 +172,7 @@ export function inspectWindowsApp(appPath, platformKey, options = {}) {
     Flapstack: appPath,
     Claude: path.join(bin, "claude.exe"),
     Codex: path.join(bin, "codex.exe"),
+    "Codex code-mode host": path.join(bin, "codex-code-mode-host.exe"),
     Whisper: path.join(bin, "whisper-cli.exe"),
     Parakeet: path.join(bin, "flapstack-stt-sidecar.exe"),
     "better-sqlite3": path.join(
@@ -204,6 +205,10 @@ export function inspectWindowsApp(appPath, platformKey, options = {}) {
     console.log(`${label}: regular ${inspection.format} ${inspection.architectures.join("+")}`)
   }
   assertDigestMarker(binaries.Parakeet, path.join(bin, ".stt-sidecar.sha256"))
+  assertDigestMarker(
+    binaries["Codex code-mode host"],
+    path.join(bin, ".codex-code-mode-host.sha256"),
+  )
   const asar = path.join(resources, "app.asar")
   const asarStat = fs.lstatSync(asar)
   if (!asarStat.isFile() || asarStat.isSymbolicLink()) {

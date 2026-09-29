@@ -83,7 +83,7 @@ const ALLOWED_NATIVE_PATHS = [
   /^Flapstack-(?:Setup|Portable)-[0-9A-Za-z.+-]+-x64\.exe$/,
   /^(?:d3dcompiler_47|dxcompiler|dxil|ffmpeg|libEGL|libGLESv2|vk_swiftshader|vulkan-1)\.dll$/,
   /^resources\/elevate\.exe$/,
-  /^resources\/bin\/(?:claude|codex|flapstack-stt-sidecar|whisper-cli)\.exe$/,
+  /^resources\/bin\/(?:claude|codex|codex-code-mode-host|flapstack-stt-sidecar|whisper-cli)\.exe$/,
   /^resources\/bin\/(?:ggml|ggml-base|ggml-cpu|whisper)\.dll$/,
   /^resources\/app\.asar\.unpacked\/node_modules\/@anthropic-ai\/claude-agent-sdk-win32-x64\/claude\.exe$/,
   /^resources\/app\.asar\.unpacked\/node_modules\/@img\/sharp-win32-x64\/lib\/(?:libvips[^/]*\.dll|sharp-win32-x64-0\.35\.4\.node)$/,

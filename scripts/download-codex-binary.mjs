@@ -66,6 +66,8 @@ const PLATFORMS = {
   "win32-x64": {
     assetName: "codex-x86_64-pc-windows-msvc.exe",
     outputBinaryName: "codex.exe",
+    codeModeHostAssetName: "codex-code-mode-host-x86_64-pc-windows-msvc.exe",
+    codeModeHostOutputName: "codex-code-mode-host.exe",
   },
 }
 
@@ -158,7 +160,7 @@ function parseSha256Digest(rawDigest) {
   if (!rawDigest.startsWith("sha256:")) return null
 
   const value = rawDigest.slice("sha256:".length).trim().toLowerCase()
-  return value.length > 0 ? value : null
+  return /^[a-f0-9]{64}$/.test(value) ? value : null
 }
 
 function extractTarGz(archivePath, targetDir) {
@@ -213,10 +215,17 @@ export async function downloadPlatform(version, platformKey, release, options = 
   const targetPath = path.join(targetDir, platform.outputBinaryName)
   const assetHashMarkerPath = path.join(targetDir, ".codex-asset.sha256")
   const binaryHashMarkerPath = path.join(targetDir, ".codex-binary.sha256")
+  const codeModeHostPath = platform.codeModeHostOutputName
+    ? path.join(targetDir, platform.codeModeHostOutputName)
+    : null
+  const codeModeHostMarkerPath = codeModeHostPath
+    ? path.join(targetDir, ".codex-code-mode-host.sha256")
+    : null
 
   ensureRealDirectory(binDirectory)
   ensureRealDirectory(targetDir)
   recoverInterruptedFileReplacement(targetPath)
+  if (codeModeHostPath) recoverInterruptedFileReplacement(codeModeHostPath)
 
   const asset = findAsset(release, platform.assetName)
   if (!asset) {
@@ -225,13 +234,27 @@ export async function downloadPlatform(version, platformKey, release, options = 
   }
 
   const expectedHash = parseSha256Digest(asset.digest)
+  const codeModeHostAsset = platform.codeModeHostAssetName
+    ? findAsset(release, platform.codeModeHostAssetName)
+    : null
+  const expectedCodeModeHostHash = codeModeHostAsset
+    ? parseSha256Digest(codeModeHostAsset.digest)
+    : null
   let downloadUrl
+  let codeModeHostDownloadUrl
   try {
     downloadUrl = requireCodexReleaseAssetUrl(
       version,
       platform.assetName,
       asset.browser_download_url,
     )
+    if (platform.codeModeHostAssetName && codeModeHostAsset) {
+      codeModeHostDownloadUrl = requireCodexReleaseAssetUrl(
+        version,
+        platform.codeModeHostAssetName,
+        codeModeHostAsset.browser_download_url,
+      )
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error))
     return false
@@ -239,6 +262,10 @@ export async function downloadPlatform(version, platformKey, release, options = 
 
   if (!expectedHash) {
     console.error(`Missing SHA256 digest for pinned Codex asset ${platform.assetName}`)
+    return false
+  }
+  if (platform.codeModeHostAssetName && (!codeModeHostAsset || !expectedCodeModeHostHash)) {
+    console.error(`Missing release asset or SHA256 digest for ${platform.codeModeHostAssetName}`)
     return false
   }
 
@@ -250,7 +277,10 @@ export async function downloadPlatform(version, platformKey, release, options = 
     const assetMarker = fs.readFileSync(assetHashMarkerPath, "utf8").trim()
     if (
       assetMarker === expectedHash &&
-      (await verifyCachedBinaryDigest(targetPath, platformKey, binaryHashMarkerPath))
+      (await verifyCachedBinaryDigest(targetPath, platformKey, binaryHashMarkerPath)) &&
+      (!codeModeHostPath ||
+        (fs.readFileSync(codeModeHostMarkerPath, "utf8").trim() === expectedCodeModeHostHash &&
+          (await verifyCachedBinaryDigest(codeModeHostPath, platformKey, codeModeHostMarkerPath))))
     ) {
       console.log("  Already downloaded and verified")
       return true
@@ -265,6 +295,12 @@ export async function downloadPlatform(version, platformKey, release, options = 
   const stagingDirectory = fs.mkdtempSync(path.join(targetDir, ".codex-download-"))
   const downloadPath = path.join(stagingDirectory, platform.assetName)
   const candidatePath = path.join(stagingDirectory, platform.outputBinaryName)
+  const codeModeHostDownloadPath = platform.codeModeHostAssetName
+    ? path.join(stagingDirectory, platform.codeModeHostAssetName)
+    : null
+  const codeModeHostCandidatePath = platform.codeModeHostOutputName
+    ? path.join(stagingDirectory, platform.codeModeHostOutputName)
+    : null
   const extractDir = path.join(stagingDirectory, "extract")
   try {
     await (options.downloadFile ?? downloadFileWithRetry)(downloadUrl, downloadPath, {
@@ -282,6 +318,30 @@ export async function downloadPlatform(version, platformKey, release, options = 
       return false
     }
     console.log(`  Verified SHA256: ${actualHash.slice(0, 16)}...`)
+
+    if (codeModeHostDownloadPath && codeModeHostCandidatePath) {
+      await (options.downloadFile ?? downloadFileWithRetry)(
+        codeModeHostDownloadUrl,
+        codeModeHostDownloadPath,
+        {
+          headersForUrl: () => getRequestHeaders(),
+          label: `Codex code-mode host ${platformKey}`,
+          onRetry: ({ attempt, attempts, error }) =>
+            console.warn(
+              `  ${error.message}; retrying Codex code-mode host download (${attempt}/${attempts})...`,
+            ),
+        },
+      )
+      const actualCodeModeHostHash = await sha256File(codeModeHostDownloadPath)
+      if (actualCodeModeHostHash !== expectedCodeModeHostHash) {
+        console.error("  Code-mode host hash mismatch!")
+        console.error(`    Expected: ${expectedCodeModeHostHash}`)
+        console.error(`    Actual:   ${actualCodeModeHostHash}`)
+        return false
+      }
+      fs.copyFileSync(codeModeHostDownloadPath, codeModeHostCandidatePath)
+      assertBundledBinary(codeModeHostCandidatePath, platformKey)
+    }
 
     if (platform.assetName.endsWith(".tar.gz")) {
       fs.mkdirSync(extractDir)
@@ -301,6 +361,10 @@ export async function downloadPlatform(version, platformKey, release, options = 
 
     assertBundledBinary(candidatePath, platformKey)
     const binaryHash = await sha256File(candidatePath)
+    if (codeModeHostCandidatePath) {
+      replaceFileAtomically(codeModeHostCandidatePath, codeModeHostPath)
+      fs.writeFileSync(codeModeHostMarkerPath, `${expectedCodeModeHostHash}\n`)
+    }
     replaceFileAtomically(candidatePath, targetPath)
     fs.writeFileSync(assetHashMarkerPath, `${expectedHash}\n`)
     fs.writeFileSync(binaryHashMarkerPath, `${binaryHash}\n`)

@@ -25,7 +25,10 @@ import {
 import { resolvePackageBuild, runAppBuild } from "../scripts/package-app.mjs"
 import { inspectLinuxApp, runMacNativeModulesSmoke } from "../scripts/inspect-packaged-binaries.mjs"
 import { resolveDarwinTargetPackages } from "../scripts/lib/darwin-target-dependencies.mjs"
-import { resolvePackageTargets } from "../scripts/prepare-package-resources.mjs"
+import {
+  resolvePackageTargets,
+  validatePreparedTarget,
+} from "../scripts/prepare-package-resources.mjs"
 import {
   installWhisperDirectory,
   validateWhisperDirectory,
@@ -127,6 +130,45 @@ function executable(dir: string, name: string, contents: Buffer) {
 }
 
 describe("packaged harness preparation", () => {
+  it("requires a digest-verified Codex code-mode host in Windows package resources", async () => {
+    const root = mkdtempSync(join(tmpdir(), "flapstack-prepared-resources-"))
+    const target = join(root, "win32-x64")
+    mkdirSync(target)
+    const binaries = [
+      "claude.exe",
+      "codex.exe",
+      "codex-code-mode-host.exe",
+      "flapstack-stt-sidecar.exe",
+    ]
+    for (const name of binaries) executable(target, name, pe("x64"))
+    for (const name of [
+      "ggml-base.dll",
+      "ggml-cpu.dll",
+      "ggml.dll",
+      "whisper-cli.exe",
+      "whisper.dll",
+      "flapstack-stt-sidecar-LICENSE",
+      "transcribe.cpp-LICENSE",
+      "whisper.cpp-LICENSE",
+      ".whisper-version",
+    ])
+      writeFileSync(join(target, name), "fixture")
+    writeFileSync(join(target, ".transcribe-version"), "0.1.3\n")
+    writeFileSync(join(target, ".codex-asset.sha256"), `${"a".repeat(64)}\n`)
+    for (const [binary, marker] of [
+      ["codex.exe", ".codex-binary.sha256"],
+      ["codex-code-mode-host.exe", ".codex-code-mode-host.sha256"],
+      ["flapstack-stt-sidecar.exe", ".stt-sidecar.sha256"],
+    ])
+      writeFileSync(join(target, marker), `${await sha256File(join(target, binary))}\n`)
+
+    await expect(validatePreparedTarget("win32-x64", root)).resolves.toBeUndefined()
+    writeFileSync(join(target, "codex-code-mode-host.exe"), pe("x64", 256))
+    await expect(validatePreparedTarget("win32-x64", root)).rejects.toThrow(
+      /code-mode host digest validation failed/i,
+    )
+  })
+
   it("loads packaged macOS native modules through the bundled Electron runtime", () => {
     let invocation: {
       runtime: string
