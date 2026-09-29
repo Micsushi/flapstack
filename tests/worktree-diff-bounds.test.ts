@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, expect, it, vi } from "vitest"
+import { afterAll, expect, it, vi } from "vitest"
 import { getWorktreeDiff } from "../src/main/lib/git/worktree"
 
 const roots: string[] = []
@@ -18,7 +18,7 @@ function repository() {
   git(root, "commit", "--quiet", "-m", "Fixture")
   return root
 }
-afterEach(() =>
+afterAll(() =>
   roots
     .splice(0)
     .forEach((root) =>
