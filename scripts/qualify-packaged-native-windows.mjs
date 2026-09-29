@@ -955,7 +955,7 @@ export async function main() {
     const approvedNonce = `APPROVED-${randomBytes(12).toString("hex")}`
     const approvedContent = `${approvedNonce}\n`
     const approvedPrompt =
-      `Continue this same conversation. Use the Write tool to replace ${approvalAbsolutePath} with exactly ${approvedContent}` +
+      `Continue this same conversation. Use the Write tool to replace ${approvalAbsolutePath} with ${approvedNonce} followed by a newline. ` +
       `Then use the Bash tool to run exactly ${approvalCommand} from the current repository. ` +
       `After both approved actions succeed, reply with exactly the following text and nothing else:\n${approvedNonce}`
     activeRunId = approvedRunId
