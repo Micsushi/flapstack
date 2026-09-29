@@ -44,6 +44,7 @@ export async function main() {
     status: "running",
     surface: "hidden-window",
     providersLaunched: false,
+    packagedSource: provenance.source.sha,
     runtimeSha256: createHash("sha256").update(readFileSync(archive)).digest("hex"),
     checks: [],
   }
@@ -64,9 +65,7 @@ export async function main() {
       packaged: app.isPackaged,
       profile: app.getPath("userData"),
       hidden: BrowserWindow.getAllWindows().every((window) => !window.isVisible()),
-      archive: require("node:fs").existsSync(
-        require("node:path").join(process.resourcesPath, "project-records-runtime.json.gz"),
-      ),
+      resourcesPath: process.resourcesPath,
       authAbsent:
         !process.env.FLAPSTACK_PROJECT_RECORDS_TOKEN &&
         !process.env.FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE &&
@@ -77,7 +76,8 @@ export async function main() {
     assert.equal(actual.packaged, true)
     assert.equal(samePath(actual.profile, expectedProfile), true, "Must use owned fresh profile")
     assert.equal(actual.hidden, true, "Qualification must stay hidden")
-    assert.equal(actual.archive, true)
+    assert.equal(samePath(actual.resourcesPath, resources), true)
+    assert(existsSync(join(actual.resourcesPath, "project-records-runtime.json.gz")))
     assert.equal(actual.authAbsent, true)
     assert.equal(actual.sourceAbsent, true)
     await page.evaluate(() => {
@@ -132,14 +132,19 @@ export async function main() {
     })
   const board = (path) => rpc("projectRecords.boardRequest", { path, method: "GET" }, "mutation")
   try {
+    const missingPythonIdentity = `${identity}m`
     const missingPythonEnv = {
-      ...env,
-      FLAPSTACK_PREVIEW_INSTANCE: `preview-bridge-${identity}-missing-python`,
+      ...childEnvironment(
+        env,
+        missingPythonIdentity,
+        join(ownedRoot, "codex"),
+        join(ownedRoot, "claude"),
+      ),
       FLAPSTACK_PROJECT_RECORDS_PYTHON: join(ownedRoot, "nonexistent-python.exe"),
     }
     const missingPythonProfile = join(
       ownedRoot,
-      `Flapstack Preview preview-bridge-${identity}-missing-python`,
+      `Flapstack Preview preview-bridge-${missingPythonIdentity}`,
     )
     assert(!existsSync(missingPythonProfile), "Failure profile must start empty")
     await start(missingPythonEnv, missingPythonProfile)
@@ -147,6 +152,7 @@ export async function main() {
       board("/v1/storage"),
       /Records requires Python 3.*FLAPSTACK_PROJECT_RECORDS_PYTHON/,
     )
+    await rpc("betaFeatures.set", { feature: "planning", enabled: true }, "mutation")
     assert.equal(await rpc("planSources.recordsMode"), true)
     await assert.rejects(
       rpc(
