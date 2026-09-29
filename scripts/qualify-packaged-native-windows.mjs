@@ -202,7 +202,7 @@ export function assertCodingCompleted(state, expected) {
         /^(bash|powershell)$/i.test(String(payload.name ?? "")) &&
         completedToolIds.has(event.provider_tool_id) &&
         typeof command === "string" &&
-        command.includes("git diff --check") &&
+        (expected.command ? command === expected.command : command.includes("git diff --check")) &&
         command.includes(expected.filePath)
       )
     })
@@ -516,6 +516,12 @@ export async function main() {
     if (!settled) throw new Error(`Timed out resolving approvals for ${runId}`)
     if (launchError) throw launchError
     await launch
+    report.approvalResolution = {
+      answer,
+      kinds: requests.map(
+        (request) => qualificationApprovalKind(request, expected) ?? "unexpected",
+      ),
+    }
     assertQualificationApprovals(requests, expected)
     return requests
   }
@@ -886,7 +892,9 @@ export async function main() {
     report.phase = "approval-deny-allow"
     const approvalFilePath = "approval-proof.txt"
     const approvalAbsolutePath = join(projectPath, approvalFilePath)
-    const approvalCommand = `git diff --check -- ${approvalFilePath}`
+    const approvedNonce = `APPROVED-${randomBytes(12).toString("hex")}`
+    const approvedContent = `${approvedNonce}\n`
+    const approvalCommand = `printf '%s\\n' '${approvedNonce}' > ${approvalFilePath}`
     const approvalExpectation = {
       filePath: approvalAbsolutePath,
       command: approvalCommand,
@@ -931,6 +939,7 @@ export async function main() {
       ...approvalExpectation,
       kinds: ["edit"],
     })
+    report.phase = "approval-denied-assertions"
     assert.equal(
       qualificationApprovalKind(deniedRequests[0], approvalExpectation),
       "edit",
@@ -952,8 +961,6 @@ export async function main() {
     activeRunId = null
 
     const approvedRunId = randomUUID()
-    const approvedNonce = `APPROVED-${randomBytes(12).toString("hex")}`
-    const approvedContent = `${approvedNonce}\n`
     const approvedPrompt =
       `Continue this same conversation. Use the Write tool to replace ${approvalAbsolutePath} with ${approvedNonce} followed by a newline. ` +
       `Then use the Bash tool to run exactly ${approvalCommand} from the current repository. ` +
@@ -980,6 +987,7 @@ export async function main() {
       "Allow once",
       { ...approvalExpectation, kinds: ["edit", "command"] },
     )
+    report.phase = "approval-approved-assertions"
     assert(
       approvedRequests.some(
         (request) => qualificationApprovalKind(request, approvalExpectation) === "edit",
@@ -1004,6 +1012,7 @@ export async function main() {
       messageOffset: 2,
       cwd: projectPath,
       filePath: approvalFilePath,
+      command: approvalCommand,
       approvalMode: "interactive",
       permissionMode: "ask-before-edits",
       providerPermissionMode: "default",
@@ -1021,6 +1030,7 @@ export async function main() {
       [deniedSessionId],
       "Approval retry must resume session",
     )
+    report.phase = "approval-change-review"
     const changeReview = await rpc("runs.getChangeReview", {
       runId: approvedRunId,
       filePath: approvalFilePath,
@@ -1028,6 +1038,7 @@ export async function main() {
     assert.equal(changeReview.fileCount, 1)
     assert.equal(changeReview.recoverable, true)
     assert(changeReview.diff?.includes(approvedNonce), "Run diff must contain the approved edit")
+    report.phase = "approval-undo"
     const undo = await rpc("runs.undoChangeSet", { runId: approvedRunId }, "mutation")
     assert.equal(undo.success, true)
     assert.equal(undo.alreadyUndone, false)
@@ -1036,6 +1047,7 @@ export async function main() {
       [approvalFilePath],
     )
     assert.equal(readFileSync(approvalAbsolutePath, "utf8"), "BASELINE\n")
+    report.phase = "approval-undo-verified"
     activeRunId = null
     report.approval = {
       deniedWithoutWrite: true,
@@ -1125,8 +1137,19 @@ export async function main() {
     await start()
     assertRestart(afterContinuation, await state())
     report.phase = "visual-evidence"
-    const syntheticChat = page.getByText("Approval qualification Claude", { exact: true }).first()
-    assert.equal(await syntheticChat.isVisible(), true, "Target qualification chat must be visible")
+    const closeTutorial = page.getByRole("button", { name: "Close tutorial", exact: true })
+    if (await closeTutorial.isVisible()) await closeTutorial.click()
+    const syntheticChatCandidates = await page
+      .getByText("Approval qualification Claude", { exact: true })
+      .all()
+    const syntheticChat = (
+      await Promise.all(
+        syntheticChatCandidates.map(async (candidate) =>
+          (await candidate.isVisible()) ? candidate : null,
+        ),
+      )
+    ).find(Boolean)
+    assert(syntheticChat, "Target qualification chat must be visible")
     await syntheticChat.click()
     const activePane = page.locator(`[data-active-group][data-active-chat-id="${approvalChat.id}"]`)
     await activePane.waitFor({ state: "visible" })

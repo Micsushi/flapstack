@@ -429,6 +429,7 @@ test("both direct providers require exact identity, transcript, and coding proof
       })
       assertCodingCompleted(approvedState, {
         ...codingExpected,
+        command: "git diff --check -- proof.txt",
         approvalMode: "interactive",
         permissionMode: "ask-before-edits",
         providerPermissionMode: "default",
