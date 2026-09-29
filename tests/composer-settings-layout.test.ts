@@ -23,12 +23,14 @@ describe("composer settings layout", () => {
     expect(overflow).toContain("grid-cols-[88px_minmax(0,1fr)]")
   })
 
-  it("locks immutable launch settings after the first message", () => {
+  it("locks immutable launch settings from provider intent, preserving idle context", () => {
     const composer = read("src/renderer/features/agents/main/chat-input-area.tsx")
     const runtime = read("src/renderer/features/agents/runtime-settings/runtime-selector.tsx")
     const profile = read("src/renderer/features/agent-profiles/chat-agent-profile-control.tsx")
 
-    expect(composer).toContain("const hasStartedChat = messageTokenData.messageCount > 0")
+    expect(composer).toContain(
+      "const hasStartedChat = runtimeChat?.hasProviderIntent ?? messageTokenData.messageCount > 0",
+    )
     expect(composer).toContain("locked={hasStartedChat}")
     expect(runtime).toContain("Runtime locked after the first message")
     expect(profile).toContain("const isLocked = locked || binding.data?.frozen === true")

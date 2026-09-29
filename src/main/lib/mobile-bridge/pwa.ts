@@ -73,8 +73,10 @@ let offer = readOffer()
 let socket = null
 let sessionCredential = readJson(localStorage.getItem("flapstack-mobile-session"))
 let currentItems = new Map()
+const notificationAttempts = new Map()
 let online = false
 let freshUntil = 0
+let lastExpiryCheck = Date.now()
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/service-worker.js").catch(() => undefined)
@@ -99,8 +101,12 @@ $("notifications").addEventListener("click", async () => {
 })
 window.addEventListener("offline", () => setOnline(false))
 setInterval(() => {
+  const now = Date.now()
+  const approvalExpired = [...currentItems.values()].some((item) => item.kind === "approval" && item.expiresAt > lastExpiryCheck && item.expiresAt <= now)
+  lastExpiryCheck = now
   if (online && Date.now() >= freshUntil) {
-    connection.textContent = "State is stale · read-only"
+    render()
+  } else if (approvalExpired) {
     render()
   }
 }, 1000)
@@ -176,7 +182,9 @@ function applyEnvelope(envelope) {
 }
 
 function render() {
+  if (online) connection.textContent = Date.now() < freshUntil ? "Online · current" : "State is stale · read-only"
   itemsRoot.replaceChildren()
+  for (const id of notificationAttempts.keys()) if (!currentItems.has("approval:" + id)) notificationAttempts.delete(id)
   for (const item of currentItems.values()) {
     const row = document.createElement("article")
     row.className = "item"
@@ -218,7 +226,7 @@ function render() {
     if (item.kind === "approval" && Date.now() < item.expiresAt) {
       actions.append(actionButton("Approve", item, () => ({type:"approval.approve"})))
       actions.append(actionButton("Deny", item, () => ({type:"approval.deny"})))
-      maybeNotify("Approval needs attention", item.action)
+      maybeNotify(item)
     }
     row.append(actions)
     if (item.kind === "approval" || item.kind === "orchestration" || item.kind === "run" || item.kind === "automation") {
@@ -304,6 +312,7 @@ function isMutable() {
 function sendCommand(target, action) {
   if (!isMutable()) return announce("State is stale or offline. Cached data is read-only.")
   if (!confirm("Confirm " + action.type + " for this exact " + target.kind + "?")) return
+  if (!isMutable() || currentItems.get(target.kind + ":" + target.id) !== target || (target.kind === "approval" && Date.now() >= target.expiresAt)) return announce("This action expired or changed. Review the current work.")
   const now = Date.now()
   const privileged = ["run.cancel","orchestration.cancel","automation.cancel","approval.approve"].includes(action.type)
   const stepUpToken = $("step-up-token").value.trim()
@@ -324,6 +333,7 @@ function sendCommand(target, action) {
 
 function setOnline(value) {
   online = value
+  if (!value) freshUntil = 0
   connection.dataset.mode = value ? "online" : "offline"
   connection.textContent = value ? "Online · current" : "Offline · read-only"
   render()
@@ -333,9 +343,10 @@ function announce(message) {
   $("pairing-result").textContent = message
 }
 
-function maybeNotify(title, body) {
-  if (online && "Notification" in window && Notification.permission === "granted") {
-    try { new Notification(title, {body: body + ". Delivery is best effort."}) } catch {}
+function maybeNotify(item) {
+  if (isMutable() && "Notification" in window && Notification.permission === "granted" && notificationAttempts.get(item.id) !== item.version) {
+    notificationAttempts.set(item.id, item.version)
+    try { new Notification("Approval needs attention", {body: item.action + ". Delivery is best effort."}) } catch { announce("Notification delivery failed. Check the attention cards here.") }
   }
 }
 

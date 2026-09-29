@@ -22,6 +22,8 @@ export function AgentsVoiceTab() {
   const { data: sttModels } = trpc.speech.listSttModels.useQuery()
   const { data: openAIKeyStatus } = trpc.voice.hasOpenAIKey.useQuery()
   const updateSettings = trpc.speech.updateSettings.useMutation({
+    onError: (error) =>
+      toast.error("Could not update Voice settings", { description: error.message }),
     onSuccess: async () => {
       await utils.speech.getSettings.invalidate()
       await utils.speech.listAdapters.invalidate()
@@ -88,17 +90,37 @@ export function AgentsVoiceTab() {
           Speech to text
         </h4>
         <select
+          aria-label="Transcription engine"
           data-dev-voice-control="stt-adapter"
           value={settings.sttAdapterId}
           onChange={(event) => update({ sttAdapterId: event.target.value })}
           className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
         >
           {adapters.stt.map((adapter) => (
-            <option key={adapter.id} value={adapter.id}>
+            <option
+              key={adapter.id}
+              value={adapter.id}
+              disabled={adapter.kind === "cloud" && !settings.cloudTranscriptionEnabled}
+            >
               {adapter.label}
             </option>
           ))}
         </select>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={settings.cloudTranscriptionEnabled}
+            disabled={updateSettings.isPending}
+            onChange={(event) => update({ cloudTranscriptionEnabled: event.target.checked })}
+          />
+          <span>Allow cloud transcription when I select OpenAI Whisper</span>
+        </label>
+        <p className="text-xs text-muted-foreground">
+          Cloud selection sends each recording to OpenAI with your configured API key. Provider
+          retention terms apply. Flapstack keeps the transcript in Voice History, not the recording.
+          Local errors never trigger an automatic upload. Turn this off to stop active cloud
+          requests and return to local dictation.
+        </p>
         <StatusLine
           available={selectedSttAvailability?.available}
           text={selectedSttAvailability?.reason || "Selected STT adapter is available."}

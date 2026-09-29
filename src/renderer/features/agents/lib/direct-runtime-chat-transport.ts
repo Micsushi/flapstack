@@ -6,9 +6,14 @@ import { trpc, trpcClient } from "../../../lib/trpc"
 import { RuntimeActivityChatChunkMapper } from "./runtime-activity-chat-chunks"
 import { directRuntimeFinishMetadata, type DirectRuntimeUsage } from "./runtime-finish-metadata"
 import { RuntimeResponseLabelFilter, RuntimeTextChatChunkMapper } from "./runtime-text-chat-chunks"
-import { codexThreadVisibilityAtom } from "../../../lib/atoms"
+import {
+  agentsLoginModalOpenAtom,
+  claudeLoginModalConfigAtom,
+  codexThreadVisibilityAtom,
+} from "../../../lib/atoms"
 import { appStore } from "../../../lib/jotai-store"
 import { createStreamChunkBatcher } from "../../../lib/stream-chunk-batcher"
+import { pendingAuthRetryMessageAtom } from "../atoms"
 
 type DirectRuntimeHarness = "codex" | "claude-code"
 type RuntimeEffort = "minimal" | "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
@@ -36,15 +41,23 @@ export async function createDirectRuntimeStream(input: {
   }
   abortSignal?: AbortSignal
 }): Promise<ReadableStream<any> | null> {
-  const resolution = await trpcClient.agentRuntimeChat.prepare.mutate({
-    chatId: input.chatId,
-    subChatId: input.subChatId,
-    harness: input.harness,
-    model: input.model,
-    mode: input.mode,
-    reasoningEffort: input.reasoningEffort,
-    reasoningEnabled: input.reasoningEnabled,
-  })
+  const resolution = await trpcClient.agentRuntimeChat.prepare
+    .mutate({
+      chatId: input.chatId,
+      subChatId: input.subChatId,
+      harness: input.harness,
+      model: input.model,
+      mode: input.mode,
+      reasoningEffort: input.reasoningEffort,
+      reasoningEnabled: input.reasoningEnabled,
+    })
+    .catch((error) => {
+      if (input.harness === "claude-code" && isClaudeRuntimeAuthenticationError(error)) {
+        showClaudeRuntimeAuthenticationRequired(input)
+        throw new Error("Claude Code authentication required")
+      }
+      throw error
+    })
   refreshPinnedRuntimeSelection(input.chatId)
   if (!resolution.direct) return null
 
@@ -76,6 +89,16 @@ export async function createDirectRuntimeStream(input: {
         } catch {
           // Stream already closed.
         }
+      }
+      const failClaudeAuthentication = async () => {
+        if (closed) return
+        closed = true
+        input.abortSignal?.removeEventListener("abort", abort)
+        chunks.cancel()
+        await trpcClient.agentRuntimeChat.cancel.mutate({ runId }).catch(() => undefined)
+        subscription?.unsubscribe()
+        showClaudeRuntimeAuthenticationRequired(input)
+        controller.error(new Error("Claude Code authentication required"))
       }
       function abort() {
         if (closed) return
@@ -131,6 +154,13 @@ export async function createDirectRuntimeStream(input: {
               for (const chunk of activityMapper.beforeText()) chunks.push(chunk)
               for (const chunk of textMapper.map(event)) chunks.push(chunk)
             } else if (event.type === "activity-batch") {
+              if (
+                input.harness === "claude-code" &&
+                hasClaudeRuntimeAuthenticationFailure(event.events)
+              ) {
+                void failClaudeAuthentication()
+                return
+              }
               const usage = event.events.findLast(
                 (item) =>
                   item.kind === "usage" &&
@@ -174,6 +204,10 @@ export async function createDirectRuntimeStream(input: {
           },
           onError(error) {
             if (closed) return
+            if (input.harness === "claude-code" && isClaudeRuntimeAuthenticationError(error)) {
+              void failClaudeAuthentication()
+              return
+            }
             closed = true
             chunks.cancel()
             input.abortSignal?.removeEventListener("abort", abort)
@@ -191,6 +225,65 @@ export async function createDirectRuntimeStream(input: {
       cancelStream?.()
     },
   })
+}
+
+export function isClaudeRuntimeAuthenticationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return (
+    /\b(authentication[ _-](?:required|failed)|not logged in|login required|invalid[ _-](?:api[ _-]?key|oauth|token)|(?:api[ _-]?key|oauth(?: token)?|access token|credentials?)\s+(?:is |are |has )?(?:missing|expired|invalid)|(?:missing|expired|invalid)\s+(?:api[ _-]?key|oauth(?: token)?|access token|credentials?))\b/i.test(
+      message,
+    ) ||
+    /\b(?:api(?: error)?|http(?: error| status)?)\s*:?\s*401\b/i.test(message) ||
+    /\b401\s+(?:unauthorized|authentication failed)\b/i.test(message) ||
+    /(?:^|[^a-z0-9])\/login\b/i.test(message)
+  )
+}
+
+export function hasClaudeRuntimeAuthenticationFailure(events: readonly unknown[]): boolean {
+  return events.some((event) => {
+    if (!event || typeof event !== "object") return false
+    const activity = event as { kind?: unknown; phase?: unknown; payload?: unknown }
+    if ((activity.kind !== "status" && activity.kind !== "warning") || activity.phase !== "failed")
+      return false
+    const payload = activity.payload
+    if (!payload || typeof payload !== "object") return false
+    const { code, message } = payload as { code?: unknown; message?: unknown }
+    if (code === "auth-error") return true
+    return isClaudeRuntimeAuthenticationError(
+      [typeof code === "string" ? code : "", typeof message === "string" ? message : ""].join(" "),
+    )
+  })
+}
+
+function showClaudeRuntimeAuthenticationRequired(input: {
+  subChatId: string
+  prompt: string
+  images: Array<{ base64Data: string; mediaType: string; filename?: string }>
+}): void {
+  appStore.set(pendingAuthRetryMessageAtom, {
+    subChatId: input.subChatId,
+    provider: "claude-code",
+    prompt: input.prompt,
+    ...(input.images.length > 0 ? { images: input.images } : {}),
+    readyToRetry: false,
+  })
+  toast.error("Claude Code authentication required", {
+    description:
+      "Flapstack uses your local Claude Code credentials. Connect Claude Code, then retry this message.",
+    duration: 12000,
+    action: {
+      label: "Connect",
+      onClick: openClaudeLoginModal,
+    },
+  })
+}
+
+function openClaudeLoginModal(): void {
+  appStore.set(claudeLoginModalConfigAtom, {
+    hideCustomModelSettingsLink: true,
+    autoStartAuth: true,
+  })
+  appStore.set(agentsLoginModalOpenAtom, true)
 }
 
 function refreshPinnedRuntimeSelection(chatId: string): void {

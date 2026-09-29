@@ -36,10 +36,12 @@ describe("direct Codex Runtime recovery", () => {
       method: "turn/completed",
       params: { threadId: "thread-1", turn: { id: "turn-1", status: "interrupted", error: null } },
     })
-    for await (const _event of adapter.streamActivity(context, resumed, turn)) {
-      // drain terminal event
-    }
-    await adapter.complete(context)
+    await expect(async () => {
+      for await (const _event of adapter.streamActivity(context, resumed, turn)) {
+        // drain terminal event
+      }
+    }).rejects.toThrow("interrupted")
+    await expect(adapter.complete(context)).rejects.toThrow("interrupted")
     await adapter.archiveSession(context, resumed)
     await adapter.cleanup(context)
     expect(clients[0].closed).toBe(true)
@@ -63,9 +65,14 @@ describe("direct Codex Runtime recovery", () => {
   it("reconciles restart state without replaying uncertain turn intent", async () => {
     const active = new FakeCodexProtocolClient()
     active.responses.set("thread/read", {
-      thread: { id: "thread-1", status: { type: "active", activeFlags: [] }, turns: [] },
+      thread: {
+        id: "thread-1",
+        status: { type: "active", activeFlags: [] },
+        turns: [{ id: "turn-1", status: "inProgress" }],
+      },
     })
     const activeAdapter = createCodexRuntimeAdapterFactory({
+      resolvePersistedTurn: () => ({ providerTurnId: "turn-1" }),
       appendActivity: collectActivity().append,
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolvePersistedSession: () => ({
@@ -88,6 +95,7 @@ describe("direct Codex Runtime recovery", () => {
       },
     })
     const completedAdapter = createCodexRuntimeAdapterFactory({
+      resolvePersistedTurn: () => ({ providerTurnId: "turn-1" }),
       appendActivity: collectActivity().append,
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolvePersistedSession: () => ({
@@ -110,6 +118,104 @@ describe("direct Codex Runtime recovery", () => {
     })()
     expect(await uncertainAdapter.reconcile(runtimeContext())).toBe("uncertain")
   })
+
+  it.each([
+    {
+      name: "completed archived turn",
+      persistedTurn: "turn-1",
+      threadId: "thread-1",
+      threadStatus: "notLoaded",
+      turns: [{ id: "turn-1", status: "completed" }],
+      expected: "completed",
+    },
+    {
+      name: "unloaded unfinished turn",
+      persistedTurn: "turn-1",
+      threadId: "thread-1",
+      threadStatus: "notLoaded",
+      turns: [{ id: "turn-1", status: "inProgress" }],
+      expected: "uncertain",
+    },
+    {
+      name: "missing persisted turn",
+      persistedTurn: null,
+      threadId: "thread-1",
+      turns: [{ id: "older", status: "completed" }],
+      expected: "uncertain",
+    },
+    {
+      name: "missing requested turn",
+      persistedTurn: "turn-1",
+      threadId: "thread-1",
+      turns: [{ id: "older", status: "completed" }],
+      expected: "uncertain",
+    },
+    {
+      name: "wrong thread",
+      persistedTurn: "turn-1",
+      threadId: "other",
+      turns: [{ id: "turn-1", status: "completed" }],
+      expected: "uncertain",
+    },
+    {
+      name: "interrupted turn",
+      persistedTurn: "turn-1",
+      threadId: "thread-1",
+      turns: [{ id: "turn-1", status: "interrupted" }],
+      expected: "uncertain",
+    },
+    {
+      name: "failed turn",
+      persistedTurn: "turn-1",
+      threadId: "thread-1",
+      turns: [{ id: "turn-1", status: "failed" }],
+      expected: "uncertain",
+    },
+    {
+      name: "ambiguous turn",
+      persistedTurn: "turn-1",
+      threadId: "thread-1",
+      turns: [
+        { id: "turn-1", status: "completed" },
+        { id: "turn-1", status: "inProgress" },
+      ],
+      expected: "uncertain",
+    },
+    {
+      name: "completed turn followed by another active turn",
+      persistedTurn: "turn-1",
+      threadId: "thread-1",
+      turns: [
+        { id: "turn-1", status: "completed" },
+        { id: "later", status: "inProgress" },
+      ],
+      expected: "completed",
+    },
+  ])(
+    "reconciles exact run identity: $name",
+    async ({ persistedTurn, threadId, turns, expected, threadStatus }) => {
+      const client = new FakeCodexProtocolClient()
+      client.responses.set("thread/read", {
+        thread: { id: threadId, status: { type: threadStatus ?? "active" }, turns },
+      })
+      const adapter = createCodexRuntimeAdapterFactory({
+        appendActivity: collectActivity().append,
+        resolveThreadParams: () => ({ cwd: "/worktree" }),
+        resolvePersistedSession: () => ({
+          providerSessionId: "session-1",
+          providerThreadId: "thread-1",
+        }),
+        resolvePersistedTurn: () => (persistedTurn ? { providerTurnId: persistedTurn } : null),
+        resolveCommand: () => "/fake/codex",
+        getBinaryVersion: async () => "0.153.4",
+        createClient: () => client,
+      })()
+      expect(await adapter.reconcile(runtimeContext())).toBe(expected)
+      expect(
+        client.requests.some(({ method }) => method === "turn/start" || method === "thread/start"),
+      ).toBe(false)
+    },
+  )
 
   it("interrupts a recovered turn only from exact persisted thread and turn identity", async () => {
     const client = new FakeCodexProtocolClient()
@@ -143,6 +249,7 @@ describe("direct Codex Runtime recovery", () => {
     }
     const diagnostics: string[] = []
     const adapter = createCodexRuntimeAdapterFactory({
+      resolvePersistedTurn: () => ({ providerTurnId: "turn-1" }),
       appendActivity: collectActivity().append,
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolvePersistedSession: () => ({
@@ -157,6 +264,33 @@ describe("direct Codex Runtime recovery", () => {
 
     await expect(adapter.reconcile(runtimeContext())).resolves.toBe("uncertain")
     expect(diagnostics).toEqual(["Restart reconciliation cleanup failed: cleanup failed"])
+  })
+
+  it("does not complete an externally interrupted turn when the local signal is live", async () => {
+    const client = new FakeCodexProtocolClient()
+    const adapter = createCodexRuntimeAdapterFactory({
+      appendActivity: collectActivity().append,
+      resolveThreadParams: () => ({ cwd: "/worktree" }),
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.153.4",
+      createClient: () => client,
+    })()
+    const context = runtimeContext()
+    const session = await adapter.startSession(context)
+    const turn = await adapter.startTurn(context, session, "PROMPT")
+    client.queue.emit({
+      method: "turn/completed",
+      params: { threadId: "thread-1", turn: { id: "turn-1", status: "interrupted" } },
+    })
+    await expect(async () => {
+      for await (const _event of adapter.streamActivity(context, session, turn)) {
+        // drain terminal event
+      }
+    }).rejects.toThrow("interrupted")
+    expect(context.signal.aborted).toBe(false)
+    await expect(adapter.complete(context)).rejects.toThrow("interrupted")
+    await expect(adapter.reconcile(context)).resolves.toBe("uncertain")
+    await adapter.cleanup(context)
   })
 
   it("fails closed on process crash and permission timeout", async () => {

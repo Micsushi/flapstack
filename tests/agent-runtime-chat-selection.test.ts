@@ -40,6 +40,88 @@ describe("Agent Runtime chat selection", () => {
     expect(database.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
   })
 
+  it("configures user-only idle context in place without changing history or starting a run", () => {
+    const context = [
+      { id: "context", role: "user", parts: [{ type: "text", text: "Quoted task context" }] },
+    ]
+    const { chatId, subChatId } = seedRuntimeChat(database, { harness: "local", messages: context })
+    const service = createRuntimeChatLifecycleService(database)
+    expect(service.hasProviderIntent(chatId)).toBe(false)
+    service.setEmptyChatProvider({ chatId, subChatId, harness: "codex" })
+    service.setEmptyChatPreference({ chatId, preference: "codex" })
+    expect(
+      database
+        .prepare("SELECT harness, model, messages, session_id FROM sub_chats WHERE id = ?")
+        .get(subChatId),
+    ).toEqual({
+      harness: "codex",
+      model: null,
+      messages: JSON.stringify(context),
+      session_id: null,
+    })
+    expect(database.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
+    expect(database.prepare("SELECT count(*) count FROM chats").get()).toEqual({ count: 1 })
+  })
+
+  it.each(["assistant", "session", "stream", "run"])(
+    "keeps %s provider intent immutable during provider selection",
+    (kind) => {
+      const { chatId, subChatId } = seedRuntimeChat(database)
+      if (kind === "assistant")
+        database
+          .prepare("UPDATE sub_chats SET messages = ? WHERE id = ?")
+          .run(JSON.stringify([{ role: "assistant", parts: [] }]), subChatId)
+      if (kind === "session")
+        database.prepare("UPDATE sub_chats SET session_id = 'existing' WHERE id = ?").run(subChatId)
+      if (kind === "stream")
+        database.prepare("UPDATE sub_chats SET stream_id = 'existing' WHERE id = ?").run(subChatId)
+      if (kind === "run")
+        database
+          .prepare(
+            "INSERT INTO agent_runs (id,chat_id,status,started_at) VALUES ('prior',?,'completed',1)",
+          )
+          .run(chatId)
+      const service = createRuntimeChatLifecycleService(database)
+      expect(service.hasProviderIntent(chatId)).toBe(true)
+      expect(() => service.setEmptyChatProvider({ chatId, subChatId, harness: "local" })).toThrow(
+        "Started chats",
+      )
+      expect(database.prepare("SELECT harness, model FROM chats WHERE id = ?").get(chatId)).toEqual(
+        { harness: "codex", model: "model" },
+      )
+    },
+  )
+
+  it("rejects another chat's conversation and incompatible persisted Runtime before provider mutation", () => {
+    const source = seedRuntimeChat(database)
+    const other = seedRuntimeChat(database, { chatId: "other" })
+    const service = createRuntimeChatLifecycleService(database)
+    expect(() =>
+      service.setEmptyChatProvider({
+        chatId: source.chatId,
+        subChatId: other.subChatId,
+        harness: "local",
+      }),
+    ).toThrow("Conversation is missing")
+    service.setEmptyChatPreference({ chatId: source.chatId, preference: "codex" })
+    expect(() => service.setEmptyChatProvider({ ...source, harness: "local" })).toThrow()
+    expect(database.prepare("SELECT harness FROM chats WHERE id = ?").get(source.chatId)).toEqual({
+      harness: "codex",
+    })
+  })
+
+  it.each(["not-json", "null", '{"role":"assistant"}', '["assistant",null,3,{"role":"user"}]'])(
+    "preserves malformed/non-message history handling for %s",
+    (messages) => {
+      const { chatId, subChatId } = seedRuntimeChat(database)
+      database.prepare("UPDATE sub_chats SET messages = ? WHERE id = ?").run(messages, subChatId)
+      const service = createRuntimeChatLifecycleService(database)
+      expect(service.hasProviderIntent(chatId)).toBe(false)
+      database.prepare("UPDATE sub_chats SET session_id = 'existing' WHERE id = ?").run(subChatId)
+      expect(service.hasProviderIntent(chatId)).toBe(true)
+    },
+  )
+
   it("accepts the matching enhanced preference and rejects it for another harness", () => {
     const codex = seedRuntimeChat(database, { chatId: "codex-enhanced" })
     const service = createRuntimeChatLifecycleService(database)

@@ -16,6 +16,9 @@ vi.mock("qrcode", () => ({
   default: { toDataURL: mock.qr },
 }))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock("../src/renderer/components/dialogs/settings-tabs/remote-computer-client", () => ({
+  RemoteComputerClientSection: () => null,
+}))
 vi.mock("../src/renderer/lib/trpc", () => ({
   trpc: {
     useUtils: () => ({
@@ -59,17 +62,17 @@ const running = {
   enabled: true,
   bindAddress: "192.168.1.2",
   port: 4317,
-  fingerprint: "sha256:fixture",
+  fingerprint: "sha256:" + "a".repeat(64),
   failure: null,
 }
+const offerCreatedAt = Date.now()
 const offer = {
-  version: 1,
-  offerId: "offer",
+  protocolVersion: 1,
   endpoint: "https://192.168.1.2:4317",
-  certificateFingerprint: "sha256:fixture",
-  oneTimeToken: "synthetic",
-  createdAt: 0,
-  expiresAt: 9999999999999,
+  certificateFingerprint: "sha256:" + "a".repeat(64),
+  oneTimeToken: "a".repeat(43),
+  createdAt: offerCreatedAt,
+  expiresAt: offerCreatedAt + 120_000,
 }
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
@@ -182,7 +185,7 @@ it("clears the previous QR while encoding an immediately returned replacement", 
         finish = resolve
       }),
   )
-  mock.create.mockResolvedValue({ ...offer, offerId: "next", oneTimeToken: "replacement" })
+  mock.create.mockResolvedValue({ ...offer, oneTimeToken: "b".repeat(43) })
   await click("Create fresh pairing QR")
   expect(container.querySelector("img")).toBeNull()
   await act(async () => finish("data:image/png;base64,bmV3"))

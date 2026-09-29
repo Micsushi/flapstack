@@ -505,6 +505,34 @@
       "when": 1788862420575,
       "tag": "0071_worktree_declarations",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "6",
+      "when": 1789900000000,
+      "tag": "0072_record_task_worktrees",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "6",
+      "when": 1790000000000,
+      "tag": "0073_records_plan_pairs",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "6",
+      "when": 1790000000001,
+      "tag": "0074_runtime_launch_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "6",
+      "when": 1790000000002,
+      "tag": "0075_record_task_worktree_base_branch",
+      "breakpoints": true
     }
   ]
 }

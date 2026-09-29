@@ -155,6 +155,39 @@ export class RuntimeChatLifecycleService {
       .immediate()
   }
 
+  setEmptyChatProvider(input: { chatId: string; subChatId: string; harness: string }) {
+    return this.sqlite
+      .transaction(() => {
+        const chat = this.requireChat(input.chatId)
+        this.assertNoActiveRun(input.chatId)
+        if (this.hasProviderIntent(input.chatId)) {
+          throw new RuntimeChatLifecycleError(
+            "chat-started",
+            "Started chats cannot change provider in place.",
+          )
+        }
+        const subChat = this.sqlite
+          .prepare("SELECT harness FROM sub_chats WHERE id = ? AND chat_id = ?")
+          .get(input.subChatId, input.chatId) as Row | undefined
+        if (!subChat)
+          throw new RuntimeChatLifecycleError(
+            "chat-missing",
+            "Conversation is missing from this Chat.",
+          )
+        const preference = (chat.runtime_preference ?? "auto") as AgentRuntimePreference
+        assertCompatible(input.harness, preference)
+        const timestamp = millisecondsToEpochSeconds(Date.now())
+        this.sqlite
+          .prepare("UPDATE chats SET harness = ?, model = NULL, updated_at = ? WHERE id = ?")
+          .run(input.harness, timestamp, input.chatId)
+        this.sqlite
+          .prepare("UPDATE sub_chats SET harness = ?, model = NULL, updated_at = ? WHERE id = ?")
+          .run(input.harness, timestamp, input.subChatId)
+        return { chatId: input.chatId, subChatId: input.subChatId, harness: input.harness }
+      })
+      .immediate()
+  }
+
   previewContinuation(input: RuntimeContinuationInput): RuntimeContinuationPreview {
     const source = this.requireChat(input.sourceChatId)
     this.assertNoActiveRun(input.sourceChatId)
@@ -463,18 +496,35 @@ export class RuntimeChatLifecycleService {
     }
   }
 
-  private hasProviderIntent(chatId: string): boolean {
+  hasProviderIntent(chatId: string): boolean {
     const run = this.sqlite
       .prepare("SELECT id FROM agent_runs WHERE chat_id = ? LIMIT 1")
       .get(chatId)
     if (run) return true
-    const rows = this.sqlite
-      .prepare("SELECT session_id, stream_id, messages FROM sub_chats WHERE chat_id = ?")
-      .all(chatId) as Row[]
-    return rows.some((row) => {
-      if (row.session_id || row.stream_id) return true
-      return parseMessages(row.messages).some((message) => message.role === "assistant")
-    })
+    const session = this.sqlite
+      .prepare(
+        "SELECT 1 FROM sub_chats WHERE chat_id = ? AND (COALESCE(session_id, '') != '' OR COALESCE(stream_id, '') != '') LIMIT 1",
+      )
+      .get(chatId)
+    if (session) return true
+    // Keep metadata reads free of transcript materialization. As with parseMessages,
+    // malformed/non-array histories contribute no message roles; runs/sessions above
+    // remain authoritative even when their history cannot be decoded.
+    return Boolean(
+      this.sqlite
+        .prepare(
+          `
+      SELECT 1 FROM sub_chats AS conversation,
+      json_each(CASE WHEN json_valid(conversation.messages)
+        THEN CASE WHEN json_type(conversation.messages) = 'array' THEN conversation.messages ELSE '[]' END
+        ELSE '[]' END) AS message
+      WHERE conversation.chat_id = ?
+        AND CASE WHEN message.type = 'object' THEN json_extract(message.value, '$.role') END = 'assistant'
+      LIMIT 1
+    `,
+        )
+        .get(chatId),
+    )
   }
 
   private existingContinuation(

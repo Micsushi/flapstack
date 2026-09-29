@@ -20,6 +20,7 @@ import { Input } from "../../components/ui/input"
 import { Label } from "../../components/ui/label"
 import { Textarea } from "../../components/ui/textarea"
 import { trpc } from "../../lib/trpc"
+import { RecordsPlanPromotionDialog } from "./records-plan-promotion-dialog"
 import {
   desktopViewAtom,
   openAgentChatIdsAtom,
@@ -41,7 +42,37 @@ type PromotionForm = {
   seedText: string
 }
 
-export function PlanPromotionDialog({
+type PlanPromotionDialogProps = {
+  sourceProjectId: string
+  source: PlanSourceSnapshot
+  candidate: PlanCandidate
+  onClose: () => void
+}
+
+export function PlanPromotionDialog(props: PlanPromotionDialogProps) {
+  const mode = trpc.planSources.recordsMode.useQuery()
+  if (!mode.isSuccess)
+    return (
+      <Dialog open onOpenChange={(open) => !open && props.onClose()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Promote plan candidate</DialogTitle>
+          </DialogHeader>
+          <p role="status">{mode.isError ? mode.error.message : "Loading destination…"}</p>
+          <Button variant="outline" onClick={props.onClose}>
+            Cancel
+          </Button>
+        </DialogContent>
+      </Dialog>
+    )
+  return mode.data ? (
+    <RecordsPlanPromotionDialog {...props} />
+  ) : (
+    <LegacyPlanPromotionDialog {...props} />
+  )
+}
+
+function LegacyPlanPromotionDialog({
   sourceProjectId,
   source,
   candidate,

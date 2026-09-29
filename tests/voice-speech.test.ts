@@ -136,12 +136,18 @@ describe("spoken fallback summary", () => {
 
 describe("adapter registry", () => {
   it("exposes local-first STT and Kokoro-default TTS adapters", () => {
-    expect(sttAdapters.map((a) => a.id)).toEqual(["local-parakeet", "local-whisper"])
+    expect(sttAdapters.map((a) => a.id)).toEqual([
+      "local-parakeet",
+      "local-whisper",
+      "openai-whisper",
+    ])
     expect(ttsAdapters.map((a) => a.id)).toEqual(["kokoro", "native-os"])
   })
 
   it("falls back to the local adapter for an obsolete cloud selection", () => {
-    const adapter = resolveSttAdapter({ sttAdapterId: "openai-whisper", preferOffline: true })
+    const adapter = resolveSttAdapter(
+      normalizeVoiceSettings({ sttAdapterId: "openai-whisper", preferOffline: true }),
+    )
     expect(adapter.id).toBe("local-parakeet")
   })
 

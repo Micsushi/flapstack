@@ -45,7 +45,7 @@ function argsValue(name) {
   return index >= 0 ? process.argv[index + 1] : null
 }
 
-function cargoCommand() {
+export function cargoCommand() {
   const direct = spawnSync("cargo", ["--version"], { stdio: "ignore" })
   if (!direct.error && direct.status === 0) return { command: "cargo", env: {} }
   const home = process.env.RUSTUP_HOME || path.join(os.homedir(), ".rustup")
@@ -55,8 +55,9 @@ function cargoCommand() {
     stableRustToolchainName(process.platform, process.arch),
     "bin",
   )
-  const cargo = path.join(stable, "cargo")
-  const rustc = path.join(stable, "rustc")
+  const suffix = process.platform === "win32" ? ".exe" : ""
+  const cargo = path.join(stable, `cargo${suffix}`)
+  const rustc = path.join(stable, `rustc${suffix}`)
   if (fs.existsSync(cargo) && fs.existsSync(rustc))
     return {
       command: cargo,
@@ -98,7 +99,7 @@ function build(targetKey) {
   const target = rustTargets[targetKey]
   if (!target) throw new Error(`Unsupported STT sidecar target: ${targetKey}`)
   const hostKey = `${process.platform}-${process.arch}`
-  const args = ["build", "--release"]
+  const args = ["build", "--release", "--locked"]
   if (targetKey !== hostKey) {
     const rustup = spawnSync("rustup", ["target", "add", target], { stdio: "inherit" })
     if (rustup.error || rustup.status !== 0)

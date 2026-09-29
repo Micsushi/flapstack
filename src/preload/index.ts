@@ -1,3 +1,4 @@
+import type { AgentActivityInvalidation } from "../shared/agent-activity"
 import { contextBridge, ipcRenderer, webUtils } from "electron"
 import { exposeElectronTRPC } from "trpc-electron/main"
 import {
@@ -336,6 +337,11 @@ contextBridge.exposeInMainWorld("desktopApi", {
     const safeResponse = parseDevRendererControlResponse(response)
     if (safeResponse) ipcRenderer.send(DEV_RENDERER_CONTROL_RESPONSE_CHANNEL, safeResponse)
   },
+  onAgentActivityInvalidated: (callback: (payload: AgentActivityInvalidation) => void) => {
+    const handler = (_event: unknown, payload: AgentActivityInvalidation) => callback(payload)
+    ipcRenderer.on("agent-activity:invalidated", handler)
+    return () => ipcRenderer.removeListener("agent-activity:invalidated", handler)
+  },
   onProductMcpInvalidation: (callback: (payload: ProductMcpRendererInvalidation) => void) => {
     const handler = (_event: unknown, raw: unknown) => {
       const payload = parseProductMcpRendererInvalidation(raw)
@@ -577,6 +583,7 @@ export interface DesktopApi {
   onDevMcpSettingsChanged: (callback: (payload: DevMcpSettingsInvalidation) => void) => () => void
   onDevMcpViewChanged: (callback: (payload: DevTestControlViewPayload) => void) => () => void
   onDevMcpAgentInput: (callback: (payload: DevAgentInputPayload) => void) => () => void
+  onAgentActivityInvalidated: (callback: (payload: AgentActivityInvalidation) => void) => () => void
   onProductMcpInvalidation: (
     callback: (payload: ProductMcpRendererInvalidation) => void,
   ) => () => void

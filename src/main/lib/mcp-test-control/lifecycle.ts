@@ -1,4 +1,5 @@
-import { win32 } from "node:path"
+import { readFileSync } from "node:fs"
+import { join, win32 } from "node:path"
 
 export function isPreviewExecutable(executablePath = process.execPath): boolean {
   const name = win32.basename(executablePath, win32.extname(executablePath)).toLowerCase()
@@ -15,11 +16,51 @@ export function isStage6PerformanceProfile(
   return env.FLAPSTACK_STAGE6_PERFORMANCE_PROFILE === "1"
 }
 
+export function isHiddenPreviewVerification(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env.FLAPSTACK_PREVIEW_HEADLESS === "1"
+}
+
 /** A hidden launch must never fall back to an ordinary or shared user profile. */
 export function isHeadlessPerformanceProfile(
   isPackaged: boolean,
   env: Readonly<Record<string, string | undefined>> = process.env,
+  executablePath = process.execPath,
+  resourcesPath = process.resourcesPath,
 ): boolean {
+  if (env.FLAPSTACK_PREVIEW_HEADLESS !== undefined) {
+    const instance = env.FLAPSTACK_PREVIEW_INSTANCE ?? ""
+    const identity = /^preview-bridge-(\d+-[a-z0-9]+)$/.exec(instance)?.[1]
+    if (
+      env.FLAPSTACK_PREVIEW_HEADLESS !== "1" ||
+      !isPackaged ||
+      !isPreviewExecutable(executablePath) ||
+      !identity ||
+      !new RegExp(`^pb-${identity}-[a-f0-9]{12}$`).test(env.FLAPSTACK_PREVIEW_RUN_TOKEN ?? "") ||
+      env.FLAPSTACK_STAGE6_HEADLESS !== undefined ||
+      env.FLAPSTACK_STAGE6_PERFORMANCE_PROFILE !== undefined ||
+      env.FLAPSTACK_DEV_INSTANCE !== undefined ||
+      env.FLAPSTACK_DEV_MCP_PROFILE !== undefined ||
+      env.FLAPSTACK_ENABLE_DEV_TEST_CONTROL !== undefined
+    ) {
+      throw new Error("Hidden Preview verification requires an isolated Preview package profile.")
+    }
+    try {
+      const provenance = JSON.parse(
+        readFileSync(join(resourcesPath, "package-provenance.json"), "utf8"),
+      )
+      if (
+        provenance?.build?.channel !== "preview" ||
+        provenance?.package?.productName !== "Flapstack Preview"
+      ) {
+        throw new Error("Preview package identity mismatch")
+      }
+    } catch {
+      throw new Error("Hidden Preview verification requires embedded Preview package provenance.")
+    }
+    return true
+  }
   if (env.FLAPSTACK_STAGE6_HEADLESS !== "1") return false
   const instance = env.FLAPSTACK_DEV_INSTANCE ?? ""
   if (

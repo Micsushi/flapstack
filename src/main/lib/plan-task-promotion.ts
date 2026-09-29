@@ -36,7 +36,7 @@ function stableId(prefix: string, ...parts: string[]): string {
   return `${prefix}-${digest}`
 }
 
-function resolveCandidate(snapshot: ProjectPlanSnapshot, reference: PlanCandidateReference) {
+export function resolveCandidate(snapshot: ProjectPlanSnapshot, reference: PlanCandidateReference) {
   if (snapshot.projectId !== reference.sourceProjectId) {
     throw new PlanTaskPromotionError("not-found", "Plan source project is missing.")
   }

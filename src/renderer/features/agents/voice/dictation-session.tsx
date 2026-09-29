@@ -41,9 +41,11 @@ type DictationSessionValue = {
   isRecording: boolean
   isStarting: boolean
   isTranscribing: boolean
+  canCancelTranscription: boolean
   audioLevel: number
   start: (target: DictationTarget) => Promise<void>
   stop: () => Promise<void>
+  cancel: () => Promise<void>
 }
 
 const DictationSessionContext = createContext<DictationSessionValue | null>(null)
@@ -73,6 +75,9 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
   const baseDraftRef = useRef("")
   const streamStartRef = useRef<Promise<unknown> | null>(null)
   const operationRef = useRef<Promise<void> | null>(null)
+  const cancelledRef = useRef(false)
+  const transcriptionDispatchedRef = useRef(false)
+  const cancellationRef = useRef<Promise<void> | null>(null)
   const sessionIdRef = useRef<string | null>(null)
   const startGenerationRef = useRef(0)
   const startingRef = useRef(false)
@@ -107,20 +112,27 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
       .catch((error) => console.warn("[Voice] Legacy playback rate migration failed", error))
   }, [updateSettingsMutation, utils.speech.getSettings, voiceSettings])
 
-  const { isRecording, audioLevel, startRecording, stopRecording, cancelRecording, waitForPcm } =
-    useVoiceRecording({
-      normalizeRecording: voiceSettings?.sttAdapterId !== "local-parakeet",
-      onPcmChunk: async (chunk) => {
-        if (streamStartRef.current) await streamStartRef.current
-        const sessionId = sessionIdRef.current
-        if (!sessionId) return
-        const update = await feedStreamingMutation.mutateAsync({
-          sessionId,
-          pcmBase64: float32ToBase64(chunk),
-        })
-        applyStreamingTranscript(update.committed, update.tentative)
-      },
-    })
+  const {
+    isRecording,
+    error: recordingError,
+    audioLevel,
+    startRecording,
+    stopRecording,
+    cancelRecording,
+    waitForPcm,
+  } = useVoiceRecording({
+    normalizeRecording: voiceSettings?.sttAdapterId !== "local-parakeet",
+    onPcmChunk: async (chunk) => {
+      if (streamStartRef.current) await streamStartRef.current
+      const sessionId = sessionIdRef.current
+      if (!sessionId) return
+      const update = await feedStreamingMutation.mutateAsync({
+        sessionId,
+        pcmBase64: float32ToBase64(chunk),
+      })
+      applyStreamingTranscript(update.committed, update.tentative)
+    },
+  })
 
   useEffect(() => {
     if (!startedAt) return
@@ -152,11 +164,16 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
       try {
         const target = activeTargetRef.current
         const blob = await stopRecording()
+        if (cancelledRef.current) return
         if (voiceSettings?.sttAdapterId === "local-parakeet") {
           await waitForPcm()
+          if (cancelledRef.current) return
+          transcriptionDispatchedRef.current = true
           const result = await finalizeStreamingMutation.mutateAsync({
             sessionId: sessionIdRef.current ?? "",
           })
+          await cancellationRef.current
+          if (cancelledRef.current) return
           publish(composeDictationDraft(baseDraftRef.current, result.text.trim()))
           if (!result.historySaved)
             toast.warning("Transcript kept in the draft but Voice History could not save", {
@@ -164,8 +181,12 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
             })
           if (!result.text.trim()) toast.info("No speech detected")
         } else if (blob.size >= 1000 && target) {
+          const audio = await blobToBase64(blob)
+          if (cancelledRef.current) return
+          transcriptionDispatchedRef.current = true
           const result = await transcribeMutation.mutateAsync({
-            audio: await blobToBase64(blob),
+            sessionId: sessionId ?? undefined,
+            audio,
             format: getAudioFormat(blob.type),
             chatId: target.chatId,
             subChatId: target.subChatId,
@@ -175,6 +196,8 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
             selectedContext: target.selectedContext,
             allowCloudSelectedContext: target.allowCloudSelectedContext ?? false,
           })
+          await cancellationRef.current
+          if (cancelledRef.current) return
           if (result.text.trim())
             publish(composeDictationDraft(baseDraftRef.current, result.text.trim()))
           else toast.info("No speech detected")
@@ -184,6 +207,8 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
             })
         }
       } catch (error) {
+        await cancellationRef.current
+        if (cancelledRef.current) return
         if (voiceSettings?.sttAdapterId === "local-parakeet" && sessionId)
           await cancelStreamingMutation.mutateAsync({ sessionId }).catch(() => undefined)
         console.error("[DictationSession] Finalization failed:", error)
@@ -215,9 +240,39 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
     waitForPcm,
   ])
 
+  const cancel = useCallback(async () => {
+    const operation = operationRef.current
+    if (!operation) return
+    if (voiceSettings?.sttAdapterId === "local-parakeet") {
+      await operation
+      return
+    }
+    if (!cancellationRef.current) {
+      if (!transcriptionDispatchedRef.current) cancelledRef.current = true
+      const sessionId = sessionIdRef.current
+      cancellationRef.current = sessionId
+        ? cancelStreamingMutation
+            .mutateAsync({ sessionId })
+            .then((result) => {
+              if (result.cancelled) cancelledRef.current = true
+            })
+            .catch(() => undefined)
+        : Promise.resolve()
+    }
+    await cancellationRef.current
+    await operation
+  }, [cancelStreamingMutation, voiceSettings?.sttAdapterId])
+
+  useEffect(() => {
+    if (recordingError && activeTargetRef.current && !startingRef.current) void stop()
+  }, [isStarting, recordingError, stop])
+
   const start = useCallback(
     async (target: DictationTarget) => {
       if (activeTargetRef.current || operationRef.current) await stop()
+      cancelledRef.current = false
+      transcriptionDispatchedRef.current = false
+      cancellationRef.current = null
       const generation = ++startGenerationRef.current
       const sessionId = window.crypto.randomUUID()
       sessionIdRef.current = sessionId
@@ -292,11 +347,25 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
       isRecording,
       isStarting,
       isTranscribing,
+      canCancelTranscription:
+        voiceSettings?.sttAdapterId === "local-whisper" ||
+        voiceSettings?.sttAdapterId === "openai-whisper",
       audioLevel,
       start,
       stop,
+      cancel,
     }),
-    [activeTarget?.key, audioLevel, isRecording, isStarting, isTranscribing, start, stop],
+    [
+      activeTarget?.key,
+      audioLevel,
+      isRecording,
+      isStarting,
+      isTranscribing,
+      cancel,
+      start,
+      stop,
+      voiceSettings?.sttAdapterId,
+    ],
   )
   const originIsVisible = Boolean(
     activeTarget &&
@@ -329,8 +398,15 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
           <Button
             size="icon"
             variant="ghost"
-            aria-label="Stop background dictation"
-            onClick={() => void stop()}
+            disabled={isTranscribing && !value.canCancelTranscription}
+            aria-label={
+              isTranscribing
+                ? value.canCancelTranscription
+                  ? "Cancel transcription"
+                  : "Finishing dictation"
+                : "Stop background dictation"
+            }
+            onClick={() => void (isTranscribing ? cancel() : stop())}
           >
             <Square className="h-3.5 w-3.5 fill-current" />
           </Button>

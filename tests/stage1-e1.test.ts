@@ -273,6 +273,7 @@ function createTestSchema() {
       runtime_protocol_version text DEFAULT 'legacy-stage3' NOT NULL,
       runtime_capability_snapshot text DEFAULT '{}' NOT NULL,
       runtime_control_snapshot text DEFAULT '{}' NOT NULL,
+      runtime_launch_identity text,
       provider_account_id text DEFAULT 'legacy-system-default' NOT NULL,
       provider_auth_mode text DEFAULT 'legacy' NOT NULL,
       provider_runtime_target text DEFAULT 'local' NOT NULL,

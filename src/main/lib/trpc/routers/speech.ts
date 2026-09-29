@@ -36,6 +36,7 @@ import {
   getVoiceHistoryAudioPath,
 } from "../../speech/history"
 import { shell } from "electron"
+import { cancelCloudTranscriptions } from "../../speech/stt-cloud"
 import { publicProcedure, router } from "../index"
 
 const speechOwnership = new SpeechRequestOwnership()
@@ -66,6 +67,7 @@ export const speechRouter = router({
       z.object({
         voiceSettingsVersion: z.literal(2).optional(),
         sttAdapterId: z.string().optional(),
+        cloudTranscriptionEnabled: z.boolean().optional(),
         parakeetModelId: z.literal("parakeet-unified-en-q8").optional(),
         retainDictationAudio: z.boolean().optional(),
         sttModelUnloadMinutes: z.number().int().min(1).max(60).optional(),
@@ -81,6 +83,8 @@ export const speechRouter = router({
     .mutation(({ input }) => {
       const previous = getVoiceSettings()
       const next = setVoiceSettings(input)
+      if (!next.cloudTranscriptionEnabled || next.sttAdapterId !== "openai-whisper")
+        cancelCloudTranscriptions()
       if (previous.sttModelUnloadMinutes !== next.sttModelUnloadMinutes)
         parakeetSidecar.rescheduleIdleUnload()
       return next

@@ -6,8 +6,64 @@ import {
 } from "../../../../shared/project-records"
 import { configuredProjectRecordsClient } from "../../project-records/client"
 import { publicProcedure, router } from "../index"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { getSqliteDatabase } from "../../db"
+import { createWorktree } from "../../git/worktree"
+import { bindFilesystemRootIdentity } from "../../git/security/path-validation"
+import {
+  openRecordChatSchema,
+  previewRecordChatSchema,
+  RecordTaskWorktreeService,
+} from "../../project-records/task-worktree"
+
+import {
+  RecordsPlanPairService,
+  yapPairInputSchema,
+  confirmYapPairSchema,
+} from "../../project-records/plan-pair"
+import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
+
+async function taskWorktrees() {
+  const client = await configuredProjectRecordsClient()
+  return new RecordTaskWorktreeService(
+    getSqliteDatabase(),
+    client,
+    client.endpoint,
+    join(homedir(), ".flapstack", "worktrees", "records"),
+    createWorktree,
+    bindFilesystemRootIdentity,
+  )
+}
 
 export const projectRecordsRouter = router({
+  previewProposalChat: publicProcedure
+    .input(yapPairInputSchema)
+    .query(async ({ input }) =>
+      new RecordsPlanPairService(
+        getSqliteDatabase(),
+        await configuredProjectRecordsClient(),
+      ).previewProposal(input),
+    ),
+  confirmProposalChat: publicProcedure.input(confirmYapPairSchema).mutation(async ({ input }) => {
+    const result = await new RecordsPlanPairService(
+      getSqliteDatabase(),
+      await configuredProjectRecordsClient(),
+    ).confirmProposal(input)
+    publishLocalProductInvalidation({
+      version: 1,
+      source: "product-mcp",
+      domains: ["chats", "plan-sources", "task-proposals"],
+      projectIds: [input.localProjectId],
+    })
+    return result
+  }),
+  previewTaskChat: publicProcedure
+    .input(previewRecordChatSchema)
+    .query(async ({ input }) => (await taskWorktrees()).preview(input)),
+  openTaskChat: publicProcedure
+    .input(openRecordChatSchema)
+    .mutation(async ({ input }) => (await taskWorktrees()).open(input)),
   yapProposals: publicProcedure
     .input(z.object({ projectId: z.string().optional() }).default({}))
     .query(async ({ input }) => {

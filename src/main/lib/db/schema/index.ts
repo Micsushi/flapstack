@@ -48,6 +48,48 @@ export const discussionRevisions = sqliteTable(
   (table) => [primaryKey({ columns: [table.topicId, table.revision] })],
 )
 
+// Local execution links only; task state and claims remain in Project Records.
+export const recordsPlanPairs = sqliteTable("records_plan_pairs", {
+  id: text("id").primaryKey(),
+  endpoint: text("endpoint").notNull(),
+  projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
+  status: text("status").notNull(),
+  preparedChat: text("prepared_chat").notNull(),
+  error: text("error"),
+  updatedAt: integer("updated_at").notNull(),
+})
+
+export const recordTaskWorktrees = sqliteTable(
+  "record_task_worktrees",
+  {
+    id: text("id").primaryKey(),
+    endpoint: text("endpoint").notNull(),
+    recordPath: text("record_path").notNull(),
+    recordId: text("record_id").notNull(),
+    canonicalProjectId: text("canonical_project_id").notNull(),
+    localProjectId: text("local_project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    sourceRevision: text("source_revision").notNull(),
+    claimId: text("claim_id").notNull(),
+    chatId: text("chat_id")
+      .unique()
+      .references(() => chats.id, { onDelete: "set null" }),
+    worktreePath: text("worktree_path").notNull().unique(),
+    branch: text("branch").notNull(),
+    baseCommit: text("base_commit").notNull(),
+    baseBranch: text("base_branch"),
+  },
+  (table) => [
+    uniqueIndex("record_task_worktrees_canonical_idx").on(
+      table.endpoint,
+      table.recordPath,
+      table.recordId,
+      table.canonicalProjectId,
+    ),
+  ],
+)
+
 // ============ PROJECTS ============
 export const projects = sqliteTable("projects", {
   id: text("id")
@@ -1724,6 +1766,9 @@ export const agentRuns = sqliteTable(
     resolvedRuntime: text("resolved_runtime").notNull().default("flapstack-native"),
     runtimeAdapterVersion: text("runtime_adapter_version").notNull().default("legacy-stage3"),
     runtimeProtocolVersion: text("runtime_protocol_version").notNull().default("legacy-stage3"),
+    // Actual probed adapter versions, captured once with provider intent.
+    // The earlier selection snapshot remains immutable, including unprobed provenance.
+    runtimeLaunchIdentity: text("runtime_launch_identity"),
     runtimeCapabilitySnapshot: text("runtime_capability_snapshot")
       .notNull()
       .default('{"schemaVersion":1,"status":"legacy"}'),

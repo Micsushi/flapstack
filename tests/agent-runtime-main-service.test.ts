@@ -31,6 +31,10 @@ import { updateProjectVaultContextSelection } from "../src/main/lib/project-vaul
 vi.mock("../src/main/lib/trpc/routers", () => ({
   createAppRouter: () => ({ createCaller: () => ({}) }),
 }))
+const activityInvalidation = vi.hoisted(() => vi.fn())
+vi.mock("../src/main/lib/agent-runtime/activity-service", () => ({
+  broadcastAgentActivityInvalidation: activityInvalidation,
+}))
 const invalidation = vi.hoisted(() => vi.fn())
 vi.mock("../src/main/lib/mcp-control/invalidation-bridge", () => ({
   publishLocalProductInvalidation: invalidation,
@@ -42,6 +46,7 @@ let sqlite: Database.Database
 
 beforeEach(() => {
   invalidation.mockReset()
+  activityInvalidation.mockReset()
   resetMainRuntimeLaunchServicesForTests()
   directory = mkdtempSync(join(tmpdir(), "flapstack-runtime-main-service-"))
   path = join(directory, "agents.db")
@@ -57,6 +62,42 @@ afterEach(() => {
 })
 
 describe("process-wide Runtime launch service", () => {
+  it("broadcasts production activity only after its owning transaction commits", async () => {
+    const runId = "activity-commit"
+    seedDirectRun(runId)
+    const value = directAdapter()
+    value.streamActivity = async function* () {
+      yield {
+        provider: "openai",
+        kind: "agent-text",
+        phase: "completed",
+        displayClass: "provider-visible",
+        privacyClass: "public",
+        payload: { text: "Public answer" },
+      }
+    }
+    activityInvalidation.mockImplementation((event) => {
+      // This independent connection cannot see uncommitted writer changes.
+      const persisted = sqlite
+        .prepare("SELECT sequence FROM agent_activity_events WHERE storage_id = ? AND run_id = ?")
+        .get(event.lastStorageId, runId) as { sequence: number } | undefined
+      expect(persisted?.sequence).toBe(event.lastSequence)
+      expect(event.chatId).toBe(`chat-${runId}`)
+    })
+    await getMainRuntimeLaunchService(path, {
+      codexFactory: () => value,
+      enableCodex: true,
+    }).launch(queued(runId))
+    expect(activityInvalidation.mock.calls.length).toBeGreaterThanOrEqual(4)
+    const announced = activityInvalidation.mock.calls.flatMap(([event]) =>
+      Array.from({ length: event.insertedCount }, (_, index) => event.firstSequence + index),
+    )
+    const persisted = sqlite
+      .prepare("SELECT sequence FROM agent_activity_events WHERE run_id = ? ORDER BY sequence")
+      .all(runId) as { sequence: number }[]
+    expect(announced).toEqual(persisted.map((row) => row.sequence))
+  })
+
   it("projects a completed direct feedback answer into its durable conversation", async () => {
     const runId = "feedback-answer"
     seedDirectRun(runId)
@@ -140,17 +181,18 @@ describe("process-wide Runtime launch service", () => {
     ).toContain("Review mode:")
   })
 
-  it("owns one registry/coordinator and keeps real disabled factories recoverable", async () => {
+  it("owns one registry/coordinator and applies the platform release policy", async () => {
     const first = getMainRuntimeLaunchService(path)
     const second = getMainRuntimeLaunchService(path)
+    const directEnabled = process.platform === "win32"
 
     expect(second).toBe(first)
     expect(first.diagnostics().registry).toEqual([
-      expect.objectContaining({ runtime: "codex", harness: "codex", enabled: false }),
+      expect.objectContaining({ runtime: "codex", harness: "codex", enabled: directEnabled }),
       expect.objectContaining({
         runtime: "claude-code",
         harness: "claude-code",
-        enabled: false,
+        enabled: directEnabled,
       }),
       expect.objectContaining({ runtime: "codex", harness: "claude-code", enabled: false }),
       expect.objectContaining({ runtime: "claude-code", harness: "codex", enabled: false }),
@@ -494,6 +536,158 @@ describe("process-wide Runtime launch service", () => {
     })
     expect(prompts[1]).toContain("Review mode:")
     expect(prompts[1]).toContain("Follow up")
+  })
+
+  it.each(["codex", "claude-code"] as const)(
+    "delivers seeded Chat context once on the first direct %s request",
+    async (runtime) => {
+      const firstRunId = `seeded-${runtime}`
+      const secondRunId = `seeded-${runtime}-followup`
+      seedDirectRun(firstRunId, testRuntimeSnapshotSqlValues(runtime, runtime), runtime, runtime)
+      sqlite.prepare("UPDATE sub_chats SET messages = ? WHERE id = ?").run(
+        JSON.stringify([
+          {
+            id: "seed-context",
+            role: "user",
+            parts: [{ type: "text", text: "CANONICAL BOARD TASK CONTEXT" }],
+          },
+          {
+            id: `mcp-${firstRunId}`,
+            role: "user",
+            parts: [{ type: "text", text: "Prompt" }],
+          },
+        ]),
+        `sub-${firstRunId}`,
+      )
+      const prompts: string[] = []
+      const adapter = directAdapter(runtime)
+      adapter.startTurn = async (_context, _session, prompt) => {
+        prompts.push(prompt)
+        return { providerTurnId: `turn-${prompts.length}` }
+      }
+      const service = getMainRuntimeLaunchService(path, {
+        codexFactory: () => (runtime === "codex" ? adapter : directAdapter("codex")),
+        claudeCodeFactory: () =>
+          runtime === "claude-code" ? adapter : directAdapter("claude-code"),
+        enableCodex: true,
+        enableClaudeCode: true,
+      })
+
+      await service.launch(queued(firstRunId, runtime))
+      seedFollowupRun(secondRunId, firstRunId, runtime)
+      const followup = queued(secondRunId, runtime)
+      followup.chatId = `chat-${firstRunId}`
+      followup.subChatId = `sub-${firstRunId}`
+      followup.prompt = "Follow up"
+      await service.launch(followup)
+
+      expect(prompts[0]).toContain("CANONICAL BOARD TASK CONTEXT")
+      expect(prompts[0]).toContain("# Current request\n\nPrompt")
+      expect(prompts[1]).toContain("Follow up")
+      expect(prompts[1]).not.toContain("CANONICAL BOARD TASK CONTEXT")
+    },
+  )
+
+  it("limits pre-session context by user-message count", async () => {
+    seedDirectRun("seed-count")
+    sqlite.prepare("UPDATE sub_chats SET messages = ? WHERE id = ?").run(
+      JSON.stringify([
+        ...Array.from({ length: 25 }, (_, index) => ({
+          id: `seed-${index}`,
+          role: "user",
+          parts: [{ type: "text", text: `COUNTED-SEED-${String(index).padStart(2, "0")}` }],
+        })),
+        {
+          id: "mcp-seed-count",
+          role: "user",
+          parts: [{ type: "text", text: "Prompt" }],
+        },
+      ]),
+      "sub-seed-count",
+    )
+    let providerPrompt = ""
+    const adapter = directAdapter()
+    adapter.startTurn = async (_context, _session, prompt) => {
+      providerPrompt = prompt
+      return { providerTurnId: "turn-seed-count" }
+    }
+
+    await getMainRuntimeLaunchService(path, {
+      codexFactory: () => adapter,
+      enableCodex: true,
+    }).launch(queued("seed-count"))
+
+    for (const omitted of ["01", "02", "03", "04", "05"])
+      expect(providerPrompt).not.toContain(`COUNTED-SEED-${omitted}`)
+    const retained = [
+      "00",
+      ...Array.from({ length: 19 }, (_, index) => String(index + 6).padStart(2, "0")),
+    ]
+    let previousIndex = -1
+    for (const suffix of retained) {
+      const messageIndex = providerPrompt.indexOf(`COUNTED-SEED-${suffix}`)
+      expect(messageIndex).toBeGreaterThan(previousIndex)
+      previousIndex = messageIndex
+    }
+    expect(providerPrompt).toContain(
+      "Some earlier user messages were omitted to keep this context bounded.",
+    )
+    expect(providerPrompt).toContain("# Current request\n\nPrompt")
+  })
+
+  it("limits pre-session context by total characters", async () => {
+    seedDirectRun("seed-characters")
+    sqlite.prepare("UPDATE sub_chats SET messages = ? WHERE id = ?").run(
+      JSON.stringify([
+        {
+          id: "large-seed",
+          role: "user",
+          parts: [{ type: "text", text: `START-${"x".repeat(11_994)}` }],
+        },
+        {
+          id: "partly-included-seed",
+          role: "user",
+          parts: [{ type: "text", text: `MIDDLE-${"y".repeat(19_993)}` }],
+        },
+        {
+          id: "latest-seed",
+          role: "user",
+          parts: [{ type: "text", text: `LATEST-${"z".repeat(4_993)}` }],
+        },
+        {
+          id: "mcp-seed-characters",
+          role: "user",
+          parts: [{ type: "text", text: "Prompt" }],
+        },
+      ]),
+      "sub-seed-characters",
+    )
+    let providerPrompt = ""
+    const adapter = directAdapter()
+    adapter.startTurn = async (_context, _session, prompt) => {
+      providerPrompt = prompt
+      return { providerTurnId: "turn-seed-characters" }
+    }
+
+    await getMainRuntimeLaunchService(path, {
+      codexFactory: () => adapter,
+      enableCodex: true,
+    }).launch(queued("seed-characters"))
+
+    const earlierContext =
+      /before its provider session started\.\n\n([\s\S]*?)\n\n# Current request/.exec(
+        providerPrompt,
+      )?.[1]
+    const omissionNotice = "Some earlier user messages were omitted to keep this context bounded."
+    expect(earlierContext).toContain(omissionNotice)
+    const boundedContext = earlierContext?.split(`\n\n${omissionNotice}`)[0]
+    expect(boundedContext).toHaveLength(24_000)
+    expect(boundedContext).toBeDefined()
+    const bounded = boundedContext!
+    expect(earlierContext).toMatch(/^START-/)
+    expect(bounded.indexOf("START-")).toBeLessThan(bounded.indexOf("MIDDLE-"))
+    expect(bounded.indexOf("MIDDLE-")).toBeLessThan(bounded.indexOf("LATEST-"))
+    expect(providerPrompt).toContain("# Current request\n\nPrompt")
   })
 
   it("persists cancellation before provider launch authority is reserved", async () => {
@@ -919,6 +1113,7 @@ describe("process-wide Runtime launch service", () => {
 
     await expect(service.launch(queued("intent-failure"))).rejects.toThrow()
     expect(value.startSession).not.toHaveBeenCalled()
+    expect(activityInvalidation).not.toHaveBeenCalled()
   })
 
   it("persists the crash window identity and fails without replay", async () => {
@@ -1447,6 +1642,7 @@ function seedDirectRun(
   runId: string,
   snapshotValues: readonly unknown[] = testRuntimeSnapshotSqlValues("codex", "codex"),
   chatPreference = "codex",
+  harness: "codex" | "claude-code" = "codex",
 ): void {
   sqlite
     .prepare(
@@ -1457,16 +1653,16 @@ function seedDirectRun(
     .prepare(
       `INSERT INTO chats
        (id, project_id, name, scope, permission_mode, harness, model, worktree_path, runtime_preference)
-       VALUES (?, 'project', 'Chat', 'global', 'read-only', 'codex', 'model', '/tmp/project', ?)`,
+       VALUES (?, 'project', 'Chat', 'global', 'read-only', ?, 'model', '/tmp/project', ?)`,
     )
-    .run(`chat-${runId}`, chatPreference)
+    .run(`chat-${runId}`, harness, chatPreference)
   sqlite
     .prepare(
       `INSERT INTO sub_chats
        (id, chat_id, harness, permission_mode, worktree_path, run_status, messages)
-       VALUES (?, ?, 'codex', 'read-only', '/tmp/project', 'running', '[]')`,
+       VALUES (?, ?, ?, 'read-only', '/tmp/project', 'running', '[]')`,
     )
-    .run(`sub-${runId}`, `chat-${runId}`)
+    .run(`sub-${runId}`, `chat-${runId}`, harness)
   sqlite
     .prepare(
       `INSERT INTO agent_runs (
@@ -1475,13 +1671,17 @@ function seedDirectRun(
         runtime_snapshot_version, runtime_preference, runtime_preference_source,
         resolved_runtime, runtime_adapter_version, runtime_protocol_version,
         runtime_capability_snapshot, runtime_control_snapshot
-      ) VALUES (?, ?, ?, 'codex', 'model', 'read-only', '/tmp/project', ?, 'Prompt', 'running', 1,
+      ) VALUES (?, ?, ?, ?, 'model', 'read-only', '/tmp/project', ?, 'Prompt', 'running', 1,
         ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(runId, `chat-${runId}`, `sub-${runId}`, `mcp-${runId}`, ...snapshotValues)
+    .run(runId, `chat-${runId}`, `sub-${runId}`, harness, `mcp-${runId}`, ...snapshotValues)
 }
 
-function seedFollowupRun(runId: string, previousRunId: string): void {
+function seedFollowupRun(
+  runId: string,
+  previousRunId: string,
+  harness: "codex" | "claude-code" = "codex",
+): void {
   sqlite
     .prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = ?")
     .run(`sub-${previousRunId}`)
@@ -1493,15 +1693,16 @@ function seedFollowupRun(runId: string, previousRunId: string): void {
         runtime_snapshot_version, runtime_preference, runtime_preference_source,
         resolved_runtime, runtime_adapter_version, runtime_protocol_version,
         runtime_capability_snapshot, runtime_control_snapshot
-      ) VALUES (?, ?, ?, 'codex', 'model', 'read-only', '/tmp/project', ?, 'Follow up', 'running', 2,
+      ) VALUES (?, ?, ?, ?, 'model', 'read-only', '/tmp/project', ?, 'Follow up', 'running', 2,
         ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       runId,
       `chat-${previousRunId}`,
       `sub-${previousRunId}`,
+      harness,
       `mcp-${runId}`,
-      ...testRuntimeSnapshotSqlValues("codex", "codex"),
+      ...testRuntimeSnapshotSqlValues(harness, harness),
     )
 }
 
@@ -1543,12 +1744,12 @@ function allowCorruptActivityFixture(): void {
   sqlite.prepare("DROP TRIGGER agent_activity_events_append_only").run()
 }
 
-function queued(runId: string): QueuedAgentRun {
+function queued(runId: string, runtime: "codex" | "claude-code" = "codex"): QueuedAgentRun {
   return {
     runId,
     chatId: `chat-${runId}`,
     subChatId: `sub-${runId}`,
-    harness: "codex",
+    harness: runtime,
     prompt: "Prompt",
     model: "model",
     reasoningEffort: "high",
@@ -1558,17 +1759,17 @@ function queued(runId: string): QueuedAgentRun {
     projectPath: "/tmp/project",
     runtimeLaunch: {
       schemaVersion: 1,
-      harness: "codex",
+      harness: runtime,
       model: "model",
-      requestedPreference: "codex",
+      requestedPreference: runtime,
       preferenceSource: "chat",
-      resolvedRuntime: "codex",
-      compatibility: { compatible: true, harness: "codex", runtime: "codex", reason: null },
+      resolvedRuntime: runtime,
+      compatibility: { compatible: true, harness: runtime, runtime, reason: null },
       versions: {
-        adapterVersion: "codex-test-adapter",
-        protocolVersion: "codex-test-protocol",
+        adapterVersion: `${runtime}-test-adapter`,
+        protocolVersion: `${runtime}-test-protocol`,
       },
-      capabilities: availableProbe().capabilities,
+      capabilities: availableProbe(runtime).capabilities,
       controls: {
         schemaVersion: 1,
         modelEffort: "high",
@@ -1621,8 +1822,8 @@ function availableProbe(runtime: "codex" | "claude-code" = "codex") {
     harness: runtime,
     available: true,
     versions: {
-      adapterVersion: "codex-test-adapter",
-      protocolVersion: "codex-test-protocol",
+      adapterVersion: `${runtime}-test-adapter`,
+      protocolVersion: `${runtime}-test-protocol`,
     },
     capabilities: {
       schemaVersion: 1 as const,

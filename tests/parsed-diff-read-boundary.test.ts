@@ -30,6 +30,7 @@ import * as schema from "../src/main/lib/db/schema"
 import { bindFilesystemRootIdentity } from "../src/main/lib/git/security/path-validation"
 import { gitCache } from "../src/main/lib/git/cache"
 import { chatsRouter } from "../src/main/lib/trpc/routers/chats"
+import * as reviewService from "../src/main/lib/diff-annotations/review"
 
 let container: string, root: string, sqlite: Database.Database
 const caller = chatsRouter.createCaller({ getWindow: () => null })
@@ -54,11 +55,98 @@ beforeEach(() => {
   state.read.mockReset().mockImplementation(async () => ({ success: true, diff: state.diff }))
 })
 afterEach(() => {
+  vi.restoreAllMocks()
   gitCache.invalidateWorktree(root)
   closeDatabase()
   sqlite.close()
   delete process.env.FLAPSTACK_DB_PATH
   rmSync(container, { recursive: true, force: true })
+})
+
+it("rejects an image snapshot when the diff changes during its byte reads", async () => {
+  const hash = createHash("sha256").update(state.diff).digest("hex")
+  vi.spyOn(reviewService, "readDiffReview").mockResolvedValueOnce({
+    kind: "image",
+    before: null,
+    after: null,
+  })
+  state.read
+    .mockResolvedValueOnce({ success: true, diff: state.diff })
+    .mockResolvedValueOnce({ success: true, diff: patch("changed.ts") })
+  const stream = await caller.getDiffReview({
+    chatId: "chat",
+    diffHash: hash,
+    fileKey: "image",
+    offset: 0,
+  })
+  await expect(stream.next()).rejects.toThrow("Image diff changed")
+})
+
+it("loads only a bounded section of the observed diff and rejects stale identities", async () => {
+  state.diff = patch("file.ts")
+  const snapshot = await caller.getParsedDiff({ chatId: "chat", includeContents: false })
+  if (snapshot.unchanged) throw new Error("Expected snapshot")
+  const stream = await caller.getDiffReview({
+    chatId: "chat",
+    diffHash: snapshot.diffHash,
+    fileKey: snapshot.files[0]!.key,
+    offset: 0,
+  })
+  const review = (await stream.next()).value
+  expect(review?.kind).toBe("text")
+  state.diff = patch("other.ts")
+  await expect(
+    (
+      await caller.getDiffReview({
+        chatId: "chat",
+        diffHash: snapshot.diffHash,
+        fileKey: snapshot.files[0]!.key,
+        offset: 0,
+      })
+    ).next(),
+  ).rejects.toThrow("Diff changed")
+  await expect(
+    (
+      await caller.getDiffReview({
+        chatId: "missing",
+        diffHash: snapshot.diffHash,
+        fileKey: "file",
+        offset: 0,
+      })
+    ).next(),
+  ).rejects.toThrow("scope")
+})
+
+it("propagates subscription cancellation to in-flight diff collection", async () => {
+  let collecting!: () => void
+  const started = new Promise<void>((resolve) => {
+    collecting = resolve
+  })
+  const controller = new AbortController()
+  state.read.mockImplementation(
+    async (_root: string, _base: unknown, options: { signal: AbortSignal }) => {
+      collecting()
+      await new Promise<void>((_resolve, reject) =>
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+          once: true,
+        }),
+      )
+    },
+  )
+  const cancelledCaller = chatsRouter.createCaller(
+    { getWindow: () => null },
+    { signal: controller.signal },
+  )
+  const stream = await cancelledCaller.getDiffReview({
+    chatId: "chat",
+    diffHash: "a".repeat(64),
+    fileKey: "a",
+    offset: 0,
+  })
+  const next = stream.next()
+  await started
+  controller.abort()
+  await expect(next).rejects.toThrow()
 })
 
 it("does not prefetch content through a repository directory junction", async () => {

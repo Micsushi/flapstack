@@ -120,4 +120,42 @@ describe("voice recording startup lifecycle", () => {
     expect(trackStop).toHaveBeenCalledTimes(1)
     expect(controls?.isRecording).toBe(false)
   })
+
+  it.each(["error", "stop"])(
+    "releases a failed recorder on %s and allows another session",
+    async (event) => {
+      let startPromise!: Promise<void>
+      await act(async () => {
+        startPromise = controls!.startRecording()
+        resolveStream(stream)
+        await startPromise
+      })
+      const failedRecorder = FakeMediaRecorder.instances[0]!
+      await act(async () => {
+        if (event === "error") failedRecorder.onerror?.(new Event("error"))
+        else failedRecorder.stop()
+      })
+      expect(trackStop).toHaveBeenCalledTimes(1)
+      expect(controls?.isRecording).toBe(false)
+      expect(controls?.error?.message).toMatch(/Microphone/)
+      await expect(controls!.stopRecording()).rejects.toThrow(/Microphone/)
+
+      await act(async () => {
+        startPromise = controls!.startRecording()
+        resolveStream(stream)
+        await startPromise
+        // A queued event from the old recorder cannot stop the new session.
+        failedRecorder.onerror?.(new Event("error"))
+      })
+      expect(FakeMediaRecorder.instances).toHaveLength(2)
+      expect(controls?.isRecording).toBe(true)
+      expect(controls?.error).toBeNull()
+      let blob!: Blob
+      await act(async () => {
+        failedRecorder.ondataavailable?.({ data: new Blob(["stale recording"]) } as BlobEvent)
+        blob = await controls!.stopRecording()
+      })
+      expect(blob.size).toBe(0)
+    },
+  )
 })

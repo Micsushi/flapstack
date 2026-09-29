@@ -1,3 +1,5 @@
+import { promisify } from "node:util"
+import { afterProcessClose } from "../git/closed-process"
 import { execFile as execFileCallback } from "node:child_process"
 import { createHash } from "node:crypto"
 import {
@@ -125,9 +127,14 @@ export const whisperCppAdapter: SttAdapter = {
   },
 
   async transcribe(input: SttInput): Promise<SttResult> {
+    input.signal?.throwIfAborted()
     const binary = await findWorkingWhisperBinary()
     if (!binary) throw new Error("whisper.cpp binary not found. Set WHISPER_CPP_BIN.")
-    const modelPath = await ensureModel()
+    input.signal?.throwIfAborted()
+    const modelPath = input.signal
+      ? await raceAbort(ensureModel(), input.signal)
+      : await ensureModel()
+    input.signal?.throwIfAborted()
     const dir = mkdtempSync(path.join(os.tmpdir(), "flapstack-stt-"))
     const audioPath = path.join(dir, `audio.${input.format}`)
     const wavPath = path.join(dir, "audio.wav")
@@ -135,11 +142,12 @@ export const whisperCppAdapter: SttAdapter = {
     try {
       const fs = await import("node:fs")
       fs.writeFileSync(audioPath, input.audioBuffer)
-      const inputPath = await convertToWhisperAudio(audioPath, wavPath, input.format)
+      const inputPath = await convertToWhisperAudio(audioPath, wavPath, input.format, input.signal)
       const args = ["-m", modelPath, "-f", inputPath, "-otxt", "-of", outputBase]
       if (input.language) args.push("-l", input.language)
       if (input.vocabularyHints?.length) args.push("--prompt", input.vocabularyHints.join(", "))
-      await execFileAsync(binary, args, { timeout: 180000 })
+      await execFileAsync(binary, args, { timeout: 180000, signal: input.signal })
+      input.signal?.throwIfAborted()
       const textPath = `${outputBase}.txt`
       const text = existsSync(textPath) ? fs.readFileSync(textPath, "utf8") : ""
       return { text: cleanTranscribedText(text), adapterId: whisperCppAdapter.id }
@@ -404,6 +412,7 @@ async function convertToWhisperAudio(
   audioPath: string,
   wavPath: string,
   format: SttInput["format"],
+  signal?: AbortSignal,
 ) {
   // whisper.cpp accepts WAV/MP3/FLAC/OGG directly. Chromium records WebM and
   // Safari records M4A, so normalize those two formats before invoking it.
@@ -416,6 +425,7 @@ async function convertToWhisperAudio(
   }
   await execFileAsync(ffmpeg, ["-y", "-i", audioPath, "-ar", "16000", "-ac", "1", wavPath], {
     timeout: 30000,
+    signal,
   })
   return wavPath
 }
@@ -455,13 +465,13 @@ function getSpeechDataDir() {
   return process.env.FLAPSTACK_SPEECH_DIR || path.join(os.homedir(), ".flapstack", "speech")
 }
 
-function execFileAsync(command: string, args: string[], options: { timeout?: number } = {}) {
-  return new Promise<void>((resolve, reject) => {
-    execFileCallback(command, args, { ...options, windowsHide: true }, (error) => {
-      if (error) reject(error)
-      else resolve()
-    })
-  })
+const execFilePromise = promisify(execFileCallback)
+function execFileAsync(
+  command: string,
+  args: string[],
+  options: { timeout?: number; signal?: AbortSignal } = {},
+) {
+  return afterProcessClose(execFilePromise(command, args, { ...options, windowsHide: true }))
 }
 
 function execFileCapture(command: string, args: string[], options: { timeout?: number } = {}) {

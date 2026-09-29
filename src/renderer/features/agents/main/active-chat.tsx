@@ -1,6 +1,7 @@
 "use client"
 
 import { stripEmojis } from "../../../components/chat-markdown-renderer"
+import { formatModelDisplayName } from "../../../../shared/model-catalog"
 import { Button } from "../../../components/ui/button"
 import {
   AgentIcon,
@@ -154,6 +155,7 @@ import {
   subChatFilesAtom,
   agentsSidebarOpenAtom,
   subChatCodexModelIdAtomFamily,
+  initializeSubChatCodexModelAtom,
   subChatCodexReasoningAtomFamily,
   subChatCursorModelIdAtomFamily,
   subChatOpencodeModelsAtomFamily,
@@ -269,6 +271,7 @@ import {
 } from "../utils/pr-message"
 import { ChatInputArea } from "./chat-input-area"
 import { IsolatedMessagesSection, type MessageVirtualizerHandle } from "./isolated-messages-section"
+import { ChatRuntimeActivity } from "../runtime-activity/chat-runtime-activity"
 import { RuntimeActivityFixtureControls } from "../runtime-activity/runtime-activity-fixture-controls"
 // import { selectedTeamIdAtom } from "@/lib/atoms/team"
 const selectedTeamIdAtom = atom<string | null>(null)
@@ -5008,26 +5011,22 @@ const ChatViewInner = memo(function ChatViewInner({
           preference,
           requestId,
         })
-        const exactTarget = [
-          `${preview.targetSnapshot.harness} / ${preview.targetSnapshot.runtime}`,
-          preview.targetSnapshot.model ?? "provider default model",
-          preview.targetSnapshot.runtimeMode,
-        ].join(" · ")
-        const exactAuthority = [
-          preview.authorityCeiling.permissionMode,
-          preview.authorityCeiling.network ? "network allowed" : "network blocked",
-          preview.authorityCeiling.worktreePath ?? "no worktree",
-        ].join(" · ")
+        const modelName =
+          formatModelDisplayName(preview.targetSnapshot.model) ?? "the provider default model"
+        const worktreePath = preview.authorityCeiling.worktreePath
+        const worktreeName = worktreePath?.split(/[\\/]/).filter(Boolean).at(-1) ?? "None"
         const confirmed = window.confirm(
           [
-            "Confirm exact cross-provider continuation",
+            `Continue with ${modelName}?`,
             "",
-            `Target: ${exactTarget}`,
-            `Visible messages: ${preview.visibleMessageCount}`,
-            `Authority: ${exactAuthority}`,
-            `Preview digest: ${preview.digest}`,
+            `Provider: ${preview.targetSnapshot.harness}`,
+            `Runtime: ${preview.targetSnapshot.runtime} (${preview.targetSnapshot.runtimeMode})`,
+            `Messages to include: ${preview.visibleMessageCount}`,
+            `Permission: ${preview.authorityCeiling.permissionMode}`,
+            `Network: ${preview.authorityCeiling.network ? "Allowed" : "Blocked"}`,
+            `Worktree: ${worktreeName}`,
             "",
-            "A fresh child Chat and provider session will be created. The source Chat remains unchanged.",
+            "Creates a new child Chat and provider session. Your source Chat stays unchanged.",
           ].join("\n"),
         )
         if (!confirmed) {
@@ -5090,17 +5089,21 @@ const ChatViewInner = memo(function ChatViewInner({
             preview.availability.reason ?? "The selected delegation target is unavailable.",
           )
         }
+        const modelName =
+          formatModelDisplayName(preview.targetSnapshot.model) ?? "the provider default model"
+        const worktreePath = preview.authorityCeiling.worktreePath
+        const worktreeName = worktreePath?.split(/[\\/]/).filter(Boolean).at(-1) ?? "None"
         const confirmed = window.confirm(
           [
-            "Confirm exact cross-provider delegation",
+            `Delegate to ${modelName}?`,
             "",
             `Task: ${objective}`,
-            `Target: ${preview.targetSnapshot.harness} / ${preview.targetSnapshot.runtime} / ${preview.targetSnapshot.model ?? "provider default"}`,
+            `Provider: ${preview.targetSnapshot.harness}`,
+            `Runtime: ${preview.targetSnapshot.runtime} (${preview.targetSnapshot.runtimeMode})`,
             `Visible messages: ${preview.visibleMessageCount}`,
             `Permission ceiling: ${preview.authorityCeiling.permissionMode}`,
             `Network: ${preview.authorityCeiling.network ? "allowed" : "blocked"}`,
-            `Worktree: ${preview.authorityCeiling.worktreePath ?? "none"}`,
-            `Preview digest: ${preview.digest}`,
+            `Worktree: ${worktreeName}`,
             "",
             "A distinct child Chat/run will own the task. Hidden provider state and private reasoning are not transferred.",
           ].join("\n"),
@@ -5246,6 +5249,11 @@ const ChatViewInner = memo(function ChatViewInner({
                     projectId={projectId ?? null}
                     chatId={parentChatId}
                     subChatId={subChatId}
+                  />
+                  <ChatRuntimeActivity
+                    key={parentChatId}
+                    chatId={parentChatId}
+                    live={isStreaming}
                   />
                   <IsolatedMessagesSection
                     key={subChatId}
@@ -5535,6 +5543,8 @@ function ChatViewScoped({
   const isFullscreen = useAtomValue(isFullscreenAtom)
   const sidebarOpen = useAtomValue(agentsSidebarOpenAtom)
   const selectedOllamaModel = useAtomValue(selectedOllamaModelAtom)
+  const selectedLocalModelId = useAtomValue(selectedLocalModelIdAtom)
+  const localModelEndpoint = useAtomValue(localModelEndpointAtom)
   const chatTitleGenerationEnabled = useAtomValue(chatTitleGenerationEnabledAtom)
   const chatTitleStyle = useAtomValue(chatTitleStyleAtom)
   const chatAutoTaggingEnabled = useAtomValue(chatAutoTaggingEnabledAtom)
@@ -7410,6 +7420,17 @@ Make sure to preserve all functionality from both branches when resolving confli
       const targetWorktreePath = appStore.get(selectedTargetWorktreePathAtomFamily(subChatId))
       const runWorktreePath = targetWorktreePath || worktreePath || globalRuntimePath
       const desiredSubChat = agentSubChats.find((sc) => sc.id === subChatId)
+      const savedConversation = desiredSubChat as
+        { harness?: string; model?: string | null } | undefined
+      const savedChat = agentChat as { harness?: string; model?: string | null }
+      if ((savedConversation?.harness || savedChat.harness) === "codex") {
+        appStore.set(initializeSubChatCodexModelAtom, {
+          subChatId,
+          model: savedConversation?.model,
+          parentHarness: savedChat.harness,
+          parentModel: savedChat.model,
+        })
+      }
       const rawDesiredMessages = desiredSubChat?.messages
       const readDesiredMessages = () =>
         sanitizePersistedHarnessMessages(
@@ -7433,6 +7454,19 @@ Make sure to preserve all functionality from both branches when resolving confli
         if (isRemoteChat) return existing
 
         const existingOpencodeTransport = (existing as any)?.transport
+        if (
+          existingOpencodeTransport instanceof LocalModelChatTransport &&
+          existing.status !== "streaming" &&
+          existing.status !== "submitted"
+        ) {
+          existingOpencodeTransport.updateConfig({
+            model:
+              (desiredSubChat as any)?.model || (agentChat as any)?.model || selectedLocalModelId,
+            endpoint: localModelEndpoint,
+            cwd: runWorktreePath ?? existingOpencodeTransport.getConfig().cwd,
+            projectPath,
+          })
+        }
         const overrideProvider = subChatProviderOverrides[subChatId]
         if (!(existingOpencodeTransport instanceof OpencodeChatTransport) && !overrideProvider) {
           return existing
@@ -7524,20 +7558,15 @@ Make sure to preserve all functionality from both branches when resolving confli
         })
       } else if (runWorktreePath) {
         if (chatProvider === "local") {
-          const model =
-            (subChat as any)?.model ||
-            (agentChat as any)?.model ||
-            appStore.get(selectedLocalModelIdAtom)
-          if (model) {
-            transport = new LocalModelChatTransport({
-              chatId,
-              subChatId,
-              cwd: runWorktreePath,
-              projectPath,
-              endpoint: appStore.get(localModelEndpointAtom),
-              model,
-            })
-          }
+          const model = (subChat as any)?.model || (agentChat as any)?.model || selectedLocalModelId
+          transport = new LocalModelChatTransport({
+            chatId,
+            subChatId,
+            cwd: runWorktreePath,
+            projectPath,
+            endpoint: localModelEndpoint,
+            model,
+          })
         } else if (chatProvider === "openrouter" || chatProvider === "nanogpt") {
           const fallbackModel =
             chatProvider === "openrouter" ? "openrouter/tencent/hy3:free" : "nanogpt/deepseek-chat"
@@ -7704,6 +7733,8 @@ Make sure to preserve all functionality from both branches when resolving confli
       chatId,
       currentMode,
       inferProviderFromMessages,
+      selectedLocalModelId,
+      localModelEndpoint,
       subChatProviderOverrides,
       setSubChatUnseenChanges,
       selectedChatId,
@@ -7716,7 +7747,7 @@ Make sure to preserve all functionality from both branches when resolving confli
   )
 
   const handleProviderChange = useCallback(
-    (subChatId: string, nextProvider: AgentProviderId) => {
+    async (subChatId: string, nextProvider: AgentProviderId) => {
       // Provider switch is only allowed for brand new sub-chats.
       const activeChat = agentChatStore.get(subChatId) as any
       let messageCount = Array.isArray(activeChat?.messages) ? activeChat.messages.length : 0
@@ -7736,19 +7767,21 @@ Make sure to preserve all functionality from both branches when resolving confli
         }
       }
 
-      if (messageCount > 0) return
-
-      appStore.set(lastSelectedAgentIdAtom, nextProvider)
-      setSubChatProviderOverrides((prev) => ({
-        ...prev,
-        [subChatId]: nextProvider,
-      }))
-
-      // Force transport recreation with the newly selected provider.
-      agentChatStore.delete(subChatId)
-      forceUpdate({})
+      if (activeChat?.status === "streaming" || activeChat?.status === "submitted") return
+      if ((agentChat as any)?.hasProviderIntent ?? messageCount > 0) return
+      try {
+        await trpcClient.chats.setIdleProvider.mutate({ chatId, subChatId, harness: nextProvider })
+        await trpcUtils.chats.getMetadata.invalidate({ id: chatId })
+        appStore.set(lastSelectedAgentIdAtom, nextProvider)
+        setSubChatProviderOverrides((prev) => ({ ...prev, [subChatId]: nextProvider }))
+        // Preserve saved context while recreating only the idle provider transport.
+        agentChatStore.delete(subChatId)
+        forceUpdate({})
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not change provider.")
+      }
     },
-    [agentSubChats],
+    [agentSubChats, agentChat, chatId, trpcUtils],
   )
 
   // Handle creating a new sub-chat
@@ -7875,16 +7908,14 @@ Make sure to preserve all functionality from both branches when resolving confli
     } else if (chatWorkingDir) {
       if (chatProvider === "local") {
         const model = appStore.get(selectedLocalModelIdAtom)
-        if (model) {
-          newSubChatTransport = new LocalModelChatTransport({
-            chatId,
-            subChatId: newId,
-            cwd: chatWorkingDir,
-            projectPath,
-            endpoint: appStore.get(localModelEndpointAtom),
-            model,
-          })
-        }
+        newSubChatTransport = new LocalModelChatTransport({
+          chatId,
+          subChatId: newId,
+          cwd: chatWorkingDir,
+          projectPath,
+          endpoint: appStore.get(localModelEndpointAtom),
+          model,
+        })
       } else if (chatProvider === "openrouter" || chatProvider === "nanogpt") {
         const fallbackModel =
           chatProvider === "openrouter" ? "openrouter/tencent/hy3:free" : "nanogpt/deepseek-chat"

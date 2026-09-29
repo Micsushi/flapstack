@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs"
@@ -25,7 +26,71 @@ import { resolvePackageBuild, runAppBuild } from "../scripts/package-app.mjs"
 import { inspectLinuxApp, runMacNativeModulesSmoke } from "../scripts/inspect-packaged-binaries.mjs"
 import { resolveDarwinTargetPackages } from "../scripts/lib/darwin-target-dependencies.mjs"
 import { resolvePackageTargets } from "../scripts/prepare-package-resources.mjs"
-import { validateWhisperDirectory } from "../scripts/prepare-whisper-binary.mjs"
+import {
+  installWhisperDirectory,
+  validateWhisperDirectory,
+} from "../scripts/prepare-whisper-binary.mjs"
+
+describe("standalone Whisper resource preparation", () => {
+  function fixture() {
+    const parent = mkdtempSync(join(tmpdir(), "flapstack-whisper-siblings-"))
+    const target = join(parent, "win32-x64")
+    const staging = join(parent, ".whisper-stage")
+    mkdirSync(target)
+    mkdirSync(staging)
+    executable(staging, "whisper-cli.exe", pe("x64"))
+    for (const name of [
+      "ggml-base.dll",
+      "ggml-cpu.dll",
+      "ggml.dll",
+      "whisper.dll",
+      "whisper.cpp-LICENSE",
+    ]) {
+      writeFileSync(join(staging, name), "whisper fixture")
+    }
+    writeFileSync(join(staging, ".whisper-version"), "1.8.6-portable-v1\n")
+    writeFileSync(join(target, "whisper-cli.exe"), "previous whisper")
+    writeFileSync(join(target, "codex.exe"), "retained codex")
+    writeFileSync(join(target, "flapstack-stt-sidecar.exe"), "retained sidecar")
+    writeFileSync(join(target, ".stt-sidecar.sha256"), "retained digest")
+    return { target, staging }
+  }
+
+  it("repairs Whisper while preserving sibling binaries and their metadata", () => {
+    const { target, staging } = fixture()
+    installWhisperDirectory(staging, target, "win32-x64")
+    expect(readFileSync(join(target, "codex.exe"), "utf8")).toBe("retained codex")
+    expect(readFileSync(join(target, "flapstack-stt-sidecar.exe"), "utf8")).toBe("retained sidecar")
+    expect(readFileSync(join(target, ".stt-sidecar.sha256"), "utf8")).toBe("retained digest")
+    expect(() => validateWhisperDirectory(target, "win32-x64", true)).not.toThrow()
+    expect(() => validateWhisperDirectory(target, "win32-x64")).toThrow(/unexpected/i)
+  })
+
+  it("rejects unexpected downloaded files before changing existing resources", () => {
+    const { target, staging } = fixture()
+    writeFileSync(join(staging, "codex.exe"), "unexpected download")
+    expect(() => installWhisperDirectory(staging, target, "win32-x64")).toThrow(/unexpected/i)
+    expect(readFileSync(join(target, "codex.exe"), "utf8")).toBe("retained codex")
+    expect(readFileSync(join(target, "whisper-cli.exe"), "utf8")).toBe("previous whisper")
+  })
+
+  it("recovers an interrupted directory replacement before preserving siblings", () => {
+    const { target, staging } = fixture()
+    renameSync(target, join(target, "..", ".win32-x64.replacement-backup"))
+    installWhisperDirectory(staging, target, "win32-x64")
+    expect(readFileSync(join(target, "codex.exe"), "utf8")).toBe("retained codex")
+    expect(readFileSync(join(target, "flapstack-stt-sidecar.exe"), "utf8")).toBe("retained sidecar")
+    validateWhisperDirectory(target, "win32-x64", true)
+  })
+
+  it("refuses a non-regular sibling without replacing the resource directory", () => {
+    const { target, staging } = fixture()
+    mkdirSync(join(target, "unexpected-directory"))
+    expect(() => installWhisperDirectory(staging, target, "win32-x64")).toThrow(/regular file/)
+    expect(readFileSync(join(target, "whisper-cli.exe"), "utf8")).toBe("previous whisper")
+    expect(readFileSync(join(target, "codex.exe"), "utf8")).toBe("retained codex")
+  })
+})
 
 const requireFromTest = createRequire(import.meta.url)
 

@@ -1,6 +1,9 @@
 import { z } from "zod"
 import type { RunPermissionMode } from "./harness-types"
 
+/** Deterministic rejection of persisted result content, not an infrastructure failure. */
+export class RuntimeStructuredOutputError extends Error {}
+
 export const AGENT_RUNTIME_PREFERENCES = [
   "auto",
   "codex",

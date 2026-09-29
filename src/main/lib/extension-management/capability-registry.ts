@@ -51,7 +51,7 @@ export const extensionHarnessBaselines: ExtensionHarnessBaseline[] = [
   {
     harness: "claude-code",
     adapter: "@anthropic-ai/claude-agent-sdk",
-    version: "0.3.207 / Claude Code 2.1.207",
+    version: "0.3.207 / Claude Code 2.1.284",
     provenance: "bundled",
   },
   {

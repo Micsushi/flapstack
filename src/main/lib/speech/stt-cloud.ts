@@ -2,9 +2,24 @@ import { execFileSync } from "node:child_process"
 import os from "node:os"
 import type { SttAdapter, SttInput, SttResult } from "./types"
 import { getCredentialService } from "../credential-service"
+import { getVoiceSettings } from "./settings"
 
 const MAX_AUDIO_SIZE = 25 * 1024 * 1024
 const API_TIMEOUT_MS = 30000
+const activeRequests = new Set<AbortController>()
+
+export function cancelCloudTranscriptions(): void {
+  for (const controller of activeRequests)
+    controller.abort(new Error("Cloud transcription disabled."))
+}
+
+function requireCloudSelection(): void {
+  const settings = getVoiceSettings()
+  if (!settings.cloudTranscriptionEnabled || settings.sttAdapterId !== "openai-whisper")
+    throw new Error(
+      "Enable cloud transcription and explicitly select OpenAI Whisper in Voice settings.",
+    )
+}
 
 let cachedOpenAIKey: string | null | undefined = undefined
 export function clearOpenAIKeyCache(): void {
@@ -63,6 +78,15 @@ export const cloudWhisperAdapter: SttAdapter = {
   supportsVocabularyHints: true,
 
   async isAvailable() {
+    try {
+      requireCloudSelection()
+    } catch (error) {
+      return {
+        available: false,
+        status: "not-configured" as const,
+        reason: (error as Error).message,
+      }
+    }
     return getOpenAIApiKey()
       ? { available: true, status: "available" as const }
       : {
@@ -83,7 +107,10 @@ async function transcribeWithWhisper({
   format,
   language,
   vocabularyHints,
+  signal,
 }: SttInput): Promise<string> {
+  signal?.throwIfAborted()
+  requireCloudSelection()
   const key = getOpenAIApiKey()
   if (!key) throw new Error("OpenAI API key not configured.")
   if (audioBuffer.length > MAX_AUDIO_SIZE) {
@@ -104,13 +131,14 @@ async function transcribeWithWhisper({
   if (vocabularyHints?.length) formData.append("prompt", vocabularyHints.join(", "))
 
   const controller = new AbortController()
+  activeRequests.add(controller)
   const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS)
   try {
     const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}` },
       body: formData,
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
     })
     if (!response.ok) {
       if (response.status === 401) throw new Error("Invalid OpenAI API key.")
@@ -118,13 +146,24 @@ async function transcribeWithWhisper({
       if (response.status >= 500) throw new Error("OpenAI service temporarily unavailable.")
       throw new Error(`Transcription failed (${response.status}).`)
     }
-    return cleanTranscribedText(await response.text())
+    const text = await response.text()
+    signal?.throwIfAborted()
+    controller.signal.throwIfAborted()
+    requireCloudSelection()
+    return cleanTranscribedText(text)
   } catch (error) {
+    signal?.throwIfAborted()
+    if (
+      controller.signal.aborted &&
+      controller.signal.reason?.message === "Cloud transcription disabled."
+    )
+      throw controller.signal.reason
     if (error instanceof Error && error.name === "AbortError")
       throw new Error("Transcription timed out.")
     throw error
   } finally {
     clearTimeout(timeoutId)
+    activeRequests.delete(controller)
   }
 }
 

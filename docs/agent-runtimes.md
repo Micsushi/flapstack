@@ -16,11 +16,10 @@ Automatic resolves by harness after chat, project, and global overrides. An
 explicit unavailable choice blocks before provider intent. Flapstack never
 silently changes the stored preference or falls back to another Runtime.
 
-Direct Codex and native Claude Code defaults remain release-gated in production
-until their pinned protocol, credentialed live, restart, and packaged-app checks
-pass. Flapstack Dev enables both direct Runtimes so those checks can be run.
-Preview packages can opt in with
-`FLAPSTACK_ENABLE_UNVERIFIED_NATIVE_RUNTIMES=1`. Adapter probes still reject a
+On Windows, direct Codex and native Claude Code are enabled for new launches.
+Their pinned protocol, credentialed live, cancellation, persistence, restart,
+packaged-app, and cleanup checks passed there. Other operating systems remain
+gated until their package qualification passes. Adapter probes still reject a
 missing login, missing binary, or unsupported version instead of falling back.
 
 ## Select and continue
@@ -57,6 +56,15 @@ Runtimes. Diagnostics show preference and source, resolved Runtime,
 adapter/protocol versions, capability and control snapshots, session identity
 class, activity counts, release policy, and a bounded sanitized error. They do
 not expose prompts, provider-private content, secrets, or raw session IDs.
+
+Worker creation may record an unprobed selection snapshot. Before provider
+intent, the central launcher captures the validated adapter and protocol
+versions once on the run, in the same transaction as intent. Launch and restart
+readers use that identity while preserving the original selection snapshot,
+permissions, controls and worktree. Malformed or mismatched captured identities
+fail closed. Historical runs without a captured identity retain their original
+provenance; they are not silently backfilled. This persistence check does not
+certify real mixed-provider execution.
 
 - **Adapter disabled:** choose a compatible enabled Runtime or complete the
   native live/package release gates.

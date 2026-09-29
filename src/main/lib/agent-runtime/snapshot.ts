@@ -202,6 +202,37 @@ export function resolvedLaunchFromSnapshotRow(row: Record<string, unknown>): Res
     capabilities.composition,
   )
   if (!compatibility.compatible) throw new AgentRuntimeResolutionError(compatibility.reason)
+  let versions = {
+    adapterVersion: snapshot.runtimeAdapterVersion,
+    protocolVersion: snapshot.runtimeProtocolVersion,
+  }
+  const captured = row.runtime_launch_identity ?? row.runtimeLaunchIdentity
+  if (captured !== null && captured !== undefined) {
+    let identity
+    try {
+      identity = JSON.parse(String(captured))
+    } catch {
+      throw new Error("Runtime launch identity is corrupt.")
+    }
+    if (
+      identity?.schemaVersion !== 1 ||
+      identity.runtime !== snapshot.resolvedRuntime ||
+      identity.harness !== harness ||
+      ![identity.versions?.adapterVersion, identity.versions?.protocolVersion].every(
+        (value) =>
+          typeof value === "string" &&
+          value.trim().length > 0 &&
+          value.length <= 512 &&
+          value !== "unresolved",
+      ) ||
+      (versions.adapterVersion !== "unresolved" &&
+        (versions.adapterVersion !== identity.versions.adapterVersion ||
+          versions.protocolVersion !== identity.versions.protocolVersion))
+    ) {
+      throw new Error("Runtime launch identity does not match its selection snapshot.")
+    }
+    versions = identity.versions
+  }
   return {
     schemaVersion: 1,
     harness,
@@ -210,10 +241,7 @@ export function resolvedLaunchFromSnapshotRow(row: Record<string, unknown>): Res
     preferenceSource: snapshot.runtimePreferenceSource,
     resolvedRuntime: snapshot.resolvedRuntime,
     compatibility,
-    versions: {
-      adapterVersion: snapshot.runtimeAdapterVersion,
-      protocolVersion: snapshot.runtimeProtocolVersion,
-    },
+    versions,
     capabilities,
     controls: parseSnapshotJson(
       snapshot.runtimeControlSnapshot,

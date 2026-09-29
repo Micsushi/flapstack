@@ -20,6 +20,15 @@ function repository() {
 }
 afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })))
 
+it("does not start collection after its caller cancels", async () => {
+  const result = await getWorktreeDiff("unused-path", undefined, {
+    onlyUncommitted: true,
+    signal: AbortSignal.abort(),
+  })
+  expect(result.success).toBe(false)
+  expect(result.error).toMatch(/abort/i)
+})
+
 it("rejects oversized tracked output without returning a partial review", async () => {
   const root = repository()
   writeFileSync(join(root, "file.txt"), "x".repeat(9 * 1024 * 1024))

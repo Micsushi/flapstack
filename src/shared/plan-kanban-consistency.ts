@@ -12,6 +12,7 @@ export interface PlanSourceLink {
     description: string | null
     status: string
     version: number
+    revision?: string
   }
   projectId: string
   provenance: {

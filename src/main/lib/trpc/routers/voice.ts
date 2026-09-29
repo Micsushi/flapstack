@@ -45,6 +45,8 @@ type ActiveDictation = {
   transcript: StreamingTranscriptState
 }
 
+const batchDictations = new Map<string, AbortController>()
+
 let activeDictation: ActiveDictation | null = null
 let pendingDictation: { sessionId: string; windowId: number; cancelled: boolean } | null = null
 let streamingStartTransition: Promise<void> = Promise.resolve()
@@ -93,11 +95,12 @@ export function clearPlanCache(): void {}
 export const voiceRouter = router({
   /**
    * Transcribe audio to text
-   * Local-only: browser audio is transcribed by whisper.cpp.
+   * The explicitly selected adapter owns local/cloud consent and availability.
    */
   transcribe: publicProcedure
     .input(
       z.object({
+        sessionId: z.string().min(1).max(200).optional(),
         audio: z.string(), // base64 encoded audio
         format: z.enum(["webm", "wav", "mp3", "m4a", "ogg"]).default("webm"),
         language: z.string().optional(), // ISO 639-1 code (e.g., "en", "ru")
@@ -110,59 +113,74 @@ export const voiceRouter = router({
         allowCloudSelectedContext: z.boolean().default(false),
       }),
     )
-    .mutation(async ({ input }) => {
-      const audioBuffer = Buffer.from(input.audio, "base64")
+    .mutation(async ({ input, ctx }) => {
+      const key = `${ctx.getWindow()?.id ?? 0}:${input.sessionId ?? crypto.randomUUID()}`
+      if (batchDictations.has(key)) throw new Error("Dictation session is already running.")
+      const controller = new AbortController()
+      batchDictations.set(key, controller)
+      try {
+        const audioBuffer = Buffer.from(input.audio, "base64")
 
-      console.log(`[Voice] Transcribing ${audioBuffer.length} bytes of ${input.format} audio`)
+        console.log(`[Voice] Transcribing ${audioBuffer.length} bytes of ${input.format} audio`)
 
-      // Check audio size limit
-      if (audioBuffer.length > MAX_AUDIO_SIZE) {
-        throw new Error(
-          `Audio too large (${Math.round(audioBuffer.length / 1024 / 1024)}MB). Maximum is 25MB.`,
-        )
-      }
-
-      const settings = getVoiceSettings()
-      const adapter = await resolveAvailableSttAdapter(settings)
-      const availability = await adapter.isAvailable()
-      const canAutoProvision = await adapter.canAutoProvision?.()
-      if (!availability.available && !canAutoProvision)
-        throw new Error(availability.reason || "Voice input is not configured.")
-      const result = await adapter.transcribe({
-        audioBuffer,
-        format: input.format,
-        language: input.language,
-        vocabularyHints: resolveSpeechVocabularyHints(
-          adapter,
-          buildSelectedSpeechVocabulary(input.selectedContext),
-          { allowCloudSelectedContext: input.allowCloudSelectedContext },
-        ),
-      })
-      console.log(
-        `[Voice] ${result.adapterId} transcription completed (${result.text.length} chars)`,
-      )
-      let historyError: string | null = null
-      if (result.text.trim()) {
-        try {
-          await recordTranscription({
-            chatId: input.chatId,
-            subChatId: input.subChatId,
-            text: result.text,
-            adapterId: result.adapterId,
-            modelId:
-              result.adapterId === "local-whisper"
-                ? settings.whisperModelId
-                : settings.parakeetModelId,
-            originKind: input.originKind,
-            originId: input.originId,
-            originLabel: input.originLabel,
-          })
-        } catch (error) {
-          historyError = error instanceof Error ? error.message : String(error)
-          console.error("[Voice] Failed to save transcription history:", error)
+        // Check audio size limit
+        if (audioBuffer.length > MAX_AUDIO_SIZE) {
+          throw new Error(
+            `Audio too large (${Math.round(audioBuffer.length / 1024 / 1024)}MB). Maximum is 25MB.`,
+          )
         }
+
+        const settings = getVoiceSettings()
+        const adapter = await resolveAvailableSttAdapter(settings)
+        const availability = await adapter.isAvailable()
+        const canAutoProvision = await adapter.canAutoProvision?.()
+        if (!availability.available && !canAutoProvision)
+          throw new Error(availability.reason || "Voice input is not configured.")
+        controller.signal.throwIfAborted()
+        const result = await adapter.transcribe({
+          signal: controller.signal,
+          audioBuffer,
+          format: input.format,
+          language: input.language,
+          vocabularyHints: resolveSpeechVocabularyHints(
+            adapter,
+            buildSelectedSpeechVocabulary(input.selectedContext),
+            { allowCloudSelectedContext: input.allowCloudSelectedContext },
+          ),
+        })
+        controller.signal.throwIfAborted()
+        console.log(
+          `[Voice] ${result.adapterId} transcription completed (${result.text.length} chars)`,
+        )
+        // Completion wins once persistence begins; later cancellation reports too late.
+        batchDictations.delete(key)
+        let historyError: string | null = null
+        if (result.text.trim()) {
+          try {
+            await recordTranscription({
+              chatId: input.chatId,
+              subChatId: input.subChatId,
+              text: result.text,
+              adapterId: result.adapterId,
+              modelId:
+                result.adapterId === "openai-whisper"
+                  ? "whisper-1"
+                  : result.adapterId === "local-whisper"
+                    ? settings.whisperModelId
+                    : settings.parakeetModelId,
+              originKind: input.originKind,
+              originId: input.originId,
+              originLabel: input.originLabel,
+            })
+          } catch (error) {
+            historyError = error instanceof Error ? error.message : String(error)
+            console.error("[Voice] Failed to save transcription history:", error)
+          }
+        }
+        return { ...result, historySaved: historyError === null, historyError }
+      } finally {
+        if (batchDictations.get(key) === controller) batchDictations.delete(key)
       }
-      return { ...result, historySaved: historyError === null, historyError }
     }),
 
   startStreaming: publicProcedure
@@ -305,17 +323,22 @@ export const voiceRouter = router({
     .input(z.object({ sessionId: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
       const windowId = ctx.getWindow()?.id ?? 0
+      const batch = batchDictations.get(`${windowId}:${input.sessionId}`)
+      let cancelled = Boolean(batch)
+      batch?.abort()
       if (
         pendingDictation?.windowId === windowId &&
         pendingDictation.sessionId === input.sessionId
       ) {
         pendingDictation.cancelled = true
+        cancelled = true
       }
       if (activeDictation?.windowId === windowId && activeDictation.sessionId === input.sessionId) {
+        cancelled = true
         activeDictation = null
         await parakeetSidecar.cancel()
       }
-      return { cancelled: true as const }
+      return { cancelled }
     }),
 
   /** Check local-only dictation readiness, including model auto-provisioning. */

@@ -1,15 +1,37 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 // @ts-expect-error JavaScript build-script helper intentionally has no declaration file.
 import {
+  cargoCommand,
   resolveSttBuildEnv,
   resolveTranscribeLicense,
   stableRustToolchainName,
 } from "../scripts/prepare-stt-sidecar.mjs"
 
 describe("STT sidecar toolchain fallback", () => {
+  it.skipIf(process.platform !== "win32")("finds Windows Rust executables outside PATH", () => {
+    const home = mkdtempSync(join(tmpdir(), "flapstack-rust-fallback-"))
+    const bin = join(home, "toolchains", stableRustToolchainName("win32", "x64"), "bin")
+    mkdirSync(bin, { recursive: true })
+    writeFileSync(join(bin, "cargo.exe"), "fixture")
+    writeFileSync(join(bin, "rustc.exe"), "fixture")
+    vi.stubEnv("PATH", home)
+    vi.stubEnv("RUSTUP_HOME", home)
+    try {
+      expect(cargoCommand()).toEqual({
+        command: join(bin, "cargo.exe"),
+        env: { RUSTC: join(bin, "rustc.exe"), PATH: `${bin};${home}` },
+      })
+      rmSync(join(bin, "rustc.exe"))
+      expect(() => cargoCommand()).toThrow("Rust/Cargo is required")
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   it("uses the native Rust host triple on Windows, macOS, and Linux", () => {
     expect(stableRustToolchainName("win32", "x64")).toBe("stable-x86_64-pc-windows-msvc")
     expect(stableRustToolchainName("darwin", "arm64")).toBe("stable-aarch64-apple-darwin")

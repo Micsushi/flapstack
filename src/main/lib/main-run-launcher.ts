@@ -1,7 +1,11 @@
+import type { AgentActivityInvalidation } from "../../shared/agent-activity"
+import { broadcastAgentActivityInvalidation } from "./agent-runtime/activity-service"
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
+import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
 import { randomUUID } from "node:crypto"
+import { promisify } from "node:util"
 import { createAppRouter } from "./trpc/routers"
 import { publishLocalProductInvalidation } from "./mcp-control/invalidation-bridge"
 import {
@@ -27,9 +31,15 @@ import type {
   RuntimeAdapterSession,
   RuntimeAdapterTurn,
 } from "../../shared/agent-runtime"
-import { usesFlapstackRuntimeEnhancements } from "../../shared/agent-runtime"
+import {
+  usesFlapstackRuntimeEnhancements,
+  RuntimeStructuredOutputError,
+} from "../../shared/agent-runtime"
 import { isAgentHarness } from "../../shared/harness-types"
-import { LEGACY_RUNTIME_CAPABILITIES } from "./agent-runtime/snapshot"
+import {
+  LEGACY_RUNTIME_CAPABILITIES,
+  resolvedLaunchFromSnapshotRow,
+} from "./agent-runtime/snapshot"
 import {
   RuntimeLaunchCancelledError,
   RuntimeLaunchCoordinator,
@@ -43,9 +53,11 @@ import {
   CLAUDE_CODE_VERSION,
   createClaudeCodeRuntimeAdapter,
   type ClaudeRuntimeDependencies,
+  type ClaudeRuntimeProbeInput,
   type ClaudeRuntimeQueryInput,
 } from "./agent-runtime/claude-code"
 import { RUNTIME_RELEASE_POLICY } from "./agent-runtime/release-policy"
+import { isHiddenPreviewVerification } from "./mcp-test-control/lifecycle"
 import { sanitizeRuntimeText } from "./agent-runtime/sanitizer"
 import { getDatabasePath } from "./db"
 import * as schema from "./db/schema"
@@ -130,6 +142,8 @@ import {
   createTranslatedRuntimeAdapterPackFactory,
   translatedRuntimeCompositionIdentity,
 } from "./agent-runtime/translated-adapter-pack"
+
+const execFileAsync = promisify(execFile)
 
 export type MainRunLauncherOptions = {
   databasePath?: string
@@ -219,14 +233,12 @@ export class MainRuntimeLaunchService {
         resolveThreadParams: async (context, operation) => {
           const authority = await this.resolveExtensionAuthority(context, "codex")
           const enhanced = usesFlapstackRuntimeEnhancements(context.launch.requestedPreference)
-          const enforceExtensionPolicy =
-            enhanced || Boolean(this.runs.get(context.runId)?.profileRuntimeAuthority)
-          const config = enforceExtensionPolicy
-            ? applyCodexExtensionPolicyConfig(
+          const config = isHiddenPreviewVerification()
+            ? {}
+            : applyCodexExtensionPolicyConfig(
                 enhanced ? buildManagedCodexHookConfig(authority.hooks) : {},
                 authority.policy,
               )
-            : {}
           return {
             cwd: authority.cwd,
             ...(enhanced && operation === "start" && context.instructions
@@ -302,7 +314,7 @@ export class MainRuntimeLaunchService {
         { runtime: "flapstack-native", factory: nativeFactory },
       ])
     this.coordinator = new RuntimeLaunchCoordinator(this.registry, {
-      persistIntent: (request) => this.persistIntent(request.runId),
+      persistIntent: (request) => this.persistIntent(request.runId, request.launch),
       persistSession: (request, session) => this.persistSession(request.runId, session),
       persistTurn: (request, session, turn) => this.persistTurn(request.runId, session, turn),
       onLifecycle: (request, lifecycle, detail) =>
@@ -323,15 +335,28 @@ export class MainRuntimeLaunchService {
         throw new RuntimeLaunchCancelledError(run.runId)
       }
       const resolvedLaunch = run.runtimeLaunch ?? legacyLaunch(run)
+      const persistedSession = await this.loadPersistedSession(run.runId)
+      const prompt = resolveRuntimeTurnPrompt(
+        {
+          ...run,
+          prompt:
+            !persistedSession &&
+            run.harness !== "local" &&
+            resolvedLaunch.resolvedRuntime !== "flapstack-native"
+              ? prependPreSessionChatContext(run.prompt, this.loadPreSessionUserMessages(run.runId))
+              : run.prompt,
+        },
+        resolvedLaunch,
+      )
       await this.coordinator.launch({
         runId: run.runId,
         chatId: run.chatId,
         subChatId: run.subChatId,
         launch: resolvedLaunch,
-        prompt: resolveRuntimeTurnPrompt(run, resolvedLaunch),
+        prompt,
         instructions,
         outputSchema: run.outputSchema,
-        persistedSession: await this.loadPersistedSession(run.runId),
+        persistedSession,
       })
     } catch (error) {
       const cancelled =
@@ -608,8 +633,9 @@ export class MainRuntimeLaunchService {
 
   private persistPendingCancellation(runId: string, reason: string): boolean {
     const db = this.open()
+    let activityInvalidation: AgentActivityInvalidation | undefined
     try {
-      return db
+      const cancelled = db
         .transaction(() => {
           const run = db.prepare("SELECT sub_chat_id FROM agent_runs WHERE id = ?").get(runId) as
             { sub_chat_id: string | null } | undefined
@@ -632,12 +658,14 @@ export class MainRuntimeLaunchService {
                ), 'cancelled'), updated_at = ? WHERE id = ?`,
             ).run(run.sub_chat_id, runId, now, run.sub_chat_id)
           }
-          this.appendActivityWithDatabase(db, runId, [
+          activityInvalidation = this.appendActivityWithDatabase(db, runId, [
             lifecycleActivity("cancelled", "lifecycle:cancelled", undefined, undefined, reason),
           ])
           return true
         })
         .immediate()
+      if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
+      return cancelled
     } finally {
       db.close()
     }
@@ -676,52 +704,36 @@ export class MainRuntimeLaunchService {
   private claudeDependencies(): ClaudeRuntimeDependencies {
     return {
       query: (input) => claudeQuery(input),
-      probe: async () => {
-        const binary = await resolveBundledClaudePath()
-        return {
-          available: existsSync(binary),
-          sdkVersion: CLAUDE_AGENT_SDK_VERSION,
-          claudeCodeVersion: CLAUDE_CODE_VERSION,
-          features: {
-            partialMessages: true,
-            thinking: true,
-            hooks: true,
-            subagentForwarding: true,
-            resume: true,
-            resumeAt: true,
-            fork: true,
-            cancellation: true,
-          },
-          unavailableReason: existsSync(binary) ? null : "Bundled Claude Code binary is missing.",
-        }
-      },
+      probe: () => probeClaudeRuntimeReadiness(),
       buildQueryOptions: async (context, _prompt, abortController) => {
         const authority = await this.resolveExtensionAuthority(context, "claude-code")
         const enhanced = usesFlapstackRuntimeEnhancements(context.launch.requestedPreference)
-        const enforceExtensionPolicy =
-          enhanced || Boolean(this.runs.get(context.runId)?.profileRuntimeAuthority)
-        const sdkOptions = enforceExtensionPolicy
-          ? getClaudeExtensionSdkOptions(authority.policy)
-          : {}
-        const hooks = enhanced
-          ? buildManagedClaudeHookOptions(authority.hooks, (record, input, signal) =>
-              this.hookRuntimeExecutor.execute(record, input, signal, authority.cwd),
+        const hiddenPreviewVerification = isHiddenPreviewVerification()
+        const sdkOptions = hiddenPreviewVerification
+          ? {}
+          : getClaudeExtensionSdkOptions(authority.policy)
+        const hooks =
+          !hiddenPreviewVerification && enhanced
+            ? buildManagedClaudeHookOptions(authority.hooks, (record, input, signal) =>
+                this.hookRuntimeExecutor.execute(record, input, signal, authority.cwd),
+              )
+            : {}
+        const loadedMcpServers = hiddenPreviewVerification
+          ? {}
+          : Object.fromEntries(
+              Object.entries(await loadClaudeMcpServers(authority.cwd)).map(([name, server]) => [
+                name,
+                hydrateMcpServerSecrets(server),
+              ]),
             )
-          : {}
-        const loadedMcpServers = Object.fromEntries(
-          Object.entries(await loadClaudeMcpServers(authority.cwd)).map(([name, server]) => [
-            name,
-            hydrateMcpServerSecrets(server),
-          ]),
-        )
-        const mcpServers = enforceExtensionPolicy
-          ? filterClaudeExtensionMcpServers(loadedMcpServers, authority.policy)
-          : loadedMcpServers
+        const mcpServers = hiddenPreviewVerification
+          ? {}
+          : filterClaudeExtensionMcpServers(loadedMcpServers, authority.policy)
         return {
           cwd: authority.cwd,
           pathToClaudeCodeExecutable: await resolveBundledClaudePath(),
           includePartialMessages: true,
-          settingSources: ["user", "project", "local"],
+          settingSources: hiddenPreviewVerification ? [] : ["user", "project", "local"],
           canUseTool: async (
             toolName: string,
             toolInput: Record<string, unknown>,
@@ -830,19 +842,38 @@ export class MainRuntimeLaunchService {
     }
   }
 
-  private persistIntent(runId: string): void {
+  private persistIntent(runId: string, launch: ResolvedRuntimeLaunch): void {
     const db = this.open()
+    let activityInvalidation: AgentActivityInvalidation | undefined
     try {
       db.transaction(() => {
-        const row = db.prepare("SELECT status FROM agent_runs WHERE id = ?").get(runId) as
-          { status: string } | undefined
+        const row = db.prepare("SELECT * FROM agent_runs WHERE id = ?").get(runId) as
+          Record<string, unknown> | undefined
         if (!row || row.status !== "running") {
           throw new Error("Runtime launch intent has no claimed durable running row.")
         }
-        this.appendActivityWithDatabase(db, runId, [
+        if (launch.preferenceSource !== "legacy") {
+          const identity = JSON.stringify({
+            schemaVersion: 1,
+            runtime: launch.resolvedRuntime,
+            harness: launch.harness,
+            versions: launch.versions,
+          })
+          resolvedLaunchFromSnapshotRow({ ...row, runtime_launch_identity: identity })
+          if (row.runtime_launch_identity != null && row.runtime_launch_identity !== identity) {
+            throw new Error("Runtime launch identity changed after provider intent.")
+          }
+          if (row.runtime_launch_identity == null) {
+            db.prepare(
+              "UPDATE agent_runs SET runtime_launch_identity=? WHERE id=? AND runtime_launch_identity IS NULL",
+            ).run(identity, runId)
+          }
+        }
+        activityInvalidation = this.appendActivityWithDatabase(db, runId, [
           lifecycleActivity("intent-persisted", "intent-persisted"),
         ])
       }).immediate()
+      if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
     } finally {
       db.close()
     }
@@ -850,6 +881,7 @@ export class MainRuntimeLaunchService {
 
   private async persistSession(runId: string, session: RuntimeAdapterSession): Promise<void> {
     const db = this.open()
+    let activityInvalidation: AgentActivityInvalidation | undefined
     try {
       db.transaction(() => {
         const run = this.requireRunRow(db, runId)
@@ -864,10 +896,11 @@ export class MainRuntimeLaunchService {
             run.sub_chat_id,
           )
         }
-        this.appendActivityWithDatabase(db, runId, [
+        activityInvalidation = this.appendActivityWithDatabase(db, runId, [
           lifecycleActivity("session-started", "session-started", session),
         ])
       }).immediate()
+      if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
     } finally {
       db.close()
     }
@@ -879,10 +912,12 @@ export class MainRuntimeLaunchService {
     turn: RuntimeAdapterTurn,
   ): Promise<void> {
     const db = this.open()
+    let activityInvalidation: AgentActivityInvalidation | undefined
     try {
-      this.appendActivityWithDatabase(db, runId, [
+      activityInvalidation = this.appendActivityWithDatabase(db, runId, [
         lifecycleActivity("turn-started", "turn-started", session, turn),
       ])
+      if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
     } finally {
       db.close()
     }
@@ -894,6 +929,7 @@ export class MainRuntimeLaunchService {
     detail?: string | null,
   ): Promise<void> {
     const db = this.open()
+    let activityInvalidation: AgentActivityInvalidation | undefined
     let chatId: string | undefined
     try {
       db.transaction(() => {
@@ -935,10 +971,11 @@ export class MainRuntimeLaunchService {
           }
         }
         const dedupKey = ["paused", "resumed"].includes(lifecycle) ? null : `lifecycle:${lifecycle}`
-        this.appendActivityWithDatabase(db, runId, [
+        activityInvalidation = this.appendActivityWithDatabase(db, runId, [
           lifecycleActivity(lifecycle, dedupKey, undefined, undefined, detail),
         ])
       }).immediate()
+      if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
     } finally {
       db.close()
     }
@@ -977,8 +1014,10 @@ export class MainRuntimeLaunchService {
     events: readonly AgentActivityAppend[],
   ): Promise<void> {
     const db = this.open()
+    let activityInvalidation: AgentActivityInvalidation | undefined
     try {
-      this.appendActivityWithDatabase(db, runId, events)
+      activityInvalidation = this.appendActivityWithDatabase(db, runId, events)
+      if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
     } finally {
       db.close()
     }
@@ -988,17 +1027,23 @@ export class MainRuntimeLaunchService {
     db: Database.Database,
     runId: string,
     events: readonly AgentActivityAppend[],
-  ): void {
+  ): AgentActivityInvalidation | undefined {
+    let invalidation: AgentActivityInvalidation | undefined
     const agent = db
       .prepare("SELECT id FROM orchestration_agents WHERE run_id = ? LIMIT 1")
       .get(runId) as { id: string } | undefined
-    createAgentActivityStore(db).appendBatch(
+    createAgentActivityStore(db, {
+      onInvalidated: (value) => {
+        invalidation = value
+      },
+    }).appendBatch(
       runId,
       events.map((event) => ({
         ...event,
         orchestrationAgentId: event.orchestrationAgentId ?? agent?.id ?? null,
       })),
     )
+    return invalidation
   }
 
   private referenceActivity(runId: string): void {
@@ -1008,6 +1053,42 @@ export class MainRuntimeLaunchService {
         nowEpochSeconds(),
         runId,
       )
+    } finally {
+      db.close()
+    }
+  }
+
+  private loadPreSessionUserMessages(runId: string): BoundedPreSessionContext {
+    const db = this.open()
+    try {
+      const row = db
+        .prepare(
+          `SELECT r.prompt_message_id, s.messages
+           FROM agent_runs r
+           JOIN sub_chats s ON s.id = r.sub_chat_id
+           WHERE r.id = ?`,
+        )
+        .get(runId) as { prompt_message_id: string | null; messages: string } | undefined
+      if (!row?.prompt_message_id) return { messages: [], omitted: false }
+      const messages = parseStoredChatMessages(row.messages)
+      const promptIndex = messages.findIndex((message) => message.id === row.prompt_message_id)
+      if (promptIndex <= 0) return { messages: [], omitted: false }
+      const earlierUserMessages = messages.slice(0, promptIndex).flatMap((message) => {
+        if (message.role !== "user" || !Array.isArray(message.parts)) return []
+        const text = message.parts
+          .flatMap((part) =>
+            part &&
+            typeof part === "object" &&
+            (part as { type?: unknown }).type === "text" &&
+            typeof (part as { text?: unknown }).text === "string"
+              ? [(part as { text: string }).text.trim()]
+              : [],
+          )
+          .filter(Boolean)
+          .join("\n\n")
+        return text ? [text] : []
+      })
+      return boundPreSessionUserMessages(earlierUserMessages)
     } finally {
       db.close()
     }
@@ -1239,6 +1320,53 @@ export class MainRuntimeLaunchService {
   }
 }
 
+type ClaudeRuntimeReadinessDependencies = {
+  resolveBinaryPath(): Promise<string>
+  binaryExists(path: string): boolean
+  probeAuthentication(path: string): Promise<ClaudeAuthenticationProbe>
+}
+
+export type ClaudeAuthenticationProbe =
+  { status: "authenticated" } | { status: "logged-out" } | { status: "error"; reason: string }
+
+export async function probeClaudeRuntimeReadiness(
+  overrides: Partial<ClaudeRuntimeReadinessDependencies> = {},
+): Promise<ClaudeRuntimeProbeInput> {
+  const dependencies: ClaudeRuntimeReadinessDependencies = {
+    resolveBinaryPath: resolveBundledClaudePath,
+    binaryExists: existsSync,
+    probeAuthentication: probeBundledClaudeAuthentication,
+    ...overrides,
+  }
+  const binary = await dependencies.resolveBinaryPath()
+  const binaryAvailable = dependencies.binaryExists(binary)
+  const authentication = binaryAvailable
+    ? await cachedClaudeAuthenticationProbe(binary, dependencies.probeAuthentication)
+    : null
+  return {
+    available: binaryAvailable && authentication?.status === "authenticated",
+    sdkVersion: CLAUDE_AGENT_SDK_VERSION,
+    claudeCodeVersion: CLAUDE_CODE_VERSION,
+    features: {
+      partialMessages: true,
+      thinking: true,
+      hooks: true,
+      subagentForwarding: true,
+      resume: true,
+      resumeAt: true,
+      fork: true,
+      cancellation: true,
+    },
+    unavailableReason: !binaryAvailable
+      ? "Bundled Claude Code binary is missing."
+      : authentication?.status === "authenticated"
+        ? null
+        : authentication?.status === "logged-out"
+          ? "Claude Code authentication required. Connect Claude Code, then retry."
+          : (authentication?.reason ?? "Claude Code readiness check failed. Retry the launch."),
+  }
+}
+
 function assertFrozenProfileToolPolicySupported(run: QueuedAgentRun): void {
   const resolvedRuntime = run.runtimeLaunch?.resolvedRuntime
   if (
@@ -1258,6 +1386,77 @@ export function resolveRuntimeTurnPrompt(
   return launch.resolvedRuntime === "flapstack-native"
     ? run.prompt
     : applyChatModeInstruction(run.prompt, normalizeChatMode(run.chatMode))
+}
+
+const MAX_PRE_SESSION_USER_MESSAGES = 20
+const MAX_PRE_SESSION_CONTEXT_CHARACTERS = 24_000
+const PRE_SESSION_CONTEXT_SEPARATOR = "\n\n---\n\n"
+
+type BoundedPreSessionContext = { messages: string[]; omitted: boolean }
+
+function boundPreSessionUserMessages(messages: readonly string[]): BoundedPreSessionContext {
+  if (messages.length === 0) return { messages: [], omitted: false }
+  const first = messages[0].slice(0, MAX_PRE_SESSION_CONTEXT_CHARACTERS)
+  const bounded = first ? [first] : []
+  let remaining = MAX_PRE_SESSION_CONTEXT_CHARACTERS - first.length
+  let omitted = first.length < messages[0].length
+  const recent: string[] = []
+  for (const message of messages.slice(1).reverse()) {
+    if (bounded.length + recent.length >= MAX_PRE_SESSION_USER_MESSAGES) {
+      omitted = true
+      break
+    }
+    if (remaining <= PRE_SESSION_CONTEXT_SEPARATOR.length) {
+      omitted = true
+      break
+    }
+    const available = remaining - PRE_SESSION_CONTEXT_SEPARATOR.length
+    const text = message.slice(0, available)
+    if (!text) {
+      omitted = true
+      break
+    }
+    recent.push(text)
+    remaining -= PRE_SESSION_CONTEXT_SEPARATOR.length + text.length
+    if (text.length < message.length) {
+      omitted = true
+      break
+    }
+  }
+  if (bounded.length + recent.length < messages.length) omitted = true
+  bounded.push(...recent.reverse())
+  return { messages: bounded, omitted }
+}
+
+function prependPreSessionChatContext(prompt: string, context: BoundedPreSessionContext): string {
+  if (context.messages.length === 0) return prompt
+  return [
+    "# Earlier Chat context",
+    "",
+    "The following user context was stored in this Chat before its provider session started.",
+    "",
+    context.messages.join(PRE_SESSION_CONTEXT_SEPARATOR),
+    ...(context.omitted
+      ? ["", "Some earlier user messages were omitted to keep this context bounded."]
+      : []),
+    "",
+    "# Current request",
+    "",
+    prompt,
+  ].join("\n")
+}
+
+function parseStoredChatMessages(
+  value: string,
+): Array<{ id?: unknown; role?: unknown; parts?: unknown }> {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return Array.isArray(parsed)
+      ? (parsed as Array<{ id?: unknown; role?: unknown; parts?: unknown }>)
+      : []
+  } catch {
+    return []
+  }
 }
 
 function buildClaudeRuntimePrompt(
@@ -1347,6 +1546,8 @@ export function getMainRuntimeLaunchService(
 
 export function resetMainRuntimeLaunchServicesForTests(): void {
   services.clear()
+  claudeAuthenticationCache = null
+  claudeAuthenticationInFlight = null
   resetRuntimeLaunchAuthoritiesForTests()
 }
 
@@ -1885,7 +2086,9 @@ function readStructuredOutput(
     output.redaction_state !== "none" ||
     output.provider === "runtime"
   ) {
-    throw new Error("Completed Runtime output is not public provider-visible activity.")
+    throw new RuntimeStructuredOutputError(
+      "Completed Runtime output is not public provider-visible activity.",
+    )
   }
 
   const terminal = db
@@ -1897,7 +2100,10 @@ function readStructuredOutput(
        ORDER BY sequence ASC LIMIT 1`,
     )
     .get(runId, output.sequence) as StructuredOutputEventRow | undefined
-  if (!terminal) throw new Error("Completed Runtime output has no authoritative terminal event.")
+  if (!terminal)
+    throw new RuntimeStructuredOutputError(
+      "Completed Runtime output has no authoritative terminal event.",
+    )
   assertStructuredOutputIdentity(run, terminal)
   if (
     terminal.display_class !== "status" ||
@@ -1906,7 +2112,7 @@ function readStructuredOutput(
     terminal.provider !== "runtime" ||
     terminal.dedup_key !== "runtime:runtime:lifecycle:completed"
   ) {
-    throw new Error("Runtime completion activity is not authoritative.")
+    throw new RuntimeStructuredOutputError("Runtime completion activity is not authoritative.")
   }
   const terminalPayload = parseActivityPayload(terminal.payload_json)
   if (
@@ -1914,12 +2120,12 @@ function readStructuredOutput(
     terminalPayload.detail !== null ||
     Object.keys(terminalPayload).some((key) => key !== "state" && key !== "detail")
   ) {
-    throw new Error("Runtime completion activity is corrupt.")
+    throw new RuntimeStructuredOutputError("Runtime completion activity is corrupt.")
   }
 
   const payload = parseActivityPayload(output.payload_json)
   if (typeof payload.text !== "string" || Object.keys(payload).some((key) => key !== "text")) {
-    throw new Error("Completed Runtime output activity is corrupt.")
+    throw new RuntimeStructuredOutputError("Completed Runtime output activity is corrupt.")
   }
   const value = parseStructuredRuntimeText(payload.text)
   assertStructuredRuntimeValue(value)
@@ -1947,20 +2153,22 @@ function assertStructuredOutputIdentity(
     !Number.isInteger(event.sequence) ||
     event.sequence < 1
   ) {
-    throw new Error("Runtime structured output identity is corrupt.")
+    throw new RuntimeStructuredOutputError("Runtime structured output identity is corrupt.")
   }
 }
 
 function parseActivityPayload(payloadJson: string): Record<string, unknown> {
   if (Buffer.byteLength(payloadJson, "utf8") > MAX_AGENT_ACTIVITY_PAYLOAD_BYTES) {
-    throw new Error("Runtime structured output activity exceeds its size bound.")
+    throw new RuntimeStructuredOutputError(
+      "Runtime structured output activity exceeds its size bound.",
+    )
   }
   try {
     const value = JSON.parse(payloadJson) as unknown
-    if (!isPlainRecord(value)) throw new Error("not an object")
+    if (!isPlainRecord(value)) throw new RuntimeStructuredOutputError("not an object")
     return value
   } catch {
-    throw new Error("Runtime structured output activity is corrupt.")
+    throw new RuntimeStructuredOutputError("Runtime structured output activity is corrupt.")
   }
 }
 
@@ -1969,12 +2177,12 @@ function parseStructuredRuntimeText(text: string): unknown {
   const fenced = /^```json\s*([\s\S]*?)\s*```$/i.exec(trimmed)
   const candidate = fenced?.[1]?.trim() ?? trimmed
   if (!candidate || Buffer.byteLength(candidate, "utf8") > MAX_AGENT_ACTIVITY_PAYLOAD_BYTES) {
-    throw new Error("Completed Runtime output exceeds its size bound.")
+    throw new RuntimeStructuredOutputError("Completed Runtime output exceeds its size bound.")
   }
   try {
     return JSON.parse(candidate) as unknown
   } catch {
-    throw new Error("Completed Runtime output is not valid JSON.")
+    throw new RuntimeStructuredOutputError("Completed Runtime output is not valid JSON.")
   }
 }
 
@@ -1989,17 +2197,19 @@ function visitStructuredRuntimeValue(
   budget: { entries: number },
 ): void {
   if (depth > MAX_AGENT_ACTIVITY_METADATA_DEPTH) {
-    throw new Error("Completed Runtime output exceeds its depth bound.")
+    throw new RuntimeStructuredOutputError("Completed Runtime output exceeds its depth bound.")
   }
   if (value === null || typeof value === "boolean") return
   if (typeof value === "number") {
     if (!Number.isFinite(value))
-      throw new Error("Completed Runtime output contains an invalid number.")
+      throw new RuntimeStructuredOutputError("Completed Runtime output contains an invalid number.")
     return
   }
   if (typeof value === "string") {
     if (Buffer.byteLength(value, "utf8") > MAX_AGENT_ACTIVITY_METADATA_STRING) {
-      throw new Error("Completed Runtime output contains an oversized string.")
+      throw new RuntimeStructuredOutputError(
+        "Completed Runtime output contains an oversized string.",
+      )
     }
     return
   }
@@ -2009,16 +2219,21 @@ function visitStructuredRuntimeValue(
     for (const item of value) visitStructuredRuntimeValue(item, depth + 1, budget)
     return
   }
-  if (!isPlainRecord(value)) throw new Error("Completed Runtime output contains an invalid value.")
+  if (!isPlainRecord(value))
+    throw new RuntimeStructuredOutputError("Completed Runtime output contains an invalid value.")
   const entries = Object.entries(value)
   budget.entries += entries.length
   assertStructuredRuntimeEntryBudget(budget)
   for (const [key, item] of entries) {
     if (["__proto__", "prototype", "constructor"].includes(key)) {
-      throw new Error("Completed Runtime output contains an unsafe object key.")
+      throw new RuntimeStructuredOutputError(
+        "Completed Runtime output contains an unsafe object key.",
+      )
     }
     if (Buffer.byteLength(key, "utf8") > 512) {
-      throw new Error("Completed Runtime output contains an oversized object key.")
+      throw new RuntimeStructuredOutputError(
+        "Completed Runtime output contains an oversized object key.",
+      )
     }
     visitStructuredRuntimeValue(item, depth + 1, budget)
   }
@@ -2026,7 +2241,7 @@ function visitStructuredRuntimeValue(
 
 function assertStructuredRuntimeEntryBudget(budget: { entries: number }): void {
   if (budget.entries > MAX_AGENT_ACTIVITY_METADATA_ENTRIES) {
-    throw new Error("Completed Runtime output exceeds its entry bound.")
+    throw new RuntimeStructuredOutputError("Completed Runtime output exceeds its entry bound.")
   }
 }
 
@@ -2107,6 +2322,97 @@ async function* claudeQuery(input: ClaudeRuntimeQueryInput) {
 async function resolveBundledClaudePath(): Promise<string> {
   const { getBundledClaudeBinaryPath } = await import("./claude")
   return getBundledClaudeBinaryPath()
+}
+
+const CLAUDE_AUTH_CONFIRMATION_TTL_MS = 10_000
+const CLAUDE_AUTH_FAILURE_TTL_MS = 1_000
+const CLAUDE_AUTH_STATUS_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 10_000
+let claudeAuthenticationCache: {
+  binary: string
+  probe: (path: string) => Promise<ClaudeAuthenticationProbe>
+  result: ClaudeAuthenticationProbe
+  checkedAt: number
+} | null = null
+let claudeAuthenticationInFlight: {
+  binary: string
+  probe: (path: string) => Promise<ClaudeAuthenticationProbe>
+  promise: Promise<ClaudeAuthenticationProbe>
+} | null = null
+
+async function cachedClaudeAuthenticationProbe(
+  binary: string,
+  probe: (path: string) => Promise<ClaudeAuthenticationProbe>,
+): Promise<ClaudeAuthenticationProbe> {
+  if (
+    claudeAuthenticationCache &&
+    claudeAuthenticationCache.binary === binary &&
+    claudeAuthenticationCache.probe === probe &&
+    Date.now() - claudeAuthenticationCache.checkedAt <
+      (claudeAuthenticationCache.result.status === "authenticated"
+        ? CLAUDE_AUTH_CONFIRMATION_TTL_MS
+        : CLAUDE_AUTH_FAILURE_TTL_MS)
+  )
+    return claudeAuthenticationCache.result
+  if (
+    claudeAuthenticationInFlight?.binary === binary &&
+    claudeAuthenticationInFlight.probe === probe
+  ) {
+    return await claudeAuthenticationInFlight.promise
+  }
+  const promise = probe(binary).then((result) => {
+    claudeAuthenticationCache = { binary, probe, result, checkedAt: Date.now() }
+    return result
+  })
+  claudeAuthenticationInFlight = { binary, probe, promise }
+  try {
+    return await promise
+  } finally {
+    if (claudeAuthenticationInFlight?.promise === promise) claudeAuthenticationInFlight = null
+  }
+}
+
+async function probeBundledClaudeAuthentication(
+  binary: string,
+): Promise<ClaudeAuthenticationProbe> {
+  try {
+    const { getClaudeShellEnvironment } = await import("./claude")
+    const { stdout } = await execFileAsync(binary, ["auth", "status"], {
+      env: { ...process.env, ...getClaudeShellEnvironment() },
+      windowsHide: true,
+      timeout: CLAUDE_AUTH_STATUS_TIMEOUT_MS,
+    })
+    return (
+      parseClaudeAuthenticationOutput(stdout) ?? {
+        status: "error",
+        reason: "Claude Code returned an unreadable authentication status. Retry the launch.",
+      }
+    )
+  } catch (error) {
+    const failed = error as { stdout?: string | Buffer; killed?: boolean; code?: unknown }
+    const parsed = parseClaudeAuthenticationOutput(failed.stdout)
+    if (parsed) return parsed
+    return {
+      status: "error",
+      reason:
+        failed.killed || failed.code === "ETIMEDOUT"
+          ? "Claude Code authentication check timed out. Retry the launch."
+          : "Claude Code authentication check failed. Retry the launch.",
+    }
+  }
+}
+
+export function parseClaudeAuthenticationOutput(
+  stdout: string | Buffer | undefined,
+): ClaudeAuthenticationProbe | null {
+  if (stdout === undefined) return null
+  try {
+    const loggedIn = (JSON.parse(String(stdout)) as { loggedIn?: unknown }).loggedIn
+    if (loggedIn === true) return { status: "authenticated" }
+    if (loggedIn === false) return { status: "logged-out" }
+  } catch {
+    // The caller reports this as an operational probe failure, not a verified logout.
+  }
+  return null
 }
 
 function codexPermissionOptions(mode: ResolvedRuntimeLaunch["permission"]["mode"]): {

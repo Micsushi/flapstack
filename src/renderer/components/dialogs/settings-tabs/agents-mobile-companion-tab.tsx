@@ -4,6 +4,8 @@ import { toast } from "sonner"
 import type { MobilePairingOffer, MobileResourceRef } from "../../../../shared/mobile-control"
 import { trpc } from "../../../lib/trpc"
 import { Button } from "../../ui/button"
+import { RemoteComputerClientSection } from "./remote-computer-client"
+import { mobileConnectionLink } from "../../../../shared/mobile-connection-link"
 
 const resourceKinds = ["project", "task", "chat", "orchestration"] as const
 type GrantResourceKind = (typeof resourceKinds)[number]
@@ -70,7 +72,7 @@ export function AgentsMobileCompanionTab() {
       return
     }
     let live = true
-    void QRCode.toDataURL(pairingLaunchUrl(displayedOffer), {
+    void QRCode.toDataURL(mobileConnectionLink(displayedOffer), {
       errorCorrectionLevel: "M",
       margin: 2,
       width: 256,
@@ -217,6 +219,7 @@ export function AgentsMobileCompanionTab() {
         </p>
       </header>
 
+      <RemoteComputerClientSection />
       <section className="space-y-3" data-settings-id="mobile-companion-bridge">
         <div>
           <h2 className="text-sm font-semibold">Private HTTPS bridge</h2>
@@ -331,6 +334,26 @@ export function AgentsMobileCompanionTab() {
               <div>
                 <dt className="font-medium">Endpoint</dt>
                 <dd className="mt-1 font-mono text-muted-foreground">{displayedOffer.endpoint}</dd>
+              </div>
+              <div>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (displayedOffer.expiresAt <= Date.now()) {
+                      setPairingNotice("This connection link expired. Create a fresh pairing QR.")
+                      return
+                    }
+                    void navigator.clipboard.writeText(mobileConnectionLink(displayedOffer)).then(
+                      () =>
+                        setPairingNotice(
+                          "Connection link copied. Paste it in Remote computer on the other computer.",
+                        ),
+                      () => setPairingNotice("Could not copy the connection link. Try again."),
+                    )
+                  }}
+                >
+                  Copy connection link
+                </Button>
               </div>
             </dl>
           </div>
@@ -467,14 +490,6 @@ export function AgentsMobileCompanionTab() {
       </p>
     </div>
   )
-}
-
-function pairingLaunchUrl(offer: MobilePairingOffer): string {
-  const payload = new TextEncoder().encode(JSON.stringify(offer))
-  let binary = ""
-  for (const byte of payload) binary += String.fromCharCode(byte)
-  const encoded = btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "")
-  return `${offer.endpoint}/?pair=${encoded}`
 }
 
 function mobileSettingsError(error: unknown, fallback: string): string {

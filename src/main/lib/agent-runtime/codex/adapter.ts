@@ -195,8 +195,22 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       let response: Record<string, unknown>
       try {
         response = record(await state.client.request("thread/resume", { ...params, threadId }))
-      } catch {
-        await state.client.request("thread/unarchive", { threadId })
+      } catch (resumeError) {
+        if (
+          !(resumeError instanceof Error) ||
+          !resumeError.message.includes(`session ${threadId} is archived.`)
+        ) {
+          throw resumeError
+        }
+        try {
+          // Restoring the persisted rollout can outlast ordinary protocol requests.
+          await state.client.request("thread/unarchive", { threadId }, 60_000)
+        } catch (restoreError) {
+          throw new Error(
+            `${String(restoreError)} (initial resume rejection: ${resumeError.message})`,
+            { cause: restoreError },
+          )
+        }
         response = record(await state.client.request("thread/resume", { ...params, threadId }))
       }
       this.captureThread(state, response, "thread/resume")
@@ -325,8 +339,11 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
           const turn = record(notification.params.turn)
           state.terminal = true
           state.turnId = null
-          if (turn.status === "failed") {
-            state.terminalFailure = codexTurnFailureMessage(turn.error)
+          if (turn.status === "failed" || turn.status === "interrupted") {
+            state.terminalFailure =
+              turn.status === "failed"
+                ? codexTurnFailureMessage(turn.error)
+                : "[codex-runtime] Codex turn was interrupted."
             throw new Error(state.terminalFailure)
           }
           return
@@ -427,13 +444,14 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     }
     const persisted = await this.options.resolvePersistedSession?.(context)
     const threadId = persisted?.providerThreadId
-    if (!threadId) return "uncertain"
+    const turn = await this.options.resolvePersistedTurn?.(context)
+    if (!threadId || !turn?.providerTurnId) return "uncertain"
     let client: CodexProtocolClient | null = null
     try {
       client = await this.createClient({ cwd: process.cwd() })
       await initialize(client)
       const response = record(await client.request("thread/read", { threadId, includeTurns: true }))
-      return reconcileThread(record(response.thread))
+      return reconcileThread(record(response.thread), threadId, turn.providerTurnId)
     } catch (error) {
       return "uncertain"
     } finally {
@@ -790,15 +808,20 @@ function sessionFromState(state: CodexRunState): RuntimeAdapterSession {
   return { providerSessionId: state.sessionId, providerThreadId: state.threadId }
 }
 
-function reconcileThread(thread: Record<string, unknown>): "running" | "completed" | "uncertain" {
+function reconcileThread(
+  thread: Record<string, unknown>,
+  threadId: string,
+  turnId: string,
+): "running" | "completed" | "uncertain" {
+  if (thread.id !== threadId) return "uncertain"
   const status = record(thread.status)
-  if (status.type === "active") return "running"
-  if (status.type === "systemError" || status.type === "notLoaded") return "uncertain"
+  if (status.type === "systemError") return "uncertain"
   const turns = array(thread.turns)
-  const last = record(turns.at(-1))
-  if (last.status === "inProgress") return "running"
-  if (["completed", "interrupted"].includes(String(last.status))) return "completed"
-  if (last.status === "failed") return "uncertain"
+    .map(record)
+    .filter((turn) => turn.id === turnId)
+  if (turns.length !== 1) return "uncertain"
+  if (turns[0].status === "completed") return "completed"
+  if (status.type !== "notLoaded" && turns[0].status === "inProgress") return "running"
   return "uncertain"
 }
 

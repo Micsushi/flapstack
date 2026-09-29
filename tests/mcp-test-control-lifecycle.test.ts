@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { readFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, writeFileSync, unlinkSync, rmdirSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import {
   isDevTestControlEnabled,
+  isHiddenPreviewVerification,
   isPreviewExecutable,
   isStage6PerformanceProfile,
   isHeadlessPerformanceProfile,
@@ -11,6 +13,85 @@ import {
 } from "../src/main/lib/mcp-test-control/lifecycle"
 
 describe("test-control lifecycle", () => {
+  it("requires matching explicit Preview identity and rejects mixed or shared hidden profiles", () => {
+    const executable = "C:\\Apps\\Flapstack Preview.exe"
+    const resources = mkdtempSync(resolve(tmpdir(), "flapstack-preview-identity-"))
+    const provenance = resolve(resources, "package-provenance.json")
+    writeFileSync(
+      provenance,
+      JSON.stringify({
+        build: { channel: "preview" },
+        package: { productName: "Flapstack Preview" },
+      }),
+    )
+    try {
+      const env = {
+        FLAPSTACK_PREVIEW_HEADLESS: "1",
+        FLAPSTACK_PREVIEW_INSTANCE: "preview-bridge-123-abc",
+        FLAPSTACK_PREVIEW_RUN_TOKEN: "pb-123-abc-012345abcdef",
+      }
+      expect(isHeadlessPerformanceProfile(true, env, executable, resources)).toBe(true)
+      expect(isHiddenPreviewVerification(env)).toBe(true)
+      expect(resolvePreviewUserDataName(env.FLAPSTACK_PREVIEW_INSTANCE)).toBe(
+        "Flapstack Preview preview-bridge-123-abc",
+      )
+      expect(isDevTestControlEnabled(false, true, env)).toBe(false)
+      expect(() => isHeadlessPerformanceProfile(false, env, executable, resources)).toThrow(
+        "Preview",
+      )
+      expect(() => isHeadlessPerformanceProfile(true, env, "C:\\Apps\\Flapstack.exe")).toThrow(
+        "Preview",
+      )
+      for (const [field, value] of [
+        ["FLAPSTACK_PREVIEW_HEADLESS", "true"],
+        ["FLAPSTACK_PREVIEW_HEADLESS", ""],
+        ["FLAPSTACK_PREVIEW_INSTANCE", ""],
+        ["FLAPSTACK_PREVIEW_INSTANCE", "preview-bridge-123-abc/other"],
+        ["FLAPSTACK_PREVIEW_RUN_TOKEN", "pb-456-abc-012345abcdef"],
+        ["FLAPSTACK_PREVIEW_RUN_TOKEN", ""],
+        ["FLAPSTACK_STAGE6_HEADLESS", "1"],
+        ["FLAPSTACK_STAGE6_PERFORMANCE_PROFILE", "1"],
+        ["FLAPSTACK_DEV_INSTANCE", "other"],
+        ["FLAPSTACK_DEV_MCP_PROFILE", "other"],
+        ["FLAPSTACK_ENABLE_DEV_TEST_CONTROL", "1"],
+      ]) {
+        expect(() =>
+          isHeadlessPerformanceProfile(true, { ...env, [field]: value }, executable, resources),
+        ).toThrow("Preview")
+      }
+      for (const value of [
+        "invalid json",
+        "null",
+        JSON.stringify({
+          build: { channel: "release" },
+          package: { productName: "Flapstack Preview" },
+        }),
+        JSON.stringify({ build: { channel: "preview" }, package: { productName: "Flapstack" } }),
+      ]) {
+        writeFileSync(provenance, value)
+        expect(() => isHeadlessPerformanceProfile(true, env, executable, resources)).toThrow(
+          "provenance",
+        )
+      }
+      unlinkSync(provenance)
+      expect(() => isHeadlessPerformanceProfile(true, env, executable, resources)).toThrow(
+        "provenance",
+      )
+    } finally {
+      try {
+        unlinkSync(provenance)
+      } catch {}
+      rmdirSync(resources)
+    }
+    const main = readFileSync("src/main/index.ts", "utf8")
+    expect(main).toContain("const IS_CONTROL_DEV = IS_DEV || IS_STAGE6_PERFORMANCE")
+    expect(main).toMatch(/function handleDeepLink[^\n]+\{\s*if \(IS_HEADLESS_PERFORMANCE\) return/)
+    expect(main).toMatch(
+      /app.on\("second-instance",[^\n]+\{\s*if \(IS_HEADLESS_PERFORMANCE\) return/,
+    )
+    expect(main).toMatch(/app.on\("activate",[^\n]+\{\s*if \(IS_HEADLESS_PERFORMANCE\) return/)
+  })
+
   it("requires an isolated supervised profile before hiding a test window", () => {
     const env = {
       FLAPSTACK_STAGE6_HEADLESS: "1",
@@ -21,6 +102,7 @@ describe("test-control lifecycle", () => {
     }
     expect(isHeadlessPerformanceProfile(false, env)).toBe(true)
     expect(isHeadlessPerformanceProfile(false, {})).toBe(false)
+    expect(isHiddenPreviewVerification({})).toBe(false)
     expect(() => isHeadlessPerformanceProfile(true, env)).toThrow("isolated")
     for (const field of [
       "FLAPSTACK_STAGE6_PERFORMANCE_PROFILE",
@@ -36,17 +118,17 @@ describe("test-control lifecycle", () => {
 
   it("keeps isolated performance probes out of global startup side effects", () => {
     const main = readFileSync("src/main/index.ts", "utf8")
-    expect(main).toContain("if (IS_STAGE6_PERFORMANCE) return false")
+    expect(main).toContain("if (IS_ISOLATED_VERIFICATION) return false")
     expect(main).toContain('console.error("[App] Hidden runtime profile validation failed.")')
     expect(main).toMatch(
       /console.error\("\[App\] Failed required startup:", error\)\s*if \(IS_HEADLESS_PERFORMANCE\) return/,
     )
-    expect(main).toMatch(/setTimeout\(async \(\) => \{\s*if \(IS_STAGE6_PERFORMANCE\) return/)
+    expect(main).toMatch(/setTimeout\(async \(\) => \{\s*if \(IS_ISOLATED_VERIFICATION\) return/)
     expect(main).toMatch(
-      /const migration = IS_STAGE6_PERFORMANCE\s*\? \{ migrated: 0, deferred: 0 \}\s*:\s*await migrateClaudeMcpSecretFiles/,
+      /const migration = IS_ISOLATED_VERIFICATION\s*\? \{ migrated: 0, deferred: 0 \}\s*:\s*await migrateClaudeMcpSecretFiles/,
     )
     expect(main).toMatch(
-      /name: "Usage startup catch-up",\s*run: \(\) => \{\s*if \(IS_STAGE6_PERFORMANCE\) return/,
+      /name: "Usage startup catch-up",\s*run: \(\) => \{\s*if \(IS_ISOLATED_VERIFICATION\) return/,
     )
     const window = readFileSync("src/main/windows/main.ts", "utf8")
     expect(window).toContain("offscreen: true, focusOnNavigation: false")

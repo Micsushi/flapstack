@@ -79,10 +79,10 @@ export function listPlanSourceLinks(
     .all()
     .map((row) => ({ kind: "proposal", ...row }))
 
-  return [...taskRows, ...proposalRows].map((row) => linkRow(snapshot, row))
+  return [...taskRows, ...proposalRows].map((row) => linkPlanSource(snapshot, row))
 }
 
-function linkRow(snapshot: ProjectPlanSnapshot, row: ProvenanceRow): PlanSourceLink {
+export function linkPlanSource(snapshot: ProjectPlanSnapshot, row: ProvenanceRow): PlanSourceLink {
   const provenance = {
     sourceType: row.sourceType as "openspec" | "markdown",
     sourcePath: row.sourcePath!,
@@ -159,5 +159,6 @@ function resolveStatus(
   if (!source) return "source-missing"
   if (source.status === "malformed") return "malformed"
   if (!candidateExists) return "candidate-missing"
+  if (source.status === "stale" || source.stale) return "diverged"
   return source.fingerprint === storedFingerprint ? "current" : "diverged"
 }

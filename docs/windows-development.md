@@ -31,6 +31,29 @@ npm ci --legacy-peer-deps
 
 `preinstall` runs the same preflight automatically. It reports every missing or
 unsupported prerequisite in one pass and does not modify machine software.
+
+For an isolated checkout, keep native speech build caches in that checkout's
+owned cache directory. The upstream Rust dependency creates a CMake junction
+under `LOCALAPPDATA`; an unusable shared junction can otherwise fail preparation
+with an invalid-directory or missing-file error. From PowerShell:
+
+```powershell
+$previousLocalAppData = $env:LOCALAPPDATA
+$nativeCache = Join-Path (Get-Location) '.local-evidence/native-build-cache'
+New-Item -ItemType Directory -Path $nativeCache -Force | Out-Null
+try {
+  $env:LOCALAPPDATA = $nativeCache
+  npm run stt:prepare
+} finally {
+  $env:LOCALAPPDATA = $previousLocalAppData
+}
+```
+
+Use the same owned cache environment when starting that isolated development
+instance. This does not require clearing an existing personal cache. Preparation
+needs public dependencies on its first run; an already populated Cargo cache
+can be checked offline by setting `CARGO_NET_OFFLINE=true` for the command.
+
 The same root commands are supported when the checkout path contains spaces,
 Unicode, ampersands, parentheses, or percent signs. Keep using argument arrays
 in new Node scripts: project package bins are launched through their JavaScript
@@ -102,6 +125,25 @@ Preview uses its own app ID, executable name, `flapstack-preview://` protocol,
 profile, and `release-preview` output. Inspection verifies PE/x64 architecture for
 the app, agent binaries, speech sidecars, better-sqlite3, and every node-pty native
 output, plus the app archive, licenses, and Electron file version.
+
+For an isolated, hidden bridge lifecycle check, launch the Preview executable
+with `FLAPSTACK_PREVIEW_HEADLESS=1`, a fresh
+`FLAPSTACK_PREVIEW_INSTANCE=preview-bridge-<timestamp>-<random>` and matching
+`FLAPSTACK_PREVIEW_RUN_TOKEN=pb-<timestamp>-<random>-<12 lowercase hex digits>`.
+The timestamp is decimal and random suffix is lowercase alphanumeric. Keep
+that identity for a restart check; never reuse a personal Preview profile.
+The token identifies the test run; it is not bridge authentication.
+
+This mode requires a packaged Preview executable and embedded Preview channel
+and product-name provenance, rejects Dev profile flags
+and Dev test-control opt-in, and keeps the normal isolated Preview userData
+name. It renders offscreen, ignores deep links and second-instance activation,
+and skips protocol registration, sleep prevention, credential migration,
+usage catch-up and MCP warmup. It does not enable the bridge or a test server.
+Exercise the normal bridge settings: default disabled, enable on an active
+approved private interface, disable, then enable and quit. Loopback remains
+rejected. Package binary smoke alone does not verify that listener lifecycle;
+an unsigned unpacked Preview check does not certify signed installation.
 
 ## Signed release
 

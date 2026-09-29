@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
 import type { ChildProcessWithoutNullStreams } from "node:child_process"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { createCodexRuntimeAdapterFactory } from "../src/main/lib/agent-runtime/codex"
 import { spawnCodexProtocolClient } from "../src/main/lib/agent-runtime/codex/protocol-client"
 import {
@@ -347,7 +347,8 @@ describe("direct Codex Runtime adapter", () => {
     let resumeAttempts = 0
     client.responses.set("thread/resume", () => {
       resumeAttempts += 1
-      if (resumeAttempts === 1) throw new Error("thread is archived")
+      if (resumeAttempts === 1)
+        throw new Error("session thread-1 is archived. Run `codex unarchive thread-1` first.")
       return { thread: { id: "thread-1", sessionId: "session-1" } }
     })
     client.responses.set("thread/unarchive", { thread: { id: "thread-1" } })
@@ -371,6 +372,64 @@ describe("direct Codex Runtime adapter", () => {
         .filter((request) => request.method.startsWith("thread/"))
         .map((request) => request.method),
     ).toEqual(["thread/resume", "thread/unarchive", "thread/resume"])
+    expect(client.requests.find((request) => request.method === "thread/unarchive")).toEqual({
+      method: "thread/unarchive",
+      params: { threadId: "thread-1" },
+      timeoutMs: 60_000,
+    })
+  })
+
+  it.each([
+    "invalid configuration",
+    "thread/resume timed out after 30000 ms.",
+    "session another-thread is archived.",
+  ])("does not unarchive after unrelated resume failure: %s", async (message) => {
+    const client = new FakeCodexProtocolClient()
+    client.responses.set("thread/resume", new Error(message))
+    const adapter = createCodexRuntimeAdapterFactory({
+      appendActivity: collectActivity().append,
+      resolveThreadParams: () => ({ cwd: "/worktree" }),
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.153.4",
+      createClient: () => client,
+    })()
+
+    await expect(
+      adapter.resumeSession(runtimeContext(), {
+        providerSessionId: "session-1",
+        providerThreadId: "thread-1",
+      }),
+    ).rejects.toThrow(message)
+    expect(client.requests.some((request) => request.method === "thread/unarchive")).toBe(false)
+    expect(client.closed).toBe(true)
+  })
+
+  it("preserves the archived resume rejection when restoration times out", async () => {
+    const client = new FakeCodexProtocolClient()
+    client.responses.set("thread/resume", new Error("session thread-1 is archived."))
+    client.responses.set(
+      "thread/unarchive",
+      new Error("thread/unarchive timed out after 60000 ms."),
+    )
+    const adapter = createCodexRuntimeAdapterFactory({
+      appendActivity: collectActivity().append,
+      resolveThreadParams: () => ({ cwd: "/worktree" }),
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.153.4",
+      createClient: () => client,
+    })()
+
+    await expect(
+      adapter.resumeSession(runtimeContext(), {
+        providerSessionId: "session-1",
+        providerThreadId: "thread-1",
+      }),
+    ).rejects.toThrow(
+      "thread/unarchive timed out after 60000 ms. (initial resume rejection: session thread-1 is archived.)",
+    )
+    expect(client.requests.filter((request) => request.method === "thread/resume")).toHaveLength(1)
+    expect(client.requests.some((request) => request.method === "turn/start")).toBe(false)
+    expect(client.closed).toBe(true)
   })
 
   it("rejects a terminal failed turn instead of projecting provider failure as success", async () => {
@@ -440,6 +499,41 @@ describe("direct Codex Runtime adapter", () => {
 })
 
 describe("Codex App Server JSON-RPC transport bounds", () => {
+  it("allows one bounded restore deadline without extending ordinary requests", async () => {
+    vi.useFakeTimers()
+    const fake = fakeChild()
+    const client = spawnCodexProtocolClient({
+      command: "/fake/codex",
+      spawnProcess: () => fake.child,
+    })
+    try {
+      const ordinary = client.request("model/list", {}).catch((error: Error) => error)
+      const restored = vi.fn()
+      const restore = client
+        .request("thread/unarchive", { threadId: "thread-1" }, 60_000)
+        .catch((error: Error) => error)
+        .then((result) => {
+          restored()
+          return result
+        })
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(await ordinary).toEqual(
+        new Error("[codex-runtime] model/list timed out after 30000 ms."),
+      )
+      expect(restored).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(restored).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(await restore).toEqual(
+        new Error("[codex-runtime] thread/unarchive timed out after 60000 ms."),
+      )
+      expect(restored).toHaveBeenCalledOnce()
+    } finally {
+      await client.close()
+      vi.useRealTimers()
+    }
+  })
+
   it("fails closed on malformed stdout and kills the process", async () => {
     const fake = fakeChild()
     const client = spawnCodexProtocolClient({

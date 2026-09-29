@@ -38,9 +38,12 @@ export function normalizeVoiceSettings(raw: Partial<VoiceSettings>): VoiceSettin
     voiceSettingsVersion: 2,
     sttAdapterId:
       raw.voiceSettingsVersion === 2 &&
-      (raw.sttAdapterId === "local-parakeet" || raw.sttAdapterId === "local-whisper")
+      (raw.sttAdapterId === "local-parakeet" ||
+        raw.sttAdapterId === "local-whisper" ||
+        (raw.sttAdapterId === "openai-whisper" && raw.cloudTranscriptionEnabled === true))
         ? raw.sttAdapterId
         : defaultVoiceSettings.sttAdapterId,
+    cloudTranscriptionEnabled: raw.cloudTranscriptionEnabled === true,
     parakeetModelId: "parakeet-unified-en-q8",
     retainDictationAudio: raw.retainDictationAudio ?? defaultVoiceSettings.retainDictationAudio,
     sttModelUnloadMinutes:

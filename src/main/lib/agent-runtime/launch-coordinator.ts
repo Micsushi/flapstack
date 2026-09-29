@@ -147,6 +147,9 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
         )
       }
       assertProbeMatchesSnapshot(request, probe)
+      // Keep the original selection snapshot intact; dispatch and its durable
+      // intent use the exact adapter that passed this launch's probe.
+      request = { ...request, launch: { ...request.launch, versions: probe.versions } }
     }
     await this.hooks.onLifecycle?.(request, "validated")
 

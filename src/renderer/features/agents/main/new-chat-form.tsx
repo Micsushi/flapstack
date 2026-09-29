@@ -830,7 +830,10 @@ export function NewChatForm({
     validatedProject,
   ])
 
-  const handleVoiceMouseUp = useCallback(() => dictation.stop(), [dictation])
+  const handleVoiceMouseUp = useCallback(
+    () => (isTranscribing ? dictation.cancel() : dictation.stop()),
+    [dictation, isTranscribing],
+  )
 
   const finishVoiceBeforeSend = useCallback(async () => {
     if (ownsDictation) await dictation.stop()
@@ -1260,6 +1263,8 @@ export function NewChatForm({
         { id: data.id },
         {
           ...data,
+          // This first user message is already submitted for automatic dispatch.
+          hasProviderIntent: true,
           subChats: data.subChats.map(({ messages: _messages, ...subChat }) => subChat),
         },
       )
@@ -2454,6 +2459,7 @@ export function NewChatForm({
                         isRecording={isVoiceRecording}
                         isStarting={isVoiceStarting}
                         isTranscribing={isTranscribing}
+                        canCancelTranscription={dictation.canCancelTranscription}
                         voiceInputReady={isVoiceReady}
                         voiceStatusLabel={voiceStatusLabel}
                         onUnavailableClick={showVoiceSetup}

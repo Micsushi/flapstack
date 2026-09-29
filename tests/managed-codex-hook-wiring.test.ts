@@ -17,9 +17,16 @@ import {
 } from "../src/main/lib/extension-management"
 import { discoverProviderExtensions } from "../src/main/lib/provider-extensions"
 
-const boundary = vi.hoisted(() => ({ clients: [] as FakeCodexProtocolClient[] }))
+const boundary = vi.hoisted(() => ({
+  clients: [] as FakeCodexProtocolClient[],
+  claudeDependencies: null as unknown,
+}))
 vi.mock("../src/main/lib/trpc/routers", () => ({
   createAppRouter: () => ({ createCaller: () => ({}) }),
+}))
+vi.mock("../src/main/lib/claude", () => ({
+  getBundledClaudeBinaryPath: () => "synthetic-claude",
+  getClaudeShellEnvironment: () => ({}),
 }))
 // Preserve the actual launcher-owned callbacks and actual adapter. Only executable/provider I/O is replaced.
 vi.mock("../src/main/lib/agent-runtime/codex", async (original) => {
@@ -38,6 +45,18 @@ vi.mock("../src/main/lib/agent-runtime/codex", async (original) => {
           return client
         },
       }),
+  }
+})
+vi.mock("../src/main/lib/agent-runtime/claude-code", async (original) => {
+  const actual = await original<typeof import("../src/main/lib/agent-runtime/claude-code")>()
+  return {
+    ...actual,
+    createClaudeCodeRuntimeAdapter: (
+      dependencies: Parameters<typeof actual.createClaudeCodeRuntimeAdapter>[0],
+    ) => {
+      boundary.claudeDependencies = dependencies
+      return actual.createClaudeCodeRuntimeAdapter(dependencies)
+    },
   }
 })
 import { MainRuntimeLaunchService } from "../src/main/lib/main-run-launcher"
@@ -72,7 +91,7 @@ it("carries lifecycle-approved hooks and extension policy through launcher-owned
         worktreePath: project,
       })
       .run()
-    const stat = lstatSync(project)
+    const stat = lstatSync(project, { bigint: true })
     db.insert(schema.filesystemRootRegistrations)
       .values({
         path: project,
@@ -127,10 +146,17 @@ it("carries lifecycle-approved hooks and extension policy through launcher-owned
     })
     adapter = service.registry.get("codex", "codex")!
     const session = { providerThreadId: "thread-1", providerSessionId: "session-1" }
-    async function request(operation: "start" | "resume" | "fork", enabled: boolean) {
+    async function request(
+      operation: "start" | "resume" | "fork",
+      enabled: boolean,
+      requestedPreference: ReturnType<
+        typeof runtimeContext
+      >["launch"]["requestedPreference"] = "codex-enhanced",
+      expectExtensionPolicy = true,
+    ) {
       const context = runtimeContext()
       context.runId = `hook-${operation}-${contexts.length}`
-      context.launch.requestedPreference = "codex-enhanced"
+      context.launch.requestedPreference = requestedPreference
       contexts.push(context)
       sqlite
         .prepare(
@@ -144,10 +170,14 @@ it("carries lifecycle-approved hooks and extension policy through launcher-owned
         .at(-1)!
         .requests.find((r) => r.method === `thread/${operation}`)!.params!
       expect(params.cwd).toBe(realpathSync(project))
-      expect(params.config).toMatchObject({
-        skills: { config: [{ path: installed!.sourceId, enabled: false }] },
-      })
-      if (enabled)
+      if (!expectExtensionPolicy) {
+        expect(params).not.toHaveProperty("config")
+      } else {
+        expect(params.config).toMatchObject({
+          skills: { config: [{ path: installed!.sourceId, enabled: false }] },
+        })
+      }
+      if (enabled && expectExtensionPolicy)
         expect(params.config).toMatchObject({
           features: { hooks: true },
           hooks: {
@@ -156,17 +186,19 @@ it("carries lifecycle-approved hooks and extension policy through launcher-owned
             ],
           },
         })
-      else expect(params.config).not.toHaveProperty("hooks")
+      else if (expectExtensionPolicy) expect(params.config).not.toHaveProperty("hooks")
       expect(boundary.clients.at(-1)!.requests.some((r) => r.method === "turn/start")).toBe(false)
       await adapter!.cleanup(context)
     }
-    await request("start", false)
+    await request("start", false, "codex")
     expect((await lifecycle.validate(imported.id)).validation?.valid).toBe(true)
     expect((await lifecycle.dryRun(imported.id)).dryRun?.success).toBe(true)
     await lifecycle.setEnabled(imported.id, true)
     for (const operation of ["start", "resume", "fork"] as const) await request(operation, true)
     await lifecycle.setEnabled(imported.id, false)
     await request("resume", false)
+    vi.stubEnv("FLAPSTACK_PREVIEW_HEADLESS", "1")
+    await request("start", false, "codex", false)
   } finally {
     for (const context of contexts) await adapter?.cleanup(context)
     sqlite.close()
@@ -174,6 +206,131 @@ it("carries lifecycle-approved hooks and extension policy through launcher-owned
     expect(boundary.clients.every((c) => c.closed)).toBe(true)
     expect(dirname(resolve(directory))).toBe(resolve(tmpdir()))
     expect(basename(directory).startsWith("flapstack-hook-wiring-")).toBe(true)
+    rmSync(directory, { recursive: true, force: true })
+  }
+}, 20000)
+
+it("applies Claude extension policy to ordinary launches and isolates hidden Preview options", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "flapstack-claude-policy-wiring-"))
+  const project = join(directory, "project")
+  const home = join(directory, "empty-home")
+  const path = join(directory, "agents.db")
+  mkdirSync(project)
+  mkdirSync(home)
+  const sqlite = new Database(path)
+  const database = drizzle(sqlite, { schema })
+  try {
+    boundary.claudeDependencies = null
+    migrateDatabase(database, sqlite, resolve("drizzle"))
+    database
+      .insert(schema.projects)
+      .values({ id: "project-1", name: "Synthetic", path: project })
+      .run()
+    database
+      .insert(schema.tasks)
+      .values({ id: "task-1", projectId: "project-1", name: "Task" })
+      .run()
+    database
+      .insert(schema.chats)
+      .values({
+        id: "chat-1",
+        name: "Synthetic",
+        projectId: "project-1",
+        taskId: "task-1",
+        scope: "task",
+        worktreePath: project,
+      })
+      .run()
+    const stat = lstatSync(project, { bigint: true })
+    database
+      .insert(schema.filesystemRootRegistrations)
+      .values({
+        path: project,
+        canonicalPath: realpathSync(project),
+        deviceId: String(stat.dev),
+        inodeId: String(stat.ino),
+        boundAt: new Date(),
+      })
+      .run()
+    for (const name of ["alpha", "beta"]) {
+      const skill = join(project, ".claude", "skills", name, "SKILL.md")
+      mkdirSync(dirname(skill), { recursive: true })
+      writeFileSync(
+        skill,
+        `---\nname: ${name}\ndescription: Synthetic policy fixture\n---\nNo work.\n`,
+      )
+    }
+    const inventory = await discoverProviderExtensions({ cwd: project, homeDir: home })
+    const alpha = inventory.find(
+      (extension) =>
+        extension.provider === "claude" &&
+        extension.kind === "skill" &&
+        extension.name === "alpha" &&
+        extension.source === "project",
+    )
+    expect(alpha).toBeDefined()
+    setExtensionEnablementPolicy(database, {
+      target: extensionPolicyTargetFromManifest(alpha!),
+      location: { type: "task", projectId: "project-1", taskId: "task-1" },
+      enabled: false,
+    })
+    sqlite
+      .prepare(
+        "INSERT INTO agent_runs(id,chat_id,harness,worktree_path,permission_mode,initial_prompt,status,started_at,runtime_snapshot_version,runtime_preference,runtime_preference_source,resolved_runtime,runtime_adapter_version,runtime_protocol_version,runtime_capability_snapshot,runtime_control_snapshot) VALUES('claude-policy','chat-1','claude-code',?,'read-only','Synthetic wiring only','running',1,?,?,?,?,?,?,?,?)",
+      )
+      .run(project, ...testRuntimeSnapshotSqlValues("claude-code", "claude-code"))
+
+    const service = new MainRuntimeLaunchService({
+      databasePath: path,
+      enableClaudeCode: true,
+    })
+    service.registry.get("claude-code", "claude-code")
+    const dependencies = boundary.claudeDependencies as {
+      buildQueryOptions(
+        context: ReturnType<typeof runtimeContext>,
+        prompt: string,
+        abortController: AbortController,
+      ): Promise<Record<string, unknown>>
+    }
+    const context = runtimeContext()
+    context.runId = "claude-policy"
+    context.chatId = "chat-1"
+    context.subChatId = null
+    context.launch = {
+      ...context.launch,
+      harness: "claude-code",
+      model: "claude-opus-5-5",
+      requestedPreference: "claude-code",
+      resolvedRuntime: "claude-code",
+      compatibility: {
+        compatible: true,
+        harness: "claude-code",
+        runtime: "claude-code",
+        reason: null,
+      },
+      versions: { adapterVersion: "1", protocolVersion: "claude-agent-sdk/0.3.207" },
+    }
+
+    vi.stubEnv("FLAPSTACK_PREVIEW_HEADLESS", "")
+    const ordinary = await dependencies.buildQueryOptions(context, "Prompt", new AbortController())
+    expect(ordinary.settingSources).toEqual(["user", "project", "local"])
+    expect(ordinary.skills).toContain("beta")
+    expect(ordinary.skills).not.toContain("alpha")
+
+    vi.stubEnv("FLAPSTACK_PREVIEW_HEADLESS", "1")
+    const hidden = await dependencies.buildQueryOptions(context, "Prompt", new AbortController())
+    expect(hidden).toMatchObject({
+      settingSources: [],
+      mcpServers: {},
+      strictMcpConfig: true,
+    })
+    expect(hidden).not.toHaveProperty("skills")
+    expect(hidden).not.toHaveProperty("hooks")
+  } finally {
+    sqlite.close()
+    vi.unstubAllEnvs()
+    expect(dirname(resolve(directory))).toBe(resolve(tmpdir()))
+    expect(basename(directory).startsWith("flapstack-claude-policy-wiring-")).toBe(true)
     rmSync(directory, { recursive: true, force: true })
   }
 }, 20000)

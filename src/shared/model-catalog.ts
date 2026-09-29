@@ -9,6 +9,13 @@ const CODEX_CONTEXT_WINDOW = 258_400
 // previously stored selections keep resolving.
 export const CLAUDE_MODELS = [
   {
+    id: "claude-opus-5-5",
+    name: "Opus",
+    version: "5.5",
+    efforts: CLAUDE_DEEP_EFFORTS,
+    contextWindow: CLAUDE_CONTEXT_WINDOW,
+  },
+  {
     id: "claude-opus-5",
     name: "Opus",
     version: "5",
@@ -48,6 +55,7 @@ export const CLAUDE_MODEL_ID_MAP: Record<string, string> = {
   opusplan: "opusplan",
   "sonnet[1m]": "sonnet[1m]",
   "opus[1m]": "opus[1m]",
+  "claude-opus-5-5": "claude-opus-5-5",
   "claude-fable-5": "claude-fable-5",
   "claude-opus-5": "claude-opus-5",
   "claude-opus-4-8": "claude-opus-4-8",
@@ -290,7 +298,7 @@ export function formatCodexModelForAcp(modelId: string): string {
   return `${slashMatch[1]}[${slashMatch[2]}]`
 }
 
-export const DEFAULT_CLAUDE_MODEL_ID = "claude-opus-5"
+export const DEFAULT_CLAUDE_MODEL_ID = "claude-opus-5-5"
 export const DEFAULT_CLAUDE_EFFORT: ClaudeEffortLevel = "high"
 export const DEFAULT_CODEX_MODEL_ID = "gpt-5.6-sol"
 export const DEFAULT_CODEX_REASONING: CodexReasoningLevel = "high"

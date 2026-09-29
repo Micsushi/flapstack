@@ -16,6 +16,7 @@ import {
 describe("Claude model catalog", () => {
   it("exposes only concrete model versions in the picker", () => {
     expect(CLAUDE_MODELS.map((model) => model.id)).toEqual([
+      "claude-opus-5-5",
       "claude-opus-5",
       "claude-opus-4-8",
       "claude-fable-5",
@@ -29,6 +30,7 @@ describe("Claude model catalog", () => {
   })
 
   it("passes explicit Claude model ids through to the SDK", () => {
+    expect(CLAUDE_MODEL_ID_MAP["claude-opus-5-5"]).toBe("claude-opus-5-5")
     expect(CLAUDE_MODEL_ID_MAP["claude-opus-5"]).toBe("claude-opus-5")
     expect(CLAUDE_MODEL_ID_MAP["claude-opus-4-8"]).toBe("claude-opus-4-8")
     expect(CLAUDE_MODEL_ID_MAP["claude-sonnet-5"]).toBe("claude-sonnet-5")
@@ -41,6 +43,7 @@ describe("Claude model catalog", () => {
   })
 
   it("keeps Claude effort options model-aware", () => {
+    expect(CLAUDE_MODELS.find((model) => model.id === "claude-opus-5-5")?.efforts).toContain("max")
     expect(CLAUDE_MODELS.find((model) => model.id === "claude-opus-5")?.efforts).toContain("max")
     expect(CLAUDE_MODELS.find((model) => model.id === "claude-opus-4-8")?.efforts).toContain("max")
     expect(CLAUDE_MODELS.find((model) => model.id === "claude-sonnet-5")?.efforts).toContain(
@@ -50,8 +53,9 @@ describe("Claude model catalog", () => {
   })
 
   it("uses current defaults without removing explicitly stored older models", () => {
-    expect(DEFAULT_CLAUDE_MODEL_ID).toBe("claude-opus-5")
+    expect(DEFAULT_CLAUDE_MODEL_ID).toBe("claude-opus-5-5")
     expect(DEFAULT_CODEX_MODEL_ID).toBe("gpt-5.6-sol")
+    expect(CLAUDE_MODEL_ID_MAP["claude-opus-5"]).toBe("claude-opus-5")
     expect(CLAUDE_MODEL_ID_MAP["claude-opus-4-8"]).toBe("claude-opus-4-8")
     expect(CODEX_MODELS.some((model) => model.id === "gpt-5.5")).toBe(true)
   })

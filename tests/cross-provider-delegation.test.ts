@@ -18,6 +18,17 @@ import {
   type QueuedAgentRun,
 } from "../src/main/lib/run-launch-service"
 import type { ResolvedAgentRuntime, RuntimeAdapterProbe } from "../src/shared/agent-runtime"
+import {
+  getMainRuntimeLaunchService,
+  resetMainRuntimeLaunchServicesForTests,
+} from "../src/main/lib/main-run-launcher"
+
+vi.mock("../src/main/lib/trpc/routers", () => ({
+  createAppRouter: () => ({ createCaller: () => ({}) }),
+}))
+vi.mock("../src/main/lib/mcp-control/invalidation-bridge", () => ({
+  publishLocalProductInvalidation: vi.fn(),
+}))
 
 class RuntimeStub implements RuntimeDelegationLaunchPort {
   launches: QueuedAgentRun[] = []
@@ -126,10 +137,315 @@ class RuntimeStub implements RuntimeDelegationLaunchPort {
 const roots: string[] = []
 
 afterEach(() => {
+  resetMainRuntimeLaunchServicesForTests()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
 describe("cross-provider Runtime delegation", () => {
+  it.each([2, 1001])(
+    "retains bounded child-only reference IDs after restart and source deletion (%i records)",
+    async (count) => {
+      const fixture = createFixture("claude-code")
+      const runtime = new RuntimeStub()
+      const service = new CrossProviderDelegationService(fixture.path, runtime)
+      const request = {
+        sourceChatId: "source",
+        targetHarness: "codex" as const,
+        targetModel: "gpt-5.5",
+        preference: "codex-enhanced" as const,
+        requestId: "reference-child",
+        objective: "Inspect the owned fixture.",
+      }
+      const preview = service.preview(request)
+      const created = service.delegate({ ...request, confirmedPreviewDigest: preview.digest })
+      const otherRequest = { ...request, requestId: "other-child" }
+      const otherPreview = service.preview(otherRequest)
+      const other = service.delegate({
+        ...otherRequest,
+        confirmedPreviewDigest: otherPreview.digest,
+      })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const db = new Database(fixture.path)
+      db.pragma("foreign_keys = ON")
+      try {
+        const change = db.prepare(
+          "INSERT INTO file_change_manifests (id, run_id, file_path, change_type) VALUES (?, ?, ?, 'modified')",
+        )
+        const checkpoint = db.prepare(
+          "INSERT INTO checkpoints (id, run_id, kind, worktree_path, git_status_json) VALUES (?, ?, 'fixture', ?, ?)",
+        )
+        db.transaction(() => {
+          for (let index = 0; index < count; index++) {
+            const suffix = String(index).padStart(4, "0")
+            change.run(`change-${suffix}`, created.runId, "PRIVATE-RAW-PATH")
+            checkpoint.run(
+              `checkpoint-${suffix}`,
+              created.runId,
+              "PRIVATE-WORKTREE-PATH",
+              "PRIVATE-STATUS",
+            )
+          }
+          change.run("other-change", other.runId, "OTHER-PRIVATE-PATH")
+          checkpoint.run("other-checkpoint", other.runId, "OTHER-PRIVATE-PATH", "OTHER-STATUS")
+        })()
+      } finally {
+        db.close()
+      }
+      runtime.state = "completed"
+      const result = await service.reconcile(created.attemptId)
+      expect(result.result?.artifactAndChangeRefs).toEqual(
+        Array.from(
+          { length: Math.min(count, 1000) },
+          (_, i) => `change-${String(i).padStart(4, "0")}`,
+        ),
+      )
+      expect(result.result?.checkpointRefs).toEqual(
+        Array.from(
+          { length: Math.min(count, 1000) },
+          (_, i) => `checkpoint-${String(i).padStart(4, "0")}`,
+        ),
+      )
+      expect(JSON.stringify(result.result)).not.toMatch(
+        /PRIVATE|OTHER-STATUS|other-change|other-checkpoint/,
+      )
+      if (count > 1000)
+        expect(result.result?.limitations).toContain(
+          "Result references are limited to 1000 per kind; inspect the child run for remaining records.",
+        )
+      const deletion = new Database(fixture.path)
+      deletion.pragma("foreign_keys = ON")
+      try {
+        deletion.prepare("DELETE FROM chats WHERE id = 'source'").run()
+      } finally {
+        deletion.close()
+      }
+      const launches = runtime.launches.length
+      const restarted = new CrossProviderDelegationService(fixture.path, runtime)
+      expect(await restarted.reconcile(created.attemptId)).toEqual(result)
+      expect(runtime.launches).toHaveLength(launches)
+      const readback = new Database(fixture.path)
+      try {
+        expect(
+          readback
+            .prepare("SELECT COUNT(*) count FROM runtime_composition_attempts WHERE attempt_id = ?")
+            .get(created.attemptId),
+        ).toEqual({ count: 1 })
+        expect(
+          readback
+            .prepare("SELECT parent_chat_id FROM chats WHERE id = ?")
+            .get(created.childChatId),
+        ).toEqual({ parent_chat_id: "source" })
+      } finally {
+        readback.close()
+      }
+    },
+  )
+  it("fails malformed required output through the production parser without losing completed truth on restart", async () => {
+    const fixture = createFixture("claude-code")
+    const runtime = new RuntimeStub()
+    const parser = getMainRuntimeLaunchService(fixture.path)
+    const extract = vi
+      .spyOn(runtime, "readStructuredOutput")
+      .mockImplementation((runId) => parser.readStructuredOutput(runId))
+    const service = new CrossProviderDelegationService(fixture.path, runtime)
+    const request = {
+      sourceChatId: "source",
+      targetHarness: "codex" as const,
+      targetModel: "gpt-5.5",
+      preference: "codex-enhanced" as const,
+      requestId: "malformed-required-output",
+      objective: "Return the requested result.",
+      outputSchema: { type: "object" },
+    }
+    const preview = service.preview(request)
+    const created = service.delegate({ ...request, confirmedPreviewDigest: preview.digest })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const db = new Database(fixture.path)
+    try {
+      db.prepare("UPDATE agent_runs SET status = 'success', completed_at = 2 WHERE id = ?").run(
+        created.runId,
+      )
+      const insert = db.prepare(`INSERT INTO agent_activity_events (
+        event_id, run_id, chat_id, sub_chat_id, runtime, harness, provider, sequence,
+        kind, phase, display_class, privacy_class, redaction_state, received_at,
+        dedup_key, payload_json, created_at
+      ) VALUES (?, ?, ?, ?, 'codex', 'codex', ?, ?, ?, 'completed', ?, 'public', 'none', 1, ?, ?, 1)`)
+      insert.run(
+        "malformed-output",
+        created.runId,
+        created.childChatId,
+        created.childSubChatId,
+        "openai",
+        1,
+        "agent-text",
+        "provider-visible",
+        null,
+        JSON.stringify({ text: "not-json" }),
+      )
+      insert.run(
+        "completed-output",
+        created.runId,
+        created.childChatId,
+        created.childSubChatId,
+        "runtime",
+        2,
+        "lifecycle",
+        "status",
+        "runtime:runtime:lifecycle:completed",
+        JSON.stringify({ state: "completed", detail: null }),
+      )
+    } finally {
+      db.close()
+    }
+    runtime.state = "completed"
+    await expect(parser.readStructuredOutput(created.runId)).rejects.toThrow("not valid JSON")
+    const infrastructureFailure = new Error("synthetic database temporarily unavailable")
+    extract.mockRejectedValueOnce(infrastructureFailure)
+    await expect(service.reconcile(created.attemptId)).rejects.toBe(infrastructureFailure)
+    const pending = new Database(fixture.path)
+    try {
+      expect(
+        pending
+          .prepare(
+            "SELECT status, result_envelope FROM runtime_composition_attempts WHERE attempt_id = ?",
+          )
+          .get(created.attemptId),
+      ).toEqual({ status: "running", result_envelope: null })
+    } finally {
+      pending.close()
+    }
+    const result = await service.reconcile(created.attemptId)
+    expect(result.result).toMatchObject({
+      status: "failure",
+      structuredOutput: null,
+      limitations: ["Required structured output could not be safely extracted."],
+      terminalEvidence: { providerTerminalState: "completed" },
+    })
+    const launches = runtime.launches.length
+    const restarted = new CrossProviderDelegationService(fixture.path, runtime)
+    await restarted.recoverRunningAttempts()
+    expect(await restarted.reconcile(created.attemptId)).toEqual(result)
+    expect(runtime.launches).toHaveLength(launches)
+    const readback = new Database(fixture.path)
+    try {
+      expect(
+        readback.prepare("SELECT status FROM agent_runs WHERE id = ?").get(created.runId),
+      ).toEqual({ status: "success" })
+      expect(
+        readback.prepare("SELECT count(*) AS count FROM runtime_composition_attempts").get(),
+      ).toEqual({ count: 1 })
+    } finally {
+      readback.close()
+    }
+  })
+  it("keeps a completed plain-text result successful without requesting structured extraction", async () => {
+    const fixture = createFixture("claude-code")
+    const runtime = new RuntimeStub()
+    const readStructuredOutput = vi
+      .spyOn(runtime, "readStructuredOutput")
+      .mockRejectedValue(new Error("Completed Runtime output is not valid JSON."))
+    const service = new CrossProviderDelegationService(fixture.path, runtime)
+    const request = {
+      sourceChatId: "source",
+      targetHarness: "codex" as const,
+      targetModel: "gpt-5.5",
+      preference: "codex-enhanced" as const,
+      requestId: "plain-text-completion",
+      objective: "Reply with the requested plain-text marker.",
+    }
+    const preview = service.preview(request)
+    const created = service.delegate({ ...request, confirmedPreviewDigest: preview.digest })
+    const db = new Database(fixture.path)
+    const sourceBefore = db.prepare("SELECT messages FROM sub_chats WHERE chat_id = 'source'").all()
+    try {
+      db.prepare(
+        `INSERT INTO agent_activity_events (
+          event_id, run_id, chat_id, sub_chat_id, runtime, harness, provider, sequence,
+          kind, phase, display_class, privacy_class, redaction_state, received_at,
+          payload_json, created_at
+        ) VALUES ('plain-result', ?, ?, ?, 'codex', 'codex', 'openai', 1,
+          'agent-text', 'completed', 'provider-visible', 'public', 'none', 1,
+          '{"text":"DELEGATED-plain-text"}', 1)`,
+      ).run(created.runId, created.childChatId, created.childSubChatId)
+      for (const [index, phase, privacy, redaction, text] of [
+        [2, "delta", "public", "none", "STREAM-FRAGMENT"],
+        [3, "completed", "private", "none", "PRIVATE-OUTPUT"],
+        [4, "completed", "public", "redacted", "REDACTED-OUTPUT"],
+      ] as const) {
+        db.prepare(
+          `INSERT INTO agent_activity_events (
+            event_id, run_id, chat_id, sub_chat_id, runtime, harness, provider, sequence,
+            kind, phase, display_class, privacy_class, redaction_state, received_at,
+            payload_json, created_at
+          ) VALUES (?, ?, ?, ?, 'codex', 'codex', 'openai', ?,
+            'agent-text', ?, 'provider-visible', ?, ?, 1, ?, 1)`,
+        ).run(
+          `text-${index}`,
+          created.runId,
+          created.childChatId,
+          created.childSubChatId,
+          index,
+          phase,
+          privacy,
+          redaction,
+          JSON.stringify({ text }),
+        )
+      }
+      db.prepare("UPDATE agent_runs SET status = 'success', completed_at = 2 WHERE id = ?").run(
+        created.runId,
+      )
+    } finally {
+      db.close()
+    }
+    runtime.state = "completed"
+
+    const result = await service.reconcile(created.attemptId)
+    expect(result.result).toMatchObject({
+      status: "success",
+      structuredOutput: null,
+      visibleSummary: "DELEGATED-plain-text\nSTREAM-FRAGMENT",
+      partial: false,
+      terminalEvidence: { providerTerminalState: "completed" },
+    })
+    expect(readStructuredOutput).not.toHaveBeenCalled()
+    const restarted = new CrossProviderDelegationService(fixture.path, runtime)
+    expect((await restarted.reconcile(created.attemptId)).result).toEqual(result.result)
+    expect(runtime.launches).toHaveLength(1)
+    const reopenedDb = new Database(fixture.path)
+    try {
+      const run = reopenedDb
+        .prepare("SELECT prompt_message_id, initial_prompt FROM agent_runs WHERE id = ?")
+        .get(created.runId) as { prompt_message_id: string; initial_prompt: string }
+      const { messages } = reopenedDb
+        .prepare("SELECT messages FROM sub_chats WHERE id = ?")
+        .get(created.childSubChatId) as { messages: string }
+      expect(JSON.parse(messages)).toEqual([
+        {
+          id: run.prompt_message_id,
+          role: "user",
+          parts: [{ type: "text", text: run.initial_prompt }],
+          metadata: {
+            kind: "runtime-delegation-task",
+            sourceChatId: "source",
+            runId: created.runId,
+            previewDigest: preview.digest,
+          },
+        },
+        {
+          id: expect.any(String),
+          role: "assistant",
+          parts: [{ type: "text", text: "DELEGATED-plain-text" }],
+          metadata: expect.objectContaining({ runId: created.runId, transport: "codex-runtime" }),
+        },
+      ])
+      expect(
+        reopenedDb.prepare("SELECT messages FROM sub_chats WHERE chat_id = 'source'").all(),
+      ).toEqual(sourceBefore)
+    } finally {
+      reopenedDb.close()
+    }
+  })
+
   it.each([
     ["codex", "claude-code", "codex", "claude-provider-to-codex-contract"],
     ["claude-code", "codex", "claude-code", "codex-provider-to-claude-contract"],
@@ -964,8 +1280,15 @@ describe("cross-provider Runtime delegation", () => {
       const persisted = persistedDb
         .prepare("SELECT result_envelope FROM runtime_composition_attempts WHERE attempt_id = ?")
         .get(created.attemptId) as { result_envelope: string }
+      const history = persistedDb
+        .prepare("SELECT messages FROM sub_chats WHERE id = ?")
+        .get(created.childSubChatId) as { messages: string }
       persistedDb.close()
       expect(persisted.result_envelope).not.toContain("sk-proj-abcdefghijklmnopqrstuv")
+      expect(JSON.parse(history.messages).map((message: { role: string }) => message.role)).toEqual(
+        ["user"],
+      )
+      expect(history.messages).not.toContain("sk-proj-abcdefghijklmnopqrstuv")
     },
   )
 })

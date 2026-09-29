@@ -18,7 +18,7 @@ export type YapReviewRequest = {
   proposalId?: string
   proposalIds?: string[]
   inputId?: string
-  source?: "yap-intake" | "task-proposal-tray"
+  source?: "yap-intake" | "task-proposal-tray" | "plan"
 }
 
 export const taskProposalContentSchema = z
