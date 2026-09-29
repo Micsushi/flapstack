@@ -689,7 +689,7 @@ export async function main() {
         subChatId: chat.subChats[0].id,
         nonce: `QUALIFIED-${randomBytes(12).toString("hex")}`,
       }
-      expected.prompt = `Do not use tools, read files, run commands, delegate, or contact services. Reply with exactly ${expected.nonce}.`
+      expected.prompt = `Do not use tools, read files, run commands, delegate, or contact services. Reply with exactly the following text and nothing else:\n${expected.nonce}`
       activeRunId = expected.runId
       await rpc(
         "agentRuntimeChat.launch",
@@ -728,7 +728,7 @@ export async function main() {
         nonce: `CONTINUED-${randomBytes(12).toString("hex")}`,
         messageOffset: 2,
       }
-      continuation.prompt = `Continue this same conversation. Do not use tools, read files, run commands, delegate, or contact services. Reply with exactly ${continuation.nonce}.`
+      continuation.prompt = `Continue this same conversation. Do not use tools, read files, run commands, delegate, or contact services. Reply with exactly the following text and nothing else:\n${continuation.nonce}`
       activeRunId = continuation.runId
       await rpc(
         "agentRuntimeChat.launch",
@@ -841,7 +841,7 @@ export async function main() {
       coding.fileContent = `${coding.nonce}\n`
       coding.prompt =
         `Work only in the current qualification repository. Use a file-editing tool, not shell redirection, to replace the contents of ${coding.filePath} with exactly this UTF-8 content including its final newline:\n${coding.fileContent}` +
-        `Then use a shell command to run git diff --check -- ${coding.filePath}. Do not commit. After both succeed, reply with exactly ${coding.nonce}.`
+        `Then use a shell command to run git diff --check -- ${coding.filePath}. Do not commit. After both succeed, reply with exactly the following text and nothing else:\n${coding.nonce}`
       activeRunId = coding.runId
       await rpc(
         "agentRuntimeChat.launch",
@@ -911,7 +911,7 @@ export async function main() {
     const deniedNonce = `DENIED-${randomBytes(12).toString("hex")}`
     const deniedPrompt =
       `Use the Write tool to replace ${approvalAbsolutePath} with DENIED-WRITE followed by a newline. ` +
-      `If permission is denied, do not try another tool or method; reply with exactly ${deniedNonce}.`
+      `If permission is denied, do not try another tool or method; reply with exactly the following text and nothing else:\n${deniedNonce}`
     activeRunId = deniedRunId
     const deniedLaunch = rpc(
       "agentRuntimeChat.launch",
@@ -958,7 +958,7 @@ export async function main() {
     const approvedPrompt =
       `Continue this same conversation. Use the Write tool to replace ${approvalAbsolutePath} with exactly ${approvedContent}` +
       `Then use the Bash tool to run exactly ${approvalCommand} from the current repository. ` +
-      `After both approved actions succeed, reply with exactly ${approvedNonce}.`
+      `After both approved actions succeed, reply with exactly the following text and nothing else:\n${approvedNonce}`
     activeRunId = approvedRunId
     const approvedLaunch = rpc(
       "agentRuntimeChat.launch",
@@ -1068,7 +1068,7 @@ export async function main() {
         nonce: appended,
         prompt:
           `Continue this same conversation after restart. Use a file-editing tool, not shell redirection, to append exactly this line to ${context.coding.filePath}:\n${appended}\n` +
-          `Then use a shell command to run git diff --check -- ${context.coding.filePath}. Do not commit. After both succeed, reply with exactly ${appended}.`,
+          `Then use a shell command to run git diff --check -- ${context.coding.filePath}. Do not commit. After both succeed, reply with exactly the following text and nothing else:\n${appended}`,
         fileContent: `${context.coding.fileContent}${appended}\n`,
         messageOffset: 2,
       }
