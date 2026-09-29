@@ -1411,6 +1411,7 @@ async function exerciseSkillsHooksFixture(ownedId: string) {
     extensionPolicyTargetFromManifest,
     FileHookStateStore,
     HookLifecycleService,
+    MAX_HOOK_DRY_RUN_MS,
     NodeHookDryRunRunner,
     previewCrossHarnessCopy,
     previewNativeExtensionMutation,
@@ -1474,7 +1475,7 @@ async function exerciseSkillsHooksFixture(ownedId: string) {
     )
     const hookCommand =
       process.platform === "win32"
-        ? `"${join(process.env.SystemRoot ?? "C:\\Windows", "System32", "where.exe")}" cmd.exe`
+        ? `"${join(process.env.SystemRoot ?? "C:\\Windows", "System32", "hostname.exe")}"`
         : "/usr/bin/true"
     const imported = await hook.import({
       name: `Stage 4 MCP ${ownedId}`,
@@ -1483,7 +1484,7 @@ async function exerciseSkillsHooksFixture(ownedId: string) {
       cwd: project.projectPath,
       event: "PreToolUse",
       command: hookCommand,
-      timeoutMs: 5_000,
+      timeoutMs: MAX_HOOK_DRY_RUN_MS,
     })
     let invalidEnableRejected = false
     try {

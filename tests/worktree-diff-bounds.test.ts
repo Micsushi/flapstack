@@ -18,7 +18,13 @@ function repository() {
   git(root, "commit", "--quiet", "-m", "Fixture")
   return root
 }
-afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })))
+afterEach(() =>
+  roots
+    .splice(0)
+    .forEach((root) =>
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
+    ),
+)
 
 it("does not start collection after its caller cancels", async () => {
   const result = await getWorktreeDiff("unused-path", undefined, {
