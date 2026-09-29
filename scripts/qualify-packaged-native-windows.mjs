@@ -213,7 +213,7 @@ export function assertCodingCompleted(state, expected) {
     "Full-access coding run must not request interactive approval",
   )
   assertProviderIdentity(expected, payloads, expected.providerPermissionMode ?? "bypassPermissions")
-  assertTranscript(state, expected, run)
+  assertTranscript(state, { ...expected, allowProgressText: true }, run)
 
   assert(run.before_checkpoint_id, "Before checkpoint required")
   assert(run.after_checkpoint_id, "After checkpoint required")
@@ -313,13 +313,12 @@ function assertTranscript(state, expected, run) {
   )
   assert.equal(messages[messageOffset + 1].role, "assistant")
   assert.equal(messages[messageOffset + 1].metadata.runId, expected.runId)
-  assert.equal(
-    messages[messageOffset + 1].parts
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join(""),
-    expected.nonce,
-  )
+  const assistantText = messages[messageOffset + 1].parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("")
+  if (expected.allowProgressText) assert(assistantText.endsWith(expected.nonce))
+  else assert.equal(assistantText, expected.nonce)
 }
 
 export function assertCancelled(state, expected) {

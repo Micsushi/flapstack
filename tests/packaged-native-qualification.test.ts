@@ -376,6 +376,14 @@ test("both direct providers require exact identity, transcript, and coding proof
     })
     const codingExpected = { ...expected, cwd: "C:\\repo", filePath: "proof.txt" }
     assertCodingCompleted(codingState, codingExpected)
+    const codingWithProgress = structuredClone(codingState)
+    const codingMessages = JSON.parse(codingWithProgress.subChats[0].messages)
+    codingMessages[1].parts[0].text = `Working on it. ${expected.nonce}`
+    codingWithProgress.subChats[0].messages = JSON.stringify(codingMessages)
+    assertCodingCompleted(codingWithProgress, codingExpected)
+    codingMessages[1].parts[0].text = `${expected.nonce} trailing text`
+    codingWithProgress.subChats[0].messages = JSON.stringify(codingMessages)
+    assert.throws(() => assertCodingCompleted(codingWithProgress, codingExpected))
     const failedToolState = structuredClone(codingState)
     if (spec.harness === "claude-code") {
       const failed = failedToolState.activity.find(
