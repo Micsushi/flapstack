@@ -2,13 +2,14 @@ import { existsSync, readFileSync } from "node:fs"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import simpleGit, { type SimpleGit, type StatusResult } from "simple-git"
+import type { SimpleGit, StatusResult } from "simple-git"
 import { eq } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import { checkpoints, fileChangeManifests, getDatabase } from "./db"
 import type * as schema from "./db/schema"
 import { computeContentHash } from "./git/cache"
 import { splitUnifiedDiffByFile } from "./git/diff-parser"
+import { createGit } from "./git/git-factory"
 
 type CheckpointKind = "before" | "after"
 type AppDatabase = BetterSQLite3Database<typeof schema>
@@ -65,7 +66,7 @@ async function buildStatusSnapshot(
   }
 
   try {
-    const git = simpleGit(worktreePath)
+    const git = createGit(worktreePath)
     const isRepo = await git.checkIsRepo()
     if (!isRepo) {
       return {
@@ -132,7 +133,7 @@ export async function captureWorktreeTree(worktreePath: string): Promise<string>
   const tempDir = await mkdtemp(join(tmpdir(), "flapstack-checkpoint-"))
   try {
     const tempIndexPath = join(tempDir, "index")
-    const git = simpleGit(worktreePath).env({ GIT_INDEX_FILE: tempIndexPath })
+    const git = createGit(worktreePath).env({ GIT_INDEX_FILE: tempIndexPath })
     await git.raw(["read-tree", "HEAD"])
     await git.raw(["add", "-A"])
     const tree = (await git.raw(["write-tree"])).trim()
@@ -284,7 +285,7 @@ async function getDiffStats(
   if (!worktreePath || paths.length === 0 || !existsSync(worktreePath)) return stats
 
   try {
-    const git = simpleGit(worktreePath)
+    const git = createGit(worktreePath)
     if (!(await git.checkIsRepo())) return stats
     const diffText = await git.diff(["HEAD", "--no-color", "--", ...paths])
     for (const file of splitUnifiedDiffByFile(diffText)) {
@@ -308,7 +309,7 @@ async function getTreeDiffStats(
   if (!worktreePath || !beforeTree || !afterTree || !existsSync(worktreePath)) return stats
 
   try {
-    const output = await simpleGit(worktreePath).raw([
+    const output = await createGit(worktreePath).raw([
       "diff",
       "--numstat",
       beforeTree,
@@ -359,7 +360,7 @@ async function getCommitManifestEntries(params: {
   }
 
   try {
-    const git = simpleGit(params.worktreePath)
+    const git = createGit(params.worktreePath)
     if (!(await git.checkIsRepo())) return []
 
     const [numstat, nameStatus] = await Promise.all([
@@ -440,7 +441,7 @@ export async function captureCheckpoint(
 
   if (worktreePath && snapshot.treeCommit) {
     try {
-      const git = simpleGit(worktreePath)
+      const git = createGit(worktreePath)
       await git.raw([
         "update-ref",
         `refs/flapstack/checkpoints/${checkpoint.id}`,
@@ -473,7 +474,7 @@ export async function restoreCheckpoint(checkpointId: string): Promise<boolean> 
     throw new Error("Checkpoint cannot safely restore the worktree and index")
   }
 
-  const git = simpleGit(checkpoint.worktreePath)
+  const git = createGit(checkpoint.worktreePath)
   const retainedRef = `refs/flapstack/checkpoints/${checkpoint.id}`
   const retainedIndexRef = `refs/flapstack/checkpoint-indexes/${checkpoint.id}`
   const retainedTree = (await git.raw(["rev-parse", "--verify", `${retainedRef}^{tree}`])).trim()
