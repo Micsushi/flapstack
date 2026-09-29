@@ -126,6 +126,21 @@ profile, and `release-preview` output. Inspection verifies PE/x64 architecture f
 the app, agent binaries, speech sidecars, better-sqlite3, and every node-pty native
 output, plus the app archive, licenses, and Electron file version.
 
+For daily local use, launch the package after those checks:
+
+```powershell
+& ".\release-preview\win-unpacked\Flapstack Preview.exe"
+```
+
+Keep the whole `win-unpacked` directory together; the executable does not run
+by itself. The normal Preview profile is `%APPDATA%\Flapstack Preview`, outside
+the package directory, so replacing the directory with a newer build preserves
+projects, chats, settings, and credentials. Do not set
+`FLAPSTACK_PREVIEW_INSTANCE` for normal use because that variable intentionally
+selects a separate test profile. Build from a clean committed checkout when the
+embedded provenance must identify one exact source SHA, then run inspection,
+smoke, and audit against that unchanged package.
+
 For an isolated, hidden bridge lifecycle check, launch the Preview executable
 with `FLAPSTACK_PREVIEW_HEADLESS=1`, a fresh
 `FLAPSTACK_PREVIEW_INSTANCE=preview-bridge-<timestamp>-<random>` and matching

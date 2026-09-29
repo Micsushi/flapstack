@@ -4,11 +4,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import simpleGit, { type SimpleGit, type StatusResult } from "simple-git"
 import { eq } from "drizzle-orm"
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import { checkpoints, fileChangeManifests, getDatabase } from "./db"
+import type * as schema from "./db/schema"
 import { computeContentHash } from "./git/cache"
 import { splitUnifiedDiffByFile } from "./git/diff-parser"
 
 type CheckpointKind = "before" | "after"
+type AppDatabase = BetterSQLite3Database<typeof schema>
 
 type FileSnapshot = {
   path: string
@@ -419,8 +422,8 @@ export async function captureCheckpoint(
   runId: string,
   worktreePath: string | null,
   kind: CheckpointKind,
+  db: AppDatabase = getDatabase(),
 ) {
-  const db = getDatabase()
   const { gitCommit, snapshot } = await buildStatusSnapshot(worktreePath)
 
   const checkpoint = db
@@ -484,8 +487,7 @@ export async function restoreCheckpoint(checkpointId: string): Promise<boolean> 
   return true
 }
 
-export async function captureRunManifest(runId: string) {
-  const db = getDatabase()
+export async function captureRunManifest(runId: string, db: AppDatabase = getDatabase()) {
   db.delete(fileChangeManifests).where(eq(fileChangeManifests.runId, runId)).run()
 
   const runCheckpoints = db.select().from(checkpoints).where(eq(checkpoints.runId, runId)).all()

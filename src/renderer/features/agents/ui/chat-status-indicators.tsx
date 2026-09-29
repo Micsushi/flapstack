@@ -2,6 +2,7 @@ import { createContext, useContext, useMemo, type ReactNode } from "react"
 import { useAtomValue } from "jotai"
 import {
   CheckCircle2,
+  CircleCheck,
   CircleHelp,
   CirclePause,
   CircleX,
@@ -27,8 +28,13 @@ import {
 
 const outcomes = {
   "verified-complete": { Icon: CheckCircle2, color: "text-green-700 dark:text-green-400" },
+  "completed-unverified": {
+    Icon: CircleCheck,
+    color: "text-sky-700 dark:text-sky-400",
+  },
   "stopped-incomplete": { Icon: CirclePause, color: "text-orange-700 dark:text-orange-400" },
   blocked: { Icon: LockKeyhole, color: "text-violet-700 dark:text-violet-400" },
+  "dependency-wait-failed": { Icon: CircleX, color: "text-red-700 dark:text-red-400" },
   failed: { Icon: CircleX, color: "text-red-700 dark:text-red-400" },
   unknown: { Icon: CircleHelp, color: "text-slate-600 dark:text-slate-400" },
 } satisfies Record<WorkOutcome, { Icon: typeof CircleHelp; color: string }>
@@ -54,7 +60,20 @@ export function ChatStatusProvider({ children }: { children: ReactNode }) {
       ...plans.values(),
       ...[...questions.values()].map((question) => question.parentChatId),
     ])
-    const ids = new Set([...runs.keys(), ...unread, ...running, ...needsHelp])
+    const blocked = new Set<string>()
+    const dependencyWaitFailed = new Set<string>()
+    for (const wait of data?.waits ?? []) {
+      if (wait.status === "failed") dependencyWaitFailed.add(wait.chatId)
+      else if (wait.status === "waiting") blocked.add(wait.chatId)
+    }
+    const ids = new Set([
+      ...runs.keys(),
+      ...unread,
+      ...running,
+      ...needsHelp,
+      ...blocked,
+      ...dependencyWaitFailed,
+    ])
     return new Map(
       [...ids].map((chatId) => [
         chatId,
@@ -62,11 +81,13 @@ export function ChatStatusProvider({ children }: { children: ReactNode }) {
           unread: unread.has(chatId),
           running: running.has(chatId),
           needsHelp: needsHelp.has(chatId),
+          blocked: blocked.has(chatId),
+          dependencyWaitFailed: dependencyWaitFailed.has(chatId),
           runStatuses: runs.get(chatId),
         }),
       ]),
     )
-  }, [data?.runStatuses, unread, loading, questions, plans])
+  }, [data?.runStatuses, data?.waits, unread, loading, questions, plans])
   return <StatusContext.Provider value={statuses}>{children}</StatusContext.Provider>
 }
 

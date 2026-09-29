@@ -1,17 +1,31 @@
 import assert from "node:assert/strict"
+import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "vitest"
 import {
   assertCancelled,
+  assertCodingCompleted,
   assertCompleted,
   assertCredentialFreshness,
+  assertQualificationApprovals,
   assertRestart,
+  assertVisualEvidence,
   childEnvironment,
   cleanupCredentialCopy,
+  initializeQualificationRepository,
   qualificationCases,
+  samePath,
   validateQualification,
 } from "../scripts/qualify-packaged-native-windows.mjs"
 import { isHiddenPreviewVerification } from "../src/main/lib/mcp-test-control/lifecycle"
@@ -112,10 +126,95 @@ test("child environment discards inherited test controls and uses unique hidden 
   assert.equal(env.ELECTRON_RENDERER_URL, undefined)
 })
 
-test("both requested direct providers require exact model, transcript, turn identity and no tools", () => {
+test("qualification seed repository isolates Git identity and disables commit signing", () => {
+  const root = mkdtempSync(join(tmpdir(), "flapstack-qualification-seed-"))
+  const project = join(root, "project")
+  const configuredName = execFileSync("git", ["config", "--get", "user.name"], {
+    encoding: "utf8",
+  }).trim()
+  const configuredEmail = execFileSync("git", ["config", "--get", "user.email"], {
+    encoding: "utf8",
+  }).trim()
+  mkdirSync(project)
+  try {
+    initializeQualificationRepository(project)
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", project, ...args], { encoding: "utf8", windowsHide: true }).trim()
+    assert.equal(git("config", "--local", "user.name"), configuredName)
+    assert.equal(git("config", "--local", "user.email"), configuredEmail)
+    assert.equal(git("config", "--local", "commit.gpgSign"), "false")
+    assert.equal(git("log", "-1", "--format=%an <%ae>"), `${configuredName} <${configuredEmail}>`)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("path identity is canonical, Windows-case-insensitive, and rejects different targets", () => {
+  assert.equal(samePath("C:\\Users\\SUSHI\\Project", "c:\\users\\sushi\\project", "win32"), true)
+  assert.equal(samePath("C:\\Users\\sushi\\Project", "C:\\Users\\sushi\\Project2", "win32"), false)
+
+  const root = mkdtempSync(join(tmpdir(), "flapstack-qualification-path-"))
+  const target = join(root, "target")
+  const alias = join(root, "alias")
+  mkdirSync(target)
+  try {
+    symlinkSync(target, alias, process.platform === "win32" ? "junction" : "dir")
+    assert.equal(samePath(target, alias), true)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("qualification approves only the exact proof edit and diff command", () => {
+  const expected = {
+    filePath: "C:\\repo\\approval-proof.txt",
+    command: "git diff --check -- approval-proof.txt",
+    kinds: ["edit", "command"],
+  }
+  const request = (toolName: string, detail: string) => ({
+    origin: { toolName },
+    questions: [
+      {
+        id: "permission",
+        question: `Allow ${toolName} for this run?\n\n${detail}`,
+      },
+    ],
+  })
+  const edit = request("Write", `Path: ${expected.filePath}`)
+  const command = request("Bash", `Command: ${expected.command}`)
+  assertQualificationApprovals([edit, command], expected)
+  assert.throws(() =>
+    assertQualificationApprovals(
+      [request("Write", "Path: C:\\repo\\other.txt"), command],
+      expected,
+    ),
+  )
+  assert.throws(() =>
+    assertQualificationApprovals([edit, command, request("Bash", "Command: git status")], expected),
+  )
+  assert.throws(() => assertQualificationApprovals([edit], expected))
+  assert.throws(() => assertQualificationApprovals([edit, edit], expected))
+})
+
+test("visual evidence requires the active target chat, visible proof, and rendered pixels", () => {
+  const evidence = {
+    activeChatId: "approval-chat",
+    expectedChatId: "approval-chat",
+    visibleText: "APPROVED-proof",
+    expectedText: "APPROVED-proof",
+    bounds: { width: 800, height: 700 },
+    screenshot: Buffer.alloc(5_000, 1),
+  }
+  assertVisualEvidence(evidence)
+  assert.throws(() => assertVisualEvidence({ ...evidence, activeChatId: "other-chat" }))
+  assert.throws(() => assertVisualEvidence({ ...evidence, visibleText: "" }))
+  assert.throws(() => assertVisualEvidence({ ...evidence, screenshot: Buffer.alloc(4_999) }))
+})
+
+test("both direct providers require exact identity, transcript, and coding proof", () => {
   assert.deepEqual(qualificationCases, [
-    { harness: "codex", provider: "codex", model: "gpt-5.5", effort: "low" },
-    { harness: "claude-code", provider: "claude", model: "claude-opus-5-5", effort: "medium" },
+    { harness: "codex", provider: "codex", model: "gpt-5.6-sol", effort: "high" },
+    { harness: "claude-code", provider: "claude", model: "claude-opus-5-5", effort: "high" },
   ])
   for (const spec of qualificationCases) {
     const expected = { ...spec, runId: "run", subChatId: "chat", nonce: "NONCE", prompt: "prompt" }
@@ -183,6 +282,171 @@ test("both requested direct providers require exact model, transcript, turn iden
       ],
     }
     assertCompleted(state, expected)
+    const codingState = structuredClone(state)
+    codingState.runs[0] = {
+      ...codingState.runs[0],
+      permission_mode: "full-access",
+      before_checkpoint_id: "before",
+      after_checkpoint_id: "after",
+    }
+    if (spec.harness === "claude-code") {
+      codingState.activity[1].payload_json = JSON.stringify({
+        state: "session-initialized",
+        detail: JSON.stringify({
+          model: spec.model,
+          mcpServers: [],
+          permissionMode: "bypassPermissions",
+        }),
+      })
+      codingState.activity.push(
+        {
+          ...codingState.activity[0],
+          kind: "tool",
+          phase: "started",
+          provider_tool_id: "write-tool",
+          payload_json: JSON.stringify({
+            name: "Write",
+            state: "requested",
+            input: { file_path: "C:\\repo\\proof.txt" },
+          }),
+        },
+        {
+          ...codingState.activity[0],
+          kind: "tool",
+          phase: "completed",
+          provider_tool_id: "write-tool",
+          payload_json: JSON.stringify({ name: "tool-result", state: "completed" }),
+        },
+        {
+          ...codingState.activity[0],
+          kind: "tool",
+          phase: "started",
+          provider_tool_id: "bash-tool",
+          payload_json: JSON.stringify({
+            name: "Bash",
+            state: "requested",
+            input: { command: "git diff --check -- proof.txt" },
+          }),
+        },
+        {
+          ...codingState.activity[0],
+          kind: "tool",
+          phase: "completed",
+          provider_tool_id: "bash-tool",
+          payload_json: JSON.stringify({ name: "tool-result", state: "completed" }),
+        },
+      )
+    } else {
+      codingState.activity.push(
+        {
+          ...codingState.activity[0],
+          kind: "patch",
+          phase: "completed",
+          payload_json: JSON.stringify({ state: "completed", path: "proof.txt" }),
+        },
+        {
+          ...codingState.activity[0],
+          kind: "command",
+          phase: "completed",
+          payload_json: JSON.stringify({
+            state: "completed",
+            command: "git diff --check -- proof.txt",
+            exitCode: 0,
+          }),
+        },
+      )
+    }
+    Object.assign(codingState, {
+      checkpoints: [
+        { id: "before", run_id: "run", kind: "before", worktree_path: "C:\\repo" },
+        { id: "after", run_id: "run", kind: "after", worktree_path: "C:\\repo" },
+      ],
+      manifests: [
+        {
+          id: "manifest",
+          run_id: "run",
+          file_path: "proof.txt",
+          change_type: "added",
+          additions: 1,
+          deletions: 0,
+          before_hash: null,
+          after_hash: "hash",
+        },
+      ],
+    })
+    const codingExpected = { ...expected, cwd: "C:\\repo", filePath: "proof.txt" }
+    assertCodingCompleted(codingState, codingExpected)
+    const failedToolState = structuredClone(codingState)
+    if (spec.harness === "claude-code") {
+      const failed = failedToolState.activity.find(
+        (event) => event.provider_tool_id === "bash-tool" && event.phase === "completed",
+      )
+      failed.phase = "failed"
+      failed.payload_json = JSON.stringify({ name: "tool-result", state: "failed" })
+    } else {
+      const failed = failedToolState.activity.find((event) => event.kind === "command")
+      failed.payload_json = JSON.stringify({
+        state: "completed",
+        command: "git diff --check -- proof.txt",
+        exitCode: 1,
+      })
+    }
+    assert.throws(() => assertCodingCompleted(failedToolState, codingExpected))
+    const incompleteEditState = structuredClone(codingState)
+    if (spec.harness === "claude-code") {
+      const failed = incompleteEditState.activity.find(
+        (event) => event.provider_tool_id === "write-tool" && event.phase === "completed",
+      )
+      failed.phase = "failed"
+      failed.payload_json = JSON.stringify({ name: "tool-result", state: "failed" })
+    } else {
+      incompleteEditState.activity.find((event) => event.kind === "patch").phase = "started"
+    }
+    assert.throws(() => assertCodingCompleted(incompleteEditState, codingExpected))
+    if (spec.harness === "claude-code") {
+      const approvedState = structuredClone(codingState)
+      approvedState.runs[0].permission_mode = "ask-before-edits"
+      approvedState.activity[1].payload_json = JSON.stringify({
+        state: "session-initialized",
+        detail: JSON.stringify({
+          model: spec.model,
+          mcpServers: [],
+          permissionMode: "default",
+        }),
+      })
+      approvedState.activity.push({
+        ...approvedState.activity[0],
+        kind: "permission",
+        payload_json: JSON.stringify({ state: "completed", decision: "allow" }),
+      })
+      assertCodingCompleted(approvedState, {
+        ...codingExpected,
+        approvalMode: "interactive",
+        permissionMode: "ask-before-edits",
+        providerPermissionMode: "default",
+      })
+    }
+    assert.throws(() =>
+      assertCodingCompleted({ ...codingState, activity: state.activity }, codingExpected),
+    )
+    assert.throws(() =>
+      assertCodingCompleted(
+        {
+          ...codingState,
+          activity: [
+            ...codingState.activity,
+            {
+              ...codingState.activity[0],
+              kind: "permission",
+              payload_json: JSON.stringify({ state: "started" }),
+            },
+          ],
+        },
+        codingExpected,
+      ),
+    )
+    assert.throws(() => assertCodingCompleted({ ...codingState, checkpoints: [] }, codingExpected))
+    assert.throws(() => assertCodingCompleted({ ...codingState, manifests: [] }, codingExpected))
     const continuation = {
       ...expected,
       runId: "continued-run",

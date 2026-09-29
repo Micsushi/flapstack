@@ -17,6 +17,11 @@ vi.mock("../src/renderer/lib/trpc", () => ({
               { id: "sub-a", chatId: "a", runStatus: "failure" },
               { id: "sub-b", chatId: "b", runStatus: "success" },
             ],
+            waits: [
+              { id: "wait-a", chatId: "a", status: "failed" },
+              { id: "wait-b", chatId: "b", status: "waiting" },
+              { id: "wait-c", chatId: "c", status: "resuming" },
+            ],
           },
         }),
       },
@@ -41,16 +46,28 @@ describe("Chat status accessibility", () => {
       </ChatStatusProvider>,
     )
     expect(html).toContain(
-      "1 unread; 1 running; 1 needs help or input; Run failed; work not verified; Work outcome unknown",
+      "1 unread; 1 running; 1 needs help or input; Run failed; work not verified; Dependency wait failed; Work blocked; Run completed; work not verified",
     )
     expect(html).not.toContain("Verified work complete")
+  })
+
+  it("does not describe a resuming dependency wait as blocked", () => {
+    const html = renderToStaticMarkup(
+      <ChatStatusProvider>
+        <ChatStatusIndicators chatIds={["c"]} />
+      </ChatStatusProvider>,
+    )
+    expect(html).toContain("Work outcome unknown")
+    expect(html).not.toContain("Work blocked")
   })
   it.each(Object.keys(outcomeLabels) as WorkOutcome[])(
     "labels %s independently of unread and running",
     (outcome) => {
       for (const unread of [false, true]) {
         const html = renderToStaticMarkup(
-          <ChatStatusSummary statuses={[{ unread, running: true, needsHelp: true, outcome }]} />,
+          <ChatStatusSummary
+            statuses={[{ unread, running: true, needsHelp: true, outcome, outcomes: [outcome] }]}
+          />,
         )
         expect(html).toContain('role="img"')
         expect(html).toContain(outcomeLabels[outcome])
@@ -66,9 +83,27 @@ describe("Chat status accessibility", () => {
     const html = renderToStaticMarkup(
       <ChatStatusSummary
         statuses={[
-          { unread: false, running: false, needsHelp: false, outcome: "verified-complete" },
-          { unread: true, running: false, needsHelp: false, outcome: "unknown" },
-          { unread: false, running: false, needsHelp: false, outcome: "stopped-incomplete" },
+          {
+            unread: false,
+            running: false,
+            needsHelp: false,
+            outcome: "verified-complete",
+            outcomes: ["verified-complete"],
+          },
+          {
+            unread: true,
+            running: false,
+            needsHelp: false,
+            outcome: "unknown",
+            outcomes: ["unknown"],
+          },
+          {
+            unread: false,
+            running: false,
+            needsHelp: false,
+            outcome: "stopped-incomplete",
+            outcomes: ["stopped-incomplete"],
+          },
         ]}
       />,
     )

@@ -62,6 +62,7 @@ import { sanitizeRuntimeText } from "./agent-runtime/sanitizer"
 import { getDatabasePath } from "./db"
 import * as schema from "./db/schema"
 import { nowEpochSeconds } from "./db/timestamps"
+import { captureAgentRunBefore, captureAgentRunCompletionArtifacts } from "./agent-run-lifecycle"
 import {
   createFlapstackNativeAdapterFactory,
   type FlapstackNativeDelegationProbe,
@@ -335,6 +336,14 @@ export class MainRuntimeLaunchService {
         throw new RuntimeLaunchCancelledError(run.runId)
       }
       const resolvedLaunch = run.runtimeLaunch ?? legacyLaunch(run)
+      if (resolvedLaunch.resolvedRuntime !== "flapstack-native") {
+        await this.serializePersistedOperation(run.runId, () =>
+          this.captureBeforeCheckpoint(run.runId),
+        )
+        if (this.prelaunchCancellations.has(run.runId)) {
+          throw new RuntimeLaunchCancelledError(run.runId)
+        }
+      }
       const persistedSession = await this.loadPersistedSession(run.runId)
       const prompt = resolveRuntimeTurnPrompt(
         {
@@ -386,8 +395,13 @@ export class MainRuntimeLaunchService {
     }
     if (this.runs.has(runId) && loadRunningAgentRun(this.databasePath, runId)) {
       this.prelaunchCancellations.add(runId)
-      await this.persistLifecycle(runId, "cancelled", reason)
-      return true
+      return await this.serializePersistedOperation(runId, async () => {
+        if (this.coordinator.runState(runId)) {
+          return await this.coordinator.cancel(runId, reason)
+        }
+        await this.persistLifecycle(runId, "cancelled", reason)
+        return loadAgentRunReconciliationState(this.databasePath, runId) === "cancelled"
+      })
     }
     const inFlight = this.persistedCancellations.get(runId)
     if (inFlight) return await inFlight
@@ -928,6 +942,8 @@ export class MainRuntimeLaunchService {
     lifecycle: string,
     detail?: string | null,
   ): Promise<void> {
+    const terminal = terminalStatus(lifecycle)
+    const afterCheckpointId = terminal ? await this.captureCompletionArtifacts(runId) : undefined
     const db = this.open()
     let activityInvalidation: AgentActivityInvalidation | undefined
     let chatId: string | undefined
@@ -936,14 +952,14 @@ export class MainRuntimeLaunchService {
         const run = this.requireRunRow(db, runId)
         chatId = run.chat_id
         const now = nowEpochSeconds()
-        const terminal = terminalStatus(lifecycle)
         if (terminal) {
           const transition = db
             .prepare(
-              `UPDATE agent_runs SET status = ?, completed_at = ?
+              `UPDATE agent_runs SET status = ?, completed_at = ?,
+                 after_checkpoint_id = COALESCE(?, after_checkpoint_id)
                WHERE id = ? AND status IN ('pending','running') AND completed_at IS NULL`,
             )
-            .run(terminal, now, runId)
+            .run(terminal, now, afterCheckpointId ?? null, runId)
           if (transition.changes === 0) return
           if (
             terminal === "success" &&
@@ -989,6 +1005,31 @@ export class MainRuntimeLaunchService {
         chatIds: [chatId],
         runIds: [runId],
       })
+    }
+  }
+
+  private async captureBeforeCheckpoint(runId: string): Promise<void> {
+    const sqlite = this.open()
+    try {
+      await captureAgentRunBefore(drizzle(sqlite, { schema }), runId)
+    } finally {
+      sqlite.close()
+    }
+  }
+
+  private async captureCompletionArtifacts(runId: string): Promise<string | undefined> {
+    const sqlite = this.open()
+    try {
+      const run = sqlite
+        .prepare("SELECT resolved_runtime FROM agent_runs WHERE id = ?")
+        .get(runId) as { resolved_runtime: string | null } | undefined
+      if (!run || run.resolved_runtime === "flapstack-native") return undefined
+      return await captureAgentRunCompletionArtifacts(drizzle(sqlite, { schema }), {
+        runId,
+        logLabel: "runtime",
+      })
+    } finally {
+      sqlite.close()
     }
   }
 

@@ -376,12 +376,24 @@ npm run package:audit:preview:linux
 npm run package:release:linux # clean exact-source checkout only
 npm run package:preview:linux:arm64 # run on a native arm64 Linux host
 npm run package:release:linux:arm64 # run on a clean native arm64 Linux host
+npm run package:preview:win # unpacked Flapstack Preview test build
+npm run package:inspect:preview:win
+npm run package:smoke:preview:win
+npm run package:audit:preview:win
 ```
 
 macOS development, packaged testing, and production use separate app names,
 bundle IDs, protocols, output folders, and data profiles. Use `Flapstack Dev`
 for live source work and `Flapstack Preview` for local packaged smoke tests.
 `Flapstack` is reserved for production builds.
+
+On Windows, launch
+`release-preview\win-unpacked\Flapstack Preview.exe` and keep the whole
+`win-unpacked` directory together. Replacing that directory with a newer
+Preview build preserves chats and settings in `%APPDATA%\Flapstack Preview`.
+Build from a clean committed checkout when the package must identify one exact
+source SHA. See [Windows development and packaging](docs/windows-development.md)
+for the full native setup and package checks.
 
 Every package build command resolves one exact target set, uses it for both pinned
 Claude/Codex/whisper.cpp preparation and electron-builder, validates a fresh

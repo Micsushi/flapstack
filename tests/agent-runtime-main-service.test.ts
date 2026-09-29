@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -252,6 +253,154 @@ describe("process-wide Runtime launch service", () => {
     await expect(service.reconcileRun("durable")).resolves.toBe("completed")
     expect(value.reconcile).not.toHaveBeenCalled()
   })
+
+  it.each(["codex", "claude-code"] as const)(
+    "captures before/after checkpoints and the file manifest for direct %s runs",
+    async (runtime) => {
+      const runId = `${runtime}-checkpoint`
+      const projectRoot = join(directory, runId)
+      mkdirSync(projectRoot)
+      execFileSync("git", ["init", "-b", "main"], { cwd: projectRoot, windowsHide: true })
+      execFileSync("git", ["config", "user.email", "61084115+Micsushi@users.noreply.github.com"], {
+        cwd: projectRoot,
+        windowsHide: true,
+      })
+      execFileSync("git", ["config", "user.name", "Wenjian(Michael) Shi"], {
+        cwd: projectRoot,
+        windowsHide: true,
+      })
+      writeFileSync(join(projectRoot, "proof.txt"), "before\n")
+      execFileSync("git", ["add", "proof.txt"], { cwd: projectRoot, windowsHide: true })
+      execFileSync("git", ["commit", "-m", "fixture"], { cwd: projectRoot, windowsHide: true })
+
+      seedDirectRun(runId, testRuntimeSnapshotSqlValues(runtime, runtime), runtime, runtime)
+      sqlite.prepare("UPDATE projects SET path = ? WHERE id = 'project'").run(projectRoot)
+      sqlite
+        .prepare("UPDATE chats SET worktree_path = ? WHERE id = ?")
+        .run(projectRoot, `chat-${runId}`)
+      sqlite
+        .prepare("UPDATE sub_chats SET worktree_path = ? WHERE id = ?")
+        .run(projectRoot, `sub-${runId}`)
+      sqlite.prepare("UPDATE agent_runs SET worktree_path = ? WHERE id = ?").run(projectRoot, runId)
+
+      const adapter = directAdapter(runtime)
+      adapter.startTurn = async (context) => {
+        writeFileSync(join(projectRoot, "proof.txt"), "after\n")
+        return { providerTurnId: `turn-${context.runId}` }
+      }
+      const service =
+        runtime === "codex"
+          ? getMainRuntimeLaunchService(path, {
+              codexFactory: () => adapter,
+              enableCodex: true,
+            })
+          : getMainRuntimeLaunchService(path, {
+              claudeCodeFactory: () => adapter,
+              enableClaudeCode: true,
+            })
+      const run = queued(runId, runtime)
+      run.worktreePath = projectRoot
+      run.projectPath = projectRoot
+
+      await service.launch(run)
+
+      const persisted = sqlite
+        .prepare(
+          "SELECT before_checkpoint_id beforeId, after_checkpoint_id afterId FROM agent_runs WHERE id = ?",
+        )
+        .get(runId) as { beforeId: string | null; afterId: string | null }
+      expect(persisted.beforeId).toBeTruthy()
+      expect(persisted.afterId).toBeTruthy()
+      expect(persisted.afterId).not.toBe(persisted.beforeId)
+      expect(
+        sqlite
+          .prepare(
+            "SELECT kind, worktree_path worktreePath FROM checkpoints WHERE run_id = ? ORDER BY kind DESC",
+          )
+          .all(runId),
+      ).toEqual([
+        { kind: "before", worktreePath: projectRoot },
+        { kind: "after", worktreePath: projectRoot },
+      ])
+      expect(
+        sqlite
+          .prepare(
+            `SELECT file_path filePath, change_type changeType, additions, after_hash afterHash
+             FROM file_change_manifests WHERE run_id = ?`,
+          )
+          .all(runId),
+      ).toEqual([
+        {
+          filePath: "proof.txt",
+          changeType: "modified",
+          additions: 1,
+          afterHash: expect.any(String),
+        },
+      ])
+    },
+  )
+
+  it.each(["failure", "cancelled"] as const)(
+    "captures terminal artifacts when a direct run ends as %s",
+    async (outcome) => {
+      const runId = `terminal-${outcome}`
+      const projectRoot = join(directory, runId)
+      mkdirSync(projectRoot)
+      seedDirectRun(runId)
+      sqlite.prepare("UPDATE agent_runs SET worktree_path = ? WHERE id = ?").run(projectRoot, runId)
+
+      let streamStarted!: () => void
+      let release!: () => void
+      const started = new Promise<void>((resolve) => {
+        streamStarted = resolve
+      })
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const adapter = directAdapter()
+      adapter.streamActivity = async function* () {
+        if (outcome === "failure") throw new Error("provider failed")
+        streamStarted()
+        await gate
+      }
+      adapter.cancel = async () => release()
+      const service = getMainRuntimeLaunchService(path, {
+        codexFactory: () => adapter,
+        enableCodex: true,
+      })
+      const run = queued(runId)
+      run.worktreePath = projectRoot
+      const running = service.launch(run)
+      if (outcome === "cancelled") {
+        await started
+        await expect(service.cancel(runId, "operator")).resolves.toBe(true)
+      }
+      await expect(running).rejects.toThrow()
+
+      expect(
+        sqlite
+          .prepare(
+            `SELECT status, before_checkpoint_id beforeId, after_checkpoint_id afterId
+             FROM agent_runs WHERE id = ?`,
+          )
+          .get(runId),
+      ).toMatchObject({
+        status: outcome,
+        beforeId: expect.any(String),
+        afterId: expect.any(String),
+      })
+      expect(
+        sqlite
+          .prepare("SELECT kind FROM checkpoints WHERE run_id = ? ORDER BY kind DESC")
+          .all(runId),
+      ).toEqual([{ kind: "before" }, { kind: "after" }])
+      expect(
+        sqlite
+          .prepare("SELECT change_type changeType FROM file_change_manifests WHERE run_id = ?")
+          .all(runId),
+      ).toEqual([{ changeType: "none" }])
+    },
+  )
 
   it("forwards the workflow output schema into the provider adapter context", async () => {
     seedDirectRun("schema")
@@ -691,20 +840,58 @@ describe("process-wide Runtime launch service", () => {
   })
 
   it("persists cancellation before provider launch authority is reserved", async () => {
+    const projectRoot = join(directory, "prelaunch-cancel")
+    mkdirSync(projectRoot)
+    execFileSync("git", ["init", "-b", "main"], { cwd: projectRoot, windowsHide: true })
+    execFileSync("git", ["config", "user.email", "61084115+Micsushi@users.noreply.github.com"], {
+      cwd: projectRoot,
+      windowsHide: true,
+    })
+    execFileSync("git", ["config", "user.name", "Wenjian(Michael) Shi"], {
+      cwd: projectRoot,
+      windowsHide: true,
+    })
+    writeFileSync(join(projectRoot, "proof.txt"), "baseline\n")
+    execFileSync("git", ["add", "proof.txt"], { cwd: projectRoot, windowsHide: true })
+    execFileSync("git", ["commit", "-m", "fixture"], { cwd: projectRoot, windowsHide: true })
+    writeFileSync(join(projectRoot, "proof.txt"), "preexisting dirty work\n")
     seedDirectRun("prelaunch-cancel")
+    sqlite
+      .prepare("UPDATE agent_runs SET worktree_path = ? WHERE id = 'prelaunch-cancel'")
+      .run(projectRoot)
     const factory = vi.fn(() => directAdapter())
     const service = getMainRuntimeLaunchService(path, {
       codexFactory: factory,
       enableCodex: true,
     })
 
-    const launch = service.launch(queued("prelaunch-cancel"))
+    const run = queued("prelaunch-cancel")
+    run.worktreePath = projectRoot
+    run.projectPath = projectRoot
+    const launch = service.launch(run)
     await expect(service.cancel("prelaunch-cancel", "operator stopped")).resolves.toBe(true)
     await expect(launch).rejects.toMatchObject({ name: "RuntimeLaunchCancelledError" })
     expect(factory).not.toHaveBeenCalled()
     expect(
-      sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'prelaunch-cancel'").get(),
-    ).toEqual({ status: "cancelled" })
+      sqlite
+        .prepare(
+          `SELECT status, before_checkpoint_id beforeId, after_checkpoint_id afterId
+           FROM agent_runs WHERE id = 'prelaunch-cancel'`,
+        )
+        .get(),
+    ).toEqual({ status: "cancelled", beforeId: null, afterId: null })
+    expect(
+      sqlite
+        .prepare("SELECT COUNT(*) count FROM checkpoints WHERE run_id = 'prelaunch-cancel'")
+        .get(),
+    ).toEqual({ count: 0 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT COUNT(*) count FROM file_change_manifests WHERE run_id = 'prelaunch-cancel'",
+        )
+        .get(),
+    ).toEqual({ count: 0 })
   })
 
   it("cancels an unowned durable pending run without requiring provider identity", async () => {

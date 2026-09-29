@@ -23,6 +23,44 @@ export function cancelStaleRunningRuns(
     .run()
 }
 
+export async function captureAgentRunBefore(db: AppDatabase, runId: string) {
+  const run = db.select().from(agentRuns).where(eq(agentRuns.id, runId)).get()
+  if (!run || run.completedAt || run.beforeCheckpointId) return run?.beforeCheckpointId ?? null
+
+  const before = await captureCheckpoint(run.id, run.worktreePath, "before", db)
+  db.update(agentRuns)
+    .set({ beforeCheckpointId: before.id })
+    .where(
+      and(
+        eq(agentRuns.id, runId),
+        eq(agentRuns.status, "running"),
+        isNull(agentRuns.completedAt),
+        isNull(agentRuns.beforeCheckpointId),
+      ),
+    )
+    .run()
+  return before.id
+}
+
+export async function captureAgentRunCompletionArtifacts(
+  db: AppDatabase,
+  input: { runId: string; logLabel: string },
+): Promise<string | undefined> {
+  const run = db.select().from(agentRuns).where(eq(agentRuns.id, input.runId)).get()
+  if (!run || run.completedAt || !run.beforeCheckpointId) {
+    return run?.afterCheckpointId ?? undefined
+  }
+
+  try {
+    const after = await captureCheckpoint(run.id, run.worktreePath, "after", db)
+    await captureRunManifest(run.id, db)
+    return after.id
+  } catch (error) {
+    console.warn(`[${input.logLabel}] Failed to capture after checkpoint/manifest:`, error)
+    return undefined
+  }
+}
+
 export async function completeAgentRun(
   db: AppDatabase,
   input: { runId: string; subChatId: string; status: string; logLabel: string },
@@ -30,14 +68,7 @@ export async function completeAgentRun(
   const run = db.select().from(agentRuns).where(eq(agentRuns.id, input.runId)).get()
   if (!run || run.completedAt) return run
 
-  let afterCheckpointId: string | undefined
-  try {
-    const after = await captureCheckpoint(run.id, run.worktreePath, "after")
-    afterCheckpointId = after.id
-    await captureRunManifest(run.id)
-  } catch (error) {
-    console.warn(`[${input.logLabel}] Failed to capture after checkpoint/manifest:`, error)
-  }
+  const afterCheckpointId = await captureAgentRunCompletionArtifacts(db, input)
 
   const completedRun = db
     .update(agentRuns)
