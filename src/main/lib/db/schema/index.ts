@@ -78,6 +78,7 @@ export const recordTaskWorktrees = sqliteTable(
     worktreePath: text("worktree_path").notNull().unique(),
     branch: text("branch").notNull(),
     baseCommit: text("base_commit").notNull(),
+    baseBranch: text("base_branch"),
   },
   (table) => [
     uniqueIndex("record_task_worktrees_canonical_idx").on(

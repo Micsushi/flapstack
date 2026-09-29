@@ -16,6 +16,12 @@ export function isStage6PerformanceProfile(
   return env.FLAPSTACK_STAGE6_PERFORMANCE_PROFILE === "1"
 }
 
+export function isHiddenPreviewVerification(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env.FLAPSTACK_PREVIEW_HEADLESS === "1"
+}
+
 /** A hidden launch must never fall back to an ordinary or shared user profile. */
 export function isHeadlessPerformanceProfile(
   isPackaged: boolean,

@@ -51,7 +51,7 @@ export function probeInput() {
   return {
     available: true,
     sdkVersion: "0.3.207",
-    claudeCodeVersion: "2.1.207",
+    claudeCodeVersion: "2.1.284",
     features: {
       partialMessages: true,
       thinking: true,

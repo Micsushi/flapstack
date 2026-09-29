@@ -7,7 +7,7 @@ import type {
 } from "../../../../shared/agent-runtime"
 
 export const CLAUDE_AGENT_SDK_VERSION = "0.3.207"
-export const CLAUDE_CODE_VERSION = "2.1.207"
+export const CLAUDE_CODE_VERSION = "2.1.284"
 export const CLAUDE_RUNTIME_ADAPTER_VERSION = "1"
 export const CLAUDE_RUNTIME_PROTOCOL_VERSION = `claude-agent-sdk/${CLAUDE_AGENT_SDK_VERSION}`
 

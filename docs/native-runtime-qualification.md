@@ -1,5 +1,31 @@
 # Native runtime qualification
 
+## Windows packaged acceptance
+
+On 2026-09-29 UTC, a hidden Flapstack Preview package passed the owned-profile
+qualification with direct Runtimes enabled by the normal release policy. The
+package contained Electron 41.10.7, Codex CLI 0.153.4, Claude Code 2.1.284, and
+Claude Agent SDK 0.3.207. The binary smoke and Windows package security audit
+also passed.
+
+- Codex used `gpt-5.5` with low effort. Claude used `claude-opus-5-5` with
+  medium effort.
+- Each provider completed an exact bounded reply, continued with a second exact
+  reply in the same provider session, and persisted the expected transcript and
+  provider identity.
+- Each provider started a third turn in that same session that was cancelled
+  and durably recorded as cancelled.
+- A full app restart preserved both completed replies without replaying a turn.
+- The qualification disabled MCP servers, requested read-only authority, and
+  observed no tool, command, or patch activity.
+- The hidden app exited cleanly, removed copied credentials, deleted its owned
+  profile, and left the user's profiles and credentials unchanged.
+
+This evidence qualifies direct Codex and Claude Code for new production
+launches on Windows. Runtime probes continue to fail closed when authentication,
+the pinned binary, or the supported protocol is unavailable. Other operating
+systems retain their platform-specific package qualification requirements.
+
 Evidence captured on 2026-09-20 UTC in isolated Windows worktrees. These checks
 used synthetic input and owned databases, not a production Flapstack profile.
 Live turns requested no tools and disabled MCP. The production app checks also
@@ -18,9 +44,9 @@ were changed. This is bounded evidence, not full feature acceptance.
   authoritative failed result and the adapter rejected completion. Fresh
   `claude auth status` reports `loggedIn: false`, `authMethod: none`, and
   `apiProvider: firstParty`. Installed Claude 2.1.261 reports the same state.
-  A credential file's presence did not establish authentication. Successful
-  native Claude execution and same-session continuation remain blocked on
-  supported sign-in; neither is claimed from fixture results.
+  A credential file's presence did not establish authentication. At the time,
+  successful native Claude execution and same-session continuation were blocked
+  on supported sign-in; neither was claimed from fixture results.
 
 ## Actual production app lifecycle
 
@@ -45,7 +71,7 @@ owned project's supported extension policy disabled both discovered MCP servers.
 Earlier failed preparations remain retained. The production release gate first
 refused launch before any turn; the existing
 `FLAPSTACK_ENABLE_UNVERIFIED_NATIVE_RUNTIMES=1` qualification flag was then set
-only in the owned child environment. Discovery incorrectly treated nested MCP
+only in that historical owned child environment. Discovery incorrectly treated nested MCP
 environment tables as server names; the narrow parser correction was verified
 with fixtures and the subsequent actual app launch.
 
@@ -60,11 +86,11 @@ requests retain 30 seconds. The final successful two-turn check above verifies
 the integrated correction. Focused adapter/recovery tests passed 48 tests;
 the integrated check passed 4,517 tests plus 11 Windows tests and the build.
 
-This proves the bounded development-app lifecycle, not installed-package
-acceptance or every native event variant. Production defaults remain gated:
-the documented pinned-protocol, live, restart and packaged-app requirements
-have not all been met. Plain Codex preference and authenticated Claude behavior
-are not inferred from the Codex Enhanced check.
+This historical check proved the bounded development-app lifecycle, not
+installed-package acceptance or every native event variant. At that point,
+production defaults remained gated and authenticated Claude behavior had not
+been established. The later packaged acceptance above closes those Windows
+release gates.
 
 ## Actual native delegation target
 
@@ -111,13 +137,13 @@ accepted reply before and after a full owned-profile restart. Its two persisted
 messages retained the exact prompt/run linkage; source history, parent/project
 lineage, successful result and single-run/single-attempt counts stayed unchanged.
 There were no page errors or replay, and the hidden app closed cleanly. The
-qualification used the existing child-only unverified-runtime flag; it does not
-change release defaults or establish installed-package acceptance.
+historical qualification used the existing child-only unverified-runtime flag;
+it did not change release defaults or establish installed-package acceptance.
 
 | Source task | Evidence and remaining boundary                                                                                                                                                                                                                               |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| S4-F11-T4   | Actual pinned adapter and production-app completion, resumed cancellation, persisted identity and restart above; fixture event/drift/permission coverage. Installed-package smoke and every live event variant remain unverified.                             |
-| S4-F11-T5   | SDK fixtures and truthful actual failure verified. Successful native Claude/resume/fork and native app comparison require authenticated Claude.                                                                                                               |
+| S4-F11-T4   | Actual pinned adapter and production-app completion, same-session continuation, cancellation, persisted identity and restart above; Windows packaged qualification now passes. Every possible live event variant remains outside this bounded check.          |
+| S4-F11-T5   | SDK fixtures and truthful historical failure verified. Packaged authenticated Claude completion, same-session continuation, cancellation and restart now pass on Windows; fork remains covered by deterministic tests rather than this packaged flow.         |
 | S4-F11-T6   | Existing Native compatibility/history fixtures verified. No claim that a direct Codex probe proves the separate ACP or legacy Claude transport path.                                                                                                          |
 | S4-F11-T7   | Existing timeline/activity fixtures verified. Actual multi-window/native UI comparison and recorded 10k rendering acceptance are not established by transport checks.                                                                                         |
 | S4-F11-T8   | Resolver/selection/continuation fixtures verified. Independent actual Board/Plan/worktree replay preserved original idle context, provider/Runtime selection, one linked Chat and zero runs through full restart. Started-chat continuation remains separate. |

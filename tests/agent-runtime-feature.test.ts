@@ -85,27 +85,20 @@ describe("Agent Runtime feature acceptance", () => {
     expect(serialized).not.toContain("raw-secret-session")
   })
 
-  it("keeps production defaults gated while allowing explicit native Runtime testing", () => {
-    expect(RUNTIME_RELEASE_POLICY.codex.enabledForNewLaunches).toBe(false)
-    expect(RUNTIME_RELEASE_POLICY["claude-code"].enabledForNewLaunches).toBe(false)
+  it("enables qualified direct Runtimes on Windows and gates other platforms", () => {
+    expect(RUNTIME_RELEASE_POLICY).toEqual(buildRuntimeReleasePolicy(process.platform))
     expect(RUNTIME_RELEASE_POLICY["flapstack-native"].enabledForNewLaunches).toBe(true)
-    const testingPolicy = buildRuntimeReleasePolicy(true)
-    expect(testingPolicy.codex).toMatchObject({ enabledForNewLaunches: true, reason: null })
-    expect(testingPolicy["claude-code"]).toMatchObject({
+    const policy = buildRuntimeReleasePolicy("win32")
+    expect(policy.codex).toMatchObject({ enabledForNewLaunches: true, reason: null })
+    expect(policy["claude-code"]).toMatchObject({
       enabledForNewLaunches: true,
       reason: null,
     })
-    const previousNodeEnv = process.env.NODE_ENV
-    const previousRendererUrl = process.env.ELECTRON_RENDERER_URL
-    process.env.NODE_ENV = "development"
-    delete process.env.ELECTRON_RENDERER_URL
-    try {
-      expect(buildRuntimeReleasePolicy().codex.enabledForNewLaunches).toBe(false)
-    } finally {
-      if (previousNodeEnv === undefined) delete process.env.NODE_ENV
-      else process.env.NODE_ENV = previousNodeEnv
-      if (previousRendererUrl === undefined) delete process.env.ELECTRON_RENDERER_URL
-      else process.env.ELECTRON_RENDERER_URL = previousRendererUrl
+    for (const platform of ["darwin", "linux"] as const) {
+      const gated = buildRuntimeReleasePolicy(platform)
+      expect(gated.codex).toMatchObject({ enabledForNewLaunches: false })
+      expect(gated["claude-code"]).toMatchObject({ enabledForNewLaunches: false })
+      expect(gated.codex.reason).toContain("packaged qualification")
     }
     const guide = read("docs/agent-runtimes.md")
     expect(guide).toContain("never silently")

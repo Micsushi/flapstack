@@ -81,16 +81,8 @@ beforeEach(() => {
   repo = join(directory, "repo")
   mkdirSync(repo)
   git(["init"])
-  git([
-    "-c",
-    "user.name=Fixture User",
-    "-c",
-    "user.email=fixture@example.invalid",
-    "commit",
-    "--allow-empty",
-    "-m",
-    "Fixture",
-  ])
+  git(["commit", "--allow-empty", "-m", "Fixture"])
+  git(["branch", "-M", "release/base"])
   sqlite = new Database(join(directory, "test.db"))
   sqlite.pragma("foreign_keys=ON")
   migrate(drizzle(sqlite), { migrationsFolder: resolve("drizzle") })
@@ -131,6 +123,9 @@ it("coalesces concurrent clicks, reopens after restart and uses the isolated nat
   expect(chat.worktree_path).toBe(first.worktreePath)
   expect(chat.task_id).toBeNull()
   expect(chat.project_id).toBe("local")
+  expect(chat.base_branch).toBe("release/base")
+  expect(create.mock.calls[0]?.[3]).toBe(git(["rev-parse", "HEAD"]))
+  expect(chat.base_branch).not.toBe(create.mock.calls[0]?.[3])
   const saved = sqlite
     .prepare("SELECT messages, run_status FROM sub_chats WHERE chat_id=?")
     .get(first.chatId) as { messages: string; run_status: string | null }
@@ -183,24 +178,21 @@ it("coalesces concurrent clicks, reopens after restart and uses the isolated nat
     first.worktreePath.replaceAll("\\", "/"),
   )
 })
-it("previews the exact local target without writes and rejects a changed starting commit", async () => {
+it("previews the exact local target without writes and rejects a changed base", async () => {
   const current = service()
   const preview = await current.preview(input)
   expect(preview.projectPath).toBe(repo)
   expect(preview.branch).toMatch(/^codex\/record-/)
+  expect(preview.baseBranch).toBe("release/base")
   expect(
     (sqlite.prepare("SELECT count(*) n FROM record_task_worktrees").get() as { n: number }).n,
   ).toBe(0)
-  git([
-    "-c",
-    "user.name=Fixture User",
-    "-c",
-    "user.email=fixture@example.invalid",
-    "commit",
-    "--allow-empty",
-    "-m",
-    "Changed base",
-  ])
+  git(["switch", "-c", "other-base"])
+  await expect(current.open({ ...input, expectedTarget: preview.expectedTarget })).rejects.toThrow(
+    "target changed",
+  )
+  git(["switch", "release/base"])
+  git(["commit", "--allow-empty", "-m", "Changed base"])
   await expect(current.open({ ...input, expectedTarget: preview.expectedTarget })).rejects.toThrow(
     "target changed",
   )
@@ -228,6 +220,73 @@ it("retains failed isolation for retry and refuses an occupied branch without Gi
   await expect(open(input)).rejects.toThrow("occupied")
   expect(create).toHaveBeenCalledTimes(1)
 })
+it("preserves and rejects a pre-migration reservation with an unknown base branch", async () => {
+  sqlite
+    .prepare(
+      `INSERT INTO record_task_worktrees
+        (id, endpoint, record_path, record_id, canonical_project_id, local_project_id,
+         source_revision, claim_id, worktree_path, branch, base_commit)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "legacy-reservation",
+      "http://127.0.0.1:1234",
+      input.path,
+      input.recordId,
+      input.canonicalProjectId,
+      input.localProjectId,
+      input.expectedRevision,
+      input.claimId,
+      join(directory, "worktrees", "legacy-reservation"),
+      "codex/record-legacy",
+      git(["rev-parse", "HEAD"]),
+    )
+
+  await expect(service().preview(input)).rejects.toThrow("predates base-branch tracking")
+  expect(
+    (sqlite.prepare("SELECT count(*) n FROM record_task_worktrees").get() as { n: number }).n,
+  ).toBe(1)
+  expect(create).not.toHaveBeenCalled()
+})
+it("recovers an interrupted worktree reserved from detached HEAD", async () => {
+  git(["checkout", "--detach"])
+  const detachedCommit = git(["rev-parse", "HEAD"])
+  create.mockImplementationOnce(async (repository, branch, path, base) => {
+    mkdirSync(dirname(path), { recursive: true })
+    execFileSync("git", ["worktree", "add", path, "-b", branch, base], {
+      cwd: repository,
+      windowsHide: true,
+      stdio: "pipe",
+    })
+    throw new Error("Simulated interruption after Git")
+  })
+
+  const current = service()
+  const preview = await current.preview(input)
+  expect(preview.baseBranch).toBeNull()
+  await expect(current.open({ ...input, expectedTarget: preview.expectedTarget })).rejects.toThrow(
+    "Simulated interruption",
+  )
+  expect(
+    (
+      sqlite.prepare("SELECT base_branch FROM record_task_worktrees").get() as {
+        base_branch: string | null
+      }
+    ).base_branch,
+  ).toBe(":detached")
+  expect(create.mock.calls[0]?.[3]).toBe(detachedCommit)
+
+  git(["switch", "release/base"])
+  const recovered = await open(input)
+  expect(create).toHaveBeenCalledTimes(1)
+  expect(
+    (
+      sqlite.prepare("SELECT base_branch FROM chats WHERE id=?").get(recovered.chatId) as {
+        base_branch: string | null
+      }
+    ).base_branch,
+  ).toBeNull()
+})
 it("recovers a worktree created before a crash without duplicating chats or Git mutations", async () => {
   create.mockImplementationOnce(async (repository, branch, path, base) => {
     mkdirSync(dirname(path), { recursive: true })
@@ -251,8 +310,16 @@ it("recovers a worktree created before a crash without duplicating chats or Git 
       .get(pending.worktree_path),
   ).toBeUndefined()
   unlinkSync(marker)
+  git(["switch", "-c", "other-base"])
   const recovered = await open(input)
   expect(recovered.chatId).toBeTruthy()
   expect(create).toHaveBeenCalledTimes(1)
+  expect(
+    (
+      sqlite.prepare("SELECT base_branch FROM chats WHERE id=?").get(recovered.chatId) as {
+        base_branch: string | null
+      }
+    ).base_branch,
+  ).toBe("release/base")
   await expect(open({ ...input, localProjectId: "missing" })).rejects.toThrow("Select an active")
 })

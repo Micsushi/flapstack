@@ -202,7 +202,7 @@ describe("Claude legacy queue routing", () => {
     expect(readVisibleTranscript()).toEqual(["Original"])
   })
 
-  it("passes task-resolved skill and MCP policy into the real Claude SDK launch", async () => {
+  it("enforces task-resolved skill and MCP policy for a direct Claude launch", async () => {
     seedClaudeExtensionPolicy()
     mocks.responses.splice(0, mocks.responses.length, "policy-response")
 
@@ -325,8 +325,20 @@ function seedLegacyQueue(sqlite: Database.Database): void {
     ) VALUES (?, 'chat-order', 'sub-order', 'claude-code', 'full-access', ?, ?, 'pending', ?,
       ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-  insert.run("run-a", directory, "mcp-order-a", 1, ...testRuntimeSnapshotSqlValues("claude-code"))
-  insert.run("run-b", directory, "mcp-order-b", 2, ...testRuntimeSnapshotSqlValues("claude-code"))
+  insert.run(
+    "run-a",
+    directory,
+    "mcp-order-a",
+    1,
+    ...testRuntimeSnapshotSqlValues("claude-code", "claude-code"),
+  )
+  insert.run(
+    "run-b",
+    directory,
+    "mcp-order-b",
+    2,
+    ...testRuntimeSnapshotSqlValues("claude-code", "claude-code"),
+  )
 }
 
 function readVisibleTranscript(): string[] {

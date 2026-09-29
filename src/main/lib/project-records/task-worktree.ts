@@ -35,8 +35,11 @@ type Link = {
   worktree_path: string
   branch: string
   base_commit: string
+  base_branch: string | null
   claim_id: string
 }
+// Git rejects colons in ref names, so this cannot collide with a real branch.
+const DETACHED_BASE_BRANCH = ":detached"
 const exec = promisify(execFile)
 const git = async (cwd: string, args: string[]) =>
   (
@@ -118,6 +121,7 @@ export class RecordTaskWorktreeService {
     project,
     repo,
     link,
+    baseBranch,
   }: Awaited<ReturnType<RecordTaskWorktreeService["prepare"]>>) {
     const target = {
       projectId: project.id,
@@ -125,6 +129,7 @@ export class RecordTaskWorktreeService {
       projectPath: repo,
       worktreePath: link.worktree_path,
       branch: link.branch,
+      baseBranch,
       baseCommit: link.base_commit,
     }
     return {
@@ -189,10 +194,15 @@ export class RecordTaskWorktreeService {
       throw new Error(
         "This task belongs to another local project or worker claim. Open its existing Chat from the sidebar; do not take over its worktree.",
       )
+    if (link && !link.chat_id && link.base_branch === null)
+      throw new Error(
+        "This interrupted worktree predates base-branch tracking. Preserve it and resolve its reviewed base branch before reopening.",
+      )
     const exists = Boolean(link)
     if (!link) {
       // Resolve before any mutation: unborn repositories must not be bootstrapped.
       const base = await git(repo, ["rev-parse", "--verify", "HEAD^{commit}"])
+      const baseBranch = (await git(repo, ["branch", "--show-current"])) || DETACHED_BASE_BRANCH
       const id = createHash("sha256")
         .update(JSON.stringify([...key, project.id]))
         .digest("hex")
@@ -204,15 +214,25 @@ export class RecordTaskWorktreeService {
         worktree_path: join(this.worktreesRoot, id),
         branch: `codex/record-${id}`,
         base_commit: base,
+        base_branch: baseBranch,
         claim_id: input.claimId,
       }
     }
-    return { record, db, project, repo, key, link, exists }
+    return {
+      record,
+      db,
+      project,
+      repo,
+      key,
+      link,
+      exists,
+      baseBranch: link.base_branch === DETACHED_BASE_BRANCH ? null : link.base_branch,
+    }
   }
 
   private async openLocked(input: z.infer<typeof openRecordChatSchema>) {
     const prepared = await this.prepare(input)
-    const { record, db, project, repo, key, link, exists } = prepared
+    const { record, db, project, repo, key, link, exists, baseBranch } = prepared
     if (this.targetPreview(prepared).expectedTarget !== input.expectedTarget)
       throw new Error("The local worktree target changed. Review its preview again.")
     const reserve = () => {
@@ -220,8 +240,8 @@ export class RecordTaskWorktreeService {
         .prepare(
           `INSERT INTO record_task_worktrees
         (id, endpoint, record_path, record_id, canonical_project_id, local_project_id,
-         source_revision, claim_id, worktree_path, branch, base_commit)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         source_revision, claim_id, worktree_path, branch, base_commit, base_branch)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           link.id,
@@ -232,6 +252,7 @@ export class RecordTaskWorktreeService {
           link.worktree_path,
           link.branch,
           link.base_commit,
+          link.base_branch,
         )
     }
     const entries = (await git(repo, ["worktree", "list", "--porcelain", "-z"]))
@@ -335,7 +356,7 @@ export class RecordTaskWorktreeService {
           mcpExposureEnabled: true,
           worktreePath: link!.worktree_path,
           branch: link!.branch,
-          baseBranch: link!.base_commit,
+          baseBranch,
         })
         .returning()
         .get()

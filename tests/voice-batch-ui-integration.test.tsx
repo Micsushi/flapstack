@@ -93,7 +93,7 @@ it.each(["local-whisper", "openai-whisper"])(
                 showText: setDraft,
               })
             }
-            onStop={() => void session.stop()}
+            onStop={() => void (session.isTranscribing ? session.cancel() : session.stop())}
           />
           <span data-testid="owner">{session.activeTargetKey ?? "idle"}</span>
         </div>

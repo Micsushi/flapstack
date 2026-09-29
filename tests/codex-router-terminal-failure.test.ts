@@ -212,7 +212,7 @@ describe("Codex router terminal provider failure", () => {
     expect(readVisibleTranscript()).toEqual(["A", "A-response", "B", "B-response"])
   })
 
-  it("passes task-resolved skill and MCP policy into the real Codex ACP launch", async () => {
+  it("enforces task-resolved skill and MCP policy for a direct Codex launch", async () => {
     seedCodexExtensionPolicy()
 
     await collectStream(
@@ -340,7 +340,7 @@ function seedPendingRun(sqlite: Database.Database): void {
         'mcp-auth-prompt', 'Test provider auth failure', 'pending', 1,
         ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(directory, ...testRuntimeSnapshotSqlValues())
+    .run(directory, ...testRuntimeSnapshotSqlValues("codex", "codex"))
   sqlite
     .prepare(
       `INSERT INTO mcp_audit_records (
@@ -365,7 +365,7 @@ function seedSecondPendingRun(): void {
       ) VALUES ('run-second', 'chat-auth', 'sub-auth', 'codex', 'full-access', ?,
         'mcp-second-prompt', 'pending', 2, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(directory, ...testRuntimeSnapshotSqlValues())
+    .run(directory, ...testRuntimeSnapshotSqlValues("codex", "codex"))
   sqlite.close()
 }
 

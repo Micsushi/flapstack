@@ -526,6 +526,13 @@
       "when": 1790000000001,
       "tag": "0074_runtime_launch_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "6",
+      "when": 1790000000002,
+      "tag": "0075_record_task_worktree_base_branch",
+      "breakpoints": true
     }
   ]
 }

@@ -45,6 +45,7 @@ type DictationSessionValue = {
   audioLevel: number
   start: (target: DictationTarget) => Promise<void>
   stop: () => Promise<void>
+  cancel: () => Promise<void>
 }
 
 const DictationSessionContext = createContext<DictationSessionValue | null>(null)
@@ -142,23 +143,7 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
   }, [startedAt])
 
   const stop = useCallback(async () => {
-    if (operationRef.current) {
-      if (voiceSettings?.sttAdapterId === "local-parakeet") return operationRef.current
-      if (!cancellationRef.current) {
-        if (!transcriptionDispatchedRef.current) cancelledRef.current = true
-        const sessionId = sessionIdRef.current
-        cancellationRef.current = sessionId
-          ? cancelStreamingMutation
-              .mutateAsync({ sessionId })
-              .then((result) => {
-                if (result.cancelled) cancelledRef.current = true
-              })
-              .catch(() => undefined)
-          : Promise.resolve()
-      }
-      await cancellationRef.current
-      return operationRef.current
-    }
+    if (operationRef.current) return operationRef.current
     if (!activeTargetRef.current) return
     if (startingRef.current) {
       const sessionId = sessionIdRef.current
@@ -255,6 +240,29 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
     waitForPcm,
   ])
 
+  const cancel = useCallback(async () => {
+    const operation = operationRef.current
+    if (!operation) return
+    if (voiceSettings?.sttAdapterId === "local-parakeet") {
+      await operation
+      return
+    }
+    if (!cancellationRef.current) {
+      if (!transcriptionDispatchedRef.current) cancelledRef.current = true
+      const sessionId = sessionIdRef.current
+      cancellationRef.current = sessionId
+        ? cancelStreamingMutation
+            .mutateAsync({ sessionId })
+            .then((result) => {
+              if (result.cancelled) cancelledRef.current = true
+            })
+            .catch(() => undefined)
+        : Promise.resolve()
+    }
+    await cancellationRef.current
+    await operation
+  }, [cancelStreamingMutation, voiceSettings?.sttAdapterId])
+
   useEffect(() => {
     if (recordingError && activeTargetRef.current && !startingRef.current) void stop()
   }, [isStarting, recordingError, stop])
@@ -345,6 +353,7 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
       audioLevel,
       start,
       stop,
+      cancel,
     }),
     [
       activeTarget?.key,
@@ -352,6 +361,7 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
       isRecording,
       isStarting,
       isTranscribing,
+      cancel,
       start,
       stop,
       voiceSettings?.sttAdapterId,
@@ -396,7 +406,7 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
                   : "Finishing dictation"
                 : "Stop background dictation"
             }
-            onClick={() => void stop()}
+            onClick={() => void (isTranscribing ? cancel() : stop())}
           >
             <Square className="h-3.5 w-3.5 fill-current" />
           </Button>

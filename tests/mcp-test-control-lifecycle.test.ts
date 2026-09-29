@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import {
   isDevTestControlEnabled,
+  isHiddenPreviewVerification,
   isPreviewExecutable,
   isStage6PerformanceProfile,
   isHeadlessPerformanceProfile,
@@ -30,6 +31,7 @@ describe("test-control lifecycle", () => {
         FLAPSTACK_PREVIEW_RUN_TOKEN: "pb-123-abc-012345abcdef",
       }
       expect(isHeadlessPerformanceProfile(true, env, executable, resources)).toBe(true)
+      expect(isHiddenPreviewVerification(env)).toBe(true)
       expect(resolvePreviewUserDataName(env.FLAPSTACK_PREVIEW_INSTANCE)).toBe(
         "Flapstack Preview preview-bridge-123-abc",
       )
@@ -100,6 +102,7 @@ describe("test-control lifecycle", () => {
     }
     expect(isHeadlessPerformanceProfile(false, env)).toBe(true)
     expect(isHeadlessPerformanceProfile(false, {})).toBe(false)
+    expect(isHiddenPreviewVerification({})).toBe(false)
     expect(() => isHeadlessPerformanceProfile(true, env)).toThrow("isolated")
     for (const field of [
       "FLAPSTACK_STAGE6_PERFORMANCE_PROFILE",

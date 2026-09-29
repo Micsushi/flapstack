@@ -163,7 +163,7 @@ export function RecordsPlanPromotionDialog({
               Permission: read-only. No worktree or run will start.
             </p>
           )}
-          {preview.isFetching && <p role="status">Checking source and destination�</p>}
+          {preview.isFetching && <p role="status">Checking source and destination…</p>}
           {preview.error && (
             <p role="alert" className="text-sm text-destructive">
               {preview.error.message}

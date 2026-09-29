@@ -13,15 +13,15 @@ paths in evidence.
 
 ## Capability baseline
 
-| Harness                                              | Current declared mode | Same run | Evidence                                                         | Current limitation                                                                     |
-| ---------------------------------------------------- | --------------------- | -------: | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Claude Agent SDK 0.3.207 / Claude Code 2.1.207       | native                |      yes | Shared contract, lifecycle, renderer, and migration tests        | Provider-live reload proof remains required.                                           |
-| Codex ACP 1.1.2 / ACP provider 0.3.3 / Codex 0.144.1 | continuation          |       no | Registry and fallback tests                                      | Installed ACP surface has no verified pausable structured-input request.               |
-| Cursor CLI 2026.07.09-a3815c0                        | continuation          |       no | Registry and fallback tests                                      | Current stream-json fixtures expose no verified structured-input request.              |
-| OpenCode 1.17.18 with OpenRouter                     | continuation          |       no | Registry, sidecar contract, and permission-separation inspection | Pinned HTTP/SSE client exposes permission replies, not a verified question reply path. |
-| OpenCode 1.17.18 with NanoGPT                        | continuation          |       no | Registry, sidecar contract, and permission-separation inspection | Same shared OpenCode limitation as OpenRouter.                                         |
-| local                                                | unsupported           |       no | Registry test                                                    | No local agent loop is registered.                                                     |
-| custom / unknown                                     | unsupported           |       no | Registration and fallback tests                                  | A custom adapter must declare and prove its capability.                                |
+| Harness                                              | Current declared mode | Same run | Evidence                                                                 | Current limitation                                                                     |
+| ---------------------------------------------------- | --------------------- | -------: | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| Claude Agent SDK 0.3.207 / Claude Code 2.1.284       | native                |      yes | Shared contract, lifecycle, renderer, migration, and packaged-live tests | Windows provider-live completion, cancellation, persistence, and reload passed.        |
+| Codex ACP 1.1.2 / ACP provider 0.3.3 / Codex 0.144.1 | continuation          |       no | Registry and fallback tests                                              | Installed ACP surface has no verified pausable structured-input request.               |
+| Cursor CLI 2026.07.09-a3815c0                        | continuation          |       no | Registry and fallback tests                                              | Current stream-json fixtures expose no verified structured-input request.              |
+| OpenCode 1.17.18 with OpenRouter                     | continuation          |       no | Registry, sidecar contract, and permission-separation inspection         | Pinned HTTP/SSE client exposes permission replies, not a verified question reply path. |
+| OpenCode 1.17.18 with NanoGPT                        | continuation          |       no | Registry, sidecar contract, and permission-separation inspection         | Same shared OpenCode limitation as OpenRouter.                                         |
+| local                                                | unsupported           |       no | Registry test                                                            | No local agent loop is registered.                                                     |
+| custom / unknown                                     | unsupported           |       no | Registration and fallback tests                                          | A custom adapter must declare and prove its capability.                                |
 
 Continuation means the visible answer is sent as a normal user turn linked to the
 request; it must not be described as resuming the paused provider tool call.

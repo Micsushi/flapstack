@@ -1615,7 +1615,10 @@ export const ChatInputArea = memo(function ChatInputArea({
     subChatId,
   ])
 
-  const handleVoiceMouseUp = useCallback(() => dictation.stop(), [dictation])
+  const handleVoiceMouseUp = useCallback(
+    () => (isTranscribing ? dictation.cancel() : dictation.stop()),
+    [dictation, isTranscribing],
+  )
 
   const finishVoiceBeforeSend = useCallback(async () => {
     if (ownsDictation) await dictation.stop()

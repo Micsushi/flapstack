@@ -164,7 +164,7 @@ it.each(["normalizing", "transcribing", "completed", "streaming-completed"])(
       })
       expect(session.isTranscribing).toBe(true)
       await act(async () => {
-        cancelling = session.stop()
+        cancelling = session.cancel()
       })
       await act(async () => {
         finish()
@@ -180,6 +180,63 @@ it.each(["normalizing", "transcribing", "completed", "streaming-completed"])(
         expect(commitText).toHaveBeenLastCalledWith("existing draft new words")
       else expect(commitText).toHaveBeenCalledExactlyOnceWith("existing draft")
       expect(toast.error).not.toHaveBeenCalled()
+      expect(session.isTranscribing).toBe(false)
+    } finally {
+      await act(async () => root.unmount())
+      delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT
+    }
+  },
+)
+
+it.each(["local-whisper", "openai-whisper"])(
+  "awaits finishing %s dictation without cancelling its transcript",
+  async (adapterId) => {
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    state.settings.sttAdapterId = adapterId
+    state.stopRecording.mockResolvedValue(new Blob(["a".repeat(2000)], { type: "audio/wav" }))
+    let finish!: () => void
+    state.transcribe.mockReturnValue(
+      new Promise((resolve) => {
+        finish = () => resolve({ text: "dictated words", historySaved: true })
+      }),
+    )
+    let session!: ReturnType<typeof useDictationSession>
+    function Harness() {
+      session = useDictationSession()
+      return null
+    }
+    const root = createRoot(document.createElement("div"))
+    const commitText = vi.fn()
+    try {
+      await act(async () =>
+        root.render(createElement(DictationSessionProvider, null, createElement(Harness))),
+      )
+      await act(async () =>
+        session.start({
+          key: "send",
+          projectLabel: "Fixture",
+          chatLabel: "Fixture",
+          getText: () => "existing draft",
+          commitText,
+          showText: vi.fn(),
+        }),
+      )
+      let stopping!: Promise<void>, sending!: Promise<void>
+      await act(async () => {
+        stopping = session.stop()
+      })
+      expect(session.isTranscribing).toBe(true)
+      await act(async () => {
+        sending = session.stop()
+      })
+      expect(state.cancel).not.toHaveBeenCalled()
+      expect(commitText).toHaveBeenCalledExactlyOnceWith("existing draft")
+      await act(async () => {
+        finish()
+        await Promise.all([stopping, sending])
+      })
+      expect(commitText).toHaveBeenLastCalledWith("existing draft dictated words")
+      expect(state.cancel).not.toHaveBeenCalled()
       expect(session.isTranscribing).toBe(false)
     } finally {
       await act(async () => root.unmount())

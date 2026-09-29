@@ -86,7 +86,7 @@ const ALLOWED_NATIVE_PATHS = [
   /^resources\/bin\/(?:claude|codex|flapstack-stt-sidecar|whisper-cli)\.exe$/,
   /^resources\/bin\/(?:ggml|ggml-base|ggml-cpu|whisper)\.dll$/,
   /^resources\/app\.asar\.unpacked\/node_modules\/@anthropic-ai\/claude-agent-sdk-win32-x64\/claude\.exe$/,
-  /^resources\/app\.asar\.unpacked\/node_modules\/@img\/sharp-win32-x64\/lib\/(?:libvips[^/]*\.dll|sharp-win32-x64-0\.35\.3\.node)$/,
+  /^resources\/app\.asar\.unpacked\/node_modules\/@img\/sharp-win32-x64\/lib\/(?:libvips[^/]*\.dll|sharp-win32-x64-0\.35\.4\.node)$/,
   /^resources\/app\.asar\.unpacked\/node_modules\/@openai\/codex-win32-x64\/vendor\/x86_64-pc-windows-msvc\/.+\.exe$/,
   /^resources\/app\.asar\.unpacked\/node_modules\/better-sqlite3\/build\/Release\/better_sqlite3\.node$/,
   /^resources\/app\.asar\.unpacked\/node_modules\/node-pty\/bin\/win32-x64-\d+\/node-pty\.node$/,

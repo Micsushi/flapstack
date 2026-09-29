@@ -16,11 +16,10 @@ Automatic resolves by harness after chat, project, and global overrides. An
 explicit unavailable choice blocks before provider intent. Flapstack never
 silently changes the stored preference or falls back to another Runtime.
 
-Direct Codex and native Claude Code defaults remain release-gated in production
-until their pinned protocol, credentialed live, restart, and packaged-app checks
-pass. Flapstack Dev enables both direct Runtimes so those checks can be run.
-Preview packages can opt in with
-`FLAPSTACK_ENABLE_UNVERIFIED_NATIVE_RUNTIMES=1`. Adapter probes still reject a
+On Windows, direct Codex and native Claude Code are enabled for new launches.
+Their pinned protocol, credentialed live, cancellation, persistence, restart,
+packaged-app, and cleanup checks passed there. Other operating systems remain
+gated until their package qualification passes. Adapter probes still reject a
 missing login, missing binary, or unsupported version instead of falling back.
 
 ## Select and continue

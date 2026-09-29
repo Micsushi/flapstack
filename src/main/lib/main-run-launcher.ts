@@ -2,8 +2,10 @@ import type { AgentActivityInvalidation } from "../../shared/agent-activity"
 import { broadcastAgentActivityInvalidation } from "./agent-runtime/activity-service"
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
+import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
 import { randomUUID } from "node:crypto"
+import { promisify } from "node:util"
 import { createAppRouter } from "./trpc/routers"
 import { publishLocalProductInvalidation } from "./mcp-control/invalidation-bridge"
 import {
@@ -51,9 +53,11 @@ import {
   CLAUDE_CODE_VERSION,
   createClaudeCodeRuntimeAdapter,
   type ClaudeRuntimeDependencies,
+  type ClaudeRuntimeProbeInput,
   type ClaudeRuntimeQueryInput,
 } from "./agent-runtime/claude-code"
 import { RUNTIME_RELEASE_POLICY } from "./agent-runtime/release-policy"
+import { isHiddenPreviewVerification } from "./mcp-test-control/lifecycle"
 import { sanitizeRuntimeText } from "./agent-runtime/sanitizer"
 import { getDatabasePath } from "./db"
 import * as schema from "./db/schema"
@@ -138,6 +142,8 @@ import {
   createTranslatedRuntimeAdapterPackFactory,
   translatedRuntimeCompositionIdentity,
 } from "./agent-runtime/translated-adapter-pack"
+
+const execFileAsync = promisify(execFile)
 
 export type MainRunLauncherOptions = {
   databasePath?: string
@@ -227,14 +233,12 @@ export class MainRuntimeLaunchService {
         resolveThreadParams: async (context, operation) => {
           const authority = await this.resolveExtensionAuthority(context, "codex")
           const enhanced = usesFlapstackRuntimeEnhancements(context.launch.requestedPreference)
-          const enforceExtensionPolicy =
-            enhanced || Boolean(this.runs.get(context.runId)?.profileRuntimeAuthority)
-          const config = enforceExtensionPolicy
-            ? applyCodexExtensionPolicyConfig(
+          const config = isHiddenPreviewVerification()
+            ? {}
+            : applyCodexExtensionPolicyConfig(
                 enhanced ? buildManagedCodexHookConfig(authority.hooks) : {},
                 authority.policy,
               )
-            : {}
           return {
             cwd: authority.cwd,
             ...(enhanced && operation === "start" && context.instructions
@@ -331,15 +335,28 @@ export class MainRuntimeLaunchService {
         throw new RuntimeLaunchCancelledError(run.runId)
       }
       const resolvedLaunch = run.runtimeLaunch ?? legacyLaunch(run)
+      const persistedSession = await this.loadPersistedSession(run.runId)
+      const prompt = resolveRuntimeTurnPrompt(
+        {
+          ...run,
+          prompt:
+            !persistedSession &&
+            run.harness !== "local" &&
+            resolvedLaunch.resolvedRuntime !== "flapstack-native"
+              ? prependPreSessionChatContext(run.prompt, this.loadPreSessionUserMessages(run.runId))
+              : run.prompt,
+        },
+        resolvedLaunch,
+      )
       await this.coordinator.launch({
         runId: run.runId,
         chatId: run.chatId,
         subChatId: run.subChatId,
         launch: resolvedLaunch,
-        prompt: resolveRuntimeTurnPrompt(run, resolvedLaunch),
+        prompt,
         instructions,
         outputSchema: run.outputSchema,
-        persistedSession: await this.loadPersistedSession(run.runId),
+        persistedSession,
       })
     } catch (error) {
       const cancelled =
@@ -687,52 +704,36 @@ export class MainRuntimeLaunchService {
   private claudeDependencies(): ClaudeRuntimeDependencies {
     return {
       query: (input) => claudeQuery(input),
-      probe: async () => {
-        const binary = await resolveBundledClaudePath()
-        return {
-          available: existsSync(binary),
-          sdkVersion: CLAUDE_AGENT_SDK_VERSION,
-          claudeCodeVersion: CLAUDE_CODE_VERSION,
-          features: {
-            partialMessages: true,
-            thinking: true,
-            hooks: true,
-            subagentForwarding: true,
-            resume: true,
-            resumeAt: true,
-            fork: true,
-            cancellation: true,
-          },
-          unavailableReason: existsSync(binary) ? null : "Bundled Claude Code binary is missing.",
-        }
-      },
+      probe: () => probeClaudeRuntimeReadiness(),
       buildQueryOptions: async (context, _prompt, abortController) => {
         const authority = await this.resolveExtensionAuthority(context, "claude-code")
         const enhanced = usesFlapstackRuntimeEnhancements(context.launch.requestedPreference)
-        const enforceExtensionPolicy =
-          enhanced || Boolean(this.runs.get(context.runId)?.profileRuntimeAuthority)
-        const sdkOptions = enforceExtensionPolicy
-          ? getClaudeExtensionSdkOptions(authority.policy)
-          : {}
-        const hooks = enhanced
-          ? buildManagedClaudeHookOptions(authority.hooks, (record, input, signal) =>
-              this.hookRuntimeExecutor.execute(record, input, signal, authority.cwd),
+        const hiddenPreviewVerification = isHiddenPreviewVerification()
+        const sdkOptions = hiddenPreviewVerification
+          ? {}
+          : getClaudeExtensionSdkOptions(authority.policy)
+        const hooks =
+          !hiddenPreviewVerification && enhanced
+            ? buildManagedClaudeHookOptions(authority.hooks, (record, input, signal) =>
+                this.hookRuntimeExecutor.execute(record, input, signal, authority.cwd),
+              )
+            : {}
+        const loadedMcpServers = hiddenPreviewVerification
+          ? {}
+          : Object.fromEntries(
+              Object.entries(await loadClaudeMcpServers(authority.cwd)).map(([name, server]) => [
+                name,
+                hydrateMcpServerSecrets(server),
+              ]),
             )
-          : {}
-        const loadedMcpServers = Object.fromEntries(
-          Object.entries(await loadClaudeMcpServers(authority.cwd)).map(([name, server]) => [
-            name,
-            hydrateMcpServerSecrets(server),
-          ]),
-        )
-        const mcpServers = enforceExtensionPolicy
-          ? filterClaudeExtensionMcpServers(loadedMcpServers, authority.policy)
-          : loadedMcpServers
+        const mcpServers = hiddenPreviewVerification
+          ? {}
+          : filterClaudeExtensionMcpServers(loadedMcpServers, authority.policy)
         return {
           cwd: authority.cwd,
           pathToClaudeCodeExecutable: await resolveBundledClaudePath(),
           includePartialMessages: true,
-          settingSources: ["user", "project", "local"],
+          settingSources: hiddenPreviewVerification ? [] : ["user", "project", "local"],
           canUseTool: async (
             toolName: string,
             toolInput: Record<string, unknown>,
@@ -1057,6 +1058,42 @@ export class MainRuntimeLaunchService {
     }
   }
 
+  private loadPreSessionUserMessages(runId: string): BoundedPreSessionContext {
+    const db = this.open()
+    try {
+      const row = db
+        .prepare(
+          `SELECT r.prompt_message_id, s.messages
+           FROM agent_runs r
+           JOIN sub_chats s ON s.id = r.sub_chat_id
+           WHERE r.id = ?`,
+        )
+        .get(runId) as { prompt_message_id: string | null; messages: string } | undefined
+      if (!row?.prompt_message_id) return { messages: [], omitted: false }
+      const messages = parseStoredChatMessages(row.messages)
+      const promptIndex = messages.findIndex((message) => message.id === row.prompt_message_id)
+      if (promptIndex <= 0) return { messages: [], omitted: false }
+      const earlierUserMessages = messages.slice(0, promptIndex).flatMap((message) => {
+        if (message.role !== "user" || !Array.isArray(message.parts)) return []
+        const text = message.parts
+          .flatMap((part) =>
+            part &&
+            typeof part === "object" &&
+            (part as { type?: unknown }).type === "text" &&
+            typeof (part as { text?: unknown }).text === "string"
+              ? [(part as { text: string }).text.trim()]
+              : [],
+          )
+          .filter(Boolean)
+          .join("\n\n")
+        return text ? [text] : []
+      })
+      return boundPreSessionUserMessages(earlierUserMessages)
+    } finally {
+      db.close()
+    }
+  }
+
   private async loadPersistedSession(
     runId: string,
     allowSubChatFallback = true,
@@ -1283,6 +1320,53 @@ export class MainRuntimeLaunchService {
   }
 }
 
+type ClaudeRuntimeReadinessDependencies = {
+  resolveBinaryPath(): Promise<string>
+  binaryExists(path: string): boolean
+  probeAuthentication(path: string): Promise<ClaudeAuthenticationProbe>
+}
+
+export type ClaudeAuthenticationProbe =
+  { status: "authenticated" } | { status: "logged-out" } | { status: "error"; reason: string }
+
+export async function probeClaudeRuntimeReadiness(
+  overrides: Partial<ClaudeRuntimeReadinessDependencies> = {},
+): Promise<ClaudeRuntimeProbeInput> {
+  const dependencies: ClaudeRuntimeReadinessDependencies = {
+    resolveBinaryPath: resolveBundledClaudePath,
+    binaryExists: existsSync,
+    probeAuthentication: probeBundledClaudeAuthentication,
+    ...overrides,
+  }
+  const binary = await dependencies.resolveBinaryPath()
+  const binaryAvailable = dependencies.binaryExists(binary)
+  const authentication = binaryAvailable
+    ? await cachedClaudeAuthenticationProbe(binary, dependencies.probeAuthentication)
+    : null
+  return {
+    available: binaryAvailable && authentication?.status === "authenticated",
+    sdkVersion: CLAUDE_AGENT_SDK_VERSION,
+    claudeCodeVersion: CLAUDE_CODE_VERSION,
+    features: {
+      partialMessages: true,
+      thinking: true,
+      hooks: true,
+      subagentForwarding: true,
+      resume: true,
+      resumeAt: true,
+      fork: true,
+      cancellation: true,
+    },
+    unavailableReason: !binaryAvailable
+      ? "Bundled Claude Code binary is missing."
+      : authentication?.status === "authenticated"
+        ? null
+        : authentication?.status === "logged-out"
+          ? "Claude Code authentication required. Connect Claude Code, then retry."
+          : (authentication?.reason ?? "Claude Code readiness check failed. Retry the launch."),
+  }
+}
+
 function assertFrozenProfileToolPolicySupported(run: QueuedAgentRun): void {
   const resolvedRuntime = run.runtimeLaunch?.resolvedRuntime
   if (
@@ -1302,6 +1386,77 @@ export function resolveRuntimeTurnPrompt(
   return launch.resolvedRuntime === "flapstack-native"
     ? run.prompt
     : applyChatModeInstruction(run.prompt, normalizeChatMode(run.chatMode))
+}
+
+const MAX_PRE_SESSION_USER_MESSAGES = 20
+const MAX_PRE_SESSION_CONTEXT_CHARACTERS = 24_000
+const PRE_SESSION_CONTEXT_SEPARATOR = "\n\n---\n\n"
+
+type BoundedPreSessionContext = { messages: string[]; omitted: boolean }
+
+function boundPreSessionUserMessages(messages: readonly string[]): BoundedPreSessionContext {
+  if (messages.length === 0) return { messages: [], omitted: false }
+  const first = messages[0].slice(0, MAX_PRE_SESSION_CONTEXT_CHARACTERS)
+  const bounded = first ? [first] : []
+  let remaining = MAX_PRE_SESSION_CONTEXT_CHARACTERS - first.length
+  let omitted = first.length < messages[0].length
+  const recent: string[] = []
+  for (const message of messages.slice(1).reverse()) {
+    if (bounded.length + recent.length >= MAX_PRE_SESSION_USER_MESSAGES) {
+      omitted = true
+      break
+    }
+    if (remaining <= PRE_SESSION_CONTEXT_SEPARATOR.length) {
+      omitted = true
+      break
+    }
+    const available = remaining - PRE_SESSION_CONTEXT_SEPARATOR.length
+    const text = message.slice(0, available)
+    if (!text) {
+      omitted = true
+      break
+    }
+    recent.push(text)
+    remaining -= PRE_SESSION_CONTEXT_SEPARATOR.length + text.length
+    if (text.length < message.length) {
+      omitted = true
+      break
+    }
+  }
+  if (bounded.length + recent.length < messages.length) omitted = true
+  bounded.push(...recent.reverse())
+  return { messages: bounded, omitted }
+}
+
+function prependPreSessionChatContext(prompt: string, context: BoundedPreSessionContext): string {
+  if (context.messages.length === 0) return prompt
+  return [
+    "# Earlier Chat context",
+    "",
+    "The following user context was stored in this Chat before its provider session started.",
+    "",
+    context.messages.join(PRE_SESSION_CONTEXT_SEPARATOR),
+    ...(context.omitted
+      ? ["", "Some earlier user messages were omitted to keep this context bounded."]
+      : []),
+    "",
+    "# Current request",
+    "",
+    prompt,
+  ].join("\n")
+}
+
+function parseStoredChatMessages(
+  value: string,
+): Array<{ id?: unknown; role?: unknown; parts?: unknown }> {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return Array.isArray(parsed)
+      ? (parsed as Array<{ id?: unknown; role?: unknown; parts?: unknown }>)
+      : []
+  } catch {
+    return []
+  }
 }
 
 function buildClaudeRuntimePrompt(
@@ -1391,6 +1546,8 @@ export function getMainRuntimeLaunchService(
 
 export function resetMainRuntimeLaunchServicesForTests(): void {
   services.clear()
+  claudeAuthenticationCache = null
+  claudeAuthenticationInFlight = null
   resetRuntimeLaunchAuthoritiesForTests()
 }
 
@@ -2165,6 +2322,97 @@ async function* claudeQuery(input: ClaudeRuntimeQueryInput) {
 async function resolveBundledClaudePath(): Promise<string> {
   const { getBundledClaudeBinaryPath } = await import("./claude")
   return getBundledClaudeBinaryPath()
+}
+
+const CLAUDE_AUTH_CONFIRMATION_TTL_MS = 10_000
+const CLAUDE_AUTH_FAILURE_TTL_MS = 1_000
+const CLAUDE_AUTH_STATUS_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 10_000
+let claudeAuthenticationCache: {
+  binary: string
+  probe: (path: string) => Promise<ClaudeAuthenticationProbe>
+  result: ClaudeAuthenticationProbe
+  checkedAt: number
+} | null = null
+let claudeAuthenticationInFlight: {
+  binary: string
+  probe: (path: string) => Promise<ClaudeAuthenticationProbe>
+  promise: Promise<ClaudeAuthenticationProbe>
+} | null = null
+
+async function cachedClaudeAuthenticationProbe(
+  binary: string,
+  probe: (path: string) => Promise<ClaudeAuthenticationProbe>,
+): Promise<ClaudeAuthenticationProbe> {
+  if (
+    claudeAuthenticationCache &&
+    claudeAuthenticationCache.binary === binary &&
+    claudeAuthenticationCache.probe === probe &&
+    Date.now() - claudeAuthenticationCache.checkedAt <
+      (claudeAuthenticationCache.result.status === "authenticated"
+        ? CLAUDE_AUTH_CONFIRMATION_TTL_MS
+        : CLAUDE_AUTH_FAILURE_TTL_MS)
+  )
+    return claudeAuthenticationCache.result
+  if (
+    claudeAuthenticationInFlight?.binary === binary &&
+    claudeAuthenticationInFlight.probe === probe
+  ) {
+    return await claudeAuthenticationInFlight.promise
+  }
+  const promise = probe(binary).then((result) => {
+    claudeAuthenticationCache = { binary, probe, result, checkedAt: Date.now() }
+    return result
+  })
+  claudeAuthenticationInFlight = { binary, probe, promise }
+  try {
+    return await promise
+  } finally {
+    if (claudeAuthenticationInFlight?.promise === promise) claudeAuthenticationInFlight = null
+  }
+}
+
+async function probeBundledClaudeAuthentication(
+  binary: string,
+): Promise<ClaudeAuthenticationProbe> {
+  try {
+    const { getClaudeShellEnvironment } = await import("./claude")
+    const { stdout } = await execFileAsync(binary, ["auth", "status"], {
+      env: { ...process.env, ...getClaudeShellEnvironment() },
+      windowsHide: true,
+      timeout: CLAUDE_AUTH_STATUS_TIMEOUT_MS,
+    })
+    return (
+      parseClaudeAuthenticationOutput(stdout) ?? {
+        status: "error",
+        reason: "Claude Code returned an unreadable authentication status. Retry the launch.",
+      }
+    )
+  } catch (error) {
+    const failed = error as { stdout?: string | Buffer; killed?: boolean; code?: unknown }
+    const parsed = parseClaudeAuthenticationOutput(failed.stdout)
+    if (parsed) return parsed
+    return {
+      status: "error",
+      reason:
+        failed.killed || failed.code === "ETIMEDOUT"
+          ? "Claude Code authentication check timed out. Retry the launch."
+          : "Claude Code authentication check failed. Retry the launch.",
+    }
+  }
+}
+
+export function parseClaudeAuthenticationOutput(
+  stdout: string | Buffer | undefined,
+): ClaudeAuthenticationProbe | null {
+  if (stdout === undefined) return null
+  try {
+    const loggedIn = (JSON.parse(String(stdout)) as { loggedIn?: unknown }).loggedIn
+    if (loggedIn === true) return { status: "authenticated" }
+    if (loggedIn === false) return { status: "logged-out" }
+  } catch {
+    // The caller reports this as an operational probe failure, not a verified logout.
+  }
+  return null
 }
 
 function codexPermissionOptions(mode: ResolvedRuntimeLaunch["permission"]["mode"]): {

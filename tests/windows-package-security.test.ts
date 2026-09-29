@@ -413,7 +413,7 @@ describe("Windows package security report", () => {
         { path: "resources/bin/claude.exe", format: "pe", architectures: ["x64"] },
         { path: "resources/elevate.exe", format: "pe", architectures: ["x86"] },
         {
-          path: "resources/app.asar.unpacked/node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.3.node",
+          path: "resources/app.asar.unpacked/node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.4.node",
           format: "pe",
           architectures: ["x64"],
         },

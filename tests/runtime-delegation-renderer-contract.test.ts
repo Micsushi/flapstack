@@ -13,7 +13,7 @@ describe("renderer cross-provider delegation contract", () => {
     expect(selector).toContain("Delegate task")
     expect(selector).toContain("onDelegateWithProvider")
     expect(chat).toContain("previewRuntimeDelegation.query")
-    expect(chat).toContain("Confirm exact cross-provider delegation")
+    expect(chat).toContain("Delegate to ${modelName}?")
     expect(chat).toContain("confirmedPreviewDigest: preview.digest")
     expect(chat).toContain("delegateToRuntime.mutate")
     expect(chat).toContain("created.childChatId")
