@@ -17,9 +17,9 @@ import { tmpdir } from "node:os"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { promisify } from "node:util"
 import { eq } from "drizzle-orm"
-import simpleGit from "simple-git"
 import { agentRuns, checkpoints, fileChangeManifests, getDatabase } from "./db"
 import { captureWorktreeTree, type CheckpointStatusSnapshot } from "./checkpoints"
+import { createGit, GIT_TIMEOUTS } from "./git/git-factory"
 
 const execFileAsync = promisify(execFile)
 const worktreeLocks = new Map<string, Promise<void>>()
@@ -136,6 +136,7 @@ async function readTreeFile(
         cwd: worktreePath,
         encoding: "buffer",
         maxBuffer: 128 * 1024 * 1024,
+        timeout: GIT_TIMEOUTS.LOCAL,
         windowsHide: true,
       },
     )
@@ -155,6 +156,7 @@ async function readTreeFile(
       cwd: worktreePath,
       encoding: "buffer",
       maxBuffer: 128 * 1024 * 1024,
+      timeout: GIT_TIMEOUTS.LOCAL,
       windowsHide: true,
     })
     return {
@@ -255,7 +257,12 @@ export async function planInverseFileContent(
       const { stdout } = await execFileAsync(
         "git",
         ["merge-file", "-p", currentPath, afterPath, beforePath],
-        { encoding: "buffer", maxBuffer: 128 * 1024 * 1024, windowsHide: true },
+        {
+          encoding: "buffer",
+          maxBuffer: 128 * 1024 * 1024,
+          timeout: GIT_TIMEOUTS.LOCAL,
+          windowsHide: true,
+        },
       )
       return { result: Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout) }
     } catch (error) {
@@ -362,7 +369,7 @@ export async function getRunChangeReview(runId: string, filePath?: string) {
     "--",
     ...(filePath ? [`:(literal)${filePath}`] : []),
   ]
-  const diff = await simpleGit(worktreePath).raw(diffArgs)
+  const diff = await createGit(worktreePath).raw(diffArgs)
   return { ...changeSet, diff }
 }
 
@@ -373,7 +380,7 @@ export async function undoRunChangeSet(runId: string) {
   if (changeSet.files.length === 0) throw new Error("Run has no file changes")
 
   return withWorktreeLock(worktreePath, async () => {
-    const git = simpleGit(worktreePath)
+    const git = createGit(worktreePath)
     const undoneRef = `refs/flapstack/undone/${runId}`
     try {
       await git.raw(["rev-parse", "--verify", undoneRef])
