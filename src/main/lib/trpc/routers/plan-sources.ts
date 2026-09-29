@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server"
+import { projectRecordsEnabled } from "../../project-records/mode"
 import { observable } from "@trpc/server/observable"
 import { and, eq } from "drizzle-orm"
 import { app } from "electron"
@@ -143,7 +144,7 @@ export const planSourcesRouter = router({
     })
     return result
   }),
-  recordsMode: publicProcedure.query(() => Boolean(process.env.FLAPSTACK_PROJECT_RECORDS_URL)),
+  recordsMode: publicProcedure.query(() => projectRecordsEnabled()),
   recordsDestinations: publicProcedure.query(async () =>
     planDestinations(await configuredProjectRecordsClient()),
   ),
@@ -275,7 +276,7 @@ export const planSourcesRouter = router({
     .input(z.object({ projectId: z.string().min(1) }))
     .query(async ({ input }) => {
       const snapshot = await readProjectPlanSources(getProjectPlanSourceConfig(input.projectId))
-      if (process.env.FLAPSTACK_PROJECT_RECORDS_URL)
+      if (projectRecordsEnabled())
         return recordsPlanLinks(await configuredProjectRecordsClient(), snapshot)
       return listPlanSourceLinks(getDatabase(), snapshot)
     }),

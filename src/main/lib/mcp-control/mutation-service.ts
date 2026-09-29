@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import { projectRecordsEnabled } from "../project-records/mode"
 import { openAppDatabase } from "../db/access"
 import { randomUUID } from "node:crypto"
 import { realpath } from "node:fs/promises"
@@ -159,7 +160,7 @@ export function createMcpMutationService(
       const input = schema.safeParse(rawInput)
       if (!input.success)
         return fail("invalid-input", input.error.issues[0]?.message ?? "Invalid input.")
-      if (operation === "create_task" && process.env.FLAPSTACK_PROJECT_RECORDS_URL) {
+      if (operation === "create_task" && projectRecordsEnabled()) {
         return refuseUnboundRecordsCaller()
       }
       if (

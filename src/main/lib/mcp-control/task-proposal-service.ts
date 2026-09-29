@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { projectRecordsEnabled } from "../project-records/mode"
 import { taskProposalContentSchema } from "../../../shared/task-proposals"
 import { TaskProposalError, TaskProposalService } from "../task-proposals"
 import type { McpCallerIdentity, McpControlResponse } from "./types"
@@ -41,7 +42,7 @@ export type McpTaskProposalService = {
 export function createMcpTaskProposalService(
   databasePath = process.env.FLAPSTACK_DB_PATH,
 ): McpTaskProposalService {
-  if (process.env.FLAPSTACK_PROJECT_RECORDS_URL) {
+  if (projectRecordsEnabled()) {
     return {
       async invoke() {
         return error(

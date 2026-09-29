@@ -21,6 +21,58 @@ Run the Project Records service using its documented setup. Configure
 credentials outside source control. The desktop credential must not be given to
 agents. Service data remains in its configured Records directory.
 
+## Local SQL foundation
+
+Without an external connection, Flapstack creates a standalone Records store by
+default. This does not import, erase, or modify historical local tasks. The Board
+already uses Records; historical task data remains in the separate Flapstack
+database and is not copied into the new board. An old-task migration needs a
+separate reviewed import, not an automatic conversion.
+
+- Connected: set `FLAPSTACK_PROJECT_RECORDS_MODE=connected`, the existing
+  `FLAPSTACK_PROJECT_RECORDS_URL`, and `FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE`.
+  Flapstack does not start, migrate, or stop that service.
+- Standalone: set `FLAPSTACK_PROJECT_RECORDS_MODE=standalone`. Do not set the
+  connected URL or token variables. Flapstack starts its own bundled Records
+  engine, with a local `records.sqlite3` database and private desktop token under
+  its profile's `project-records` directory. Set `FLAPSTACK_PROJECT_RECORDS_DATA`
+  to choose another local directory. This is a data directory, not a Git checkout.
+
+Standalone currently requires an installed Python 3 interpreter. Set
+`FLAPSTACK_PROJECT_RECORDS_PYTHON` to its executable path when `python` is not
+available. Python is not installed automatically or bundled in this foundation.
+An initialization, authentication, or startup failure does not switch to a
+different task database. The configured Records mode continues blocking legacy
+task writes. Fix the configuration and restart the application.
+
+For example, in PowerShell for a development checkout:
+
+```powershell
+$env:FLAPSTACK_PROJECT_RECORDS_MODE = 'standalone'
+$env:FLAPSTACK_PROJECT_RECORDS_PYTHON = 'C:\path\to\python.exe'
+npm run dev
+```
+
+For a connected service instead:
+
+```powershell
+$env:FLAPSTACK_PROJECT_RECORDS_MODE = 'connected'
+$env:FLAPSTACK_PROJECT_RECORDS_URL = 'http://127.0.0.1:47831'
+$env:FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE = 'C:\private\records-token'
+npm run dev
+```
+
+Use a fresh shell when switching examples. Both modes use the same HTTP contract;
+the board never writes SQL directly. Flapstack keeps its chat/settings database
+separate. Standalone stops only the service process it started. Its database
+survives application exit. Do not synchronize a live SQLite file between computers.
+
+Runtime maintainers pin the reviewed companion engine with
+`node scripts/sync-project-records-runtime.mjs`, using the same
+`FLAPSTACK_PROJECT_RECORDS_SOURCE` override as UI development. The generated
+runtime archive includes source and UI, not owner data or credentials. The source
+must be committed before pinning. Packaged apps do not need a Records Git clone.
+
 ## Workflow
 
 Use Board for checked task transitions and questions. Use Setups for saved graph

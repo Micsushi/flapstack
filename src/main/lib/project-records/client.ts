@@ -1,4 +1,5 @@
 import { open } from "node:fs/promises"
+import { managedRecordsConnection, projectRecordsStartupFailure } from "./runtime"
 import {
   patchProjectRecordSchema,
   projectRecordIndexSchema,
@@ -24,6 +25,7 @@ const PAIR_PATHS = new Set([
   "/v1/yap/chat-pair/abort",
 ])
 const BOARD_PATHS = new Set([
+  "/v1/storage",
   "/v1/documents",
   "/v1/workflow",
   "/v1/document",
@@ -201,6 +203,7 @@ export class ProjectRecordsClient {
     const read =
       input.method === "GET" &&
       [
+        "/v1/storage",
         "/v1/documents",
         "/v1/workflow",
         "/v1/document",
@@ -571,15 +574,18 @@ export class ProjectRecordsClient {
 export async function configuredProjectRecordsClient(
   env = process.env,
 ): Promise<ProjectRecordsClient> {
-  const endpoint = env.FLAPSTACK_PROJECT_RECORDS_URL
+  const managed = managedRecordsConnection(env)
+  const endpoint = managed?.endpoint ?? env.FLAPSTACK_PROJECT_RECORDS_URL
+  if (projectRecordsStartupFailure()) throw new Error(projectRecordsStartupFailure())
   if (!endpoint)
     throw new Error("Project records is not connected. Configure the local records service.")
   projectRecordsEndpoint(endpoint)
-  let token = env.FLAPSTACK_PROJECT_RECORDS_TOKEN?.trim()
-  if (!token && env.FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE) {
+  let token = (managed ? managed.token : env.FLAPSTACK_PROJECT_RECORDS_TOKEN)?.trim()
+  const tokenFile = managed?.tokenFile ?? env.FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE
+  if (!token && tokenFile) {
     let file
     try {
-      file = await open(env.FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE, "r")
+      file = await open(tokenFile, "r")
       const bytes = Buffer.alloc(MAX_TOKEN_BYTES + 1)
       const { bytesRead } = await file.read(bytes, 0, bytes.length, 0)
       if (bytesRead > MAX_TOKEN_BYTES) throw new Error("Token file is too large")

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, Menu, nativeImage } from "electron"
+import { startProjectRecordsRuntime } from "./lib/project-records/runtime"
 import { existsSync, readFileSync, readlinkSync, unlinkSync } from "fs"
 import { createServer } from "http"
 import { basename, join, resolve } from "path"
@@ -697,6 +698,18 @@ if (gotTheLock) {
 
   // App ready
   app.whenReady().then(async () => {
+    try {
+      const stopRecords = await startProjectRecordsRuntime({
+        userData: app.getPath("userData"),
+        snapshotPath: app.isPackaged
+          ? join(process.resourcesPath, "project-records-runtime.json.gz")
+          : join(app.getAppPath(), "resources", "project-records-runtime.json.gz"),
+      })
+      app.once("will-quit", stopRecords)
+    } catch (error) {
+      // Keep the app usable, but explicit Records mode still blocks legacy writes.
+      console.error("[Records] Startup failed; no fallback task store was opened:", error)
+    }
     if (IS_HEADLESS_PERFORMANCE) app.dock?.hide()
     if (!IS_ISOLATED_VERIFICATION) {
       initializeSleepPrevention(() => ({

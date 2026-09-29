@@ -90,6 +90,7 @@
     "format": "node scripts/run-project-bin.mjs prettier prettier -- --write .",
     "style:check": "node scripts/with-heavy-job-lock.mjs style:check -- node scripts/run-project-bin.mjs prettier prettier -- --check .",
     "test": "node scripts/with-heavy-job-lock.mjs test -- node scripts/test.mjs",
+    "test:records-runtime": "node --experimental-strip-types --test tests/records-runtime.test.mjs",
     "test:runtime-timeline-ui": "node scripts/with-heavy-job-lock.mjs runtime-timeline-ui -- node scripts/runtime-activity-ui.mjs",
     "smoke:usage-daemon": "node scripts/ensure-native-abi.mjs electron && node scripts/smoke-usage-daemon.mjs",
     "check:stage3-release-ledger": "node scripts/check-stage3-release-ledger.mjs",
@@ -253,6 +254,10 @@
       "!**/*.{obj,pdb,lib,exp,iobj,ipdb,ilk}"
     ],
     "extraResources": [
+      {
+        "from": "resources/project-records-runtime.json.gz",
+        "to": "project-records-runtime.json.gz"
+      },
       {
         "from": "drizzle",
         "to": "migrations"

@@ -1,4 +1,5 @@
 import Database from "better-sqlite3"
+import { projectRecordsEnabled } from "../project-records/mode"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { dirname, join } from "path"
 import { existsSync, lstatSync, mkdirSync, realpathSync } from "fs"
@@ -109,7 +110,7 @@ function initializeDatabase(maintenanceLease?: string) {
 
     sqlite = nextSqlite
     db = nextDb
-    if (process.env.FLAPSTACK_PROJECT_RECORDS_URL && !process.env.FLAPSTACK_DB_PATH) {
+    if (projectRecordsEnabled() && !process.env.FLAPSTACK_DB_PATH) {
       void Promise.all([
         import("../project-records/plan-pair"),
         import("../project-records/client"),
