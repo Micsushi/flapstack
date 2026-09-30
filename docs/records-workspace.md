@@ -45,6 +45,14 @@ An initialization, authentication, or startup failure does not switch to a
 different task database. The configured Records mode continues blocking legacy
 task writes. Fix the configuration and restart the application.
 
+The compatible Records engine accepts documents up to 16 MiB. Flapstack bounds
+service responses at 32 MiB to allow envelope and serialization overhead; a
+larger response still fails explicitly. Individual changes remain limited to
+256 KiB. Large histories should be imported through the service's documented
+storage migration, then edited with small revision-checked patches, not posted
+back as whole documents. Upgrade the engine and client together before using
+documents beyond the earlier 4 MiB limit.
+
 For example, in PowerShell for a development checkout:
 
 ```powershell

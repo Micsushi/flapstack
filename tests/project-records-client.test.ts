@@ -77,7 +77,7 @@ describe("canonical records client", () => {
   })
 
   it("bounds response bytes and redacts transport errors", async () => {
-    const fetch = vi.fn().mockResolvedValue(new Response("x".repeat(4 * 1024 * 1024 + 1)))
+    const fetch = vi.fn().mockResolvedValue(new Response("x".repeat(32 * 1024 * 1024 + 1)))
     const client = new ProjectRecordsClient({
       endpoint: "http://127.0.0.1:47831",
       token: "secret",
@@ -86,6 +86,34 @@ describe("canonical records client", () => {
     await expect(client.read(path)).rejects.toThrow("too large")
     fetch.mockRejectedValue(new Error("request failed with private-token"))
     await expect(client.read(path)).rejects.toThrow("Project records is unavailable")
+  })
+
+  it("reads bounded large snapshots without expanding mutation limits", async () => {
+    const raw = JSON.stringify(snapshot).padEnd(32 * 1024 * 1024, " ")
+    const fetch = vi.fn().mockResolvedValue(new Response(raw))
+    const client = new ProjectRecordsClient({
+      endpoint: "http://127.0.0.1:47831",
+      token: "fixture",
+      fetch,
+    })
+    expect(await client.read(path)).toEqual(snapshot)
+    fetch.mockClear()
+    await expect(
+      client.patch({
+        path,
+        expectedRevision: snapshot.revision,
+        recordId: "Q-1",
+        changes: { draft: "x".repeat(256 * 1024) },
+      }),
+    ).rejects.toThrow("change is too large")
+    await expect(
+      client.boardRequest({
+        path: "/v1/record",
+        method: "POST",
+        body: "x".repeat(256 * 1024 + 1),
+      }),
+    ).rejects.toThrow("change is too large")
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   it("aborts a stalled request", async () => {

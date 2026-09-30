@@ -16,7 +16,8 @@ import {
   type ProjectRecordWriteResult,
 } from "../../../shared/project-records"
 
-const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+// Records permits 16 MiB documents; allow bounded envelope/serialization overhead.
+const MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 const MAX_TOKEN_BYTES = 4096
 const PAIR_PATHS = new Set([
   "/v1/yap/chat-pair/read",
