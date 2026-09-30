@@ -7,705 +7,546 @@
       "sourcePath": "openspec/changes/archive/2026-07-14-add-agent-change-undo-review/specs/run-checkpoints/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-agent-change-undo-review/specs/run-checkpoints/spec.md",
       "sourceSha256": "86db3408d5138ed935584969bc9626b0173a3a43def96091caa2651c2c398049",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "dac8c7aa10453e1a933d586d354dd862026a87c7882aaa216a7057284bf072c3"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-agent-change-undo-review/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-agent-change-undo-review/tasks.md",
       "sourceSha256": "f2f60000d11455c842eff754e9206d9dc760c2b91381d1132ee41de256d67cd5",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "7128175ccc947c27d6b06e741d2a310b73b9eaa5cf01da4dfa06c2ea448196f7"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-agent-question-dialog/specs/agent-input-prompts/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-agent-question-dialog/specs/agent-input-prompts/spec.md",
       "sourceSha256": "af5dd863b3f9f543858f58afb04cf9a75d8f1f018589fb1f836b8efbbbfa7dff",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "7fc0743069b6991e04444d0edf4a32a7edd112ee97477ca0612dd699eebbf6cb"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-agent-question-dialog/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-agent-question-dialog/tasks.md",
       "sourceSha256": "02ebffdf2be5f9c8276fa046725fcac6bb0a45cd731dd5b6753330bcc7cb9170",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "56d1da81f73fdf6b9bff679d41c5ac4639b98abff37349d1a2b81b39402b1082"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-chat-header-open-in/specs/workspace-lifecycle/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-chat-header-open-in/specs/workspace-lifecycle/spec.md",
       "sourceSha256": "80f8f049656b2e3a9cd0ee00846363e249088f2b7be82b46d7ee8a5d18f3a1d6",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "b17eabbb817e9618ff39cb5b8d5abca50509a7acdafe614bc021b7dde8c7f834"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-chat-header-open-in/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-chat-header-open-in/tasks.md",
       "sourceSha256": "ac893b4a7662d42bc480b9d73715754bb7191ba8b441b14da24940bf3949ea6d",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "061fe37aa8144613514dd79946ba76748275704b9659eb52aeaf0e123491454b"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-copy-chat-history/specs/chat-history-export/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-copy-chat-history/specs/chat-history-export/spec.md",
       "sourceSha256": "7dcfe7081776e11a71c56e4b12c03d481d240101f4ffcd74d747893a1da3f2ec",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "c75def454967352c3d6b778e9bf963dbf915240bdaa6d9fd0ec98d16843a9b5a"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-copy-chat-history/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-copy-chat-history/tasks.md",
       "sourceSha256": "8419b2feb261334269fcebceeb507b34736d63073c628d14740a1c65631f8f7d",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "b000af02f7dfa8639afc745eb6e53d796abf91937a18664e94c2af22450244ac"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-dev-test-control-mcp/specs/dev-test-control-mcp/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-dev-test-control-mcp/specs/dev-test-control-mcp/spec.md",
       "sourceSha256": "7a33e405228425fc86e2961ea91a0c108072b71e10f9ec913024320587892b48",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "02fc4cd2386f18b9344ce7b38234de71a1c54ed186559637da00b99f112cf4c3"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-dev-test-control-mcp/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-dev-test-control-mcp/tasks.md",
       "sourceSha256": "095214950f6c74f0aa68a35ff614643a782cf349a6251df2f5d43daaf1a22f6d",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "0989329597e256af8806c4da0a3477902b8ad7e858e2e7c2706eac495e21d1b7"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-message-timestamps/specs/chat-message-timestamps/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-message-timestamps/specs/chat-message-timestamps/spec.md",
       "sourceSha256": "1898a3445623b01d708f7867318dbe24005e3bfc09934711d5cf1bed6f74f2c7",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "fed6541f99a691a7f462a1f673f25c791e4a09d0dd0fac978ac7502f0079a277"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-message-timestamps/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-message-timestamps/tasks.md",
       "sourceSha256": "a1443584fb217003de02214ad34ad6200d9ccf765fd00dcb31cc2bf9b55a9a57",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "b827a15725a748716c26844099cb6da35618a638a4a2babc21f1f515ccff305a"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-model-tuning-dropdown/specs/model-run-controls/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-model-tuning-dropdown/specs/model-run-controls/spec.md",
       "sourceSha256": "fe2780a1ffb42922568607d83acfcec7757929c9dfea6f994cd31d42b919f716",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "725f5d1fb79bb8876407ea0c263fbb4a71572b94773873ec1d2f1df1a240bf87"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-model-tuning-dropdown/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-model-tuning-dropdown/tasks.md",
       "sourceSha256": "f08142b2efc6931f798a3ca6969331a57ee6d2351f66e0a5e9f0f9cc8dac3d68",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "9822441de0b97a750383609f879a74bd35801870763c9f419edacc120033fdc0"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-stage2-voice-usage-cursor/specs/cursor-harness/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-stage2-voice-usage-cursor/specs/cursor-harness/spec.md",
       "sourceSha256": "a88a38a50fd55cedcdc123e87f638e8a649684973f328987c48e26f9ede711d9",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "dc7533e09fbbd7be2bdc7997e1a69f1e79a6f1497e0cb5f3b91a04c144c37489"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-stage2-voice-usage-cursor/specs/direct-api-harness/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-stage2-voice-usage-cursor/specs/direct-api-harness/spec.md",
       "sourceSha256": "52a675dbee8e35d779c6c7310af9fd3dd717efd969b5f4dd6623d42092081721",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "af3421062e057cfa650681696ea10a2b979f3c3aaf879a052313b30f4f0c1425"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-stage2-voice-usage-cursor/specs/reasoning-output/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-stage2-voice-usage-cursor/specs/reasoning-output/spec.md",
       "sourceSha256": "b4e1372fddb9c516b89d5a53f71fee0f26ccae03d2a46f8e01eda0e86a3dd5d8",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "72151e0137e63f27a2a0990cc9c2b87ac017130a70221b7bfdcf8ae574abaf76"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-stage2-voice-usage-cursor/specs/usage-tracking/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-stage2-voice-usage-cursor/specs/usage-tracking/spec.md",
       "sourceSha256": "802f96ef886d975a99b5379303713294d13f17175c940677f6a59a37943a56e7",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "d140bf2742a9e2045708cd21341e8fd24c72a9e015e2f04946fe6f295b7fa757"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-stage2-voice-usage-cursor/specs/voice-io/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-stage2-voice-usage-cursor/specs/voice-io/spec.md",
       "sourceSha256": "195803f69123fb3f48b3a26f02927bdbeec3502f624d661d63cb10ccd40685d0",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "3008a660a4c0f3decb7b6b1d9766c65d7768588acb257c56137dbc70e3c15d6a"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-stage2-voice-usage-cursor/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-stage2-voice-usage-cursor/tasks.md",
       "sourceSha256": "c46683cf1b3f638f4676ba848c3ab2dee9f7b03dc71705512e15fd6a898a434b",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "fd4e589d6f771e5b04b06e098c117654957abc22e2889e7a68bf4565d2de18c8"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-stage3-mcp-control/specs/app-control-mcp/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-stage3-mcp-control/specs/app-control-mcp/spec.md",
       "sourceSha256": "49fd842b7c0a3871b68496d872996764110a5bda239489a24e39b52f0f7738d2",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "0de9e5567df7aa2d66c89de3b6d853b18fca6d074563a48a21d435ab78cc6a2d"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-stage3-mcp-control/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-add-stage3-mcp-control/tasks.md",
       "sourceSha256": "2c12d30b41b26b67a01d463d8191e54eb0710520028039298a033e9b32e3467d",
-      "transformations": [
-        "LF line endings",
-        "Replace private home prefix with /example-home"
-      ],
+      "transformations": ["LF line endings", "Replace private home prefix with /example-home"],
       "fixtureSha256Lf": "d7bdcf23e4c11bde1f41cbb0cc4a5eb66e2ea78a3002b92f454f7f7ffdb00152"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-close-provider-harnesses/specs/provider-harness-closeout/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-close-provider-harnesses/specs/provider-harness-closeout/spec.md",
       "sourceSha256": "d0668d74573e3495f3b854225dbe19480e790aaa5fa244ad56d77c22edd125b1",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "6fd2a5517f2e09320828a77ae9c11fb71bd03a34f45f1e974c1327877b7ed4ae"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-close-provider-harnesses/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-close-provider-harnesses/tasks.md",
       "sourceSha256": "be8cdad21ca2195d5ebc9131d5d5b74a2d9fd02172ceb87728b0fd932a2e58cf",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "d2963903a83a876d40e855a6274484b3b646dd4e5da9ccfdc285fcd24ae1fa30"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-complete-settings-reliability/specs/settings-reliability/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-complete-settings-reliability/specs/settings-reliability/spec.md",
       "sourceSha256": "c0cca99b470e253d06e38a70d303e0631a831109fddc3677e19f2ddf940de7ad",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "345bd93d6cb9abf596eb28e93f547bb3221b3967fa0e526c997eadbd62096da5"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-complete-settings-reliability/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-complete-settings-reliability/tasks.md",
       "sourceSha256": "52c203f09a0ee0076f828f6223975d405802e128e1b00cce81bb90abc749a22f",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "459aa84d82f708bfd10e78d3767bc2e123fcf9edccecd6eebba81f41516d7bd0"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-harden-usage-exit/specs/usage-exit-hardening/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-harden-usage-exit/specs/usage-exit-hardening/spec.md",
       "sourceSha256": "6fe3fca037d0b7e1c18377a97933a64fe6e74f01518b1d961a968b3374ba4e70",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "90e247c6c94174e889dbbeb10e62c2cf6e71b9257ea44fa77334d0bee5a0bb8d"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-harden-usage-exit/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-harden-usage-exit/tasks.md",
       "sourceSha256": "a107bedfa18d60e1e78235a9d2a061bc531aca056545d6c1655b4506bc95bbad",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "6168fd93a63580f985a41f5ce6202eba5f90fd03ef8ba37fbc8d0baeac0ae673"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-improve-agent-context-and-evidence/specs/harness-quality/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-improve-agent-context-and-evidence/specs/harness-quality/spec.md",
       "sourceSha256": "cdbd74bb05ab6bff5e40e3936ac28c243e6daeb865f3d6f66f456118c149fd6f",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "c93935e09b02cb813b571345d10339efd2eb037ddd59c90d2c1f13726fb48814"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-improve-agent-context-and-evidence/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-improve-agent-context-and-evidence/tasks.md",
       "sourceSha256": "a1edc5aa17652c87c68361f3889f66d6edb2170a835c0ec3d6f1f187eed5241d",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "5d97cb4cbe546e97ffb42f124e9e980c6b1edd97215f47f11d6c0fb5ca3f00a3"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-prove-reasoning-parity/specs/reasoning-parity-evidence/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-prove-reasoning-parity/specs/reasoning-parity-evidence/spec.md",
       "sourceSha256": "aa5342ba3aa779e001aec4a80293743b8273618e2f9fe38fd04526895c048569",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "ce9e4ca9cf04804c716c363fff3905cd837fdf75760ed1aa7965ab57bb2c8192"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-prove-reasoning-parity/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-prove-reasoning-parity/tasks.md",
       "sourceSha256": "fceefa3634a38ff6031016df98b07c863b5b9cc6c1eaf5a1aec25e84bd26b6cd",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "aab7cd320bd01b490aeef6ab36ba8137d9f73e793974b21ce70d2313edac4891"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-remove-visible-sub-chats/specs/chat-history-export/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-remove-visible-sub-chats/specs/chat-history-export/spec.md",
       "sourceSha256": "cf9c3ca2bb264b32a9ed8440f8d26f3167aadba3856c4c60d57a8dbe1c96c17a",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "54207b3398ef1fd41bf47e3754beffb03899b80796c42680a03d4b1cfed842a2"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-remove-visible-sub-chats/specs/scoped-search/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-remove-visible-sub-chats/specs/scoped-search/spec.md",
       "sourceSha256": "290718ab703fb65edb7b6ec938530d19e63d9525c7c0431683cd32e6c07e909d",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "f5282cdd858c180f3ed23a8b23b1b11eaa1fd2222c92f9a192968bb112c781f8"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-remove-visible-sub-chats/specs/single-conversation-chats/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-remove-visible-sub-chats/specs/single-conversation-chats/spec.md",
       "sourceSha256": "2731e82d23214b15dd845ec4949845639856875f1e03477f737ae8bb49e57d15",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "834174c54cbcdd5250bbeb6e5f878945c1d89776ed5987c5920b73dc0244ed2f"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-remove-visible-sub-chats/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-remove-visible-sub-chats/tasks.md",
       "sourceSha256": "2e0c4ef2aa3eeb8fd79ad3766405c61fbd8a7f9cc320b311c46341f197dea38e",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "42c2bf93a97a3506b809e38f329066fd0f73d441debb67eeec9c6dded9beb329"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-stabilize-stage3-foundation/specs/engineering-quality/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-stabilize-stage3-foundation/specs/engineering-quality/spec.md",
       "sourceSha256": "a4f6c0249f7dd4fe757df4c9795512be447bea93ab12838b30b4f8681916b6fc",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "0995be0c474d5321f601799308fc27ef417cca2a194669a72f836ea564e11f0a"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-stabilize-stage3-foundation/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-stabilize-stage3-foundation/tasks.md",
       "sourceSha256": "8871a871748f45ea490c0f40f127928d26868d81a6f3592514f31a96d6549a6c",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "480a07aa1b7e57ddd494b1b9c4be5c6f644ce6dc64f4c0c3157e67a037bd4c77"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-sync-provider-permissions-globally/specs/run-permissions/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-sync-provider-permissions-globally/specs/run-permissions/spec.md",
       "sourceSha256": "8d367220f06ed901b720a2ef4feea757e8b0b88576df5c7b852228ba6636e3a3",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "710350370f7952177b58fc82486c33cea1eadcbda83e90940b911fb28f11f5b9"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-sync-provider-permissions-globally/specs/settings-navigation/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-sync-provider-permissions-globally/specs/settings-navigation/spec.md",
       "sourceSha256": "1b13100f7b53553cb182e3e8caa047d8f5e65b2780259af6fce9402264c0a4ce",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "b8b278531902a19a7673450fe2ba5ca4f4b84e1c3f68be196420bbc8b595abc5"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-sync-provider-permissions-globally/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-sync-provider-permissions-globally/tasks.md",
       "sourceSha256": "c3d457cf18d378ff765196eb4ab40459ccb0260ac476aaab68e2ca839cc975d6",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "92975b3bbae82d323bd66dcb99df3aca3c855fd86a1e6775411efdb0d4828df5"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-validate-stage3-release/specs/integrated-stage3-release/spec.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-validate-stage3-release/specs/integrated-stage3-release/spec.md",
       "sourceSha256": "3062ece858caaacdd1559c5a0cb4739e5e4b32852a8e94344b4447cd7fb4a905",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "9a93347c64128fe146a052fc0db14f3de609b4c1cdeb315b6eb3ba3d5c3b07c6"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-validate-stage3-release/tasks.md",
       "fixturePath": "openspec/changes/archive/2026-07-14-validate-stage3-release/tasks.md",
       "sourceSha256": "85d0506af1718cf0c57628bca252528c00b55a22c2461f61cc17a6c6e6877100",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "26cc08c5a6b7df4b3db097e237f988d343ca1787dec3b4a1630f3d6a9b4483fd"
     },
     {
       "sourcePath": "openspec/changes/polish-product-ui-ux/tasks.md",
       "fixturePath": "openspec/changes/polish-product-ui-ux/tasks.md",
       "sourceSha256": "ee30593a46c2fea3fb06b661240ca9c0aaadcb517ae1ba45a5a3a2363624ed4c",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "41e0ac30548addc11b6423622e5c31f110714ea0dd250bae4bbd5b5a49af6659"
     },
     {
       "sourcePath": "openspec/changes/add-guided-onboarding-visibility/tasks.md",
       "fixturePath": "openspec/changes/add-guided-onboarding-visibility/tasks.md",
       "sourceSha256": "820e0607dd75026d7276b6ec258cb71fdd4bcdd04874fed3d6dcd85b5b590d78",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "6509fa9a64cad9fe96a474e693c8836d70da2ee7099abbfe7095aa1e623d24f9"
     },
     {
       "sourcePath": "openspec/changes/extend-agent-profiles-personalities/tasks.md",
       "fixturePath": "openspec/changes/extend-agent-profiles-personalities/tasks.md",
       "sourceSha256": "f75502b8a2952bf501e7e73b1fdc34558ce810f48c6bf7b283bf71ea95ab627d",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "0915f773b5308b6630a95d2ebced80489ac1403d667eddbbcdf9de17e5cb6e1b"
     },
     {
       "sourcePath": "openspec/changes/add-stage6-mobile-companion/tasks.md",
       "fixturePath": "openspec/changes/add-stage6-mobile-companion/tasks.md",
       "sourceSha256": "c6820d4f90ef2cf14c8cebfc5800a0e08826bfc29447a41ae57b298ed47a5576",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "54176756b0d00f22b32ed03964db01687da11289cadd0df50df7a66573e40b75"
     },
     {
       "sourcePath": "openspec/changes/add-visual-context-capture/tasks.md",
       "fixturePath": "openspec/changes/add-visual-context-capture/tasks.md",
       "sourceSha256": "5d56366b690c3a25ea6c1d34f0942d50b19d694c9237c354033360ffd4e8f564",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "2761f1b33c1e056565ea9b9f19d3dddcd072a67d4a71a4b28b897ec6f0bb48db"
     },
     {
       "sourcePath": "openspec/changes/add-terminal-grid-swarm-workspaces/tasks.md",
       "fixturePath": "openspec/changes/add-terminal-grid-swarm-workspaces/tasks.md",
       "sourceSha256": "671a6025b73304bf060f48c511c71ae423bee41c618ad2504180473e89822e1d",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "44b153584bd4930178b095e24e739dc856367def8967d7601a016c379ac5f7de"
     },
     {
       "sourcePath": "openspec/changes/complete-runtime-orchestration-composition/tasks.md",
       "fixturePath": "openspec/changes/complete-runtime-orchestration-composition/tasks.md",
       "sourceSha256": "a373950b6abe90a8b60a63a8149012db0248d0e59cef910cdbe9a7cc8dc6151c",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "2635be0d410390ee8385028d7b798de3283c1df8ba2fa216473b185e16e05275"
     },
     {
       "sourcePath": "openspec/changes/add-organization-usage-apis/tasks.md",
       "fixturePath": "openspec/changes/add-organization-usage-apis/tasks.md",
       "sourceSha256": "75daa71c23c59f2e6f00ba5add87dc4410133b2186c0186ac4738652f737b269",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "cef7cc8940996494d5d80ddaaebaa6b871686194391be7001a730b286e4542ff"
     },
     {
       "sourcePath": "openspec/changes/harden-product-performance/tasks.md",
       "fixturePath": "openspec/changes/harden-product-performance/tasks.md",
       "sourceSha256": "51d83963f97fa535c5648d8794a5be61d7f95a56e9a1eac0f6de3111bf0434a5",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "00cfb0c60ac28cf77569831838ebe7d78179b8284707983b6e480d94b83f75ac"
     },
     {
       "sourcePath": "openspec/changes/add-cross-platform-distribution/tasks.md",
       "fixturePath": "openspec/changes/add-cross-platform-distribution/tasks.md",
       "sourceSha256": "ad8dbdb9869f696ee7b4321a8fead650def21e0260f50e32f1c12b59e39a7a7b",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "9e0278b9c0c8d153f9009f2cf22d072afe6ece0b55d9768b79bb84bf230c2d46"
     },
     {
       "sourcePath": "openspec/changes/add-obsidian-compatible-project-knowledge-graph/tasks.md",
       "fixturePath": "openspec/changes/add-obsidian-compatible-project-knowledge-graph/tasks.md",
       "sourceSha256": "1445d708141cec58ade5d80947c72e2b29f2d640bf89d05f7330f325b04b6611",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "f4b98546fc8ead5b5d658c3f3f626e62b3a87cff9ec0c7dc8446ebd332242f8f"
     },
     {
       "sourcePath": "openspec/changes/validate-stage6-release/tasks.md",
       "fixturePath": "openspec/changes/validate-stage6-release/tasks.md",
       "sourceSha256": "9a65e1217b699a5ba88583571df396377641b0e65f61f9d4b803e4cd47492566",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "7673581efd5bbdefd4bd0177fb78e8c9dc61e787d45dd867fda7f518400c5ac6"
     },
     {
       "sourcePath": "openspec/specs/usage-exit-hardening/spec.md",
       "fixturePath": "openspec/specs/usage-exit-hardening/spec.md",
       "sourceSha256": "61c636c81c4a4518d53980d8a2e1e86817710de08f6a2de9dc70a2cf1cb5f415",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "4ae5f6b9a209b7626862ada2176d816a9b9836e00aa432a3d9efaf08601c00cb"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-08-add-stage1-workspace-core/design.md",
       "fixturePath": "openspec/changes/add-stage1-workspace-core/design.md",
       "sourceSha256": "b8cbfdb68271fb32f6244ed870cfc4bd1935a115e91f58c85c3f9e0f57f43969",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "c6fd438734fbd5caa4ebe535ffd984b8e86b5c9690fe29a9b5c857709d682be2"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-08-add-stage1-workspace-core/proposal.md",
       "fixturePath": "openspec/changes/add-stage1-workspace-core/proposal.md",
       "sourceSha256": "fe114f7d1a3de305fc8abf25865f5c4c2d035f6d1907fa763ffa668f9319930b",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "2a50acfa57dc35aee377a8e110d9fe07fc12fbdf83efbe2ece08dbe302c5a408"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-08-add-stage1-workspace-core/specs/agent-runs/spec.md",
       "fixturePath": "openspec/changes/add-stage1-workspace-core/specs/agent-runs/spec.md",
       "sourceSha256": "6831c7f05366ad7e9edc128a1dbd6feddf80f10dcf836cd0105b602a6531a691",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "ff713c90f13761af807d75e818ef4371348d939583cae78253c170367393d08f"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-08-add-stage1-workspace-core/specs/chat-attachments/spec.md",
       "fixturePath": "openspec/changes/add-stage1-workspace-core/specs/chat-attachments/spec.md",
       "sourceSha256": "20e2d7fa71994e850478da89ec3508c015e17be2513eba6a21826d06b7d025b7",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "171d223596ecf1044804eb9518e1e7a0b55c2b56b827c6e4b7098380acbfdfdb"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-08-add-stage1-workspace-core/specs/chat-scopes/spec.md",
       "fixturePath": "openspec/changes/add-stage1-workspace-core/specs/chat-scopes/spec.md",
       "sourceSha256": "a700d1c99d023a715597eb0e4f4f3d6a0c8799e9c78bf9b662606f6fe60854f9",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "06e81c747accac25c50530f83e03903ec9024789b35a6c8b3d3888fb0d0338c0"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-08-add-stage1-workspace-core/specs/run-checkpoints/spec.md",
       "fixturePath": "openspec/changes/add-stage1-workspace-core/specs/run-checkpoints/spec.md",
       "sourceSha256": "39a684cecb9b5b23bff9eb0a84f11217658b3b5c2d91df687af41aa140019bbb",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "fb99eae4e4a712902d8ffa405023a469a7eacb8bf34104190ca239d228919233"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-08-add-stage1-workspace-core/specs/run-permissions/spec.md",
       "fixturePath": "openspec/changes/add-stage1-workspace-core/specs/run-permissions/spec.md",
       "sourceSha256": "6fb3018a089b4e1f5082bfb5bd80ba69ea742fd46ecc73ec60b435fa0b842782",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "b9364a0b193f48a7128550e852ebccf334a2fe6f905da7086109a85d5076fb02"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-08-add-stage1-workspace-core/specs/scoped-search/spec.md",
       "fixturePath": "openspec/changes/add-stage1-workspace-core/specs/scoped-search/spec.md",
       "sourceSha256": "38d2ee9e273782311676016749a30008ad68c5fd2f1867e20d8ce29b5ec20448",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "e28cfb3f89a8306f2cb14a7013465ef3f9fb36dad87cd8b7a68690345a44fdd7"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-08-add-stage1-workspace-core/specs/task-containers/spec.md",
       "fixturePath": "openspec/changes/add-stage1-workspace-core/specs/task-containers/spec.md",
       "sourceSha256": "198fd26a82130dc5795fa95b01bb71e083d3337d0c31af56eb146b1dfb9085ad",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "a73d3fd3f0c5419c64d4d87d4814b485abe017710d13e4945e37433374f11674"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-08-add-stage1-workspace-core/specs/workspace-lifecycle/spec.md",
       "fixturePath": "openspec/changes/add-stage1-workspace-core/specs/workspace-lifecycle/spec.md",
       "sourceSha256": "4fe19da176a940ebf4149ba63f95ee6652f00360e2c819d35e0bc5f0e272d737",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "48303fba5f4a8b0fb2e22f4cc3049a1e698d8c3790731ea2a9bb5a5305c80a1f"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-08-add-stage1-workspace-core/specs/worktree-defaults/spec.md",
       "fixturePath": "openspec/changes/add-stage1-workspace-core/specs/worktree-defaults/spec.md",
       "sourceSha256": "1afb554ebbefe0538cf228bb07199c4ccd306bb916f7ca14dc79912bd86c4618",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "f6488076bab61bca9d70e40d435f4cdfc4cc41b2ead0db8516535008f209b334"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-08-add-stage1-workspace-core/tasks.md",
       "fixturePath": "openspec/changes/add-stage1-workspace-core/tasks.md",
       "sourceSha256": "283202b0fe0f75b7a9cac14b2edec7c1dfbe12179ab78668e58a772b74a61998",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "3d62cfd43323649c97480aa7d34fa49af0cdfa464490906874f5c6319acb9199"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-dev-test-control-mcp/design.md",
       "fixturePath": "openspec/changes/add-dev-test-control-mcp/design.md",
       "sourceSha256": "31c04c1394e3e514b4a717da1a847043b4aae01bdfdde6d13d246fa9c21ba47e",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "0dd9ebfd19c429e3a16a6e7de08b7c501d6ce00011510a8fde3178466a4c64e1"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-dev-test-control-mcp/proposal.md",
       "fixturePath": "openspec/changes/add-dev-test-control-mcp/proposal.md",
       "sourceSha256": "f2ea5daed074d65f8876951a12ec11c82fc48c64be53f8c382b81b6adf0eb246",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "f9eb46925ce54d5f8500fb23d6b37d76d04062658dbef4049178b2d07537cb49"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-dev-test-control-mcp/specs/dev-test-control-mcp/spec.md",
       "fixturePath": "openspec/changes/add-dev-test-control-mcp/specs/dev-test-control-mcp/spec.md",
       "sourceSha256": "7a33e405228425fc86e2961ea91a0c108072b71e10f9ec913024320587892b48",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "02fc4cd2386f18b9344ce7b38234de71a1c54ed186559637da00b99f112cf4c3"
     },
     {
       "sourcePath": "openspec/changes/archive/2026-07-14-add-dev-test-control-mcp/tasks.md",
       "fixturePath": "openspec/changes/add-dev-test-control-mcp/tasks.md",
       "sourceSha256": "095214950f6c74f0aa68a35ff614643a782cf349a6251df2f5d43daaf1a22f6d",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "0989329597e256af8806c4da0a3477902b8ad7e858e2e7c2706eac495e21d1b7"
     },
     {
       "sourcePath": "docs/stage3-release-candidate-ledger.md",
       "fixturePath": "docs/stage3-release-candidate-ledger.md",
       "sourceSha256": "34e4f864b057568c6c2001e81a7d712c2ebc93f28ff77cb276ee871a05c6960d",
-      "transformations": [
-        "LF line endings",
-        "Replace private home prefix with /example-home"
-      ],
+      "transformations": ["LF line endings", "Replace private home prefix with /example-home"],
       "fixtureSha256Lf": "91790f52b8349d5a06d9a3707a720031663c5806bd84f194161c8fc99be94ebc"
     },
     {
       "sourcePath": "docs/stage6-full-feature-test-matrix.md",
       "fixturePath": "docs/stage6-full-feature-test-matrix.md",
       "sourceSha256": "7410e1fe11345be1cd8fefdf2425bb47c4fb44d2ffd37bf15bfffea420dca4ea",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "05c6cffa04a58b01670f15e8906b7c1938d2926be5ed456eb4cad56364330645"
     },
     {
       "sourcePath": "docs/stage6-tier2-candidate-ledger.md",
       "fixturePath": "docs/stage6-tier2-candidate-ledger.md",
       "sourceSha256": "f6b745391e1e55fd0bd5d529b03e0bde53395856210d18049bd2c23888155622",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "8579e13b8e4c08fb7cc5ba501cc748a562b4d1a6296ada4464c10eaefe8d5469"
     },
     {
       "sourcePath": "docs/stage3-usage-exit-matrix.md",
       "fixturePath": "docs/stage3-usage-exit-matrix.md",
       "sourceSha256": "e07e89f7c7b8d2193d59127b686bd1609ab3602bc258c4bbd4f0672952fea222",
-      "transformations": [
-        "LF line endings",
-        "Replace private home prefix with /example-home"
-      ],
+      "transformations": ["LF line endings", "Replace private home prefix with /example-home"],
       "fixtureSha256Lf": "c2af4b92f92ec3ce1402ba2d392c2c9ac2d46b4466802e755b5b3a85751687c4"
     },
     {
       "sourcePath": "docs/provider-harness-closeout-matrix.md",
       "fixturePath": "docs/provider-harness-closeout-matrix.md",
       "sourceSha256": "f8f8d71c8fd6835543b1f9dc321e2408629b2a4f58c6601f6a5b1cb130f63399",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "08db00999dd7d99029b198376be0c25511c186b59df175c19144c5659e7e1cf2"
     },
     {
       "sourcePath": "docs/stage3-full-feature-test-matrix.md",
       "fixturePath": "docs/stage3-full-feature-test-matrix.md",
       "sourceSha256": "a147e944b74e6b8d6ae78d6af68e8dc5b7e138b4fe8df0f987c4c24a338f649e",
-      "transformations": [
-        "LF line endings"
-      ],
+      "transformations": ["LF line endings"],
       "fixtureSha256Lf": "2480febd6c3a3f98e4f1ba50fe70f39185fbff48314dec70675aa633744f9c8d"
     }
   ]
