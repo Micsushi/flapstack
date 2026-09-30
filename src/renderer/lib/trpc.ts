@@ -10,7 +10,8 @@ import superjson from "superjson"
 export const trpc: CreateTRPCReact<AppRouter, unknown> = createTRPCReact<AppRouter>()
 
 /**
- * Vanilla client for use outside React components (stores, utilities)
+ * One IPC client for React and imperative callers in this renderer. Separate
+ * clients reuse request IDs on the shared reply channel and cross-wire results.
  */
 export const trpcClient = createTRPCProxyClient<AppRouter>({
   links: [ipcLink({ transformer: superjson })],
