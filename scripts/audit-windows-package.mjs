@@ -595,6 +595,7 @@ export async function collectReleaseArtifacts(
 
 export function inspectAuthenticode(filePath, displayPath, runner = spawnSync) {
   const script = [
+    "$ErrorActionPreference = 'Stop';",
     "$signature = Get-AuthenticodeSignature -LiteralPath $env:FLAPSTACK_SIGNATURE_PATH;",
     "$result = [PSCustomObject]@{",
     "status = [string]$signature.Status;",
@@ -610,7 +611,12 @@ export function inspectAuthenticode(filePath, displayPath, runner = spawnSync) {
     {
       encoding: "utf8",
       windowsHide: true,
-      env: { ...process.env, FLAPSTACK_SIGNATURE_PATH: filePath },
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "psmodulepath"),
+        ),
+        FLAPSTACK_SIGNATURE_PATH: filePath,
+      },
     },
   )
   if (result.error) {
@@ -626,9 +632,12 @@ export function inspectAuthenticode(filePath, displayPath, runner = spawnSync) {
       .replace(/^\uFEFF/, "")
       .trim(),
   )
+  if (typeof parsed?.status !== "string" || !parsed.status.trim()) {
+    throw new Error(`${displayPath}: Authenticode inspection returned no status`)
+  }
   return {
     path: displayPath,
-    status: String(parsed.status || "UnknownError"),
+    status: parsed.status,
     subject: String(parsed.subject || ""),
     thumbprint: String(parsed.thumbprint || ""),
     timestamped: parsed.timestamped === true,

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 // @ts-expect-error JavaScript package-audit helper intentionally has no declaration file.
 import {
   assertAuthenticodePolicy,
@@ -18,6 +18,7 @@ import {
   expectedReleaseArtifactNames,
   expectedWindowsPublisher,
   findSecretFindings,
+  inspectAuthenticode,
   isAllowedNativePath,
   summarizeDependencyLicenses,
 } from "../scripts/audit-windows-package.mjs"
@@ -35,6 +36,45 @@ import { fileSymlinksSupported } from "./helpers/symlink-capability"
 const requireFromTest = createRequire(import.meta.url)
 
 describe("Windows package security report", () => {
+  it("isolates Windows PowerShell module lookup and makes signature errors terminating", () => {
+    vi.stubEnv("PSModulePath", "incompatible-powershell-modules")
+    try {
+      const result = inspectAuthenticode(
+        "C:/preview/app.exe",
+        "app.exe",
+        (_exe: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
+          expect(Object.keys(options.env).some((key) => key.toLowerCase() === "psmodulepath")).toBe(
+            false,
+          )
+          expect(options.env.FLAPSTACK_SIGNATURE_PATH).toBe("C:/preview/app.exe")
+          expect(args.at(-1)).toContain("$ErrorActionPreference = 'Stop';")
+          return { status: 0, stdout: JSON.stringify({ status: "NotSigned" }) }
+        },
+      )
+      expect(result.status).toBe("NotSigned")
+      expect(process.env.PSModulePath).toBe("incompatible-powershell-modules")
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it("rejects failed signature commands and empty success responses", () => {
+    expect(() =>
+      inspectAuthenticode("app.exe", "app.exe", () => ({
+        status: 1,
+        stderr: "Security module could not be loaded",
+      })),
+    ).toThrow("Authenticode inspection failed")
+    for (const status of [undefined, "", "   "]) {
+      expect(() =>
+        inspectAuthenticode("app.exe", "app.exe", () => ({
+          status: 0,
+          stdout: JSON.stringify({ status }),
+        })),
+      ).toThrow("Authenticode inspection returned no status")
+    }
+  })
+
   function pe() {
     const buffer = Buffer.alloc(256)
     buffer.write("MZ", 0, "ascii")
