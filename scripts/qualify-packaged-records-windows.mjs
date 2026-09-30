@@ -194,6 +194,57 @@ export async function main() {
       "Cold packaged Records proof",
     )
     report.checks.push("board-create-read")
+    const feature = await rpc(
+      "projectRecords.create",
+      {
+        kind: "feature",
+        title: "Cross-project affected feature",
+        projectId: "qualification-other",
+        requestId: `feature-${identity}`,
+      },
+      "mutation",
+    )
+    const question = await rpc(
+      "projectRecords.create",
+      {
+        kind: "question",
+        title: "Qualified support link proof",
+        projectId: "qualification",
+        requestId: `question-${identity}`,
+      },
+      "mutation",
+    )
+    const refs = [created, feature].map(({ path, recordId }) => ({ path, recordId }))
+    let support = await rpc("projectRecords.read", { path: question.path })
+    const originalQuestion = support.document.records.find((item) => item.id === question.recordId)
+    assert.equal(originalQuestion.affectedWorkRefs, undefined)
+    async function patchSupport(changes) {
+      const result = await rpc(
+        "projectRecords.patch",
+        {
+          path: question.path,
+          recordId: question.recordId,
+          expectedRevision: support.revision,
+          changes,
+        },
+        "mutation",
+      )
+      assert.equal(result.conflict, false)
+      support = result.snapshot
+      return support.document.records.find((item) => item.id === question.recordId)
+    }
+    assert.deepEqual((await patchSupport({ affectedWorkRefs: refs })).affectedWorkRefs, refs)
+    assert.equal((await patchSupport({ affectedWorkRefs: null })).affectedWorkRefs, undefined)
+    const restoredQuestion = await patchSupport({ affectedWorkRefs: refs })
+    assert.equal(restoredQuestion.state, originalQuestion.state)
+    assert.equal(restoredQuestion.answer, originalQuestion.answer)
+    const supportReadback = await rpc("projectRecords.read", { path: question.path })
+    assert.deepEqual(supportReadback, support)
+    report.checks.push(
+      "qualified-task-feature-links",
+      "support-link-remove-reapply",
+      "typed-support-readback",
+    )
     await close()
     await start()
     const after = JSON.parse(
@@ -201,6 +252,8 @@ export async function main() {
     )
     assert.equal(after.revision, before.revision)
     assert.deepEqual(after.document, before.document)
+    assert.deepEqual(await rpc("projectRecords.read", { path: question.path }), support)
+    report.checks.push("qualified-support-restart-retention")
     report.checks.push("restart-retention")
     await close()
     report.status = "passed"

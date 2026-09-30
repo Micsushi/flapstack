@@ -2,6 +2,7 @@ import { useState } from "react"
 import { projectBlockerDetailsSchema, type ProjectRecord } from "../../../shared/project-records"
 import { Button } from "../../components/ui/button"
 import { writeClipboardText } from "../../lib/clipboard"
+import { projectAffectedWorkLabels } from "./project-record-projection"
 
 const categoryLabels: Record<string, string> = {
   authority: "Authorization",
@@ -30,12 +31,13 @@ export function BlockerDetails({
     )
   }
   const blocker = parsed.data
+  const affectedWork = projectAffectedWorkLabels(blocker)
   const closed = record.state === "resolved" || record.state === "superseded"
   return (
     <div className="mt-3 max-w-prose space-y-4 text-sm">
-      <p className="text-muted-foreground">
+      <p className="break-words text-muted-foreground">
         {categoryLabels[blocker.category]}
-        {blocker.affectedWork.length > 0 && ` · Affects ${blocker.affectedWork.join(", ")}`}
+        {affectedWork.length > 0 && ` · Affects ${affectedWork.join(", ")}`}
       </p>
       {closed ? (
         <p className="font-medium">

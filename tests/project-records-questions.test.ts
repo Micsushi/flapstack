@@ -96,3 +96,34 @@ it("keeps an answered parent waiting for its open child, while agent research re
   expect(questionNeedsOwner({ ...record, state: "agent_research", followUps: null })).toBe(false)
   expect(questionNeedsOwner({ ...record, state: "open", followUps: null })).toBe(true)
 })
+
+it("preserves qualified support references and rejects malformed, duplicate or non-support fields", () => {
+  const ref = { path: "projects/BugMe.v2/features.md", recordId: "FEATURE:01" }
+  const record = {
+    ...parent,
+    affectedWorkRefs: [ref],
+    followUps: [{ ...child, affectedWorkRefs: [ref] }],
+  }
+  expect(projectRecordSchema.parse(record)).toEqual(record)
+  expect(projectRecordSchema.parse({ ...parent, affectedWorkRefs: [] }).affectedWorkRefs).toEqual(
+    [],
+  )
+  for (const refs of [
+    null,
+    [ref, ref],
+    [{ ...ref, extra: true }],
+    [{ ...ref, path: "../tasks.md" }],
+    [{ ...ref, recordId: " bad id" }],
+  ]) {
+    expect(projectRecordSchema.safeParse({ ...parent, affectedWorkRefs: refs }).success).toBe(false)
+    expect(
+      projectRecordSchema.safeParse({
+        ...parent,
+        followUps: [{ ...child, affectedWorkRefs: refs }],
+      }).success,
+    ).toBe(false)
+  }
+  expect(
+    projectRecordSchema.safeParse({ ...parent, kind: "task", affectedWorkRefs: [] }).success,
+  ).toBe(false)
+})

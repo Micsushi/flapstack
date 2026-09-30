@@ -33,6 +33,16 @@ it("accepts canonical blockers without changing legacy records and requires clos
     questionIds: [],
   }
   expect(projectRecordSchema.parse(blocker)).toEqual(blocker)
+  const affectedWorkRefs = [{ path: "lanes/vault/tasks.md", recordId: "TASK-01" }]
+  expect(projectRecordSchema.parse({ ...blocker, affectedWorkRefs }).affectedWorkRefs).toEqual(
+    affectedWorkRefs,
+  )
+  expect(
+    projectRecordSchema.safeParse({
+      ...blocker,
+      affectedWorkRefs: [{ path: "/absolute", recordId: "TASK-01" }],
+    }).success,
+  ).toBe(false)
   const continuationPrompt = "  Continue B1.\nPrepare <runtime path> and verify startup.  "
   expect(projectRecordSchema.parse({ ...blocker, continuationPrompt }).continuationPrompt).toBe(
     continuationPrompt,

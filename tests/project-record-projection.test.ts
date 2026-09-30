@@ -1,6 +1,10 @@
 import { expect, it } from "vitest"
 import type { ProjectRecord, ProjectRecordSnapshot } from "../src/shared/project-records"
-import { projectRecordGroups } from "../src/renderer/features/project-records/project-record-projection"
+import {
+  projectRecordGroups,
+  projectBlockerEntries,
+  projectAffectedWorkLabels,
+} from "../src/renderer/features/project-records/project-record-projection"
 
 function snapshot(path: string, records: ProjectRecord[]): ProjectRecordSnapshot {
   return {
@@ -65,4 +69,46 @@ it("uses a document project only when known, leaving unassigned lane work shared
   ])
   expect(groups.map((group) => group.name)).toEqual(["Ai Master Class", "Shared work"])
   expect(groups.some((group) => group.id === "vault")).toBe(false)
+})
+
+it("uses exact support locators without hiding same-ID work in another document or guessing legacy ambiguity", () => {
+  const task: ProjectRecord = {
+    id: "TASK-01",
+    title: "Blocked work",
+    kind: "task",
+    state: "blocked",
+    history: [],
+  }
+  const support: ProjectRecord = {
+    id: "BLOCK-01",
+    title: "Blocker",
+    kind: "blocker",
+    state: "blocked",
+    history: [],
+    affectedWork: [],
+    affectedWorkRefs: [{ path: "lanes/vault/tasks.md", recordId: task.id }],
+  }
+  const first = snapshot("lanes/vault/tasks.md", [task])
+  const second = snapshot("lanes/flapstack/tasks.md", [{ ...task }])
+  const blocker = snapshot("lanes/vault/questions.md", [support])
+  const entries = [first, second, blocker].flatMap((snapshot) =>
+    snapshot.document.records.map((record) => ({ snapshot, record })),
+  )
+  expect(projectBlockerEntries(entries).map((entry) => entry.snapshot.path)).toEqual([
+    second.path,
+    blocker.path,
+  ])
+  support.affectedWorkRefs = []
+  support.affectedWork = [task.id]
+  expect(projectBlockerEntries(entries)).toHaveLength(3)
+  expect(projectBlockerEntries([entries[0]!, entries[2]!])).toEqual([entries[2]])
+  support.affectedWork = []
+  support.affectedWorkRefs = [{ path: "projects/missing/features.md", recordId: task.id }]
+  expect(projectBlockerEntries(entries)).toHaveLength(3)
+  expect(projectAffectedWorkLabels(support)).toEqual(["projects/missing/features.md#TASK-01"])
+  support.affectedWorkRefs = [{ path: first.path, recordId: task.id }]
+  task.kind = "feature"
+  expect(projectBlockerEntries(entries)).toHaveLength(2)
+  task.kind = "question"
+  expect(projectBlockerEntries(entries)).toHaveLength(3)
 })

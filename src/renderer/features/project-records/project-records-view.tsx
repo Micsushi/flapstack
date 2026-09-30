@@ -10,6 +10,7 @@ import { trpc, trpcClient } from "../../lib/trpc"
 import { retainRecordAction } from "./record-action"
 import {
   projectBlockerEntries,
+  projectAffectedWorkLabels,
   projectRecordGroups,
   type ProjectRecordEntry,
 } from "./project-record-projection"
@@ -95,11 +96,12 @@ export function ProjectRecordsView() {
           record.cause,
           record.missingPrerequisite,
           record.ownerAction,
-          record.affectedWork,
+          projectAffectedWorkLabels(record),
           record.resolutionSteps,
           record.answer,
           record.agentReview,
           record.followUps,
+          record.followUps?.flatMap(projectAffectedWorkLabels),
           project.name,
         ])
           .toLocaleLowerCase()
@@ -461,6 +463,7 @@ function QuestionAnswer({
   const key = draftKey ?? `${path}:${record.id}`
   const reviewState = questionReviewState(record)
   const canAnswer = record.state !== "superseded" && record.state !== "agent_research"
+  const affectedWork = projectAffectedWorkLabels(record)
   const draft = drafts[key] ?? text(record.draft)
   const setDraft = (value: string) => setDrafts((current) => ({ ...current, [key]: value }))
   const saveDraft = async (submit: boolean) => {
@@ -477,6 +480,11 @@ function QuestionAnswer({
   }
   return (
     <div className="mt-3 max-w-prose space-y-3">
+      {affectedWork.length > 0 && (
+        <p className="break-words text-sm text-muted-foreground">
+          Affects {affectedWork.join(", ")}
+        </p>
+      )}
       {record.state === "agent_research" && (
         <p className="text-sm">The agent is checking this. No answer is needed from you.</p>
       )}

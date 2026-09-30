@@ -3,17 +3,43 @@ import type { ProjectRecord, ProjectRecordSnapshot } from "../../../shared/proje
 export type ProjectRecordEntry = { record: ProjectRecord; snapshot: ProjectRecordSnapshot }
 export type RecordProject = { id: string; name: string; entries: ProjectRecordEntry[] }
 
-export function projectBlockerEntries(entries: ProjectRecordEntry[]): ProjectRecordEntry[] {
-  const covered = new Set(
-    entries.flatMap(({ record }) =>
-      record.kind === "blocker" && record.state === "blocked" && Array.isArray(record.affectedWork)
+export function projectAffectedWorkLabels(record: {
+  affectedWork?: unknown
+  affectedWorkRefs?: ProjectRecord["affectedWorkRefs"]
+}): string[] {
+  return [
+    ...new Set([
+      ...(Array.isArray(record.affectedWork)
         ? record.affectedWork.filter((id): id is string => typeof id === "string")
-        : [],
-    ),
-  )
+        : []),
+      ...(record.affectedWorkRefs ?? []).map((ref) => `${ref.path}#${ref.recordId}`),
+    ]),
+  ]
+}
+
+export function projectBlockerEntries(entries: ProjectRecordEntry[]): ProjectRecordEntry[] {
+  const key = (path: string, id: string) => JSON.stringify([path, id])
+  const covered = new Set<string>()
+  const work = entries.filter(({ record }) => record.kind === "task" || record.kind === "feature")
+  for (const { record } of entries) {
+    if (record.kind !== "blocker" || record.state !== "blocked") continue
+    for (const ref of record.affectedWorkRefs ?? []) {
+      if (
+        work.some((entry) => entry.snapshot.path === ref.path && entry.record.id === ref.recordId)
+      ) {
+        covered.add(key(ref.path, ref.recordId))
+      }
+    }
+    // Entries share one project. An ambiguous legacy ID must not hide either row.
+    for (const id of Array.isArray(record.affectedWork) ? record.affectedWork : []) {
+      const targets = work.filter((entry) => entry.record.id === id)
+      if (targets.length === 1) covered.add(key(targets[0]!.snapshot.path, targets[0]!.record.id))
+    }
+  }
   return entries.filter(
-    ({ record }) =>
-      record.kind === "blocker" || (record.state === "blocked" && !covered.has(record.id)),
+    ({ record, snapshot }) =>
+      record.kind === "blocker" ||
+      (record.state === "blocked" && !covered.has(key(snapshot.path, record.id))),
   )
 }
 

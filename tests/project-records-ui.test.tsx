@@ -592,6 +592,7 @@ it("shows current and stale agent reviews and keeps follow-up answers inside the
     draft: "",
     answer: "",
     affectedWork: [],
+    affectedWorkRefs: [{ path: "projects/other/features.md", recordId: "FEATURE-02" }],
     metadata: { retained: true },
   }
   const sibling = {
@@ -646,6 +647,7 @@ it("shows current and stale agent reviews and keeps follow-up answers inside the
       "Waiting for your answer",
     )
     expect(parentItem.textContent).toContain("Agent confirmed this answer")
+    expect(childGroup().textContent).toContain("projects/other/features.md#FEATURE-02")
     expect(parentItem.textContent).toContain(
       "The agent is checking this. No answer is needed from you.",
     )
@@ -744,5 +746,57 @@ it("keeps resolved and superseded blocker instructions historical without asking
     }
   } finally {
     await act(async () => root.unmount())
+  }
+})
+
+it("displays and searches qualified support locators without resolving them by bare ID", async () => {
+  fixture.extra = [
+    {
+      ...fixture.snapshot,
+      path: "lanes/vault/questions.md",
+      document: {
+        schemaVersion: 1,
+        title: "Support",
+        records: [
+          {
+            ...blocker,
+            affectedWork: [],
+            affectedWorkRefs: [{ path: "projects/remote/features.md", recordId: "FEATURE-01" }],
+          },
+          {
+            ...fixture.snapshot.document.records[0]!,
+            id: "Q-remote",
+            title: "Remote decision",
+            affectedWorkRefs: [{ path: "lanes/vault/tasks.md", recordId: "TASK-remote" }],
+          },
+        ],
+      },
+    },
+  ]
+  const container = document.createElement("div")
+  const root = createRoot(container)
+  try {
+    await act(async () =>
+      root.render(
+        <Provider>
+          <ProjectRecordsView />
+        </Provider>,
+      ),
+    )
+    expect(container.textContent).toContain("projects/remote/features.md#FEATURE-01")
+    expect(container.textContent).toContain("lanes/vault/tasks.md#TASK-remote")
+    await act(async () => {
+      const input = container.querySelector<HTMLInputElement>('[aria-label="Search records"]')!
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        input,
+        "projects/remote/features.md#FEATURE-01",
+      )
+      input.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    expect(container.textContent).toContain(blocker.title)
+    expect(container.textContent).not.toContain("Remote decision")
+  } finally {
+    await act(async () => root.unmount())
+    fixture.extra = []
   }
 })

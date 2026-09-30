@@ -5,6 +5,33 @@ export const projectRecordPathSchema = z
   .regex(
     /^(?:lanes\/(?:vault|flapstack)\/(?:questions|done|tasks)|projects\/[a-z0-9][a-z0-9-]*\/features)\.md$/,
   )
+export const projectAffectedWorkRefsSchema = z
+  .array(
+    z
+      .object({
+        path: z
+          .string()
+          .max(240)
+          .regex(
+            /^(?:lanes\/(?:vault|flapstack)\/(?:questions|done|tasks)|projects\/[A-Za-z0-9][A-Za-z0-9._-]{0,100}\/features)\.md$/,
+          ),
+        recordId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$/),
+      })
+      .strict(),
+  )
+  .superRefine((refs, context) => {
+    const seen = new Set<string>()
+    refs.forEach((ref, index) => {
+      const key = JSON.stringify([ref.path, ref.recordId])
+      if (seen.has(key))
+        context.addIssue({
+          code: "custom",
+          path: [index],
+          message: "Affected work references must be unique",
+        })
+      seen.add(key)
+    })
+  })
 export const projectBlockerDetailsSchema = z.object({
   category: z.enum([
     "authority",
@@ -16,6 +43,7 @@ export const projectBlockerDetailsSchema = z.object({
     "decision",
   ]),
   affectedWork: z.array(z.string()),
+  affectedWorkRefs: projectAffectedWorkRefsSchema.optional(),
   cause: z.string().trim().min(1),
   missingPrerequisite: z.string().trim().min(1),
   whyAgentCannotResolve: z.string().trim().min(1),
@@ -53,6 +81,7 @@ export const projectQuestionFollowUpSchema = z
     draft: z.string(),
     answer: z.string(),
     affectedWork: z.array(z.string()),
+    affectedWorkRefs: projectAffectedWorkRefsSchema.optional(),
     answerSource: z.enum(["owner", "ai"]).nullish(),
     agentReview: projectQuestionReviewSchema.nullish(),
     followUps: z.null().optional(),
@@ -79,9 +108,21 @@ export const projectRecordSchema = z
     history: z.array(z.unknown()),
     agentReview: projectQuestionReviewSchema.nullish(),
     followUps: questionFollowUpsSchema.nullish(),
+    affectedWorkRefs: projectAffectedWorkRefsSchema.optional(),
   })
   .passthrough()
   .superRefine((record, context) => {
+    if (
+      record.affectedWorkRefs !== undefined &&
+      record.kind !== "question" &&
+      record.kind !== "blocker"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["affectedWorkRefs"],
+        message: "Affected work references belong to questions or blockers",
+      })
+    }
     if (record.kind !== "blocker") return
     const result = projectBlockerDetailsSchema.safeParse(record)
     if (!result.success) {
