@@ -74,6 +74,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: flapstack-preview-linux-${{ github.sha }}
+          include-hidden-files: true
           path: |
             release-preview/linux-unpacked
             release-preview/*.AppImage
@@ -168,6 +169,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: flapstack-preview-windows-${{ github.sha }}
+          include-hidden-files: true
           path: |
             release-preview/win-unpacked
             release-preview/windows-security-report.json

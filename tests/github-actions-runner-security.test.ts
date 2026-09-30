@@ -17,7 +17,7 @@ const windowsRelease = readFileSync(
 type WorkflowJob = {
   if?: string
   "runs-on"?: string | string[]
-  steps?: Array<{ uses?: string }>
+  steps?: Array<{ uses?: string; with?: Record<string, unknown> }>
 }
 
 type Workflow = {
@@ -59,6 +59,30 @@ function allowsOnlyTrustedEvents(condition: string | undefined): boolean {
 }
 
 describe("GitHub Actions self-hosted runner policy", () => {
+  it("preserves hidden runtime files only inside audited Preview upload paths", () => {
+    const workflow = load(ci) as Workflow
+    for (const [job, paths] of Object.entries({
+      verify: [
+        "release-preview/linux-unpacked",
+        "release-preview/*.AppImage",
+        "release-preview/*.deb",
+        "release-preview/linux-security-report-x64.json",
+        "release-preview/linux-security-report-x64.json.sha256",
+      ],
+      "windows-verify": [
+        "release-preview/win-unpacked",
+        "release-preview/windows-security-report.json",
+        "release-preview/windows-security-report.json.sha256",
+      ],
+    })) {
+      const upload = workflow.jobs?.[job]?.steps?.find((step) =>
+        step.uses?.startsWith("actions/upload-artifact@"),
+      )
+      expect(upload?.with?.["include-hidden-files"], job).toBe(true)
+      expect(String(upload?.with?.path).trim().split(/\r?\n/), job).toEqual(paths)
+    }
+  })
+
   it("keeps pull-request CI on GitHub-hosted Linux", () => {
     expect(ci).toMatch(
       /verify:\s+if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'\s+runs-on: \[self-hosted, Linux, X64, flapstack\]/,
