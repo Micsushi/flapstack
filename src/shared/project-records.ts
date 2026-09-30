@@ -74,7 +74,14 @@ export const projectQuestionFollowUpSchema = z
   .object({
     id: z.string().min(1).max(200),
     title: z.string().min(1).max(1000),
-    state: z.enum(["open", "answered", "resolved_independently", "superseded", "agent_research"]),
+    state: z.enum([
+      "open",
+      "answered",
+      "resolved",
+      "resolved_independently",
+      "superseded",
+      "agent_research",
+    ]),
     context: z.string(),
     choices: z.array(z.string()),
     recommendation: z.string(),

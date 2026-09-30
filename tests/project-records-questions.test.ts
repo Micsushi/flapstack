@@ -1,6 +1,7 @@
 import { expect, it } from "vitest"
 import {
   projectRecordSchema,
+  projectRecordSnapshotSchema,
   questionNeedsOwner,
   questionReviewState,
 } from "../src/shared/project-records"
@@ -31,6 +32,37 @@ const child = {
   answer: "",
   affectedWork: [],
 }
+
+it("reads a document containing a resolved follow-up without reopening owner work", () => {
+  const snapshot = {
+    schemaVersion: 1,
+    path: "lanes/vault/questions.md",
+    revision: "a".repeat(64),
+    document: {
+      schemaVersion: 1,
+      title: "Project questions",
+      records: [
+        {
+          ...parent,
+          followUps: [
+            {
+              ...child,
+              state: "resolved",
+              answer: "Use the isolated test folder.",
+              answerSource: "owner",
+              affectedWorkRefs: [{ path: "lanes/vault/tasks.md", recordId: "TASK-01" }],
+              resolutionEvidence: ["The test folder was verified."],
+            },
+          ],
+        },
+      ],
+    },
+  }
+  const parsed = projectRecordSnapshotSchema.parse(snapshot)
+  expect(parsed).toEqual(snapshot)
+  expect(questionNeedsOwner(parsed.document.records[0]!)).toBe(false)
+  expect(questionNeedsOwner({ ...parsed.document.records[0]!, state: "open" })).toBe(true)
+})
 
 it("preserves legacy answers and binds review to exact saved text and provenance, never the draft", () => {
   expect(projectRecordSchema.parse({ ...parent, answerSource: "" })).toEqual({
