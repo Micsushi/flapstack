@@ -103,7 +103,7 @@ ordered migration/rollback fixtures and the security boundaries named above.
       and usage events without copying or relabeling provider reasoning.
 
 Supporting evidence for S4-MA01 through S4-MA10 is recorded in
-`docs/stage4-s4-f3-multi-agent-operations.md`. The exact-tree campaign added the
+the historical `stage4-s4-f3-multi-agent-operations.md` record in Project Records. The exact-tree campaign added the
 real-app workflow, restart, roster, cancellation, and durable-activity proof
 needed to accept S4-MA01 through S4-MA07. Direct Codex transports and mixed
 providers remain separately scoped capability rows.

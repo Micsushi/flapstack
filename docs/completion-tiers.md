@@ -38,7 +38,7 @@ unless it is explicitly labeled `release-blocking`.
 
 At Tier 2:
 
-- the authoritative OpenSpec task checkbox may be checked;
+- the authoritative Project Records task may be marked complete;
 - a feature is complete when all required tasks and integrated acceptance pass;
 - a stage is `implementation complete` when all required features and the
   integrated agent gate pass.
@@ -101,7 +101,7 @@ Do not use `fully done` without naming which state applies.
 
 ## Authority
 
-- OpenSpec `tasks.md` files own task checkboxes and Tier 2 task status.
+- Project Records owns task state and Tier 2 task status.
 - Stage test matrices own integrated Tier 2 evidence rows.
 - The owner manual-testing backlog owns Tier 3 status only.
 - Historical boards remain historical. Do not bulk-check old work solely

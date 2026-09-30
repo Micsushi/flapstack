@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
-const root = resolve(import.meta.dirname, "..")
+const root = resolve(import.meta.dirname, "../tests/fixtures/verification-contracts")
 const changesRoot = resolve(root, "openspec/changes")
 const ledger = readFileSync(resolve(root, "docs/stage3-release-candidate-ledger.md"), "utf8")
 
@@ -12,7 +12,7 @@ const mappedChangeRoots = new Map(
 
 const evidenceCorpus = collectMarkdown(resolve(root, "docs"), {
   exclude: new Set([resolve(root, "docs/stage3-release-candidate-ledger.md")]),
-}).concat(collectMarkdown(resolve(root, "tests/fixtures")))
+})
 const releaseRows = [...new Set([...changeMappings.values()].flatMap((mapping) => mapping.rows))]
 for (const row of releaseRows) {
   if (!containsRowDefinition(evidenceCorpus, row))

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
-const root = resolve(import.meta.dirname, "..")
+const root = resolve(import.meta.dirname, "../tests/fixtures/verification-contracts")
 const matrixPath = resolve(root, "docs/stage3-usage-exit-matrix.md")
 const specPath = resolve(root, "openspec/specs/usage-exit-hardening/spec.md")
 const matrix = readFileSync(matrixPath, "utf8")

@@ -1,25 +1,11 @@
 # Stage 3 full-feature test matrix
 
-## Evidence classes
-
-Fixture tests, local CLI probes without paid turns, authenticated provider
-requests, headless Dev runtime checks, visible Dev UI checks, and packaged-app
-checks are distinct evidence classes; one cannot substitute for another. PASS
-requires the named class on the exact commit. BLOCKED identifies a missing
-credential, prerequisite or platform; UNSUPPORTED requires an honest pre-launch
-capability label or rejection. Every command/request needs a deadline. Use
-authorized low-value test accounts and keep credentials out of commands, logs,
-screenshots, generated configuration and retained evidence. These requirements
-do not authorize a provider call or turn dated results into current acceptance.
-
-## Historical matrix
-
 Current disposition: complete at 48/48 rows. Dated narrative below preserves
 intermediate evidence and may mention rows that were still open at that earlier
 candidate; checkbox state is the final matrix truth.
 
 Snapshot: 2026-07-14. This is the final user-facing exit matrix for Stage 3.
-Project Records owns current implementation task state; old OpenSpec checklist references are historical. This
+OpenSpec `tasks.md` files remain the only implementation task checklists. This
 document records integrated and manual evidence; it does not replace them.
 
 Stage 3 required rows pass on macOS arm64. Windows and Linux native/package
@@ -347,7 +333,7 @@ These groups are now owned by Stage 3 features and their OpenSpec task boards.
       OpenRouter/NanoGPT rows `E1-*` through `E7-*` pass in live UI and package
       contexts; NanoGPT defaults name a currently chat-capable tested model.
       Capability and evidence-class mapping:
-      the historical `provider-harness-closeout-matrix.md` record in Project Records.
+      `docs/provider-harness-closeout-matrix.md`.
       2026-07-13 headless evidence proves Cursor CLI `auto` continuation,
       persisted OpenRouter/NanoGPT success, NanoGPT `zai-org/glm-latest`, and
       provider allow/deny/cancel integrity. Implementation SHA `99672b7` passes

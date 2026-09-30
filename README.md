@@ -207,9 +207,19 @@ the [Stage 3 execution plan](docs/stage3-execution-plan.md).
 - Reusable Agent Profiles and Personalities for deterministic workflow roles
   and standalone named specialists without expanding their authority.
 
-Its eleven OpenSpec feature boards contain 87 bounded tasks; see the
-[Stage 4 router](openspec/stages/s4-knowledge-workspaces-operations/README.md)
-and [execution plan](docs/stage4-execution-plan.md).
+Its eleven historical feature boards contain 87 bounded tasks. Current plans,
+dependencies, progress and the historical execution plan belong in Project Records.
+
+Operating boundaries retained from the Stage 4 contract:
+
+- Automations run while the app is open; agent-created schedules require approval.
+- Local-model operation has no hidden cloud fallback. Raw usage facts remain
+  distinct from cached rollups and unattributed provider totals.
+- Export/import excludes secrets and must be staged, recoverable and explicit.
+- Coordination engine, Agent Runtime, capability and presentation personality
+  are separate; personality cannot widen authority, and active runs must not
+  silently switch engines or runtimes.
+- Saved operation workspaces do not remove the four-visible-chat limit.
 
 Stage 4 core implementation and AI acceptance are complete. Project Memory,
 Orchestration, Saved Workspaces, Automations, and Planning & Task Board remain
@@ -242,8 +252,7 @@ Stage 5 core implementation and AI acceptance are complete: all 50
 implementation-gating task scopes and all 40 `T2-core` matrix rows passed.
 Twenty-one optional capability rows and fourteen distributable-release rows
 remain open. Its nine features contain 76 work records; see the
-[Stage 5 router](openspec/stages/s5-windows-compatibility/README.md),
-[execution plan](docs/stage5-execution-plan.md),
+historical execution plan in Project Records,
 [test matrix](docs/stage5-full-feature-test-matrix.md), and
 [manual test](docs/stage5-windows-manual-test.md). Native setup and packaging
 commands live in the [Windows development guide](docs/windows-development.md).
@@ -277,10 +286,9 @@ commands live in the [Windows development guide](docs/windows-development.md).
 
 Stage 6 core implementation and AI acceptance are complete: all 60 `T2-core`
 matrix rows passed. Ten optional capability rows and sixteen release-evidence
-rows remain open. Its twelve OpenSpec feature boards contain 100 work records;
-see the
-[Stage 6 router](openspec/stages/s6-product-polish-personalization-reach/README.md),
-[execution plan](docs/stage6-execution-plan.md), and
+rows remain open. Its twelve historical feature boards contain 100 work records;
+current planning and progress belong in Project Records. See the
+[historical execution plan](docs/stage6-execution-plan.md) and
 [test matrix](docs/stage6-full-feature-test-matrix.md).
 
 Recent owner-requested local additions on `main` add reusable chat tags with

@@ -1294,7 +1294,15 @@ export function getTestEnvironment(repoPath = process.cwd()) {
     repo: {
       path: repoPath,
       packageJsonExists: existsSync(join(repoPath, "package.json")),
-      openspecChangePath: join(repoPath, "openspec", "changes", "add-dev-test-control-mcp"),
+      openspecChangePath: join(
+        repoPath,
+        "tests",
+        "fixtures",
+        "verification-contracts",
+        "openspec",
+        "changes",
+        "add-dev-test-control-mcp",
+      ),
     },
     runtime: {
       platform: process.platform,
@@ -2836,6 +2844,8 @@ export async function runProjectCheck(input: { repoPath?: string; timeoutMs?: nu
 
 export async function openspecValidate(input: { repoPath?: string; timeoutMs?: number }) {
   const repoPath = input.repoPath ?? process.cwd()
+  // This development check validates Flapstack's frozen contract, not a user's live plan.
+  const fixturePath = join(repoPath, "tests", "fixtures", "verification-contracts")
   const result = await runShellCommand(
     "npx",
     [
@@ -2847,7 +2857,7 @@ export async function openspecValidate(input: { repoPath?: string; timeoutMs?: n
       "--no-interactive",
     ],
     {
-      cwd: repoPath,
+      cwd: fixturePath,
       timeoutMs: input.timeoutMs ?? 120_000,
       env: {
         ...withRecommendedNodePath(),

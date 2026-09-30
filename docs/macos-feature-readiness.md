@@ -10,8 +10,12 @@ This audit maps every top-level feature group in
 macOS evidence. It does not close owner, capability, or release checkboxes in
 the authoritative matrices.
 
-The execution path for closing every gap is in the
-[macOS remediation plan](macos-remediation-plan.md).
+The historical remediation sequence and current work scopes are retained in
+Project Records. Operator release steps remain in [macOS release operations](releasing-macos.md).
+Native hardware, provider access/spend, accessibility and signed dual-architecture
+proof cannot be inferred from fixtures or a development build. Use one exact
+candidate for release evidence; missing grants or real-target evidence remain
+blocked rather than guessed. Planning transfer grants no provider or release action.
 
 ## Status meanings
 

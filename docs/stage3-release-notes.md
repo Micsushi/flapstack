@@ -57,4 +57,4 @@ repeatable evidence collection; they do not promote credentialed provider,
 microphone, visual reasoning, or cross-platform acceptance. Apple signing and
 notarization are deferred public-distribution work; OpenAI and Anthropic Admin
 usage keys are also outside Stage 3 acceptance. See
-`docs/future-release-considerations.md`.
+the historical promotion record in Project Records.

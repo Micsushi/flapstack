@@ -10,8 +10,14 @@ import {
 describe("Stage 6 Tier 2 candidate ledger", () => {
   it("maps every one of the 60 authoritative T2-core rows exactly once", () => {
     const result = validateStage6Tier2Ledger({
-      matrix: readFileSync("docs/stage6-full-feature-test-matrix.md", "utf8"),
-      ledger: readFileSync("docs/stage6-tier2-candidate-ledger.md", "utf8"),
+      matrix: readFileSync(
+        "tests/fixtures/verification-contracts/docs/stage6-full-feature-test-matrix.md",
+        "utf8",
+      ),
+      ledger: readFileSync(
+        "tests/fixtures/verification-contracts/docs/stage6-tier2-candidate-ledger.md",
+        "utf8",
+      ),
       expectedCount: 60,
     })
 

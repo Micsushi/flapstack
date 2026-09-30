@@ -1,8 +1,14 @@
 # Stage 6 Multi-Pane Chat and Window Test Plan
 
-This document is the manual acceptance walkthrough for S6-F6. Task status
-remains authoritative in
-`openspec/changes/add-terminal-grid-swarm-workspaces/tasks.md`; integrated
+Planning-source migration: referenced root `openspec/` paths below are historical
+source identifiers preserved in Project Records, not local files or current
+editable task boards. Current specifications, dependencies and task progress
+belong to Project Records. Retained procedures and evidence limitations remain
+applicable; this migration does not certify a capability or lift a release hold.
+
+This document is the manual acceptance walkthrough for S6-F6. Current task status
+belongs to Project Records; its historical source was
+`openspec/changes/add-terminal-grid-swarm-workspaces/tasks.md`. Integrated
 acceptance remains authoritative in `docs/stage6-full-feature-test-matrix.md`.
 
 ## Product Limits

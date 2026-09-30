@@ -19,7 +19,7 @@ export const stage6TaskBoardPaths = [
   "add-cross-platform-distribution",
   "add-obsidian-compatible-project-knowledge-graph",
   "validate-stage6-release",
-].map((change) => `openspec/changes/${change}/tasks.md`)
+].map((change) => `tests/fixtures/verification-contracts/openspec/changes/${change}/tasks.md`)
 
 const stage6ReleaseOnlyTaskIds = new Set([
   ...Array.from({ length: 8 }, (_, index) => `S6-F10-T${index + 1}`),
@@ -191,8 +191,20 @@ function list(values) {
 function main() {
   try {
     const result = validateStage6Tier2Ledger({
-      matrix: readFileSync(resolve(root, "docs/stage6-full-feature-test-matrix.md"), "utf8"),
-      ledger: readFileSync(resolve(root, "docs/stage6-tier2-candidate-ledger.md"), "utf8"),
+      matrix: readFileSync(
+        resolve(
+          root,
+          "tests/fixtures/verification-contracts/docs/stage6-full-feature-test-matrix.md",
+        ),
+        "utf8",
+      ),
+      ledger: readFileSync(
+        resolve(
+          root,
+          "tests/fixtures/verification-contracts/docs/stage6-tier2-candidate-ledger.md",
+        ),
+        "utf8",
+      ),
     })
     const taskResult = validateStage6TaskBoards({
       taskBoards: stage6TaskBoardPaths.map((path) => ({

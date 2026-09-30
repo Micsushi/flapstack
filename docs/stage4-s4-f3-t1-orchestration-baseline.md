@@ -1,5 +1,11 @@
 # S4-F3-T1 Stage 3 orchestration baseline
 
+Planning-source migration: referenced root `openspec/` paths below are historical
+source identifiers preserved in Project Records, not local files or current
+editable task boards. Current specifications, dependencies and task progress
+belong to Project Records. Retained procedures and evidence limitations remain
+applicable; this migration does not certify a capability or lift a release hold.
+
 Historical implementation evidence. S4-F3 core is now accepted at Tier 2.
 
 This is the frozen delta from the shipped Stage 3 orchestration contract to

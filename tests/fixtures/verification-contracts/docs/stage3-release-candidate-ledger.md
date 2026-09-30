@@ -7,14 +7,14 @@ Status: Stage 3 complete. Exact-candidate automation, provider, Voice, Usage,
 Dev, macOS package, review, and cleanup evidence pass.
 
 OpenAI/Anthropic Admin usage validation and Apple public-distribution signing/
-notarization are deferred to the historical promotion record in Project Records. Neither is
+notarization are deferred to `docs/future-release-considerations.md`. Neither is
 a Stage 3 acceptance row.
 
 ## Candidate header
 
 - Candidate source: annotated tag `stage3-final` on
   `codex/stage3-integration`; resolve with `git rev-parse stage3-final^{commit}`.
-- Checkout: `/Users/michaelshi/Documents/GitHub/temp/flapstack-s3-integration`
+- Checkout: `/example-home/Documents/GitHub/temp/flapstack-s3-integration`
   on `codex/stage3-integration`; local `main` is a squash with the exact tagged
   tree and parent `origin/main`.
 - Profile isolation: final exact Dev used `Flapstack Dev stage3-capture`; exact

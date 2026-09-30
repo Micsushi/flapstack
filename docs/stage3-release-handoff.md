@@ -8,7 +8,7 @@ Status: Stage 3 complete. Exact-candidate implementation, automation, providers,
 Voice, Usage, Dev, macOS Preview, review, and cleanup evidence are green.
 
 OpenAI/Anthropic Admin usage validation and Apple public-distribution signing/
-notarization are explicitly deferred to `docs/future-release-considerations.md`
+notarization are explicitly deferred to the historical promotion record in Project Records
 and do not block Stage 3.
 
 ## Current candidate

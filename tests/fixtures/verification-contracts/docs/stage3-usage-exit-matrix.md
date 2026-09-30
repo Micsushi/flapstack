@@ -133,12 +133,12 @@ lifecycle smoke, but it did not prove a credentialed closed-app provider sample
 or the Windows/Linux secret stores. Those rows and locked-UI credential rows
 remain blocked rather than inferred. Windows and Linux remain UNAVAILABLE until
 observed on those targets. OpenAI and Anthropic Admin usage validation is
-deferred to the historical promotion record in Project Records and is not a Stage 3 row.
+deferred to `docs/future-release-considerations.md` and is not a Stage 3 row.
 
 ## 2026-07-13 safe headless and package evidence
 
 - Base: `5297ed7`; isolated branch/worktree `codex/s3-f14-usage-exit` at
-  `/Users/michaelshi/.codex/worktrees/e899/flapstack`. The final commit is
+  `/example-home/.codex/worktrees/e899/flapstack`. The final commit is
   reported at handoff after verification.
 - Automated: 107 focused Usage/credential tests passed. Matrix coverage passed
   with 29 rows and 14 scenarios. Production build passed. The daemon smoke
@@ -182,7 +182,7 @@ Discord, Windows, or Linux claim is added; S3-F14-T3 through S3-F14-T5 stay open
 ## 2026-07-13 c100 Usage closeout evidence
 
 - Base: `821c9cd`; branch `codex/stage3-usage-exit-closeout`; worktree
-  `/Users/michaelshi/.codex/worktrees/c100/flapstack`. The final commit is
+  `/example-home/.codex/worktrees/c100/flapstack`. The final commit is
   reported at handoff.
 - macOS Keychain: a random unique value used service namespace
   `dev.flapstack.usage.usage-exit-c100`; the no-TTY write/read/delete probe
