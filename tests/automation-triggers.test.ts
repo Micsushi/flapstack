@@ -79,13 +79,14 @@ describe("automation cron calculation", () => {
   })
 
   it("skips nonexistent spring times and preserves both fall occurrences", () => {
-    expect(next(calculator, "30 2 * * *", "America/Vancouver", Date.UTC(2026, 2, 8, 8, 0))).toBe(
-      Date.UTC(2026, 2, 9, 9, 30),
+    // Use historical transitions: Vancouver stopped changing clocks in 2026.
+    expect(next(calculator, "30 2 * * *", "America/Vancouver", Date.UTC(2025, 2, 9, 8, 0))).toBe(
+      Date.UTC(2025, 2, 10, 9, 30),
     )
 
-    const firstRepeatedTime = Date.UTC(2026, 10, 1, 8, 30)
+    const firstRepeatedTime = Date.UTC(2025, 10, 2, 8, 30)
     expect(next(calculator, "30 1 * * *", "America/Vancouver", firstRepeatedTime)).toBe(
-      Date.UTC(2026, 10, 1, 9, 30),
+      Date.UTC(2025, 10, 2, 9, 30),
     )
   })
 
