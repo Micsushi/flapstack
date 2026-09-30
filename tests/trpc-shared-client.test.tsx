@@ -52,10 +52,15 @@ it("keeps React and imperative IPC requests distinct across provider remounts", 
         reply(direct.id, board)
         reply(hooked.id, [])
         expect(await result).toEqual(board)
-        await new Promise((resolve) => setTimeout(resolve, 0))
       })
       expect(direct.id).not.toBe(hooked.id)
-      expect(approvals).toEqual([])
+      await vi.waitFor(async () => {
+        // React Query notifies asynchronously; flush until the exact result renders.
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0))
+        })
+        expect(approvals).toEqual([])
+      })
       await act(async () => root.unmount())
       if (round === 0) root = createRoot(document.createElement("div"))
     }
