@@ -1,5 +1,6 @@
 "use client"
 
+import { recordsNavigationAtom } from "../project-records/shared-records-board"
 import { ChatStatusIndicators, ChatStatusProvider } from "../agents/ui/chat-status-indicators"
 import React from "react"
 import { useProjectSelectionGuard } from "./use-project-selection-guard"
@@ -3112,6 +3113,7 @@ function AgentsSidebarInner({
     newChatDraftReminderEnabledAtom,
   )
   const desktopView = useAtomValue(desktopViewAtom)
+  const setRecordsNavigation = useSetAtom(recordsNavigationAtom)
   const setDesktopView = useSetAtom(desktopViewAtom)
   const [loadingSubChats] = useAtom(loadingSubChatsAtom)
   const pendingQuestions = useAtomValue(pendingUserQuestionsAtom)
@@ -3228,7 +3230,13 @@ function AgentsSidebarInner({
   const [hiddenNavigationItems, setHiddenNavigationItems] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem("flapstack-sidebar-hidden-navigation-items")
-      return stored ? new Set<string>(JSON.parse(stored) as string[]) : new Set()
+      return stored
+        ? new Set<string>(
+            (JSON.parse(stored) as string[]).map((label) =>
+              label === "Tasks" ? "Work board" : label === "Orchestration fleet" ? "Fleet" : label,
+            ),
+          )
+        : new Set()
     } catch {
       return new Set()
     }
@@ -7233,8 +7241,9 @@ function AgentsSidebarInner({
     ...(betaFeatures.automations && featureVisibility.isVisible("automations")
       ? ["Automations", "Inbox"]
       : []),
-    ...(betaFeatures.orchestration && featureVisibility.isVisible("orchestration")
-      ? ["Orchestration fleet"]
+    ...((betaFeatures.orchestration || betaFeatures.planning) &&
+    featureVisibility.isVisible("orchestration")
+      ? ["Fleet"]
       : []),
     ...(selectedProject && betaFeatures.planning && featureVisibility.isVisible("plan")
       ? ["Plan"]
@@ -7249,7 +7258,7 @@ function AgentsSidebarInner({
     featureVisibility.isVisible("saved-workspaces")
       ? ["Saved workspaces"]
       : []),
-    ...(betaFeatures.planning ? ["Tasks"] : []),
+    ...(betaFeatures.planning ? ["Work board", "Yap", "Setups"] : []),
   ].sort((a, b) => a.localeCompare(b))
   const hasVisibleNavigationItems = navigationVisibilityLabels.some(
     (label) => !hiddenNavigationItems.has(label),
@@ -7446,10 +7455,11 @@ function AgentsSidebarInner({
                     },
                   ]
                 : []),
-              ...(betaFeatures.orchestration && featureVisibility.isVisible("orchestration")
+              ...((betaFeatures.orchestration || betaFeatures.planning) &&
+              featureVisibility.isVisible("orchestration")
                 ? [
                     {
-                      label: "Orchestration fleet",
+                      label: "Fleet",
                       Icon: Network,
                       isActive: desktopView === "orchestration-fleet",
                       onClick: () => {
@@ -7512,17 +7522,36 @@ function AgentsSidebarInner({
               ...(betaFeatures.planning
                 ? [
                     {
-                      label: "Tasks",
+                      label: "Work board",
                       Icon: ClipboardList,
                       isActive: desktopView === "tasks",
                       onClick: () => {
                         setSelectedChatId(null)
                         setSelectedDraftId(null)
                         setShowNewChatForm(false)
+                        setRecordsNavigation(null)
                         setDesktopView("tasks")
                         setSearchQuery("")
                       },
                     },
+                    ...(
+                      [
+                        ["Yap", "records-yap", MessageSquarePlus],
+                        ["Setups", "records-setups", Workflow],
+                      ] as const
+                    ).map(([label, view, Icon]) => ({
+                      label,
+                      Icon,
+                      isActive: desktopView === view,
+                      onClick: () => {
+                        setSelectedChatId(null)
+                        setSelectedDraftId(null)
+                        setShowNewChatForm(false)
+                        setRecordsNavigation(null)
+                        setDesktopView(view)
+                        setSearchQuery("")
+                      },
+                    })),
                   ]
                 : []),
             ]

@@ -83,7 +83,21 @@ must be committed before pinning. Packaged apps do not need a Records Git clone.
 
 ## Workflow
 
-Use Board for checked task transitions and questions. Use Setups for saved graph
+Work board, Yap, Fleet and Setups are separate sidebar destinations. Work board
+shows equal-height collapsed tickets; click a title to expand its context and
+actions. Each ticket also shows a short reference such as `#42`. Expand a ticket
+and edit Reference to replace that display with a text ID such as `FLAP-42`.
+Save reference applies the change; leaving the field blank restores its original
+automatic number. Custom references must be unique in the profile, ignoring case,
+and cannot use the reserved `#number` format. Undo/Redo supports reference changes
+without discarding newer unsaved text. Search either the custom reference or the
+original automatic number to find the ticket. Numbers are assigned once per document path and
+record ID, saved in the app/browser profile, and never reused when a ticket
+leaves the board. They survive title, status, grouping and ordering changes.
+They are local board references, not replacements for Project Records IDs;
+other devices or profiles may assign different numbers. Clearing that profile's
+site data removes the numbering. If local storage is unavailable, the board
+shows the original IDs and an error instead of claiming a number was saved. Use Work board for checked task transitions and questions. Use Setups for saved graph
 versions, execution policy and project assignments. Fleet shows worker attempts;
 a finished worker does not by itself mark its task verified. Yap keeps source
 material, proposed destinations and approval separate. Review each action before

@@ -1311,6 +1311,8 @@ export type DesktopView =
   | "settings"
   | "usage"
   | "tasks"
+  | "records-yap"
+  | "records-setups"
   | "plan"
   | "discussions"
   | "project-records"

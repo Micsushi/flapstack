@@ -408,12 +408,18 @@ function AgentsContentInner() {
   const [yapReview, setYapReview] = useState<YapReviewRequest | null>(null)
   const betaFeatures = useBetaFeatures()
   const effectiveDesktopView =
-    (desktopView === "orchestration-fleet" && !betaFeatures.orchestration) ||
+    (desktopView === "orchestration-fleet" &&
+      !betaFeatures.orchestration &&
+      !betaFeatures.planning) ||
     ((desktopView === "automations" ||
       desktopView === "automations-detail" ||
       desktopView === "inbox") &&
       !betaFeatures.automations) ||
-    ((desktopView === "tasks" || desktopView === "plan" || desktopView === "discussions") &&
+    ((desktopView === "tasks" ||
+      desktopView === "records-yap" ||
+      desktopView === "records-setups" ||
+      desktopView === "plan" ||
+      desktopView === "discussions") &&
       !betaFeatures.planning) ||
     (desktopView === "project-vault" && !betaFeatures.projectMemory) ||
     (desktopView === "saved-workspaces" && !betaFeatures.savedWorkspaces)
@@ -492,6 +498,10 @@ function AgentsContentInner() {
     if (desktopView !== effectiveDesktopView) setDesktopView(effectiveDesktopView)
   }, [desktopView, effectiveDesktopView, setDesktopView])
 
+  useEffect(() => {
+    if (desktopView !== "records-yap") setYapReview(null)
+  }, [desktopView])
+
   // All proposal entry points hand off to the shared Yap review boundary.
   // The target is kept in renderer state until the shared controller has
   // loaded it, so opening review from a tray does not lose its identity.
@@ -506,7 +516,7 @@ function AgentsContentInner() {
         return
       }
       setYapReview({ ...detail, source: detail.source ?? "yap-intake" })
-      setDesktopView("tasks")
+      setDesktopView("records-yap")
     }
     window.addEventListener(YAP_REVIEW_REQUEST_EVENT, handleYapReview)
     return () => window.removeEventListener(YAP_REVIEW_REQUEST_EVENT, handleYapReview)
@@ -2931,12 +2941,12 @@ function AgentsContentInner() {
           <div className="h-full overflow-y-auto select-text">
             <AgentsUsageTab />
           </div>
+        ) : effectiveDesktopView === "records-yap" ? (
+          <SharedRecordsBoard initialView="yap" yapReview={yapReview} />
+        ) : effectiveDesktopView === "records-setups" ? (
+          <SharedRecordsBoard initialView="setups" />
         ) : effectiveDesktopView === "tasks" ? (
-          yapReview ? (
-            <SharedRecordsBoard initialView="board" yapReview={yapReview} />
-          ) : (
-            <KanbanView />
-          )
+          <KanbanView />
         ) : effectiveDesktopView === "plan" ? (
           <PlanView />
         ) : effectiveDesktopView === "discussions" ? (
@@ -3090,12 +3100,12 @@ function AgentsContentInner() {
             <div className="h-full overflow-y-auto select-text">
               <AgentsUsageTab />
             </div>
+          ) : effectiveDesktopView === "records-yap" ? (
+            <SharedRecordsBoard initialView="yap" yapReview={yapReview} />
+          ) : effectiveDesktopView === "records-setups" ? (
+            <SharedRecordsBoard initialView="setups" />
           ) : effectiveDesktopView === "tasks" ? (
-            yapReview ? (
-              <SharedRecordsBoard initialView="board" yapReview={yapReview} />
-            ) : (
-              <KanbanView />
-            )
+            <KanbanView />
           ) : effectiveDesktopView === "plan" ? (
             <PlanView />
           ) : effectiveDesktopView === "discussions" ? (

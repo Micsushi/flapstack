@@ -65,15 +65,8 @@ export function SharedRecordsBoard({
     const destination = navigationRef.current
     return mountBoard(host.current, {
       embedded: true,
-      view: yapReview
-        ? "yap"
-        : initialView === "fleet"
-          ? "fleet"
-          : destination?.view === "setups"
-            ? "setups"
-            : destination?.view === "yap"
-              ? "yap"
-              : "board",
+      hostNavigation: true,
+      view: yapReview ? "yap" : initialView,
       selectedProposalRef:
         yapReview?.proposalId || yapReview?.proposalIds?.[0]
           ? { proposalId: yapReview.proposalId || yapReview.proposalIds?.[0] }
@@ -83,7 +76,15 @@ export function SharedRecordsBoard({
       selectedAgentRef: destination?.agentRef ?? null,
       onNavigate: (next) => {
         setNavigation(next)
-        setDesktopView(next.view === "fleet" ? "orchestration-fleet" : "tasks")
+        setDesktopView(
+          next.view === "fleet"
+            ? "orchestration-fleet"
+            : next.view === "yap"
+              ? "records-yap"
+              : next.view === "setups"
+                ? "records-setups"
+                : "tasks",
+        )
       },
       onCreateProposalChat: async (proposal) => {
         const project = projectRef.current

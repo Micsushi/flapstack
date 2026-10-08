@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client"
 import { expect, it, vi } from "vitest"
 import { getDefaultStore } from "jotai"
 import {
+  desktopViewAtom,
   selectedChatIsRemoteAtom,
   selectedDraftIdAtom,
   selectedChatScopeAtom,
@@ -117,8 +118,16 @@ it("the actual shared Board forwards canonical identity and the explicit local p
     await act(async () => root.render(<SharedRecordsBoard />))
     const shadow = host.querySelector("[aria-label='Project records workspace']")!.shadowRoot!
     await vi.waitFor(() => expect(shadow.textContent).toContain("Isolated work"))
-    const card = Array.from(shadow.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("Isolated work"),
+    const ticket = shadow.querySelector(".ticket-compact") as HTMLDetailsElement
+    expect(ticket.open).toBe(false)
+    expect(ticket.querySelector(".ticket-title")?.textContent).toBe("Isolated work")
+    expect(shadow.querySelector(".board-settings")?.hasAttribute("open")).toBe(false)
+    await act(async () => {
+      ticket.open = true
+      ticket.dispatchEvent(new Event("toggle"))
+    })
+    const card = Array.from(ticket.querySelectorAll("button")).find(
+      (button) => button.textContent === "Open details",
     )!
     expect(card).toBeTruthy()
     await act(async () => card.click())
@@ -162,6 +171,31 @@ it("the actual shared Board forwards canonical identity and the explicit local p
       id: "local-id",
     })
     expect(fixture.utils.chats.invalidate).toHaveBeenCalled()
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+  }
+})
+
+it.each([
+  ["board", "tasks", "#board-content"],
+  ["yap", "records-yap", "#yap-surface"],
+  ["fleet", "orchestration-fleet", "#fleet-surface"],
+  ["setups", "records-setups", "#setups-root"],
+] as const)("opens %s as its own workspace destination", async (view, route, surface) => {
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(<SharedRecordsBoard initialView={view} />))
+    const shadow = host.querySelector("[aria-label='Project records workspace']")!.shadowRoot!
+    expect((shadow.querySelector(surface) as HTMLElement).hidden).toBe(false)
+    expect((shadow.querySelector(".canonical-tabs") as HTMLElement).hidden).toBe(true)
+    expect((shadow.querySelector("#board-page-heading") as HTMLElement).hidden).toBe(
+      view !== "board",
+    )
+    await act(async () => (shadow.querySelector(`#open-${view}`) as HTMLButtonElement).click())
+    expect(getDefaultStore().get(desktopViewAtom)).toBe(route)
   } finally {
     await act(async () => root.unmount())
     host.remove()
