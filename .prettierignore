@@ -2,6 +2,8 @@ node_modules
 out
 dist
 release
+release-preview
+.local-evidence
 coverage
 docs/evidence
 tests/fixtures/extension-management/native

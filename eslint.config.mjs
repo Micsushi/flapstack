@@ -12,9 +12,11 @@ export default [
     ignores: [
       "node_modules/**",
       ".generated/**",
+      ".local-evidence/**",
       "out/**",
       "dist/**",
       "release/**",
+      "release-preview/**",
       "coverage/**",
       "resources/bin/**",
       "native/**/target/**",
