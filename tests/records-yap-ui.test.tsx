@@ -15,7 +15,8 @@ describe("canonical Yap review entry", () => {
     expect(shared).toContain("selectedProposalRef")
     expect(shared).toContain('? "yap"')
     expect(agents).toContain("YAP_REVIEW_REQUEST_EVENT")
-    expect(agents).toContain('SharedRecordsBoard initialView="board"')
+    expect(agents).toContain('setDesktopView("records-yap")')
+    expect(agents).toContain('SharedRecordsBoard initialView="yap" yapReview={yapReview}')
   })
 
   it("keeps source identity and accessible attachment viewing in the native tray", () => {
