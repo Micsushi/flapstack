@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import simpleGit from "simple-git"
+import { simpleGit } from "simple-git"
 import { sleep } from "../../../shared/sleep"
 
 const APPLY_RETRIES = 3

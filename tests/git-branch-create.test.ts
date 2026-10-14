@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import simpleGit from "simple-git"
+import { simpleGit } from "simple-git"
 import { afterEach, describe, expect, it } from "vitest"
 import { createBranchAtWorktree } from "../src/main/lib/git/branches"
 

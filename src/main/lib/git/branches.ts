@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm"
 import { getDatabase, chats } from "../db"
-import simpleGit, { type SimpleGit } from "simple-git"
+import { simpleGit, type SimpleGit } from "simple-git"
 import { z } from "zod"
 import { publicProcedure, router } from "../trpc"
 import { assertRegisteredWorktree, getRegisteredChat, gitSwitchBranch } from "./security"

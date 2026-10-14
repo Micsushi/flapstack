@@ -1,4 +1,4 @@
-import simpleGit, { SimpleGit, SimpleGitOptions } from "simple-git"
+import { simpleGit, SimpleGit, SimpleGitOptions } from "simple-git"
 import { stat, unlink } from "fs/promises"
 import { join } from "path"
 import { sleep } from "../../../shared/sleep"

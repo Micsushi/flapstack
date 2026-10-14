@@ -5,7 +5,7 @@ import { lstat, mkdir, readFile, realpath, stat, unlink } from "node:fs/promises
 import { homedir, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
-import simpleGit from "simple-git"
+import { simpleGit } from "simple-git"
 import { adjectives, animals, uniqueNamesGenerator } from "unique-names-generator"
 import { checkGitLfsAvailable, getShellEnvironment } from "./shell-env"
 import { executeWorktreeSetup } from "./worktree-config"

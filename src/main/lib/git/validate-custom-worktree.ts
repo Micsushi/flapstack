@@ -1,6 +1,6 @@
 import { realpath, stat } from "node:fs/promises"
 import { isAbsolute } from "node:path"
-import simpleGit from "simple-git"
+import { simpleGit } from "simple-git"
 import { getCurrentBranch } from "./worktree"
 
 export type CustomWorktreeValidation =

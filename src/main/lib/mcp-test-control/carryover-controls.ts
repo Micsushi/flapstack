@@ -3,7 +3,7 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { eq, inArray } from "drizzle-orm"
-import simpleGit from "simple-git"
+import { simpleGit } from "simple-git"
 import { captureCheckpoint, captureRunManifest } from "../checkpoints"
 import {
   agentRuns,
