@@ -1,3 +1,5 @@
+import { WorkspacePage, WorkspaceTitle, WorkspaceHeader } from "../../components/ui/workspace"
+import { NativeSelect } from "../../components/ui/native-select"
 import {
   useCallback,
   useEffect,
@@ -711,8 +713,9 @@ export function SavedWorkspacesView({
   }
 
   return (
-    <main className="flex h-full min-h-0 flex-col gap-3 p-3" aria-label="Saved workspaces">
-      <header className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/20 p-2">
+    <WorkspacePage className="flex min-h-0 flex-col gap-4 p-5" aria-label="Saved workspaces">
+      {!popoutPaneId && <WorkspaceTitle>Saved workspaces</WorkspaceTitle>}
+      <WorkspaceHeader className="justify-start border-b pb-4">
         {popoutPaneId && (
           <span className="text-sm font-medium">
             Workspace pane <span className="font-mono text-xs">{popoutPaneId}</span>
@@ -729,16 +732,16 @@ export function SavedWorkspacesView({
                 aria-pressed={showArchived}
               >
                 <Archive className="mr-1 h-4 w-4" />
-                {showArchived ? "Archived" : "Active"}
+                {showArchived ? "Show active" : "Show archived"}
               </Button>
             )}
             <label className="sr-only" htmlFor="saved-workspace-picker">
               Saved workspace
             </label>
-            <select
+            <NativeSelect
               id="saved-workspace-picker"
               aria-label="Saved workspace"
-              className="h-9 min-w-48 rounded-lg border border-input bg-background px-3 text-sm"
+              className="min-w-0 max-w-full"
               value={selectedWorkspaceId ?? ""}
               onChange={(event) => selectWorkspace(event.target.value)}
               disabled={
@@ -751,33 +754,41 @@ export function SavedWorkspacesView({
                   {workspace.name}
                 </option>
               ))}
-            </select>
-            <form className="flex min-w-64 flex-1 items-center gap-2" onSubmit={createWorkspace}>
-              <label className="sr-only" htmlFor="saved-workspace-name">
-                New workspace name
-              </label>
-              <Input
-                id="saved-workspace-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Workspace name"
-                maxLength={256}
-              />
-              <Button
-                type="submit"
-                variant="outline"
-                disabled={
-                  !initialChatId ||
-                  createMutation.isPending ||
-                  dirty ||
-                  saving ||
-                  showArchived ||
-                  selectedWorkspaceArchived
-                }
+            </NativeSelect>
+            <details className="beta-disclosure group">
+              <summary className="cursor-pointer rounded-md border px-3 py-2 text-sm">
+                New workspace
+              </summary>
+              <form
+                className="mt-2 flex min-w-0 flex-wrap items-center gap-2"
+                onSubmit={createWorkspace}
               >
-                Create from chat
-              </Button>
-            </form>
+                <label className="sr-only" htmlFor="saved-workspace-name">
+                  New workspace name
+                </label>
+                <Input
+                  id="saved-workspace-name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Workspace name"
+                  maxLength={256}
+                />
+                <Button
+                  type="submit"
+                  variant="outline"
+                  disabled={
+                    !initialChatId ||
+                    createMutation.isPending ||
+                    dirty ||
+                    saving ||
+                    showArchived ||
+                    selectedWorkspaceArchived
+                  }
+                >
+                  Create from chat
+                </Button>
+              </form>
+            </details>
             <Button
               type="button"
               onClick={() => void saveCurrent()}
@@ -791,81 +802,84 @@ export function SavedWorkspacesView({
               disabled={!layout}
               onClick={() => void openWorkspaceWindow()}
             >
-              <PanelsTopLeft className="mr-1 h-4 w-4" /> Open workspace window
+              <PanelsTopLeft className="mr-1 h-4 w-4" /> Open in new window
             </Button>
           </>
         )}
-      </header>
+      </WorkspaceHeader>
       {!popoutPaneId && selected.data && (
-        <section
-          className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/10 p-2"
-          aria-label="Workspace lifecycle"
-        >
-          <form className="flex min-w-64 flex-1 items-center gap-2" onSubmit={renameWorkspace}>
-            <label className="sr-only" htmlFor="saved-workspace-rename">
-              Workspace name
-            </label>
-            <Input
-              id="saved-workspace-rename"
-              value={renameValue}
-              onChange={(event) => setRenameValue(event.target.value)}
-              maxLength={256}
-            />
+        <details className="beta-disclosure rounded-md border border-border p-2">
+          <summary className="cursor-pointer text-sm">Workspace options</summary>
+          <section
+            className="mt-2 flex flex-wrap items-center gap-2"
+            aria-label="Workspace lifecycle"
+          >
+            <form className="flex min-w-64 flex-1 items-center gap-2" onSubmit={renameWorkspace}>
+              <label className="sr-only" htmlFor="saved-workspace-rename">
+                Workspace name
+              </label>
+              <Input
+                id="saved-workspace-rename"
+                value={renameValue}
+                onChange={(event) => setRenameValue(event.target.value)}
+                maxLength={256}
+              />
+              <Button
+                type="submit"
+                variant="outline"
+                disabled={
+                  renameMutation.isPending ||
+                  !renameValue.trim() ||
+                  renameValue.trim() === selected.data.name
+                }
+              >
+                Rename
+              </Button>
+            </form>
+            {selectedWorkspaceArchived ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void restoreWorkspace()}
+                disabled={restoreMutation.isPending}
+              >
+                <RotateCcw className="mr-1 h-4 w-4" /> Restore
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => previewLifecycleAction("archive")}
+                disabled={archiveMutation.isPending || dirty || saving}
+              >
+                <Archive className="mr-1 h-4 w-4" /> Archive
+              </Button>
+            )}
             <Button
-              type="submit"
+              type="button"
               variant="outline"
-              disabled={
-                renameMutation.isPending ||
-                !renameValue.trim() ||
-                renameValue.trim() === selected.data.name
+              onClick={() => void duplicateWorkspace()}
+              disabled={duplicateDisabled}
+              title={
+                selected.data.owner?.kind === "orchestration"
+                  ? "Operation workspaces cannot be duplicated."
+                  : initialWorkspaceId
+                    ? "Duplicate workspaces from the main Saved Workspaces view."
+                    : undefined
               }
             >
-              Rename
+              <Copy className="mr-1 h-4 w-4" /> Duplicate workspace
             </Button>
-          </form>
-          {selectedWorkspaceArchived ? (
             <Button
               type="button"
-              variant="outline"
-              onClick={() => void restoreWorkspace()}
-              disabled={restoreMutation.isPending}
+              variant="destructive"
+              onClick={() => previewLifecycleAction("delete")}
+              disabled={deleteMutation.isPending || dirty || saving}
             >
-              <RotateCcw className="mr-1 h-4 w-4" /> Restore
+              <Trash2 className="mr-1 h-4 w-4" /> Delete metadata
             </Button>
-          ) : (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => previewLifecycleAction("archive")}
-              disabled={archiveMutation.isPending || dirty || saving}
-            >
-              <Archive className="mr-1 h-4 w-4" /> Archive
-            </Button>
-          )}
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void duplicateWorkspace()}
-            disabled={duplicateDisabled}
-            title={
-              selected.data.owner?.kind === "orchestration"
-                ? "Operation workspaces cannot be duplicated."
-                : initialWorkspaceId
-                  ? "Duplicate workspaces from the main Saved Workspaces view."
-                  : undefined
-            }
-          >
-            <Copy className="mr-1 h-4 w-4" /> Duplicate workspace
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            onClick={() => previewLifecycleAction("delete")}
-            disabled={deleteMutation.isPending || dirty || saving}
-          >
-            <Trash2 className="mr-1 h-4 w-4" /> Delete metadata
-          </Button>
-        </section>
+          </section>
+        </details>
       )}
       {lifecycleAction && selected.data && (
         <WorkspaceLifecycleImpact
@@ -889,8 +903,7 @@ export function SavedWorkspacesView({
         />
       )}
       <div className="min-h-5 text-xs text-muted-foreground" role="status" aria-live="polite">
-        {status ||
-          (!initialChatId ? "Open a chat to create a workspace." : "Select or create a workspace.")}
+        {status || (!selected.data && !initialChatId ? "Open a chat to create a workspace." : "")}
       </div>
       <div className="min-h-0 flex-1">
         {list.isLoading || (projectId && !list.data) ? (
@@ -994,11 +1007,11 @@ export function SavedWorkspacesView({
           <WorkspaceNotice title={showArchived ? "No archived workspaces" : "No workspace layout"}>
             {showArchived
               ? "Archived workspace metadata appears here without changing referenced work."
-              : "Create a workspace from the currently open chat. Empty state does not create fake pane bindings."}
+              : "Create a workspace from the currently open chat."}
           </WorkspaceNotice>
         )}
       </div>
-    </main>
+    </WorkspacePage>
   )
 }
 

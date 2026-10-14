@@ -51,16 +51,18 @@ it("removes Windows recent aliases without opening the file and supports shared 
         </Provider>,
       ),
     )
-    const remove = document.querySelector<HTMLButtonElement>(
-      'button[aria-label="Remove App.tsx from recent files"]',
+    const remove = document.querySelector<HTMLSelectElement>(
+      'select[aria-label="Remove recent file"]',
     )!
     expect(remove).not.toBeNull()
     await act(async () => {
-      remove.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
-      remove.click()
+      remove.focus()
+      remove.value = "src/App.tsx"
+      remove.dispatchEvent(new Event("change", { bubbles: true }))
     })
     expect(select).not.toHaveBeenCalled()
     expect(store.get(recentlyOpenedFilesAtom)).toEqual([])
+    expect(document.activeElement).toBe(document.querySelector('[role="combobox"]'))
     await act(async () => {
       await undoAppAction()
     })

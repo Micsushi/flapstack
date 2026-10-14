@@ -141,3 +141,102 @@ it("removes revoked approval cards and reports notification delivery failure", (
   stale.click()
   expect(app.send).not.toHaveBeenCalled()
 })
+
+it("preserves a chat draft across updates and clears it only after its matching send succeeds", () => {
+  const app = companion()
+  app.api.connected(true)
+  app.snapshot([{ kind: "project", id: "project", name: "Example", version: 1 }])
+  app.button("New chat")!.click()
+  const input = app.window.document.getElementById("message") as HTMLTextAreaElement
+  input.value = "Explain this project"
+  input.dispatchEvent(new app.window.Event("input"))
+  app.snapshot([{ kind: "project", id: "project", name: "Example", version: 2 }])
+  expect(input.value).toBe("Explain this project")
+  app.window.document
+    .getElementById("compose")!
+    .dispatchEvent(new app.window.Event("submit", { cancelable: true }))
+  const command = JSON.parse(app.send.mock.calls[0]![0])
+  expect(command.action).toEqual({
+    type: "chat.create",
+    harness: "codex",
+    message: "Explain this project",
+  })
+  expect(input.value).toBe("Explain this project")
+  app.api.receive({
+    kind: "event",
+    payload: { type: "action.result", commandId: command.commandId, status: "denied" },
+  })
+  expect(input.value).toBe("Explain this project")
+  expect(app.window.document.getElementById("send-status")!.textContent).toContain("Not sent")
+})
+
+it("loads paginated snapshots without losing earlier projects", () => {
+  const app = companion()
+  app.api.connected(true)
+  app.api.receive({
+    kind: "snapshot",
+    freshUntil: 60000,
+    nextCursor: "next",
+    items: [{ kind: "project", id: "project", name: "Example", version: 1 }],
+  })
+  expect(JSON.parse(app.send.mock.calls[0]![0]).kind).toBe("snapshot.page")
+  app.api.receive({
+    kind: "snapshot",
+    freshUntil: 60000,
+    items: [{ kind: "chat", id: "chat", name: "Existing", version: 1 }],
+  })
+  app.button("New chat")!.click()
+  expect(app.window.document.getElementById("project")!.textContent).toBe("Example")
+})
+
+it("keeps an unsent new-chat draft when returning through the chat list", () => {
+  const app = companion()
+  app.api.connected(true)
+  app.snapshot([{ kind: "project", id: "project", name: "Example", version: 1 }])
+  app.button("New chat")!.click()
+  const input = app.window.document.getElementById("message") as HTMLTextAreaElement
+  input.value = "Keep this draft"
+  input.dispatchEvent(new app.window.Event("input"))
+  app.button("Chats")!.click()
+  app.button("New chat")!.click()
+  expect(input.value).toBe("Keep this draft")
+})
+
+it("recovers a received send after reconnect without sending the message again", () => {
+  const app = companion()
+  app.api.connected(true)
+  app.snapshot([{ kind: "project", id: "project", name: "Example", version: 1 }])
+  app.button("New chat")!.click()
+  const input = app.window.document.getElementById("message") as HTMLTextAreaElement
+  input.value = "Start the task"
+  input.dispatchEvent(new app.window.Event("input"))
+  app.window.document
+    .getElementById("compose")!
+    .dispatchEvent(new app.window.Event("submit", { cancelable: true }))
+  const command = JSON.parse(app.send.mock.calls[0]![0])
+  app.api.connected(false)
+  app.api.connected(true)
+  app.snapshot([
+    { kind: "chat", id: "mobile-" + command.commandId, name: "Start the task", version: 1 },
+  ])
+  app.api.receive({
+    kind: "conversation",
+    conversation: {
+      chatId: "mobile-" + command.commandId,
+      subChatId: "sub",
+      conversations: [{ id: "sub" }],
+      messages: [],
+      acceptedCommands: [command.commandId],
+      before: null,
+      pageBefore: null,
+      status: "pending",
+    },
+  })
+  expect(
+    app.send.mock.calls
+      .map((call) => JSON.parse(call[0]))
+      .filter((value) => value.kind === "command"),
+  ).toHaveLength(1)
+  expect(app.window.document.getElementById("send-status")!.textContent).toBe("Sent")
+  expect(input.value).toBe("")
+})

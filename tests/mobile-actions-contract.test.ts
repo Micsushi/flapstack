@@ -25,6 +25,8 @@ const base = {
 describe("mobile action contract", () => {
   it("allowlists the shared run, orchestration, automation, clarification, and approval actions", () => {
     expect(mobileActionIds).toEqual([
+      "chat.create",
+      "chat.send",
       "clarification.answer",
       "run.steer",
       "run.pause",

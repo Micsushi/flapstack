@@ -1,5 +1,8 @@
 "use client"
 
+import { WorkspaceRow } from "../../components/ui/workspace"
+
+import { WorkspaceTitle, WorkspaceHeader } from "../../components/ui/workspace"
 import { diffLines } from "diff"
 import { atom, useAtom, useAtomValue, useSetAtom } from "jotai"
 import {
@@ -17,6 +20,7 @@ import {
   RotateCcw,
   Save,
   Search,
+  MoreHorizontal,
 } from "lucide-react"
 import {
   useDeferredValue,
@@ -41,6 +45,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../../components/ui/alert-dialog"
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "../../components/ui/dropdown-menu"
 import { Button } from "../../components/ui/button"
 import { Checkbox } from "../../components/ui/checkbox"
 import { Input } from "../../components/ui/input"
@@ -114,6 +124,9 @@ export function ProjectVaultView() {
       const next = typeof update === "function" ? update(existing) : update
       return { ...current, [projectId]: next }
     })
+  const [navigationOpen, setNavigationOpen] = useState(false)
+  const navigationToggleRef = useRef<HTMLButtonElement>(null)
+  const historyToggleRef = useRef<HTMLButtonElement>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [showGraph, setShowGraph] = useState(false)
   const [showCustomNotes, setShowCustomNotes] = useState(false)
@@ -401,7 +414,8 @@ export function ProjectVaultView() {
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
         event.preventDefault()
-        searchInputRef.current?.focus()
+        setNavigationOpen(true)
+        requestAnimationFrame(() => searchInputRef.current?.focus())
       }
     }
     window.addEventListener("keydown", onKeyDown)
@@ -422,7 +436,7 @@ export function ProjectVaultView() {
 
   if (sectionsQuery.error || registryQuery.error || policyQuery.error) {
     return (
-      <div className="flex h-full flex-col bg-background select-text">
+      <div className="beta-surface flex h-full flex-col bg-background select-text">
         <VaultHeader
           projectName={project.name}
           onClose={() => setDesktopView(null)}
@@ -446,7 +460,7 @@ export function ProjectVaultView() {
 
   if (sections.length === 0 && unsupportedSections.length > 0) {
     return (
-      <div className="flex h-full flex-col bg-background select-text">
+      <div className="beta-surface flex h-full flex-col bg-background select-text">
         <VaultHeader
           projectName={project.name}
           onClose={() => setDesktopView(null)}
@@ -471,13 +485,9 @@ export function ProjectVaultView() {
         />
         <main className="mx-auto w-full max-w-2xl p-8">
           <BookOpen className="mb-4 h-9 w-9 text-muted-foreground" />
-          <h1 className="text-xl font-semibold">Create project knowledge vault</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Markdown stays in app-managed central storage by default. Secrets are rejected and no
-            files are added to the project unless its location policy is changed explicitly.
-          </p>
+          <WorkspaceTitle>Create project knowledge vault</WorkspaceTitle>
           <fieldset className="mt-6 space-y-2">
-            <legend className="mb-2 text-sm font-medium">Typed sections</legend>
+            <legend className="mb-2 text-sm font-medium">Sections</legend>
             {(registryQuery.data ?? []).map((section) => (
               <label key={section.id} className="flex items-center gap-3 rounded-md border p-3">
                 <Checkbox
@@ -492,7 +502,6 @@ export function ProjectVaultView() {
                 />
                 <span>
                   <span className="block text-sm font-medium">{section.title}</span>
-                  <span className="block text-xs text-muted-foreground">{section.fileName}</span>
                 </span>
               </label>
             ))}
@@ -573,7 +582,10 @@ export function ProjectVaultView() {
   const conflictDiff = editor?.conflict ? diffLines(editor.conflict.content, editor.draft) : []
 
   return (
-    <div className="flex h-full flex-col bg-background select-text" data-project-vault-view>
+    <div
+      className="beta-surface flex h-full flex-col bg-background select-text"
+      data-project-vault-view
+    >
       <VaultHeader
         projectName={project.name}
         onClose={() => setDesktopView(null)}
@@ -589,9 +601,24 @@ export function ProjectVaultView() {
           changed.
         </div>
       )}
-      <div className="flex min-h-0 flex-1">
+      <Button
+        ref={navigationToggleRef}
+        size="sm"
+        variant="ghost"
+        className="shrink-0 self-start md:hidden"
+        aria-expanded={navigationOpen}
+        aria-controls="vault-navigation"
+        onClick={() => setNavigationOpen((value) => !value)}
+      >
+        Sections
+      </Button>
+      <div className="relative flex min-h-0 flex-1 flex-col md:flex-row">
         <aside
-          className="flex w-64 shrink-0 flex-col border-r bg-muted/15"
+          id="vault-navigation"
+          className={cn(
+            "max-h-[45%] w-full shrink-0 flex-col overflow-auto border-b bg-muted/15 md:max-h-none md:w-56 md:border-b-0 md:border-r",
+            navigationOpen ? "flex" : "hidden md:flex",
+          )}
           aria-label="Vault navigation"
         >
           <div className="border-b p-3">
@@ -622,6 +649,9 @@ export function ProjectVaultView() {
               onSelect={(sectionId) => {
                 if (isSectionId(sectionId)) {
                   setSelectedSectionId(sectionId)
+                  setNavigationOpen(false)
+                  if (window.matchMedia("(max-width: 767px)").matches)
+                    navigationToggleRef.current?.focus()
                   setShowGraph(false)
                   setShowCustomNotes(false)
                 }
@@ -636,12 +666,16 @@ export function ProjectVaultView() {
               editors={editors}
               onSelect={(sectionId) => {
                 setSelectedSectionId(sectionId)
+                setNavigationOpen(false)
+                if (window.matchMedia("(max-width: 767px)").matches)
+                  navigationToggleRef.current?.focus()
                 setShowGraph(false)
                 setShowCustomNotes(false)
               }}
             />
           )}
-          <div className="border-t px-3 py-2 text-[10px] text-muted-foreground">
+          <details className="beta-disclosure border-t px-3 py-2 text-xs text-muted-foreground">
+            <summary className="cursor-pointer py-1">Storage details</summary>
             <span className="block font-medium text-foreground">
               {policyQuery.data?.locationMode === "project-owned"
                 ? "Project-owned storage"
@@ -653,14 +687,17 @@ export function ProjectVaultView() {
             <span className="block">
               Git tracking {policyQuery.data?.gitTrackingEnabled ? "enabled" : "disabled"}
             </span>
-          </div>
-          <VaultContextPicker
-            sections={sections}
-            selected={(contextSelectionQuery.data?.projectSectionIds ?? []).filter(isSectionId)}
-            saving={updateContextSelectionMutation.isPending}
-            error={contextSelectionQuery.error?.message}
-            onToggle={(sectionId, enabled) => void handleContextToggle(sectionId, enabled)}
-          />
+          </details>
+          <details className="beta-disclosure border-t px-3 py-2 text-xs">
+            <summary className="cursor-pointer py-1">Run context</summary>
+            <VaultContextPicker
+              sections={sections}
+              selected={(contextSelectionQuery.data?.projectSectionIds ?? []).filter(isSectionId)}
+              saving={updateContextSelectionMutation.isPending}
+              error={contextSelectionQuery.error?.message}
+              onToggle={(sectionId, enabled) => void handleContextToggle(sectionId, enabled)}
+            />
+          </details>
           <div className="mt-auto border-t p-2">
             <Button
               variant={showGraph ? "secondary" : "ghost"}
@@ -687,6 +724,7 @@ export function ProjectVaultView() {
               <FolderTree className="mr-2 h-4 w-4" /> Custom notes
             </Button>
             <Button
+              ref={historyToggleRef}
               variant={showHistory ? "secondary" : "ghost"}
               size="sm"
               className="w-full justify-start"
@@ -716,21 +754,22 @@ export function ProjectVaultView() {
             <LoadingState label="Loading section…" />
           ) : (
             <>
-              <div className="flex h-12 shrink-0 items-center justify-between border-b px-4">
+              <div className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <FileText className="h-4 w-4 text-muted-foreground" />
-                    <h2 className="truncate text-sm font-semibold">{selectedSection.title}</h2>
-                    <span className="text-xs text-muted-foreground">v{editor.base.version}</span>
+                    <h2
+                      className="truncate text-sm font-semibold"
+                      title={selectedSection.relativePath}
+                    >
+                      {selectedSection.title}
+                    </h2>
                     {hasVaultEditorChanges(editor) && (
                       <span className="text-xs text-amber-600">Unsaved changes</span>
                     )}
                     {editor.base.externallyModified && (
                       <span className="text-xs text-red-600">Changed outside Flapstack</span>
                     )}
-                  </div>
-                  <div className="truncate text-[11px] text-muted-foreground">
-                    {selectedSection.sectionType} · {selectedSection.relativePath}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -852,13 +891,22 @@ export function ProjectVaultView() {
         </main>
 
         {showHistory && selectedSectionId && (
-          <aside className="flex w-80 shrink-0 flex-col border-l" aria-label="Version history">
+          <aside
+            className="absolute inset-y-0 right-0 z-10 flex w-full max-w-80 flex-col border-l bg-background shadow-lg xl:static xl:shrink-0 xl:shadow-none"
+            aria-label="Version history"
+          >
             <div className="flex h-12 items-center justify-between border-b px-3">
               <h2 className="text-sm font-semibold">Version history</h2>
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setShowHistory(false)}
+                onClick={() => {
+                  setShowHistory(false)
+                  ;(window.matchMedia("(max-width: 767px)").matches
+                    ? navigationToggleRef
+                    : historyToggleRef
+                  ).current?.focus()
+                }}
                 aria-label="Close version history"
               >
                 <ChevronRight className="h-4 w-4" />
@@ -873,11 +921,11 @@ export function ProjectVaultView() {
                 <p className="p-2 text-xs text-muted-foreground">No earlier versions yet.</p>
               ) : (
                 (backupsQuery.data ?? []).map((backup) => (
-                  <button
+                  <WorkspaceRow
                     key={backup.id}
                     type="button"
                     className={cn(
-                      "w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted",
+                      "px-3 py-2 text-sm",
                       selectedBackupId === backup.id && "bg-muted",
                     )}
                     onClick={() => setSelectedBackupId(backup.id)}
@@ -888,7 +936,7 @@ export function ProjectVaultView() {
                         ? new Date(backup.createdAt).toLocaleString()
                         : "Recorded backup"}
                     </span>
-                  </button>
+                  </WorkspaceRow>
                 ))
               )}
             </div>
@@ -955,20 +1003,33 @@ function VaultHeader({
   onOpenPortability: () => void
 }) {
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
+    <WorkspaceHeader className="h-12 flex-nowrap justify-start gap-2 border-b px-3">
       <Button variant="ghost" size="sm" onClick={onClose} aria-label="Back to project chats">
         <ArrowLeft className="h-4 w-4" />
       </Button>
       <BookOpen className="h-4 w-4 text-muted-foreground" />
-      <div className="min-w-0">
-        <div className="truncate text-sm font-semibold">Project knowledge</div>
-        <div className="truncate text-[11px] text-muted-foreground">{projectName}</div>
-      </div>
-      <Button variant="ghost" size="sm" className="ml-auto" onClick={onOpenPortability}>
-        <ArchiveRestore className="mr-2 h-4 w-4" /> Export or restore
-      </Button>
-      <div className="text-[11px] text-muted-foreground">⌘/Ctrl+F search · ⌘/Ctrl+S save</div>
-    </header>
+      <WorkspaceTitle className="min-w-0 flex-1 truncate">
+        Project knowledge: {projectName}
+      </WorkspaceTitle>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto"
+            aria-label="Project knowledge options"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={onOpenPortability}>
+            <ArchiveRestore className="mr-2 h-4 w-4" />
+            Export or restore
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </WorkspaceHeader>
   )
 }
 

@@ -1,7 +1,11 @@
 import QRCode from "qrcode"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
-import type { MobilePairingOffer, MobileResourceRef } from "../../../../shared/mobile-control"
+import {
+  mobileActionIds,
+  type MobilePairingOffer,
+  type MobileResourceRef,
+} from "../../../../shared/mobile-control"
 import { trpc } from "../../../lib/trpc"
 import { Button } from "../../ui/button"
 import { RemoteComputerClientSection } from "./remote-computer-client"
@@ -172,14 +176,9 @@ export function AgentsMobileCompanionTab() {
         deviceId: grantDeviceId,
         grant: {
           authority: ["respond", "control", "approve"],
-          capabilities: [
-            "clarification.answer",
-            "orchestration.pause",
-            "orchestration.resume",
-            "orchestration.cancel",
-            "approval.approve",
-            "approval.deny",
-          ],
+          capabilities: mobileActionIds.filter(
+            (action) => action !== "chat.create" || resourceKind === "project",
+          ),
           resources: [resource],
         },
       })
@@ -452,7 +451,7 @@ export function AgentsMobileCompanionTab() {
           />
         </div>
         <Button disabled={!grantDeviceId || !resourceId.trim()} onClick={() => void grantControl()}>
-          Grant bounded mobile control
+          Allow chats and controls
         </Button>
         {(grants.data ?? []).map((grant) => (
           <div key={grant.grantId} className="rounded-xl border border-border p-4 text-xs">

@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
+import { z } from "zod"
 import { and, asc, eq, gt, lte, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import {
@@ -89,6 +90,7 @@ export class MobileEventService {
       cursorKey?: Buffer
       eventBacklog?: number
       actions?: MobileActionService
+      readConversation?: (chatId: string, subChatId?: string, before?: number) => unknown
       listAgentInputs?: ConstructorParameters<typeof MobileSnapshotProjector>[2]
     },
   ) {
@@ -156,6 +158,7 @@ export class MobileEventService {
     return mobileSnapshotEnvelopeSchema.parse({
       protocolVersion: MOBILE_CONTROL_PROTOCOL_VERSION,
       kind: "snapshot",
+      capabilities: authorized.grant.capabilities,
       snapshotId,
       scopeVersion: authorized.grant.scopeVersion,
       sequence: latestSequence,
@@ -304,6 +307,54 @@ export class MobileEventService {
 
       try {
         const value = parseJson(bytes)
+        if (
+          value &&
+          typeof value === "object" &&
+          "kind" in value &&
+          value.kind === "snapshot.refresh"
+        ) {
+          z.object({ kind: z.literal("snapshot.refresh") })
+            .strict()
+            .parse(value)
+          const snapshot = this.createSnapshot({
+            session: connection.session,
+            grantId: connection.grantId,
+          })
+          connection.snapshotId = snapshot.snapshotId
+          connection.sequence = snapshot.sequence
+          connection.snapshotPending = Boolean(snapshot.nextCursor)
+          this.send(connection, snapshot)
+          return
+        }
+        if (
+          value &&
+          typeof value === "object" &&
+          "kind" in value &&
+          value.kind === "conversation.read"
+        ) {
+          const request = z
+            .object({
+              kind: z.literal("conversation.read"),
+              chatId: z.string().min(1).max(200),
+              subChatId: z.string().min(1).max(200).optional(),
+              before: z.number().int().nonnegative().optional(),
+            })
+            .strict()
+            .parse(value)
+          const { grant } = this.authorize(connection.session, connection.grantId)
+          if (
+            !this.projector.readResource(grant, "chat", request.chatId) ||
+            !this.options.readConversation
+          )
+            throw new MobileEventAuthorizationError()
+          const conversation = this.options.readConversation(
+            request.chatId,
+            request.subChatId,
+            request.before,
+          )
+          connection.transport.send(JSON.stringify({ kind: "conversation", conversation }))
+          return
+        }
         const command = mobileCommandEnvelopeSchema.safeParse(value)
         if (command.success) {
           connection.commandQueue = connection.commandQueue

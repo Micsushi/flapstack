@@ -157,11 +157,13 @@ export function SharedRecordsBoard({
   }
   return (
     <>
-      <div
-        ref={host}
-        className="h-full min-h-0 overflow-auto"
-        aria-label="Project records workspace"
-      />
+      <div className="beta-surface beta-records-host h-full min-h-0">
+        <div
+          ref={host}
+          className="h-full min-h-0 overflow-auto"
+          aria-label="Project records workspace"
+        />
+      </div>
       <Dialog
         open={Boolean(pending || proposalPair)}
         onOpenChange={(open) => {
@@ -172,14 +174,14 @@ export function SharedRecordsBoard({
         }}
       >
         <DialogContent
-          className="max-h-[90vh] overflow-y-auto"
+          className="beta-surface max-h-[90vh] overflow-y-auto"
           aria-describedby={undefined}
           showCloseButton={!opening}
         >
           <DialogHeader>
             <DialogTitle>
               {proposalPair
-                ? "Create task and idle Chat"
+                ? "Create task + chat"
                 : pending?.preview.existingChatId
                   ? "Open worktree Chat"
                   : "Create worktree Chat"}
@@ -188,14 +190,12 @@ export function SharedRecordsBoard({
           {proposalPair && (
             <div className="grid min-w-0 gap-2 text-sm">
               <p>{proposalPair.preview.title}</p>
-              <p className="break-all">Local repository: {proposalPair.preview.projectPath}</p>
-              <p className="break-all">
-                Canonical destination: {proposalPair.preview.destinationPath} ·{" "}
-                {proposalPair.preview.projectId}
-              </p>
-              <p>One task and one read-only Chat. No run or Git worktree is created.</p>
-              <details>
-                <summary>Reviewed task and source context</summary>
+              <p>Project: {projectRef.current?.name ?? proposalPair.preview.projectId}</p>
+              <p>Creates one task and a read-only chat. No run starts.</p>
+              <details className="beta-disclosure">
+                <summary className="cursor-pointer">Destination and source details</summary>
+                <p className="break-all">Repository: {proposalPair.preview.projectPath}</p>
+                <p className="break-all">Records: {proposalPair.preview.destinationPath}</p>
                 <pre className="whitespace-pre-wrap break-words">
                   {JSON.stringify(
                     { action: proposalPair.preview.action, rows: proposalPair.preview.rows },

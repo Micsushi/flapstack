@@ -1,6 +1,16 @@
+import { Input } from "../../../components/ui/input"
+import { Textarea } from "../../../components/ui/textarea"
 import { useEffect, useRef, useState } from "react"
 import { trpc, trpcClient } from "../../../lib/trpc"
 import { recordAppAction } from "../../../lib/app-action-history"
+import { MoreHorizontal } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+  DropdownMenuItem,
+} from "../../../components/ui/dropdown-menu"
 import { Button } from "../../../components/ui/button"
 import type { DiffAnnotationAnchor, DiffAnnotationDto } from "../../../../shared/diff-annotations"
 import { diffAnnotationBodySchema } from "../../../../shared/diff-annotations"
@@ -277,25 +287,27 @@ export function DiffComments({
     <section
       aria-label="Diff comments"
       aria-busy={busy}
-      className="max-h-[45%] shrink-0 overflow-auto border-t border-border px-3 py-2 text-sm"
+      className="beta-surface max-h-[45%] shrink-0 overflow-auto border-t border-border px-3 py-2 text-sm"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="font-medium">Comments</h3>
-        <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1 text-xs">
-            <input
-              type="checkbox"
-              checked={showDeleted}
-              onChange={(event) => setShowDeleted(event.target.checked)}
-            />
-            Deleted
-          </label>
-          <Button variant="ghost" size="sm" disabled={busy} onClick={() => void refresh()}>
-            Refresh
-          </Button>
-        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="ghost" aria-label="Comment options">
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuCheckboxItem checked={showDeleted} onCheckedChange={setShowDeleted}>
+              Show deleted comments
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuItem disabled={busy} onSelect={() => void refresh()}>
+              Refresh
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-      {(rows.length > 0 || pending) && (
+      {(selected.length > 0 || pending) && (
         <div className="my-2 space-y-1">
           <p className="break-words text-xs text-muted-foreground">
             {targetName ? `Send to ${targetName}` : "Select a conversation to send feedback."}
@@ -343,6 +355,9 @@ export function DiffComments({
       {(error || query.error || metadata.error || query.data?.error) && (
         <p role="alert" className="my-2 break-words text-red-600 dark:text-red-400">
           {error || query.error?.message || metadata.error?.message || query.data?.error}
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => void refresh()}>
+            Refresh
+          </Button>
         </p>
       )}
       {draft && (
@@ -359,9 +374,9 @@ export function DiffComments({
           </p>
           <label className="block">
             Comment
-            <textarea
+            <Textarea
               aria-label="Comment"
-              className="mt-1 block min-h-20 w-full resize-y rounded-md border border-input bg-background p-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="mt-1 resize-y"
               value={draft.body}
               disabled={busy}
               onChange={(event) => setDraft({ ...draft, body: event.target.value })}
@@ -371,13 +386,13 @@ export function DiffComments({
             {(["startLine", "endLine"] as const).map((field) => (
               <label key={field} className="text-xs">
                 {field === "startLine" ? "Start line" : "End line"}
-                <input
+                <Input
                   type="number"
                   min={1}
                   max={10000000}
                   value={draft.anchor[field]}
                   disabled={busy}
-                  className="ml-2 w-20 rounded border border-input bg-background p-1"
+                  className="ml-2 inline-flex w-20"
                   onChange={(event) =>
                     setDraft({
                       ...draft,
@@ -390,9 +405,9 @@ export function DiffComments({
           </div>
           {stale && (
             <p className="text-xs text-muted-foreground">
-              This diff changed or cannot be verified. Saving will verify its anchor; your draft
-              stays here if it fails. Use the diff comment control to explicitly replace this anchor
-              while keeping your text.
+              This diff changed or is unverified. Save checks the selected lines and preserves your
+              draft on failure. Use the diff comment control on new lines to replace the anchor and
+              keep your text.
             </p>
           )}
           <div className="flex gap-2">
@@ -421,8 +436,7 @@ export function DiffComments({
       ) : null}
       {!draft && rows.length === 0 && !query.isLoading && (
         <p className="py-2 text-xs text-muted-foreground">
-          Select lines in a diff, then use its comment control. Save comments before selecting
-          feedback to send.
+          Select lines in the diff to add a comment.
         </p>
       )}
       <ul className="divide-y divide-border">
@@ -430,9 +444,10 @@ export function DiffComments({
           .filter((row) => showDeleted || row.deletedAt === null)
           .map((row) => (
             <li key={row.id} className="py-2">
-              <label className="mb-1 flex items-center gap-2 text-xs">
+              <label className="mb-1 flex items-start gap-2 text-xs text-muted-foreground">
                 <input
                   type="checkbox"
+                  className="mt-0.5 shrink-0"
                   aria-label={`Select feedback ${row.filePath} lines ${row.startLine}–${row.endLine}`}
                   checked={
                     pending
@@ -453,13 +468,13 @@ export function DiffComments({
                     })
                   }
                 />
-                Select feedback
+                <span className="min-w-0 break-all">
+                  {row.filePath} · {row.side === "left" ? "Old" : "New"} {row.startLine}–
+                  {row.endLine}
+                  {freshness(row) !== "current" ? ` · ${freshness(row)}` : ""}
+                  {row.deletedAt !== null ? " · deleted" : ""}
+                </span>
               </label>
-              <p className="break-all text-xs text-muted-foreground">
-                {row.filePath} · {row.side === "left" ? "Old" : "New"} {row.startLine}–{row.endLine}
-                {freshness(row) !== "current" ? ` · ${freshness(row)}` : ""}
-                {row.deletedAt !== null ? " · deleted" : ""}
-              </p>
               <p className="my-1 whitespace-pre-wrap break-words">{row.body}</p>
               {row.lastFeedbackVersion != null && (
                 <p className="text-xs text-muted-foreground">
@@ -470,14 +485,19 @@ export function DiffComments({
               )}
               <div className="flex gap-2">
                 {row.feedback && ["pending", "running"].includes(row.feedback.status) && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => void cancelFeedback(row)}
-                  >
-                    Cancel feedback run
-                  </Button>
+                  <div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => void cancelFeedback(row)}
+                    >
+                      Cancel feedback run
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      Cancellation does not undo changes.
+                    </p>
+                  </div>
                 )}
                 {row.deletedAt === null && (
                   <Button

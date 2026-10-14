@@ -87,6 +87,38 @@ afterEach(() => {
 })
 
 describe("mobile-events", () => {
+  it("reads conversations only inside the authenticated grant and rechecks revocation", () => {
+    const readConversation = vi.fn(() => ({ messages: [] }))
+    events.stop()
+    events = new MobileEventService({
+      database,
+      pairing,
+      grants,
+      connections,
+      now: () => now,
+      readConversation,
+    })
+    const socket = new FakeTransport("conversation-socket")
+    events.handleWebSocket(socket)
+    socket.receive(subscribeProof())
+    socket.receive({ kind: "conversation.read", chatId: "chat-1" })
+    expect(readConversation).toHaveBeenCalledWith("chat-1", undefined, undefined)
+    socket.receive({ kind: "conversation.read", chatId: "chat-2" })
+    expect(readConversation).toHaveBeenCalledTimes(1)
+    expect(socket.closed?.code).toBe(1008)
+  })
+
+  it("refreshes the current snapshot without accepting commands from an expired session", () => {
+    const socket = new FakeTransport("refresh-socket")
+    events.handleWebSocket(socket)
+    socket.receive(subscribeProof())
+    socket.receive({ kind: "snapshot.refresh" })
+    expect(socket.sent.map((value) => JSON.parse(value).kind)).toEqual(["snapshot", "snapshot"])
+    pairing.revokeDevice(credential.session.deviceId, "user")
+    socket.receive({ kind: "snapshot.refresh" })
+    expect(socket.sent).toHaveLength(2)
+  })
+
   it("keeps the canonical mobile migration chain through projection families", () => {
     const journal = JSON.parse(
       readFileSync(resolve(migrationsFolder, "meta/_journal.json"), "utf8"),

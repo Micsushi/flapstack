@@ -264,7 +264,7 @@ commands live in the [Windows development guide](docs/windows-development.md).
   reversible progressive UI visibility.
 - One Agent Profile concept with reusable versioned Markdown personalities,
   universal new-chat/sub-agent selection, and honest effort/speed compatibility.
-- Secure cross-agent mobile companion over a default-off local PWA bridge.
+- [Phone chat and agent controls](docs/phone-chat.md) over a default-off private-network PWA bridge.
 - A [native remote-computer client](docs/native-remote-computer.md) for scoped
   work viewing and agent clarification answers through the same private bridge.
 - Visual context capture, redaction, artifacts, agent context, and standalone helper.

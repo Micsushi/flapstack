@@ -1,8 +1,32 @@
-# Board, Setups, Fleet and Yap
+# Work board, Agent workflows, Agent runs and Yap
 
 Project Records owns task state, dependencies, saved Setups, worker claims and
 Yap approvals. Flapstack displays its shared UI and connects through a local,
 authenticated HTTP service. Task completion and worker completion are separate.
+
+## Workspace appearance
+
+Beta pages use the same system font and neutral theme: 20px page titles,
+14px body text and controls, and 12px secondary labels. Section headings use
+weight rather than another display size. Code, terminal output and document
+content retain their own reading styles. Color identifies status, warnings,
+selection or board columns rather than decorating unrelated headings.
+
+The embedded Records workspace inherits the desktop theme through its wrapper;
+its shadow host must remain inside that wrapper so local token names cannot
+override the inherited values. Standalone Records follows the system theme.
+
+Reuse `components/ui/workspace.tsx` for page titles, headers, content widths
+and whole-row actions. Use the existing `Button`, `Input`, and `Textarea`, plus
+`NativeSelect` for native select menus. Buttons use `workspace` size for toolbar
+actions, `sm` for compact inline actions, and `icon` for icon-only controls.
+Rows retain native button refs and events for keyboard navigation. Feature
+components own their data, state, and specialized editor or graph layouts.
+
+Workspace font, type sizes, line heights, control height and radius are defined
+once in `globals.css`. Tailwind's body and metadata roles and the embedded
+Records stylesheet consume those values. Use the existing shared icons and
+Lucide assets rather than copying icons into individual screens.
 
 ## Build and connect
 
@@ -83,7 +107,11 @@ must be committed before pinning. Packaged apps do not need a Records Git clone.
 
 ## Workflow
 
-Work board, Yap, Fleet and Setups are separate sidebar destinations. Work board
+Work board, Yap, Agent runs and Agent workflows are separate sidebar destinations.
+Agent runs was previously called Fleet; Agent workflows was called Setups.
+Questions & progress (previously Project records) shows questions, blockers,
+completed work and the work checklist, with record references and agent review
+status visible in compact rows. Work board
 shows equal-height collapsed tickets; click a title to expand its context and
 actions. Each ticket also shows a short reference such as `#42`. Expand a ticket
 and edit Reference to replace that display with a text ID such as `FLAP-42`.
@@ -97,8 +125,8 @@ leaves the board. They survive title, status, grouping and ordering changes.
 They are local board references, not replacements for Project Records IDs;
 other devices or profiles may assign different numbers. Clearing that profile's
 site data removes the numbering. If local storage is unavailable, the board
-shows the original IDs and an error instead of claiming a number was saved. Use Work board for checked task transitions and questions. Use Setups for saved graph
-versions, execution policy and project assignments. Fleet shows worker attempts;
+shows the original IDs and an error instead of claiming a number was saved. Use Work board for checked task transitions and questions. Use Agent workflows for saved graph
+versions, execution policy and project assignments. Agent runs shows worker attempts;
 a finished worker does not by itself mark its task verified. Yap keeps source
 material, proposed destinations and approval separate. Review each action before
 applying it; unselected or uncertain actions remain available for correction.

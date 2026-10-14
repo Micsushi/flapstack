@@ -526,7 +526,12 @@ export class MobileSnapshotProjector {
           })
           .from(agentRuns)
           .innerJoin(chats, eq(agentRuns.chatId, chats.id))
-          .where(and(eq(agentRuns.id, request.runId), eq(chats.id, request.chatId)))
+          .where(
+            and(
+              eq(agentRuns.id, request.runId),
+              or(eq(chats.id, request.chatId), eq(agentRuns.subChatId, request.chatId)),
+            ),
+          )
           .get()
         if (
           !owner ||
@@ -545,7 +550,7 @@ export class MobileSnapshotProjector {
             id: request.requestId,
             version: Math.max(1, request.createdAt),
             updatedAt: request.createdAt,
-            chatId: request.chatId,
+            chatId: owner.chatId,
             runId: request.runId,
             ...(request.expiresAt === undefined ? {} : { expiresAt: request.expiresAt }),
             questions: request.questions.map((question) => ({

@@ -1,5 +1,15 @@
-"use client"
+import { Textarea } from "../../components/ui/textarea"
+;("use client")
 
+import {
+  WorkspacePage,
+  WorkspaceHeader,
+  WorkspaceTitle,
+  WorkspaceContent,
+} from "../../components/ui/workspace"
+import { Button } from "../../components/ui/button"
+import { Input } from "../../components/ui/input"
+import { NativeSelect } from "../../components/ui/native-select"
 import "./automations-styles.css"
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react"
 import { useAtomValue, useSetAtom } from "jotai"
@@ -259,25 +269,24 @@ export function AutomationsDetailView() {
     return <Centered message={recordQuery.error?.message ?? "Automation not found."} alert />
 
   return (
-    <main className="h-full overflow-y-auto bg-background" aria-label={AUTOMATION_A11Y.editor}>
-      <div className="mx-auto max-w-6xl px-4 py-5 md:px-6">
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
+    <WorkspacePage className="overflow-y-auto" aria-label={AUTOMATION_A11Y.editor}>
+      <WorkspaceContent className="max-w-6xl">
+        <WorkspaceHeader className="border-b pb-4">
           <div className="flex min-w-0 items-center gap-2">
-            <button
+            <Button
+              variant="ghost"
+              size="icon"
               type="button"
               onClick={back}
-              className="rounded-md p-1.5 hover:bg-muted"
+
               aria-label="Back to local automations"
             >
               <ArrowLeft className="h-4 w-4" />
-            </button>
+            </Button>
             <div className="min-w-0">
-              <h1 className="truncate text-lg font-semibold">
+              <WorkspaceTitle className="truncate">
                 {isCreate ? "New local automation" : record!.draft.name}
-              </h1>
-              <p className="text-xs text-muted-foreground">
-                Desktop app open only · maximum one concurrent run · local evidence retained
-              </p>
+              </WorkspaceTitle>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -288,17 +297,19 @@ export function AutomationsDetailView() {
                 dryRun={runDryRun}
               />
             )}
-            <button
+            <Button
+              variant="default"
+              size="workspace"
               type="button"
               onClick={() => void requestSave()}
               disabled={uiState.status === "saving" || !parsed.success}
-              className="inline-flex h-8 items-center gap-2 rounded-md bg-foreground px-3 text-sm text-background disabled:opacity-50"
+              className="gap-2"
             >
               <Save className="h-4 w-4" />
               {isCreate ? "Review draft" : "Review changes"}
-            </button>
+            </Button>
           </div>
-        </header>
+        </WorkspaceHeader>
 
         <div aria-live="polite" className="min-h-8 py-2 text-sm">
           {validationMessage && (
@@ -340,7 +351,7 @@ export function AutomationsDetailView() {
             )}
           </aside>
         </div>
-      </div>
+      </WorkspaceContent>
 
       <MutationDialog
         preview={uiState.pendingMutation}
@@ -348,7 +359,7 @@ export function AutomationsDetailView() {
         onCancel={() => dispatch({ type: "cancel-preview" })}
         onConfirm={() => void confirmMutation()}
       />
-    </main>
+    </WorkspacePage>
   )
 }
 
@@ -367,79 +378,85 @@ function LifecycleActions({
 }) {
   return (
     <>
-      <button
-        type="button"
-        onClick={dryRun}
-        className="h-8 rounded-md border px-3 text-sm hover:bg-muted"
-      >
+      <Button variant="outline" size="workspace" type="button" onClick={dryRun}>
         Dry-run
-      </button>
+      </Button>
       {record.draft.trigger.type === "manual" && record.enabled && (
-        <button
+        <Button
+          variant="ghost"
+          size="icon"
           type="button"
           onClick={() => requestPreview("fire", previewLifecycle({ action: "fire", record }))}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm hover:bg-muted"
+          className="gap-1.5"
         >
           <Play className="h-3.5 w-3.5" />
           Run now
-        </button>
+        </Button>
       )}
       {record.approval.state === "pending" && (
-        <button
+        <Button
+          variant="outline"
+          size="workspace"
           type="button"
           onClick={() => requestPreview("approve", previewLifecycle({ action: "approve", record }))}
-          className="h-8 rounded-md border px-3 text-sm"
         >
           Approve paused
-        </button>
+        </Button>
       )}
       {record.approval.state === "pending" && (
-        <button
+        <Button
+          variant="outline"
+          size="workspace"
           type="button"
           onClick={() =>
             requestPreview("approve-enable", previewLifecycle({ action: "approve-enable", record }))
           }
-          className="h-8 rounded-md border px-3 text-sm"
         >
           Approve + enable
-        </button>
+        </Button>
       )}
       {record.approval.state === "pending" && (
-        <button
+        <Button
+          variant="outline"
+          size="workspace"
           type="button"
           onClick={() => requestPreview("deny", previewLifecycle({ action: "deny", record }))}
-          className="h-8 rounded-md border border-red-500/30 px-3 text-sm text-red-600"
+          className="border-red-500/30 text-red-600"
         >
           Deny
-        </button>
+        </Button>
       )}
       {record.enabled ? (
-        <button
+        <Button
+          variant="outline"
+          size="workspace"
           type="button"
           onClick={() => requestPreview("pause", previewLifecycle({ action: "pause", record }))}
-          className="h-8 rounded-md border px-3 text-sm"
         >
           Pause
-        </button>
+        </Button>
       ) : (
         record.approval.state === "approved" && (
-          <button
+          <Button
+            variant="outline"
+            size="workspace"
             type="button"
             onClick={() => requestPreview("enable", previewLifecycle({ action: "enable", record }))}
-            className="h-8 rounded-md border px-3 text-sm"
           >
             Enable
-          </button>
+          </Button>
         )
       )}
-      <button
+      <Button
+        variant="ghost"
+        size="icon"
         type="button"
         onClick={() => requestPreview("archive", previewLifecycle({ action: "archive", record }))}
-        className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-red-600"
+        className="text-muted-foreground hover:text-destructive"
         aria-label="Archive automation"
       >
         <Trash2 className="h-4 w-4" />
-      </button>
+      </Button>
     </>
   )
 }
@@ -609,6 +626,10 @@ function AutomationEditor({
           }
           options={["manual", "schedule", "run-complete", "file-change"]}
         />
+        <p className="text-xs text-muted-foreground">
+          Runs only while Flapstack is open, one run at a time. Missed schedules catch up at most
+          once at startup.
+        </p>
         {scheduleTrigger && (
           <div className="grid gap-3 md:grid-cols-2">
             <TextField
@@ -974,7 +995,7 @@ function ResolvedDryRun({ value }: { value: Record<string, unknown> }) {
       <p className="mt-1 text-xs text-muted-foreground">
         No run launched. No project file changed.
       </p>
-      <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded bg-background/70 p-2 text-[11px]">
+      <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded bg-background/70 p-2 text-xs">
         {JSON.stringify(value, null, 2)}
       </pre>
     </section>
@@ -1031,17 +1052,21 @@ function History({
               {item.stopReason && <p className="mt-1 text-red-600">{item.stopReason}</p>}
               <div className="mt-2 flex gap-2">
                 {(item.chatId || item.taskId || item.projectId) && (
-                  <button
+                  <Button
+                    variant="outline"
+                    size="workspace"
                     type="button"
                     onClick={() => navigate(item)}
-                    className="inline-flex items-center gap-1 rounded border px-2 py-1"
+                    className="gap-1 rounded py-1"
                   >
                     <ExternalLink className="h-3 w-3" />
                     Open evidence
-                  </button>
+                  </Button>
                 )}
                 {item.state === "running" && (
-                  <button
+                  <Button
+                    variant="outline"
+                    size="workspace"
                     type="button"
                     onClick={() =>
                       requestPreview(
@@ -1054,10 +1079,10 @@ function History({
                         item.occurrenceId,
                       )
                     }
-                    className="rounded border border-red-500/30 px-2 py-1 text-red-600"
+                    className="rounded border-red-500/30 py-1 text-red-600"
                   >
                     Kill
-                  </button>
+                  </Button>
                 )}
               </div>
             </li>
@@ -1204,13 +1229,12 @@ function TextField({
   required?: boolean
   placeholder?: string
 }) {
-  const className =
-    "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+  const className = "mt-1 w-full"
   return (
     <label className="block text-xs font-medium">
       {label}
       {multiline ? (
-        <textarea
+        <Textarea
           value={value}
           onChange={(event) => onChange(event.target.value)}
           required={required}
@@ -1219,7 +1243,7 @@ function TextField({
           className={className}
         />
       ) : (
-        <input
+        <Input
           value={value}
           onChange={(event) => onChange(event.target.value)}
           required={required}
@@ -1246,14 +1270,14 @@ function NumberField({
   return (
     <label className="block text-xs font-medium">
       {label}
-      <input
+      <Input
         type="number"
         value={value ?? ""}
         onChange={(event) =>
           onChange(event.target.value === "" && nullable ? null : Number(event.target.value))
         }
         disabled={disabled}
-        className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
+        className="mt-1 w-full"
       />
     </label>
   )
@@ -1272,10 +1296,10 @@ function SelectField({
   return (
     <label className="block text-xs font-medium">
       {label}
-      <select
+      <NativeSelect
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
+        className="mt-1 w-full"
       >
         {options.map((option) => {
           const item = typeof option === "string" ? { value: option, label: option } : option
@@ -1285,7 +1309,7 @@ function SelectField({
             </option>
           )
         })}
-      </select>
+      </NativeSelect>
     </label>
   )
 }

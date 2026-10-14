@@ -99,52 +99,58 @@ describe("process-wide Runtime launch service", () => {
     expect(announced).toEqual(persisted.map((row) => row.sequence))
   })
 
-  it("projects a completed direct feedback answer into its durable conversation", async () => {
-    const runId = "feedback-answer"
-    seedDirectRun(runId)
-    const promptMessageId = "mcp-diff-feedback-fixture-batch"
-    sqlite
-      .prepare("UPDATE agent_runs SET prompt_message_id=? WHERE id=?")
-      .run(promptMessageId, runId)
-    sqlite
-      .prepare("UPDATE sub_chats SET messages=? WHERE id=?")
-      .run(
-        JSON.stringify([
-          { id: promptMessageId, role: "user", parts: [{ type: "text", text: "Prompt" }] },
-        ]),
-        `sub-${runId}`,
+  it.each(["feedback", "mobile"])(
+    "projects a completed direct %s answer into its durable conversation",
+    async (origin) => {
+      const runId = "feedback-answer"
+      seedDirectRun(runId)
+      const promptMessageId =
+        origin === "mobile" ? "mcp-mobile-fixture" : "mcp-diff-feedback-fixture-batch"
+      sqlite
+        .prepare("UPDATE agent_runs SET prompt_message_id=? WHERE id=?")
+        .run(promptMessageId, runId)
+      sqlite
+        .prepare("UPDATE sub_chats SET messages=? WHERE id=?")
+        .run(
+          JSON.stringify([
+            { id: promptMessageId, role: "user", parts: [{ type: "text", text: "Prompt" }] },
+          ]),
+          `sub-${runId}`,
+        )
+      if (origin === "feedback") {
+        sqlite
+          .prepare(
+            "INSERT INTO diff_feedback_batches (id,project_id,chat_id,sub_chat_id,run_id,request_hash,selection,created_at) VALUES ('fixture-batch','project',?,?,?,?,'[]',1)",
+          )
+          .run(`chat-${runId}`, `sub-${runId}`, runId, "a".repeat(64))
+      }
+      const value = directAdapter()
+      value.streamActivity = async function* () {
+        yield appendOutput(runId, "Feedback answer")
+      }
+      const service = getMainRuntimeLaunchService(path, {
+        codexFactory: () => value,
+        enableCodex: true,
+      })
+      await service.launch(queued(runId))
+      const messages = JSON.parse(
+        (
+          sqlite.prepare("SELECT messages FROM sub_chats WHERE id=?").get(`sub-${runId}`) as {
+            messages: string
+          }
+        ).messages,
       )
-    sqlite
-      .prepare(
-        "INSERT INTO diff_feedback_batches (id,project_id,chat_id,sub_chat_id,run_id,request_hash,selection,created_at) VALUES ('fixture-batch','project',?,?,?,?,'[]',1)",
-      )
-      .run(`chat-${runId}`, `sub-${runId}`, runId, "a".repeat(64))
-    const value = directAdapter()
-    value.streamActivity = async function* () {
-      yield appendOutput(runId, "Feedback answer")
-    }
-    const service = getMainRuntimeLaunchService(path, {
-      codexFactory: () => value,
-      enableCodex: true,
-    })
-    await service.launch(queued(runId))
-    const messages = JSON.parse(
-      (
-        sqlite.prepare("SELECT messages FROM sub_chats WHERE id=?").get(`sub-${runId}`) as {
-          messages: string
-        }
-      ).messages,
-    )
-    expect(messages.map((message: any) => message.role)).toEqual(["user", "assistant"])
-    expect(messages[1].parts).toEqual([{ type: "text", text: "Feedback answer" }])
-    expect(invalidation).toHaveBeenCalledWith({
-      version: 1,
-      source: "product-mcp",
-      domains: ["runs", "chats"],
-      chatIds: [`chat-${runId}`],
-      runIds: [runId],
-    })
-  })
+      expect(messages.map((message: any) => message.role)).toEqual(["user", "assistant"])
+      expect(messages[1].parts).toEqual([{ type: "text", text: "Feedback answer" }])
+      expect(invalidation).toHaveBeenCalledWith({
+        version: 1,
+        source: "product-mcp",
+        domains: ["runs", "chats"],
+        chatIds: [`chat-${runId}`],
+        runIds: [runId],
+      })
+    },
+  )
 
   it("grants requested Codex permission profiles only after approval", () => {
     const request = {

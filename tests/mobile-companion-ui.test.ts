@@ -48,7 +48,7 @@ describe("mobile companion user surfaces", () => {
       status: 200,
       contentType: expect.stringContaining("text/html"),
     })
-    expect(document?.body).toContain("Flapstack Companion")
+    expect(document?.body).toContain("<title>Flapstack</title>")
     expect(document?.body).toContain("Offline · read-only")
     expect(app?.body).toContain("new WebSocket")
     expect(app?.body).toContain('"kind":"command"')
@@ -70,6 +70,6 @@ describe("mobile companion user surfaces", () => {
     expect(app?.body).toContain("State is stale")
     expect(app?.body).toContain("serviceWorker.register")
     expect(manifest?.body).toContain('"display":"standalone"')
-    expect(worker?.body).toContain("mobile-companion-v1")
+    expect(worker?.body).toContain("mobile-companion-v2")
   })
 })

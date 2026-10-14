@@ -58,12 +58,12 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
   },
   {
     id: "projectMemory",
-    label: "Project Memory",
+    label: "Project knowledge",
     description: "Project knowledge sections, run context, search, backups, and editing.",
   },
   {
     id: "orchestration",
-    label: "Orchestration",
+    label: "Agent runs & workflows",
     description: "Multi-agent workflows, coordination engines, fleet controls, and recovery.",
   },
   {
@@ -78,7 +78,7 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
   },
   {
     id: "planning",
-    label: "Planning & Task Board",
+    label: "Work board & planning",
     description: "Plan sources, task proposals, plan promotion, and Kanban controls.",
   },
   {

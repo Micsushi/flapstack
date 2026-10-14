@@ -1,5 +1,14 @@
 "use client"
 
+import { WorkspaceRow } from "../../components/ui/workspace"
+
+import {
+  WorkspacePage,
+  WorkspaceHeader,
+  WorkspaceTitle,
+  WorkspaceContent,
+} from "../../components/ui/workspace"
+import { Button } from "../../components/ui/button"
 import "./inbox-styles.css"
 import { useEffect, useRef, useState } from "react"
 import { useSetAtom } from "jotai"
@@ -93,42 +102,39 @@ export function InboxView() {
   }
 
   return (
-    <main className="h-full overflow-y-auto bg-background" aria-labelledby="automation-inbox-title">
-      <div className="mx-auto max-w-5xl px-4 py-5 md:px-6">
-        <header className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
+    <WorkspacePage className="overflow-y-auto" aria-labelledby="automation-inbox-title">
+      <WorkspaceContent>
+        <WorkspaceHeader className="border-b pb-4">
           <div className="flex items-start gap-2">
-            <button
+            <Button
+              variant="ghost"
+              size="icon"
               type="button"
               onClick={() => setView("automations")}
-              className="rounded-md p-1.5 hover:bg-muted"
+
               aria-label="Back to local automations"
             >
               <ArrowLeft className="h-4 w-4" />
-            </button>
+            </Button>
             <div>
-              <h1
-                id="automation-inbox-title"
-                className="flex items-center gap-2 text-lg font-semibold"
-              >
+              <WorkspaceTitle id="automation-inbox-title" className="flex items-center gap-2">
                 <Inbox className="h-5 w-5" />
                 Automation inbox
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                Local execution results. Open items to reach their real task, chat, and run
-                evidence.
-              </p>
+              </WorkspaceTitle>
             </div>
           </div>
-          <button
+          <Button
+            variant="outline"
+            size="workspace"
             type="button"
             onClick={() => void markEverythingRead()}
             disabled={(inbox.data?.unreadCount ?? 0) === 0 || markAll.isPending}
-            className="inline-flex h-8 items-center gap-2 rounded-md border px-3 text-sm disabled:opacity-50"
+            className="gap-2"
           >
             <CheckCheck className="h-4 w-4" />
             Mark all read
-          </button>
-        </header>
+          </Button>
+        </WorkspaceHeader>
 
         <div className="flex items-center justify-between gap-3 py-3">
           <label className="flex items-center gap-2 text-sm">
@@ -176,7 +182,7 @@ export function InboxView() {
           >
             {items.map((item, index) => (
               <li key={item.id}>
-                <button
+                <WorkspaceRow
                   ref={(element) => {
                     if (element) itemRefs.current.set(item.id, element)
                     else itemRefs.current.delete(item.id)
@@ -185,7 +191,7 @@ export function InboxView() {
                   aria-current={index === selectedIndex ? "true" : undefined}
                   onFocus={() => setSelectedIndex(index)}
                   onClick={() => void openItem(item)}
-                  className={`w-full rounded-lg border p-3 text-left transition-colors hover:bg-muted/40 ${index === selectedIndex ? "border-ring/50 bg-muted/30" : "bg-card"}`}
+                  className={`border p-3 ${index === selectedIndex ? "border-ring/50 bg-muted/30" : "bg-card"}`}
                 >
                   <div className="flex items-start gap-3">
                     {item.unread ? (
@@ -213,13 +219,13 @@ export function InboxView() {
                       </span>
                     </div>
                   </div>
-                </button>
+                </WorkspaceRow>
               </li>
             ))}
           </ul>
         )}
-      </div>
-    </main>
+      </WorkspaceContent>
+    </WorkspacePage>
   )
 }
 

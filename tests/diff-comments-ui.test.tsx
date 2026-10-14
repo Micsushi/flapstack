@@ -296,7 +296,7 @@ it("retains a stale draft when main rejects its old anchor", async () => {
       <Harness draft={{ ...initial, anchor: { ...initial.anchor, diffHash: "b".repeat(64) } }} />,
     ),
   )
-  expect(container.textContent).toContain("diff changed or cannot be verified")
+  expect(container.textContent).toContain("diff changed or is unverified")
   await click("Save comment")
   expect(container.querySelector("textarea")?.value).toBe(initial.body)
   expect(state.create.mock.calls[0][0].anchor.diffHash).toBe("b".repeat(64))

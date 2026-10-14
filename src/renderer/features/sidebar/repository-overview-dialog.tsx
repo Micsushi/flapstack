@@ -1,13 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react"
 import { GitBranch, GitCommitHorizontal, RefreshCw, Search, Trees } from "lucide-react"
 import { Button } from "../../components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "../../components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../components/ui/dialog"
 import { Input } from "../../components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs"
 import { cn } from "../../lib/utils"
@@ -47,15 +41,15 @@ export function RepositoryOverviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[min(760px,calc(100vh-3rem))] w-[min(920px,calc(100vw-3rem))] max-w-none grid-rows-[auto_auto_1fr] overflow-hidden p-0">
+      <DialogContent
+        aria-describedby={undefined}
+        className="beta-surface flex min-h-[320px] max-h-[min(760px,calc(100vh-3rem))] w-[min(920px,calc(100vw-3rem))] max-w-none flex-col overflow-hidden p-0"
+      >
         <DialogHeader className="border-b border-border/70 px-6 pb-4 pt-6 pr-14">
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <Trees className="h-4 w-4 text-teal-400" />
-            Repository overview
+          <DialogTitle className="beta-page-title flex items-center gap-2">
+            <Trees className="h-4 w-4 text-muted-foreground" />
+            Branches &amp; worktrees: {projectName}
           </DialogTitle>
-          <DialogDescription className="truncate">
-            {projectName} · read-only branch and worktree health
-          </DialogDescription>
         </DialogHeader>
         <div className="flex items-center gap-2 px-6 pt-4">
           <div className="relative min-w-0 flex-1">
@@ -63,7 +57,8 @@ export function RepositoryOverviewDialog({
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Filter paths, branches, or upstreams"
+              aria-label="Filter branches and worktrees"
+              placeholder="Filter branches and worktrees"
               className="h-8 pl-8 text-xs"
             />
           </div>
@@ -80,8 +75,15 @@ export function RepositoryOverviewDialog({
         </div>
         {!projectPath ? (
           <div className="p-6 text-sm text-muted-foreground">This project has no local path.</div>
+        ) : overview.isLoading ? (
+          <p role="status" className="px-6 py-4 text-sm">
+            Loading branches and worktrees...
+          </p>
         ) : overview.isError ? (
-          <div className="m-6 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          <div
+            role="alert"
+            className="m-6 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"
+          >
             {overview.error.message}
           </div>
         ) : (
@@ -96,6 +98,19 @@ export function RepositoryOverviewDialog({
             </TabsList>
             <TabsContent value="worktrees" className="min-h-0 flex-1 overflow-y-auto pt-2">
               <div className="divide-y divide-border/60 rounded-lg border border-border/70">
+                {worktrees.length === 0 && (
+                  <div
+                    role="status"
+                    className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground"
+                  >
+                    {query ? "No matching worktrees" : "No worktrees"}
+                    {query && (
+                      <Button size="sm" variant="ghost" onClick={() => setQuery("")}>
+                        Clear filter
+                      </Button>
+                    )}
+                  </div>
+                )}
                 {worktrees.map((item) => (
                   <div
                     key={item.path}
@@ -110,7 +125,7 @@ export function RepositoryOverviewDialog({
                         {item.isLocked && <StatusPill tone="amber">Locked</StatusPill>}
                       </div>
                       <div
-                        className="mt-1 truncate font-mono text-[11px] text-muted-foreground"
+                        className="mt-1 truncate font-mono text-xs text-muted-foreground"
                         title={item.path}
                       >
                         {item.path}
@@ -120,21 +135,20 @@ export function RepositoryOverviewDialog({
                       <div
                         className={cn(
                           "text-xs font-medium",
-                          item.dirtyCount ? "text-amber-300" : "text-emerald-300",
+                          item.dirtyCount
+                            ? "text-amber-700 dark:text-amber-300"
+                            : "text-emerald-700 dark:text-emerald-300",
                         )}
                       >
                         {item.dirtyCount ? `${item.dirtyCount} changed` : "Clean"}
                       </div>
                       {item.dirtyCount > 0 && (
-                        <div className="mt-1 text-[10px] text-muted-foreground">
+                        <div className="mt-1 text-xs text-muted-foreground">
                           {item.stagedCount} staged · {item.modifiedCount} modified ·{" "}
                           {item.untrackedCount} new
                           {item.conflictedCount > 0 ? ` · ${item.conflictedCount} conflicted` : ""}
                         </div>
                       )}
-                      <div className="mt-1 font-mono text-[10px] text-muted-foreground">
-                        {item.head.slice(0, 8)}
-                      </div>
                     </div>
                     {item.prunableReason && (
                       <div className="col-span-2 text-xs text-rose-300">
@@ -147,6 +161,19 @@ export function RepositoryOverviewDialog({
             </TabsContent>
             <TabsContent value="branches" className="min-h-0 flex-1 overflow-y-auto pt-2">
               <div className="divide-y divide-border/60 rounded-lg border border-border/70">
+                {branches.length === 0 && (
+                  <div
+                    role="status"
+                    className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground"
+                  >
+                    {query ? "No matching branches" : "No branches"}
+                    {query && (
+                      <Button size="sm" variant="ghost" onClick={() => setQuery("")}>
+                        Clear filter
+                      </Button>
+                    )}
+                  </div>
+                )}
                 {branches.map((item) => (
                   <div
                     key={item.name}
@@ -166,11 +193,11 @@ export function RepositoryOverviewDialog({
                           <StatusPill tone="slate">Merged</StatusPill>
                         )}
                       </div>
-                      <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                      <div className="mt-1 truncate text-xs text-muted-foreground">
                         {item.checkedOutPath ?? item.upstream ?? "No upstream"}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
                       <span
                         title="Commits only on this branch"
                         className={item.uniqueCommits ? "text-amber-300" : undefined}
@@ -178,9 +205,11 @@ export function RepositoryOverviewDialog({
                         <GitCommitHorizontal className="mr-1 inline h-3.5 w-3.5" />
                         {item.uniqueCommits} unique
                       </span>
-                      <span>
-                        ↑{item.ahead} ↓{item.behind}
-                      </span>
+                      {(item.ahead > 0 || item.behind > 0) && (
+                        <span>
+                          {item.ahead} ahead · {item.behind} behind
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -201,13 +230,13 @@ function StatusPill({
   tone: "teal" | "blue" | "amber" | "slate"
 }) {
   const tones = {
-    teal: "border-teal-500/25 bg-teal-500/10 text-teal-300",
-    blue: "border-blue-500/25 bg-blue-500/10 text-blue-300",
-    amber: "border-amber-500/25 bg-amber-500/10 text-amber-300",
-    slate: "border-slate-500/25 bg-slate-500/10 text-slate-300",
+    teal: "border-teal-500/25 bg-teal-500/10 text-teal-700 dark:text-teal-300",
+    blue: "border-blue-500/25 bg-blue-500/10 text-blue-700 dark:text-blue-300",
+    amber: "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    slate: "border-slate-500/25 bg-slate-500/10 text-slate-700 dark:text-slate-300",
   }
   return (
-    <span className={cn("rounded border px-1.5 py-0.5 text-[9px] font-medium", tones[tone])}>
+    <span className={cn("rounded border px-1.5 py-0.5 text-xs font-medium", tones[tone])}>
       {children}
     </span>
   )

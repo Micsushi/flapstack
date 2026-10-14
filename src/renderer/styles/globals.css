@@ -111,6 +111,96 @@
   }
 }
 
+/* Beta workspace roles. Embedded Records inherits these through its host. */
+.beta-surface {
+  --workspace-font: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --workspace-text-body: 14px;
+  --workspace-text-meta: 12px;
+  --workspace-text-title: 20px;
+  --workspace-line-body: 20px;
+  --workspace-line-title: 28px;
+  --workspace-control-height: 36px;
+  --workspace-radius: 8px;
+  color-scheme: light;
+  --records-color-scheme: light;
+  --background: 240 8% 98%;
+  --foreground: 240 6% 13%;
+  --card: 0 0% 100%;
+  --popover: 0 0% 100%;
+  --primary: 240 6% 13%;
+  --primary-foreground: 0 0% 100%;
+  --muted: 240 5% 95%;
+  --muted-foreground: 240 5% 40%;
+  --accent: 240 5% 90%;
+  --accent-foreground: 240 6% 13%;
+  --border: 240 6% 89%;
+  --input: 240 6% 85%;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--workspace-font);
+  font-size: var(--workspace-text-body);
+  line-height: var(--workspace-line-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+.dark .beta-surface {
+  color-scheme: dark;
+  --records-color-scheme: dark;
+  --background: 240 6% 7%;
+  --foreground: 240 5% 96%;
+  --primary: 240 5% 96%;
+  --primary-foreground: 240 6% 7%;
+  --accent-foreground: 240 5% 96%;
+  --card: 240 5% 10%;
+  --popover: 240 5% 10%;
+  --muted: 240 5% 13%;
+  --accent: 240 5% 16%;
+  --border: 240 5% 19%;
+  --input: 240 5% 23%;
+  --muted-foreground: 240 5% 68%;
+}
+
+.workspace-title,
+.beta-surface .beta-page-title {
+  font-size: var(--workspace-text-title, 20px);
+  line-height: var(--workspace-line-title, 28px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.beta-surface
+  :where(button, select, input):not([role="switch"]):not([role="checkbox"]):not([role="radio"]):not(
+    [type="checkbox"]
+  ):not([type="radio"]) {
+  border-radius: var(--workspace-radius);
+}
+
+.beta-surface :where(input, select):not([type="checkbox"]):not([type="radio"]):not([type="range"]) {
+  background-color: hsl(var(--card));
+}
+
+.beta-surface :where(button):disabled {
+  opacity: 0.4;
+}
+
+.beta-surface [data-ui="button"][data-size="default"],
+.beta-surface [data-ui="button"][data-size="workspace"] {
+  height: var(--workspace-control-height);
+}
+
+/* Resolve host theme values before the shadow tree defines its own token names. */
+.beta-records-host {
+  --records-canvas: hsl(var(--background));
+  --records-paper: hsl(var(--card));
+  --records-quiet: hsl(var(--muted));
+  --records-ink: hsl(var(--foreground));
+  --records-muted: hsl(var(--muted-foreground));
+  --records-line: hsl(var(--border));
+  --records-accent: hsl(var(--primary));
+  --records-accent-soft: hsl(var(--accent));
+  --records-on-accent: hsl(var(--primary-foreground));
+}
+
 /* Search highlight styles */
 .search-highlight {
   background-color: rgb(250 204 21 / 0.35) !important;
@@ -409,4 +499,36 @@ body[data-open-chat-tab-pointer-dragging="true"] * {
   z-index: 1000;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   pointer-events: auto;
+}
+
+/* Scoped beta disclosures retain native keyboard behavior without leading markers. */
+.beta-disclosure > summary {
+  list-style: none;
+}
+.beta-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.beta-disclosure > summary::after {
+  content: "";
+  display: inline-block;
+  width: 0.4em;
+  height: 0.4em;
+  margin-left: 0.65em;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  vertical-align: 0.15em;
+  opacity: 0;
+}
+.beta-disclosure[open] > summary::after {
+  transform: rotate(225deg);
+}
+.beta-disclosure > summary:hover::after,
+.beta-disclosure > summary:focus-visible::after {
+  opacity: 1;
+}
+@media (hover: none) {
+  .beta-disclosure > summary::after {
+    opacity: 1;
+  }
 }

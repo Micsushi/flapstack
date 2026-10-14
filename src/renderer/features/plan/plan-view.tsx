@@ -1,5 +1,7 @@
 "use client"
 
+import { WorkspaceTitle, WorkspacePage } from "../../components/ui/workspace"
+import { NativeSelect } from "../../components/ui/native-select"
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
 import { useAtomValue } from "jotai"
 import {
@@ -166,54 +168,33 @@ export function PlanView() {
       <div className="flex h-full items-center justify-center p-8 text-center">
         <div>
           <BookOpenText className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
-          <h1 className="text-base font-semibold">Select a project to view its plans</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Plan sources are read from registered project roots only.
-          </p>
+          <WorkspaceTitle>Select a project to view its plans</WorkspaceTitle>
         </div>
       </div>
     )
   }
 
   return (
-    <main className="flex h-full min-w-0 flex-col bg-background" aria-labelledby="plan-view-title">
+    <WorkspacePage className="flex flex-col" aria-labelledby="plan-view-title">
       <header className="shrink-0 border-b border-border/70 px-5 py-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {selectedProject.name}
-            </div>
-            <h1
-              id="plan-view-title"
-              className="mt-0.5 flex items-center gap-2 text-lg font-semibold"
-            >
+            <WorkspaceTitle id="plan-view-title" className="mt-0.5 flex items-center gap-2">
               <BookOpenText className="h-5 w-5" aria-hidden="true" />
-              Plan
-            </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Plan sources stay read-only. Review a candidate before creating a task.
-            </p>
+              Plan · {selectedProject.name}
+            </WorkspaceTitle>
           </div>
-          <div
-            className="flex min-h-9 items-center gap-2 rounded-full border border-border bg-muted/35 px-3 text-sm"
-            aria-label={
-              model.progress.total > 0
-                ? `${model.progress.completed} of ${model.progress.total} plan items built`
-                : "No checklist progress available"
-            }
-          >
-            <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-hidden="true" />
-            {model.progress.total > 0 ? (
-              <>
-                <span className="font-medium">
-                  {model.progress.completed} / {model.progress.total} built
-                </span>
-                <span className="text-muted-foreground">{model.progress.percent}%</span>
-              </>
-            ) : (
-              <span className="text-muted-foreground">No checklist progress</span>
-            )}
-          </div>
+          {model.progress.total > 0 && (
+            <div
+              className="flex min-h-9 items-center gap-2 rounded-full border border-border bg-muted/35 px-3 text-sm"
+              aria-label={`${model.progress.completed} of ${model.progress.total} plan items built`}
+            >
+              <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-hidden="true" />
+              <span className="font-medium">
+                {model.progress.completed} / {model.progress.total} built
+              </span>
+            </div>
+          )}
         </div>
 
         {import.meta.env.DEV && (
@@ -223,8 +204,8 @@ export function PlanView() {
         <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(240px,1fr)_minmax(220px,1fr)_auto]">
           <label className="grid gap-1 text-xs font-medium text-muted-foreground">
             Source
-            <select
-              className="h-9 min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            <NativeSelect
+              className="min-w-0"
               value={source?.id ?? ""}
               onChange={(event) =>
                 dispatch({ type: "select-source", sourceId: event.currentTarget.value })
@@ -238,7 +219,7 @@ export function PlanView() {
                   {item.type === "openspec" ? "OpenSpec" : "Markdown"} · {item.path} · {item.status}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </label>
 
           <label className="grid gap-1 text-xs font-medium text-muted-foreground">
@@ -355,13 +336,10 @@ export function PlanView() {
                       {source.path}
                     </h2>
                     <SourceStatusBadge status={source.status} />
-                    <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+                    <Badge variant="outline" className="text-xs uppercase tracking-wide">
                       {source.type}
                     </Badge>
                   </div>
-                  <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
-                    {source.fingerprint}
-                  </p>
                 </div>
                 <Button
                   type="button"
@@ -542,7 +520,7 @@ export function PlanView() {
           onClose={() => setComparisonTarget(null)}
         />
       )}
-    </main>
+    </WorkspacePage>
   )
 }
 
@@ -583,6 +561,7 @@ export function PlanHierarchy({
         <PlanTreeNode
           key={node.candidate.id}
           node={node}
+          sourcePath={sourcePath}
           level={1}
           focusedId={focusedId}
           onFocusedIdChange={setFocusedId}
@@ -600,6 +579,7 @@ export function PlanHierarchy({
 
 function PlanTreeNode({
   node,
+  sourcePath,
   level,
   focusedId,
   onFocusedIdChange,
@@ -611,6 +591,7 @@ function PlanTreeNode({
   onCompare,
 }: {
   node: PlanViewNode
+  sourcePath: string
   level: number
   focusedId: string | null
   onFocusedIdChange: (candidateId: string) => void
@@ -723,14 +704,11 @@ function PlanTreeNode({
                 {node.candidate.title}
               </span>
               <WorkStatusBadge status={node.status} />
-              <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                {node.candidate.kind}
-              </Badge>
               {sourceLinks.map((link) => (
                 <Badge
                   key={`${link.kind}:${link.entity.id}`}
                   variant={link.diverged ? "destructive" : "outline"}
-                  className="text-[10px]"
+                  className="text-xs"
                 >
                   {link.kind} · {describePlanSourceLinkStatus(link.status)}
                 </Badge>
@@ -741,10 +719,12 @@ function PlanTreeNode({
                 {node.candidate.body}
               </p>
             )}
-            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-              <span className="break-all font-mono">
-                {node.candidate.path}:{node.candidate.line}
-              </span>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              {node.candidate.path !== sourcePath && (
+                <span className="break-all font-mono">
+                  {node.candidate.path}:{node.candidate.line}
+                </span>
+              )}
               <button
                 type="button"
                 className="rounded px-1 py-0.5 font-medium text-foreground/70 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -753,10 +733,12 @@ function PlanTreeNode({
                 Open
               </button>
               {isPromotableCandidate && (
-                <button
+                <Button
+                  variant="outline"
+                  size="sm"
                   type="button"
                   disabled={!onPromote || Boolean(linkedTask)}
-                  className="rounded border border-border px-1.5 py-0.5 font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-55"
+                  className="rounded border-border px-1.5 py-0.5 font-medium disabled:cursor-not-allowed disabled:opacity-55"
                   aria-label={`Promote ${node.candidate.title} to task`}
                   title={
                     linkedTask
@@ -768,17 +750,19 @@ function PlanTreeNode({
                   onClick={() => onPromote?.(node.candidate)}
                 >
                   Promote to task
-                </button>
+                </Button>
               )}
               {sourceLinks.map((link) => (
-                <button
+                <Button
+                  variant="outline"
+                  size="sm"
                   key={`compare:${link.kind}:${link.entity.id}`}
                   type="button"
-                  className="rounded border border-border px-1.5 py-0.5 font-medium text-foreground hover:bg-muted"
+                  className="rounded border-border px-1.5 py-0.5 font-medium"
                   onClick={() => onCompare(link)}
                 >
                   Compare {link.kind}
-                </button>
+                </Button>
               ))}
             </div>
           </div>
@@ -790,6 +774,7 @@ function PlanTreeNode({
             <PlanTreeNode
               key={child.candidate.id}
               node={child}
+              sourcePath={sourcePath}
               level={level + 1}
               focusedId={focusedId}
               onFocusedIdChange={onFocusedIdChange}
@@ -812,7 +797,7 @@ function SourceStatusBadge({ status }: { status: "current" | "stale" | "malforme
     <Badge
       variant="outline"
       className={cn(
-        "text-[10px]",
+        "text-xs",
         status === "current" && "border-emerald-500/40 text-emerald-700 dark:text-emerald-300",
         status === "stale" && "border-amber-500/40 text-amber-700 dark:text-amber-300",
         status === "malformed" && "border-destructive/40 text-destructive",
@@ -828,7 +813,7 @@ function WorkStatusBadge({ status }: { status: PlanWorkStatus }) {
     <Badge
       variant="outline"
       className={cn(
-        "text-[10px] capitalize",
+        "text-xs capitalize",
         status === "proposed" && "border-violet-500/40 text-violet-700 dark:text-violet-300",
         status === "active" && "border-blue-500/40 text-blue-700 dark:text-blue-300",
         status === "built" && "border-emerald-500/40 text-emerald-700 dark:text-emerald-300",

@@ -106,6 +106,8 @@ export const mobileAuthorityClasses = ["observe", "respond", "control", "approve
 export const mobileAuthorityClassSchema = z.enum(mobileAuthorityClasses)
 
 export const mobileActionIds = [
+  "chat.create",
+  "chat.send",
   "clarification.answer",
   "run.steer",
   "run.pause",
@@ -150,6 +152,22 @@ export type MobileActionCatalogEntry = {
  * production seam. Later tasks may add actions only after their shared service exists.
  */
 export const mobileActionCatalog = {
+  "chat.create": {
+    id: "chat.create",
+    authority: "control",
+    risk: "bounded-input",
+    approval: "device-confirmation",
+    enabledByDefault: false,
+    service: { module: "src/main/lib/mobile-actions/chat.ts", operation: "createMobileChat" },
+  },
+  "chat.send": {
+    id: "chat.send",
+    authority: "respond",
+    risk: "bounded-input",
+    approval: "device-confirmation",
+    enabledByDefault: false,
+    service: { module: "src/main/lib/run-launch-service.ts", operation: "queueChatRun" },
+  },
   "clarification.answer": {
     id: "clarification.answer",
     authority: "respond",
@@ -649,6 +667,7 @@ export const mobileSnapshotEnvelopeSchema = z
   .object({
     protocolVersion: z.literal(MOBILE_CONTROL_PROTOCOL_VERSION),
     kind: z.literal("snapshot"),
+    capabilities: z.array(mobileActionIdSchema).optional(),
     snapshotId: identifierSchema,
     scopeVersion: versionSchema,
     sequence: sequenceSchema,
@@ -719,6 +738,20 @@ const steerRunActionSchema = z
   .strict()
 
 export const mobileCommandActionSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("chat.create"),
+      message: boundedText(8_000),
+      harness: z.enum(["codex", "claude-code"]),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("chat.send"),
+      message: boundedText(8_000),
+      subChatId: identifierSchema,
+    })
+    .strict(),
   clarificationAnswerActionSchema,
   steerRunActionSchema,
   targetOnlyAction("run.pause"),
@@ -1045,9 +1078,12 @@ export function redactMobilePayload(value: unknown, depth = 0): RedactedValue {
   )
 }
 
-export function redactMobileText(value: string): string {
+export function redactMobileText(
+  value: string,
+  maxLength: number = mobileControlLimits.stringBytes,
+): string {
   return value
-    .slice(0, mobileControlLimits.stringBytes)
+    .slice(0, maxLength)
     .replace(/\bBearer\s+[A-Za-z0-9._~-]+/gi, `Bearer ${MOBILE_REDACTED}`)
     .replace(/\b(?:sk|sess|key)-[A-Za-z0-9_-]{8,}\b/g, MOBILE_REDACTED)
     .replace(
@@ -1057,6 +1093,8 @@ export function redactMobileText(value: string): string {
 }
 
 function actionTargetKind(action: MobileActionId): z.infer<typeof mobileResourceKindSchema> {
+  if (action === "chat.create") return "project"
+  if (action === "chat.send") return "chat"
   if (action === "clarification.answer") return "agent-input"
   if (action.startsWith("run.")) return "run"
   if (action.startsWith("orchestration.")) return "orchestration"

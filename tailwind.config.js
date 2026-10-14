@@ -4,6 +4,13 @@ module.exports = {
   darkMode: "class",
   theme: {
     extend: {
+      fontSize: {
+        xs: ["var(--workspace-text-meta, 0.75rem)", { lineHeight: "1rem" }],
+        sm: [
+          "var(--workspace-text-body, 0.875rem)",
+          { lineHeight: "var(--workspace-line-body, 1.25rem)" },
+        ],
+      },
       screens: {
         "min-420": "420px",
       },

@@ -143,7 +143,7 @@ function UnsupportedViewer({ filePath, onClose }: { filePath: string; onClose: (
   const [displayMode, setDisplayMode] = useAtom(fileViewerDisplayModeAtom)
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="beta-surface flex flex-col h-full bg-background">
       <div className="flex items-center justify-between px-2 h-10 border-b border-border/50 bg-background flex-shrink-0">
         <div className="flex items-center gap-1 min-w-0 flex-1">
           {/* Close + mode switcher on the left */}
@@ -235,11 +235,13 @@ function CodeViewerHeader({
         {/* Open in editor */}
         <Tooltip delayDuration={500}>
           <TooltipTrigger asChild>
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               type="button"
               onClick={handleOpenInEditor}
               aria-label={`Open in ${editorMeta.label}`}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer rounded-md px-1.5 py-1 hover:bg-accent hover:text-accent-foreground transition-colors"
+              className="gap-1.5 text-xs text-muted-foreground px-1.5"
             >
               <span className="hidden @[400px]:inline">Open in</span>
               {EDITOR_ICONS[preferredEditor] && (
@@ -249,7 +251,7 @@ function CodeViewerHeader({
                   className="h-3.5 w-3.5 flex-shrink-0"
                 />
               )}
-            </button>
+            </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" showArrow={false}>
             Open in {editorMeta.label}
@@ -727,7 +729,7 @@ function CodeViewer({
 
   if (isLoading) {
     return (
-      <div className="flex flex-col h-full bg-background">
+      <div className="beta-surface flex flex-col h-full bg-background">
         <CodeViewerHeader
           fileName={fileName}
           filePath={filePath}
@@ -741,7 +743,7 @@ function CodeViewer({
 
   if (error) {
     return (
-      <div className="flex flex-col h-full bg-background">
+      <div className="beta-surface flex flex-col h-full bg-background">
         <CodeViewerHeader
           fileName={fileName}
           filePath={filePath}
@@ -754,7 +756,7 @@ function CodeViewer({
   }
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="beta-surface flex flex-col h-full bg-background">
       {/* Custom find widget styles to match chat search bar */}
       <style>{`
         /* Fix: Monaco hover tooltip overlaps find widget buttons causing flicker.
@@ -971,23 +973,28 @@ function CodeViewer({
           >
             Save
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7"
-            aria-pressed={binding.state.autosave}
-            disabled={!editable || !binding.state.autosaveAllowed}
-            title={
-              binding.state.autosaveAllowed
-                ? "Opt in for this editor. Only new typing autosaves; closing or turning off cancels pending saves. An in-flight save finishes."
-                : "This editor requires explicit Save; automatic edits are unavailable."
-            }
-            onClick={() => binding.setAutosave(!binding.state.autosave)}
-          >
-            {binding.state.autosaveAllowed
-              ? `Autosave ${binding.state.autosave ? "on" : "off"}`
-              : "Autosave unavailable"}
-          </Button>
+          {binding.state.autosaveAllowed && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="ghost" className="h-7" aria-label="File editing options">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuCheckboxItem
+                  checked={binding.state.autosave}
+                  disabled={!editable}
+                  onCheckedChange={(enabled) => binding.setAutosave(enabled)}
+                >
+                  Autosave new edits
+                </DropdownMenuCheckboxItem>
+                <div className="max-w-64 px-2 py-1.5 text-xs text-muted-foreground">
+                  Only new typing autosaves. Turning off or closing cancels pending saves; a save in
+                  progress finishes.
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <Button
             size="sm"
             variant="ghost"
@@ -998,7 +1005,7 @@ function CodeViewer({
               void binding.session?.refreshDisk().then(() => setReviewDisk((value) => !value))
             }
           >
-            Review disk
+            Review saved file
           </Button>
           {binding.state.error && binding.session && (
             <Button
@@ -1023,14 +1030,10 @@ function CodeViewer({
         </div>
       )}
       {reviewDisk && binding.session && (
-        <section
-          aria-label="Current disk content"
-          className="shrink-0 border-b border-border/50 px-3 py-2"
-        >
-          <h3 className="mb-1 text-sm font-medium">Current disk content</h3>
+        <section aria-label="Saved file" className="shrink-0 border-b border-border/50 px-3 py-2">
+          <h3 className="mb-1 text-sm font-medium">Saved file</h3>
           <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">
-            {binding.state.disk?.content ??
-              "Disk contents unavailable. Your draft below is preserved."}
+            {binding.state.disk?.content ?? "Saved file unavailable. Your draft is preserved."}
           </pre>
           {binding.state.conflict && binding.state.disk && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">

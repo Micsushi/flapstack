@@ -57,6 +57,7 @@ import {
   GitFork,
   MessageSquare,
   ClipboardList,
+  Columns3,
   Activity,
   BookOpenText,
   BookOpen,
@@ -3233,7 +3234,15 @@ function AgentsSidebarInner({
       return stored
         ? new Set<string>(
             (JSON.parse(stored) as string[]).map((label) =>
-              label === "Tasks" ? "Work board" : label === "Orchestration fleet" ? "Fleet" : label,
+              label === "Tasks"
+                ? "Work board"
+                : ["Orchestration fleet", "Fleet"].includes(label)
+                  ? "Agent runs"
+                  : label === "Setups"
+                    ? "Agent workflows"
+                    : label === "Project records"
+                      ? "Questions & progress"
+                      : label,
             ),
           )
         : new Set()
@@ -7235,15 +7244,28 @@ function AgentsSidebarInner({
     )
   }
 
+  const navigationOrder = [
+    "Work board",
+    "Yap",
+    "Agent workflows",
+    "Agent runs",
+    "Questions & progress",
+    "Plan",
+    "Topics",
+    "Project knowledge",
+    "Saved workspaces",
+    "Automations",
+    "Inbox",
+  ]
   const navigationVisibilityLabels = [
-    "Project records",
+    "Questions & progress",
     ...(selectedProject && betaFeatures.planning ? ["Topics"] : []),
     ...(betaFeatures.automations && featureVisibility.isVisible("automations")
       ? ["Automations", "Inbox"]
       : []),
     ...((betaFeatures.orchestration || betaFeatures.planning) &&
     featureVisibility.isVisible("orchestration")
-      ? ["Fleet"]
+      ? ["Agent runs"]
       : []),
     ...(selectedProject && betaFeatures.planning && featureVisibility.isVisible("plan")
       ? ["Plan"]
@@ -7258,8 +7280,8 @@ function AgentsSidebarInner({
     featureVisibility.isVisible("saved-workspaces")
       ? ["Saved workspaces"]
       : []),
-    ...(betaFeatures.planning ? ["Work board", "Yap", "Setups"] : []),
-  ].sort((a, b) => a.localeCompare(b))
+    ...(betaFeatures.planning ? ["Work board", "Yap", "Agent workflows"] : []),
+  ].sort((a, b) => navigationOrder.indexOf(a) - navigationOrder.indexOf(b))
   const hasVisibleNavigationItems = navigationVisibilityLabels.some(
     (label) => !hiddenNavigationItems.has(label),
   )
@@ -7390,7 +7412,7 @@ function AgentsSidebarInner({
         )}
       </div>
 
-      {/* Navigation is sorted at render time so new destinations cannot drift out of order. */}
+      {/* Keep work intake, workflows and runs together before supporting project tools. */}
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
@@ -7398,7 +7420,7 @@ function AgentsSidebarInner({
           >
             {[
               {
-                label: "Project records",
+                label: "Questions & progress",
                 Icon: ClipboardList,
                 isActive: desktopView === "project-records",
                 onClick: () => {
@@ -7459,7 +7481,7 @@ function AgentsSidebarInner({
               featureVisibility.isVisible("orchestration")
                 ? [
                     {
-                      label: "Fleet",
+                      label: "Agent runs",
                       Icon: Network,
                       isActive: desktopView === "orchestration-fleet",
                       onClick: () => {
@@ -7523,7 +7545,7 @@ function AgentsSidebarInner({
                 ? [
                     {
                       label: "Work board",
-                      Icon: ClipboardList,
+                      Icon: Columns3,
                       isActive: desktopView === "tasks",
                       onClick: () => {
                         setSelectedChatId(null)
@@ -7537,7 +7559,7 @@ function AgentsSidebarInner({
                     ...(
                       [
                         ["Yap", "records-yap", MessageSquarePlus],
-                        ["Setups", "records-setups", Workflow],
+                        ["Agent workflows", "records-setups", Workflow],
                       ] as const
                     ).map(([label, view, Icon]) => ({
                       label,
@@ -7556,7 +7578,7 @@ function AgentsSidebarInner({
                 : []),
             ]
               .filter(({ label }) => !hiddenNavigationItems.has(label))
-              .sort((a, b) => a.label.localeCompare(b.label))
+              .sort((a, b) => navigationOrder.indexOf(a.label) - navigationOrder.indexOf(b.label))
               .map(({ label, Icon, isActive, onClick, ...item }, index) => (
                 <ButtonCustom
                   key={label}

@@ -5,6 +5,7 @@ import type { SearchAddon } from "@xterm/addon-search"
 import { useTheme } from "next-themes"
 import { useSetAtom, useAtomValue } from "jotai"
 import { toast } from "sonner"
+import { Button } from "@/components/ui/button"
 import { trpc } from "@/lib/trpc"
 import { terminalCwdAtom, terminalsAtom, activeTerminalIdAtom } from "./atoms"
 import { fullThemeDataAtom } from "@/lib/atoms"
@@ -47,6 +48,8 @@ export function Terminal({
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const isExitedRef = useRef(false)
+  const reconnectRef = useRef<(() => void) | null>(null)
+  const [needsReconnect, setNeedsReconnect] = useState(false)
   const commandBufferRef = useRef("")
 
   const [isSearchOpen, setIsSearchOpen] = useState(false)
@@ -188,6 +191,7 @@ export function Terminal({
       onComplete: () => {
         if (!xtermRef.current || isExitedRef.current) return
         isExitedRef.current = true
+        setNeedsReconnect(true)
         xtermRef.current.writeln(
           "\r\n[Terminal stream closed before final status. Press any key to reattach.]",
         )
@@ -262,6 +266,7 @@ export function Terminal({
     let usesReplay = false
     const attachReplay = (result: { replayEnabled?: boolean; serializedState: string }) => {
       if (!isUnmounted) {
+        setNeedsReconnect(false)
         usesReplay = result.replayEnabled ?? false
         setReplayEnabled(usesReplay)
         setReplayPane(paneId)
@@ -286,9 +291,16 @@ export function Terminal({
         },
         {
           onSuccess: attachReplay,
+          onError: (error) => {
+            if (isUnmounted) return
+            isExitedRef.current = true
+            xterm.writeln(`\r\n[Reconnect failed: ${error.message}]`)
+          },
         },
       )
     }
+
+    reconnectRef.current = restartTerminal
 
     // Input handler
     const handleTerminalInput = (data: string) => {
@@ -413,6 +425,7 @@ export function Terminal({
       cleanupContextMenu()
       cleanup()
 
+      reconnectRef.current = null
       replayConsumer.dispose()
       if (replayConsumerRef.current === replayConsumer) replayConsumerRef.current = null
 
@@ -499,6 +512,25 @@ export function Terminal({
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
+      {needsReconnect && (
+        <div
+          className="beta-surface absolute right-3 top-3 z-10 flex items-center gap-2 rounded border bg-background px-2 py-1 text-sm"
+          role="status"
+        >
+          Connection closed
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={createOrAttachMutation.isPending}
+            onClick={() => {
+              xtermRef.current?.focus()
+              reconnectRef.current?.()
+            }}
+          >
+            {createOrAttachMutation.isPending ? "Connecting..." : "Reconnect"}
+          </Button>
+        </div>
+      )}
       <TerminalSearch
         searchAddon={searchAddonRef.current}
         isOpen={isSearchOpen}

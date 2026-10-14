@@ -25,6 +25,18 @@ import type { MobilePairingService } from "../mobile-pairing"
 type Database = BetterSQLite3Database<typeof schema>
 
 export type MobileActionDispatchers = {
+  createChat?(
+    projectId: string,
+    commandId: string,
+    message: string,
+    harness: "codex" | "claude-code",
+  ): boolean | Promise<boolean>
+  sendChat?(
+    chatId: string,
+    subChatId: string,
+    commandId: string,
+    message: string,
+  ): boolean | Promise<boolean>
   answerClarification(
     requestId: string,
     answers: Record<string, string[]>,
@@ -166,6 +178,24 @@ export class MobileActionService {
 
   private async dispatch(command: MobileCommandEnvelope): Promise<boolean> {
     switch (command.action.type) {
+      case "chat.create":
+        return (
+          (await this.options.dispatch.createChat?.(
+            command.target.id,
+            command.commandId,
+            command.action.message,
+            command.action.harness,
+          )) ?? false
+        )
+      case "chat.send":
+        return (
+          (await this.options.dispatch.sendChat?.(
+            command.target.id,
+            command.action.subChatId,
+            command.commandId,
+            command.action.message,
+          )) ?? false
+        )
       case "clarification.answer":
         return this.options.dispatch.answerClarification(
           command.action.requestId,
@@ -246,6 +276,40 @@ export function createProductionMobileActionDispatchers(
 ): MobileActionDispatchers {
   const automation = new AutomationExecutionService(databasePath)
   return {
+    async createChat(projectId, commandId, message, harness) {
+      const { createMobileChat } = await import("./chat")
+      const { publishLocalProductInvalidation } = await import("../mcp-control/invalidation-bridge")
+      const sqlite = openAppDatabase(databasePath)
+      try {
+        const chatId = createMobileChat(sqlite, { projectId, commandId, message, harness })
+        publishLocalProductInvalidation({
+          version: 1,
+          source: "product-mcp",
+          domains: ["chats", "runs"],
+          chatIds: [chatId],
+        })
+        return true
+      } finally {
+        sqlite.close()
+      }
+    },
+    async sendChat(chatId, subChatId, commandId, message) {
+      const { sendMobileChat } = await import("./chat")
+      const { publishLocalProductInvalidation } = await import("../mcp-control/invalidation-bridge")
+      const sqlite = openAppDatabase(databasePath)
+      try {
+        const result = sendMobileChat(sqlite, { chatId, subChatId, commandId, message })
+        publishLocalProductInvalidation({
+          version: 1,
+          source: "product-mcp",
+          domains: ["chats", "runs"],
+          chatIds: [chatId],
+        })
+        return result
+      } finally {
+        sqlite.close()
+      }
+    },
     answerClarification(requestId, answers) {
       return agentInputLifecycle.answer({
         requestId,

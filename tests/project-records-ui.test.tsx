@@ -345,11 +345,11 @@ it("keeps unfinished outcomes in Checklist and answered questions in Questions",
       ),
     )
     expect(container.textContent).toContain("Destination")
-    await click("Completed")
+    await click("Completed work")
     expect(container.textContent).toContain("Finished work")
     expect(container.textContent).not.toContain("Unfinished work")
     expect(container.textContent).not.toContain("Retained history")
-    await click("Checklist")
+    await click("Work checklist")
     expect(container.textContent).toContain("Unfinished work")
     expect(container.textContent).toContain("More work")
     expect(container.textContent).toContain("Retained history")
@@ -471,7 +471,7 @@ it("defaults to all projects, orders waiting questions first and preserves share
     ).toEqual(["Beta", "Beta"])
     await filter("vault")
     expect(container.textContent).not.toContain("Cross-lane choice")
-    await click("Checklist")
+    await click("Work checklist")
     expect(container.textContent).toContain("Vault feature")
     await filter("second")
     await click("Questions")
@@ -798,5 +798,93 @@ it("displays and searches qualified support locators without resolving them by b
   } finally {
     await act(async () => root.unmount())
     fixture.extra = []
+  }
+})
+
+it("keeps record references and agent review state visible in compact questions", async () => {
+  const original = fixture.extra
+  const base = fixture.snapshot.document.records[0]!
+  fixture.extra = [
+    {
+      ...fixture.snapshot,
+      path: "lanes/vault/questions.md",
+      document: {
+        schemaVersion: 1,
+        title: "Review states",
+        records: [
+          {
+            ...base,
+            id: "Q-confirmed",
+            title: "Confirmed choice",
+            state: "answered",
+            answer: "Alpha",
+            answerSource: "owner",
+            agentReview: {
+              reviewedAnswer: "Alpha",
+              reviewedAnswerSource: "owner",
+              status: "confirmed",
+              note: "Checked.",
+            },
+            history: [{ action: "answered", note: "Kept Alpha" }],
+          },
+          {
+            ...base,
+            id: "Q-stale",
+            title: "Changed choice",
+            state: "answered",
+            answer: "Beta",
+            answerSource: "owner",
+            agentReview: {
+              reviewedAnswer: "Alpha",
+              reviewedAnswerSource: "owner",
+              status: "confirmed",
+              note: "Checked.",
+            },
+          },
+          {
+            ...base,
+            id: "Q-follow",
+            title: "Needs clarification",
+            state: "answered",
+            answer: "Alpha",
+            answerSource: "owner",
+            agentReview: {
+              reviewedAnswer: "Alpha",
+              reviewedAnswerSource: "owner",
+              status: "follow_up",
+              note: "Which one?",
+            },
+          },
+        ],
+      },
+    },
+  ]
+  const container = document.createElement("div")
+  const root = createRoot(container)
+  try {
+    await act(async () =>
+      root.render(
+        <Provider>
+          <ProjectRecordsView />
+        </Provider>,
+      ),
+    )
+    const summaries = [...container.querySelectorAll("li > details > summary")]
+    const confirmed = summaries.find((item) => item.textContent?.includes("Q-confirmed"))!
+    expect(confirmed.textContent).toContain("Agent confirmed")
+    expect((confirmed.parentElement as HTMLDetailsElement).open).toBe(false)
+    expect(summaries.find((item) => item.textContent?.includes("Q-stale"))?.textContent).toContain(
+      "Answer changed · needs review",
+    )
+    expect(summaries.find((item) => item.textContent?.includes("Q-follow"))?.textContent).toContain(
+      "Needs clarification",
+    )
+    expect(container.textContent).not.toContain("History (0)")
+    expect(container.textContent).not.toContain("No recommendation recorded yet.")
+    expect(container.textContent).toContain("action: answered · note: Kept Alpha")
+    expect(container.querySelector("h1")?.textContent).toBe("Questions & progress")
+  } finally {
+    await act(async () => root.unmount())
+    fixture.extra = original
   }
 })

@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo, memo } from "react"
+import { NativeSelect } from "../../../components/ui/native-select"
+import React, { useState, useEffect, useCallback, useRef, useMemo, useId, memo } from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { useAtom } from "jotai"
-import { X } from "lucide-react"
 import { cn } from "../../../lib/utils"
 import { trpc } from "../../../lib/trpc"
 import { recordAppAction } from "../../../lib/app-action-history"
@@ -56,6 +56,9 @@ export const FileSearchDialog = memo(function FileSearchDialog({
   projectPath,
   onSelectFile,
 }: FileSearchDialogProps) {
+  const resultsId = useId()
+  const optionId = (path: string) =>
+    `${resultsId}-${encodeURIComponent(fileSearchPathKey(projectPath, path))}`
   const [query, setQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
   const [selection, setSelection] = useState<{ scope: string; path: string } | null>(null)
@@ -247,13 +250,12 @@ export const FileSearchDialog = memo(function FileSearchDialog({
           className={cn(
             "fixed left-1/2 top-3 z-50 -translate-x-1/2",
             "w-[600px] max-w-[calc(100vw-32px)]",
-            "rounded-[10px] border border-border bg-popover shadow-lg",
+            "beta-surface rounded-xl border border-border bg-popover shadow-lg",
             "p-0 flex flex-col overflow-hidden",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           )}
           onOpenAutoFocus={(e) => e.preventDefault()}
-          onKeyDown={handleKeyDown}
         >
           <DialogPrimitive.Title className="sr-only">Go to file</DialogPrimitive.Title>
           {/* Search */}
@@ -264,6 +266,14 @@ export const FileSearchDialog = memo(function FileSearchDialog({
                 ref={searchInputRef}
                 placeholder="Go to file..."
                 aria-label="Search workspace files"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={true}
+                aria-controls={resultsId}
+                aria-activedescendant={
+                  allItems[selectedIndex] ? optionId(allItems[selectedIndex].path) : undefined
+                }
+                onKeyDown={handleKeyDown}
                 value={query}
                 onChange={handleSearchChange}
                 className="h-auto p-0 border-0 rounded-none bg-transparent text-sm placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
@@ -280,59 +290,82 @@ export const FileSearchDialog = memo(function FileSearchDialog({
                 void refetch()
               }}
             />
-            {allItems.length === 0 && debouncedQuery && !error && !isFetching ? (
-              <div className="min-h-[32px] py-[5px] px-1.5 mx-1 flex items-center text-sm text-muted-foreground">
-                No files found
-              </div>
-            ) : (
-              <>
-                {/* Recently opened files (shown at top, no section header) */}
-                {recentItems.map((item, i) => {
-                  const dirPath = item.path.includes("/")
-                    ? item.path.slice(0, item.path.lastIndexOf("/"))
-                    : ""
-                  return (
-                    <FileSearchItem
-                      key={item.id}
-                      label={item.label}
-                      dirPath={dirPath}
-                      index={i}
-                      isSelected={i === selectedIndex}
-                      onSelect={() => handleSelect(item.path)}
-                      setRef={handleSetRef}
-                      query={debouncedQuery}
-                      recentLabel="recently opened"
-                      onRemoveRecent={() => handleRemoveRecent(item.path)}
-                    />
-                  )
-                })}
+            <div id={resultsId} role="listbox" aria-label="Workspace files" aria-busy={isFetching}>
+              {allItems.length === 0 && debouncedQuery && !error && !isFetching ? (
+                <div className="min-h-[32px] py-[5px] px-1.5 mx-1 flex items-center text-sm text-muted-foreground">
+                  No files found
+                </div>
+              ) : (
+                <>
+                  {/* Recently opened files (shown at top, no section header) */}
+                  {recentItems.map((item, i) => {
+                    const dirPath = item.path.includes("/")
+                      ? item.path.slice(0, item.path.lastIndexOf("/"))
+                      : ""
+                    return (
+                      <FileSearchItem
+                        key={item.id}
+                        optionId={optionId(item.path)}
+                        label={item.label}
+                        dirPath={dirPath}
+                        index={i}
+                        isSelected={i === selectedIndex}
+                        onSelect={() => handleSelect(item.path)}
+                        setRef={handleSetRef}
+                        query={debouncedQuery}
+                        recentLabel="Recent"
+                      />
+                    )
+                  })}
 
-                {/* Other files section */}
-                {otherFiles.length > 0 && (
-                  <>
-                    {otherFiles.map((item, i) => {
-                      const flatIndex = recentCount + i
-                      const dirPath = item.path.includes("/")
-                        ? item.path.slice(0, item.path.lastIndexOf("/"))
-                        : ""
-                      return (
-                        <FileSearchItem
-                          key={item.id}
-                          label={item.label}
-                          dirPath={dirPath}
-                          index={flatIndex}
-                          isSelected={flatIndex === selectedIndex}
-                          onSelect={() => handleSelect(item.path)}
-                          setRef={handleSetRef}
-                          query={debouncedQuery}
-                        />
-                      )
-                    })}
-                  </>
-                )}
-              </>
-            )}
+                  {/* Other files section */}
+                  {otherFiles.length > 0 && (
+                    <>
+                      {otherFiles.map((item, i) => {
+                        const flatIndex = recentCount + i
+                        const dirPath = item.path.includes("/")
+                          ? item.path.slice(0, item.path.lastIndexOf("/"))
+                          : ""
+                        return (
+                          <FileSearchItem
+                            key={item.id}
+                            optionId={optionId(item.path)}
+                            label={item.label}
+                            dirPath={dirPath}
+                            index={flatIndex}
+                            isSelected={flatIndex === selectedIndex}
+                            onSelect={() => handleSelect(item.path)}
+                            setRef={handleSetRef}
+                            query={debouncedQuery}
+                          />
+                        )
+                      })}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
           </div>
+          {recentItems.length > 0 && (
+            <NativeSelect
+              aria-label="Remove recent file"
+              value=""
+              className="rounded-none border-x-0 border-b-0 text-xs"
+              onChange={(event) => {
+                handleRemoveRecent(event.target.value)
+                searchInputRef.current?.focus()
+              }}
+            >
+              <option value="" disabled>
+                Remove recent file...
+              </option>
+              {recentItems.map((item) => (
+                <option key={item.id} value={item.path}>
+                  {item.path}
+                </option>
+              ))}
+            </NativeSelect>
+          )}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
@@ -340,6 +373,7 @@ export const FileSearchDialog = memo(function FileSearchDialog({
 })
 
 interface FileSearchItemProps {
+  optionId: string
   label: string
   dirPath: string
   index: number
@@ -348,10 +382,10 @@ interface FileSearchItemProps {
   setRef: (index: number, el: HTMLDivElement | null) => void
   query?: string
   recentLabel?: string
-  onRemoveRecent?: () => void
 }
 
 const FileSearchItem = memo(function FileSearchItem({
+  optionId,
   label,
   dirPath,
   index,
@@ -360,7 +394,6 @@ const FileSearchItem = memo(function FileSearchItem({
   setRef,
   query,
   recentLabel,
-  onRemoveRecent,
 }: FileSearchItemProps) {
   const handleRef = useCallback(
     (el: HTMLDivElement | null) => {
@@ -369,19 +402,14 @@ const FileSearchItem = memo(function FileSearchItem({
     [setRef, index],
   )
 
-  const handleRemove = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation()
-      onRemoveRecent?.()
-    },
-    [onRemoveRecent],
-  )
-
   const Icon = getFileIconByExtension(label) ?? UnknownFileIcon
 
   return (
     <div
       ref={handleRef}
+      id={optionId}
+      role="option"
+      aria-selected={isSelected}
       onClick={onSelect}
       className={cn(
         "flex items-center gap-1.5 min-h-[32px] py-[5px] px-1.5 mx-1 w-[calc(100%-8px)]",
@@ -435,17 +463,6 @@ const FileSearchItem = memo(function FileSearchItem({
       {recentLabel && (
         <span className="flex items-center gap-1 ml-auto shrink-0">
           <span className="text-xs text-muted-foreground/60">{recentLabel}</span>
-          <button
-            type="button"
-            aria-label={`Remove ${label} from recent files`}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") event.stopPropagation()
-            }}
-            onClick={handleRemove}
-            className="h-4 w-4 flex items-center justify-center rounded text-muted-foreground/60 hover:text-foreground transition-colors"
-          >
-            <X className="h-3 w-3" />
-          </button>
         </span>
       )}
     </div>

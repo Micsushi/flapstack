@@ -422,9 +422,9 @@ export async function drainPendingMcpRuns(
                AND earlier.status = 'pending'
                AND earlier.prompt_message_id LIKE 'mcp-%'
                AND (earlier.started_at < r.started_at OR
-                    (earlier.started_at = r.started_at AND earlier.id < r.id))
+                    (earlier.started_at = r.started_at AND earlier.rowid < r.rowid))
            )
-         ORDER BY r.started_at, r.id`,
+         ORDER BY r.started_at, r.rowid`,
       )
       .all() as Row[]
 
@@ -443,6 +443,38 @@ export async function drainPendingMcpRuns(
       }
       const claimed = claimPendingRunWithinUsageBudget(db, String(row.id))
       if (!claimed.claimed) continue
+      if (run.runtimeLaunch && run.runtimeLaunch.resolvedRuntime !== "flapstack-native") {
+        // Persist at launch, not enqueue: an active provider owns its transcript until it finishes.
+        const conversation = db
+          .prepare("SELECT messages FROM sub_chats WHERE id = ?")
+          .get(row.sub_chat_id) as { messages: string }
+        let messages: Array<Record<string, unknown>>
+        try {
+          const parsed: unknown = JSON.parse(conversation.messages)
+          if (
+            !Array.isArray(parsed) ||
+            parsed.some((message) => !message || typeof message !== "object")
+          )
+            throw new Error("Conversation history is invalid.")
+          messages = parsed
+        } catch (error) {
+          markFailed(db, String(row.id), String(row.sub_chat_id))
+          appendCorruptLaunchAudit(db, row, error)
+          continue
+        }
+        if (!messages.some((message) => message.id === row.prompt_message_id)) {
+          messages.push({
+            id: String(row.prompt_message_id),
+            role: "user",
+            parts: [{ type: "text", text: run.prompt }],
+          })
+          db.prepare("UPDATE sub_chats SET messages = ?, updated_at = ? WHERE id = ?").run(
+            JSON.stringify(messages),
+            nowEpochSeconds(),
+            row.sub_chat_id,
+          )
+        }
+      }
       db.prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = ?").run(row.sub_chat_id)
       started += 1
       const launched = launch(run)

@@ -91,7 +91,7 @@ describe("orchestration fleet view", () => {
       )
     })
 
-    expect(container.querySelector("h1")?.textContent).toBe("Orchestration fleet")
+    expect(container.querySelector("h1")?.textContent).toBe("Local runs")
     expect(container.querySelectorAll("select")).toHaveLength(7)
     expect(container.textContent).toContain("codex")
     expect(container.textContent).toContain("Workflow")
@@ -99,6 +99,11 @@ describe("orchestration fleet view", () => {
 
     const rows = [...container.querySelectorAll<HTMLButtonElement>("[data-fleet-row]")]
     expect(rows.map((row) => row.tabIndex)).toEqual([0, -1])
+    expect(rows[0]!.textContent).not.toContain("Workflow")
+    expect(rows[0]!.textContent).not.toContain("codex")
+    expect(rows[0]!.textContent).not.toContain("Flapstack")
+    expect(container.querySelector("#fleet-status option")?.textContent).toBe("All statuses")
+
     rows[0]!.focus()
     await act(async () => {
       rows[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))
@@ -150,10 +155,23 @@ describe("orchestration fleet view", () => {
     await act(async () => {
       root.render(<OrchestrationFleetPanel {...props({ data: page, onFiltersChange })} />)
     })
+    const disclosure = container.querySelector<HTMLDetailsElement>("details")!
+    expect(disclosure.open).toBe(false)
+    expect(disclosure.querySelector("summary")?.textContent).toBe("Filters")
+    disclosure.open = true
     const provider = container.querySelector<HTMLSelectElement>("#fleet-provider")!
     provider.value = "anthropic"
     provider.dispatchEvent(new Event("change", { bubbles: true }))
     expect(onFiltersChange).toHaveBeenCalledWith({ ...filters, provider: "anthropic" })
+    await act(async () => {
+      root.render(
+        <OrchestrationFleetPanel
+          {...props({ data: page, filters: { ...filters, provider: "anthropic" } })}
+        />,
+      )
+    })
+    expect(disclosure.querySelector("summary")?.textContent).toBe("Filters (1 active)")
+    expect(disclosure.open).toBe(true)
     expect(container.querySelector('form[aria-label="Fleet filters"]')).not.toBeNull()
     expect(container.querySelector('nav[aria-label="Fleet pagination"]')).not.toBeNull()
   })
@@ -170,7 +188,7 @@ describe("orchestration fleet view", () => {
         <OrchestrationFleetPanel {...props({ data: { ...page, items: [], total: 0 } })} />,
       )
     })
-    expect(container.textContent).toContain("No orchestrations match these filters")
+    expect(container.textContent).toContain("No matching runs")
 
     await act(async () => {
       root.render(

@@ -13,6 +13,8 @@ import { MobileDeviceConnectionRegistry, MobilePairingService } from "../mobile-
 import { agentInputLifecycle } from "../agent-input/service"
 import { MobileScopeGrantService } from "./grants"
 import { MobileEventService } from "./service"
+import { openAppDatabase } from "../db/access"
+import { readMobileConversation } from "../mobile-actions/conversation"
 
 export class MobileControlRuntime {
   readonly connections = new MobileDeviceConnectionRegistry()
@@ -61,6 +63,18 @@ export class MobileControlRuntime {
       connections: this.connections,
       now: options.now,
       ...(this.actions ? { actions: this.actions } : {}),
+      ...(options.databasePath
+        ? {
+            readConversation: (chatId: string, subChatId?: string, before?: number) => {
+              const sqlite = openAppDatabase(options.databasePath!, { readonly: true })
+              try {
+                return readMobileConversation(sqlite, chatId, subChatId, before)
+              } finally {
+                sqlite.close()
+              }
+            },
+          }
+        : {}),
       listAgentInputs: () => agentInputLifecycle.list(),
     })
     this.unsubscribeAgentInput = agentInputLifecycle.subscribe((event) =>

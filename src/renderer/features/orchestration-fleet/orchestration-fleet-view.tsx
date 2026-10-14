@@ -1,3 +1,7 @@
+import { WorkspaceRow } from "../../components/ui/workspace"
+import { WorkspaceHeader, WorkspaceTitle, WorkspacePage } from "../../components/ui/workspace"
+import { NativeSelect } from "../../components/ui/native-select"
+import { Button } from "../../components/ui/button"
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { useSetAtom } from "jotai"
 import { RefreshCw } from "lucide-react"
@@ -38,6 +42,7 @@ const DEFAULT_FILTERS: OrchestrationFleetFilters = {
 }
 
 export function OrchestrationFleetView() {
+  const [source, setSource] = useState("records")
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
   const [cursor, setCursor] = useState<string | undefined>()
   const [cursorHistory, setCursorHistory] = useState<Array<string | undefined>>([])
@@ -82,21 +87,28 @@ export function OrchestrationFleetView() {
   }
 
   return (
-    <main className="h-full min-h-0 overflow-y-auto bg-background" aria-label="Fleet">
-      <section className="min-h-[32rem] border-b" aria-labelledby="records-fleet-heading">
+    <main className="h-full min-h-0 overflow-y-auto bg-background" aria-label="Agent runs">
+      <WorkspaceHeader className="border-b px-5 py-3">
+        <WorkspaceTitle className="mr-auto">Agent runs</WorkspaceTitle>
+        <label className="flex items-center gap-2 text-sm">
+          Runs
+          <NativeSelect value={source} onChange={(event) => setSource(event.target.value)}>
+            <option value="records">Records task runs</option>
+            <option value="local">Local runs</option>
+          </NativeSelect>
+        </label>
+      </WorkspaceHeader>
+      <section
+        hidden={source !== "records"}
+        className="min-h-[32rem]"
+        aria-labelledby="records-fleet-heading"
+      >
         <div className="sr-only" id="records-fleet-heading">
           Records runtime fleet
         </div>
         <SharedRecordsBoard initialView="fleet" />
       </section>
-      <details className="border-b px-5 py-4">
-        <summary className="cursor-pointer text-sm font-semibold">
-          Local orchestration fleet
-        </summary>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Native local runs remain separate from Records task attempts and keep their original chat
-          and workspace identity.
-        </p>
+      <section hidden={source !== "local"} aria-label="Local runs">
         <div className="mt-3 min-h-[24rem]">
           <OrchestrationFleetPanel
             data={query.data}
@@ -124,7 +136,7 @@ export function OrchestrationFleetView() {
             onOpenWorkspace={openWorkspace}
           />
         </div>
-      </details>
+      </section>
     </main>
   )
 }
@@ -160,6 +172,9 @@ export function OrchestrationFleetPanel({
 }) {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const activeFilterCount = Object.entries(filters).filter(
+    ([key, value]) => value !== DEFAULT_FILTERS[key as keyof OrchestrationFleetFilters],
+  ).length
   const items = data?.items ?? []
   const selected = items.find((item) => item.taskId === selectedTaskId) ?? items[0] ?? null
 
@@ -176,95 +191,94 @@ export function OrchestrationFleetPanel({
   ) => onFiltersChange({ ...filters, [key]: value })
 
   return (
-    <main
-      className="h-full overflow-y-auto bg-background p-5 text-foreground"
-      aria-labelledby="fleet-title"
-    >
-      <header className="mb-4 flex items-start justify-between gap-4">
+    <WorkspacePage className="overflow-y-auto p-6 text-foreground" aria-labelledby="fleet-title">
+      <WorkspaceHeader className="mb-4">
         <div>
-          <h1 id="fleet-title" className="text-xl font-semibold">
-            Orchestration fleet
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Read-only durable state across projects and tasks. Reading never starts work.
-          </p>
+          <WorkspaceTitle id="fleet-title">Local runs</WorkspaceTitle>
         </div>
-        <button
+        <Button
+          variant="outline"
+          size="workspace"
           type="button"
-          className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+          className="gap-2"
           onClick={onRefresh}
           aria-label="Refresh orchestration fleet"
         >
           <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />
           Refresh
-        </button>
-      </header>
+        </Button>
+      </WorkspaceHeader>
 
-      <form
-        className="mb-4 grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2 xl:grid-cols-7"
-        aria-label="Fleet filters"
-        onSubmit={(event) => event.preventDefault()}
-      >
-        <FleetSelect
-          label="Project"
-          value={filters.projectId}
-          onChange={(value) => change("projectId", value)}
-          options={data?.facets.projects ?? []}
-        />
-        <FleetSelect
-          label="Task"
-          value={filters.taskId}
-          onChange={(value) => change("taskId", value)}
-          options={data?.facets.tasks ?? []}
-        />
-        <FleetSelect
-          label="Status"
-          value={filters.status}
-          onChange={(value) => change("status", value)}
-          options={data?.facets.statuses ?? []}
-        />
-        <FleetSelect
-          label="Provider"
-          value={filters.provider}
-          onChange={(value) => change("provider", value)}
-          options={data?.facets.providers ?? []}
-        />
-        <LabeledSelect
-          label="Lifecycle"
-          value={filters.state}
-          onChange={(value) => change("state", value as OrchestrationFleetFilters["state"])}
-          options={[
-            ["all", "All"],
-            ["active", "Active"],
-            ["terminal", "Terminal"],
-            ["unknown", "Unknown"],
-          ]}
-        />
-        <LabeledSelect
-          label="Archive scope"
-          value={filters.archiveScope}
-          onChange={(value) =>
-            change("archiveScope", value as OrchestrationFleetFilters["archiveScope"])
-          }
-          options={[
-            ["visible", "Visible only"],
-            ["archived", "Archived only"],
-            ["all", "All"],
-          ]}
-        />
-        <LabeledSelect
-          label="Sort"
-          value={filters.sort}
-          onChange={(value) => change("sort", value as OrchestrationFleetSort)}
-          options={[
-            ["updated-desc", "Recently updated"],
-            ["updated-asc", "Oldest update"],
-            ["created-desc", "Recently created"],
-            ["created-asc", "Oldest created"],
-            ["name-asc", "Task name"],
-          ]}
-        />
-      </form>
+      <details className="beta-disclosure mb-4">
+        <summary className="cursor-pointer text-sm">
+          Filters{activeFilterCount > 0 ? ` (${activeFilterCount} active)` : ""}
+        </summary>
+        <form
+          className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
+          aria-label="Fleet filters"
+          onSubmit={(event) => event.preventDefault()}
+        >
+          <FleetSelect
+            label="Project"
+            value={filters.projectId}
+            onChange={(value) => change("projectId", value)}
+            options={data?.facets.projects ?? []}
+          />
+          <FleetSelect
+            label="Task"
+            value={filters.taskId}
+            onChange={(value) => change("taskId", value)}
+            options={data?.facets.tasks ?? []}
+          />
+          <FleetSelect
+            label="Status"
+            value={filters.status}
+            onChange={(value) => change("status", value)}
+            options={data?.facets.statuses ?? []}
+          />
+          <FleetSelect
+            label="Provider"
+            value={filters.provider}
+            onChange={(value) => change("provider", value)}
+            options={data?.facets.providers ?? []}
+          />
+          <LabeledSelect
+            label="Run state"
+            value={filters.state}
+            onChange={(value) => change("state", value as OrchestrationFleetFilters["state"])}
+            options={[
+              ["all", "All"],
+              ["active", "Active"],
+              ["terminal", "Finished"],
+              ["unknown", "Unknown"],
+            ]}
+          />
+          <LabeledSelect
+            label="Show"
+            value={filters.archiveScope}
+            onChange={(value) =>
+              change("archiveScope", value as OrchestrationFleetFilters["archiveScope"])
+            }
+            options={[
+              ["visible", "Unarchived"],
+              ["archived", "Archived only"],
+              ["all", "All"],
+            ]}
+          />
+          <LabeledSelect
+            label="Sort"
+            value={filters.sort}
+            onChange={(value) => change("sort", value as OrchestrationFleetSort)}
+            options={[
+              ["updated-desc", "Recently updated"],
+              ["updated-asc", "Oldest update"],
+              ["created-desc", "Recently created"],
+              ["created-asc", "Oldest created"],
+              ["name-asc", "Task name"],
+            ]}
+          />
+        </form>
+      </details>
 
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {isLoading
@@ -278,13 +292,15 @@ export function OrchestrationFleetPanel({
         <div role="alert" className="rounded-lg border border-destructive/40 p-4">
           <p className="font-medium">Fleet query failed</p>
           <p className="mt-1 text-sm text-muted-foreground">{error}</p>
-          <button
+          <Button
+            variant="outline"
+            size="workspace"
             type="button"
-            className="mt-3 rounded-md border px-3 py-1.5 text-sm"
+            className="mt-3"
             onClick={onRetry}
           >
             Retry
-          </button>
+          </Button>
         </div>
       ) : isLoading && !data ? (
         <div
@@ -295,28 +311,25 @@ export function OrchestrationFleetPanel({
         </div>
       ) : items.length === 0 ? (
         <div role="status" className="rounded-lg border p-8 text-center">
-          <p className="font-medium">No orchestrations match these filters</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Change project, task, status, provider, lifecycle, or archive scope.
-          </p>
+          <p className="font-medium">No matching runs</p>
         </div>
       ) : (
-        <div className="grid min-h-[28rem] gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.7fr)]">
-          <section aria-labelledby="fleet-results-title" className="min-w-0 rounded-lg border">
-            <h2 id="fleet-results-title" className="border-b px-4 py-3 text-sm font-semibold">
-              Fleet results
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.7fr)]">
+          <section aria-labelledby="fleet-results-title" className="min-w-0">
+            <h2 id="fleet-results-title" className="sr-only">
+              Runs
             </h2>
             <ol className="divide-y" aria-label="Orchestrations">
               {items.map((item, index) => (
                 <li key={item.taskId}>
-                  <button
+                  <WorkspaceRow
                     ref={(element) => {
                       rowRefs.current[index] = element
                     }}
                     type="button"
                     data-fleet-row
                     tabIndex={selected?.taskId === item.taskId ? 0 : -1}
-                    className={`grid w-full gap-2 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto_auto] ${
+                    className={`grid gap-2 px-4 py-3 focus-visible:ring-inset sm:grid-cols-[minmax(0,1fr)_auto] ${
                       selected?.taskId === item.taskId ? "bg-muted" : "hover:bg-muted/50"
                     }`}
                     aria-pressed={selected?.taskId === item.taskId}
@@ -327,41 +340,45 @@ export function OrchestrationFleetPanel({
                   >
                     <span className="min-w-0">
                       <span className="block truncate font-medium">{item.taskName}</span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {item.projectName} · {item.engine.label} ·{" "}
-                        {item.providers.join(", ") || "unknown provider"}
-                      </span>
+                      {!filters.projectId && (data?.facets.projects.length ?? 0) > 1 && (
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {item.projectName}
+                        </span>
+                      )}
                     </span>
                     <StatusText status={item.status} freshness={item.freshness} />
-                    <span className="text-xs text-muted-foreground">
-                      {item.aggregate.active} active · {item.aggregate.total} agents
-                    </span>
-                  </button>
+                  </WorkspaceRow>
                 </li>
               ))}
             </ol>
-            <nav
-              className="flex items-center justify-between border-t p-3"
-              aria-label="Fleet pagination"
-            >
-              <button
-                type="button"
-                className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
-                disabled={!canPrevious}
-                onClick={onPrevious}
+            {(canPrevious || data?.nextCursor) && (
+              <nav
+                className="flex items-center justify-between border-t p-3"
+                aria-label="Fleet pagination"
               >
-                Previous
-              </button>
-              <span className="text-xs text-muted-foreground">{data?.total ?? 0} matching</span>
-              <button
-                type="button"
-                className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
-                disabled={!data?.nextCursor}
-                onClick={onNext}
-              >
-                Next
-              </button>
-            </nav>
+                <Button
+                  variant="outline"
+                  size="workspace"
+                  type="button"
+
+                  disabled={!canPrevious}
+                  onClick={onPrevious}
+                >
+                  Previous
+                </Button>
+                <span className="text-xs text-muted-foreground">{data?.total ?? 0} matching</span>
+                <Button
+                  variant="outline"
+                  size="workspace"
+                  type="button"
+
+                  disabled={!data?.nextCursor}
+                  onClick={onNext}
+                >
+                  Next
+                </Button>
+              </nav>
+            )}
           </section>
           {selected && (
             <FleetDetail
@@ -372,7 +389,7 @@ export function OrchestrationFleetPanel({
           )}
         </div>
       )}
-    </main>
+    </WorkspacePage>
   )
 }
 
@@ -388,45 +405,55 @@ function FleetDetail({
   const titleId = `fleet-detail-${item.taskId}`
   const operationWorkspace = item.operationWorkspace ?? { id: null, state: "missing" as const }
   return (
-    <aside className="rounded-lg border" aria-labelledby={titleId}>
+    <aside className="overflow-hidden rounded-xl bg-card" aria-labelledby={titleId}>
       <div className="border-b p-4">
         <h2 id={titleId} className="font-semibold">
           {item.taskName}
         </h2>
-        <p className="text-sm text-muted-foreground">{item.projectName}</p>
       </div>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 p-4 text-sm">
-        <dt className="text-muted-foreground">State</dt>
-        <dd>
-          <StatusText status={item.status} freshness={item.freshness} />
-        </dd>
-        <dt className="text-muted-foreground">Freshness</dt>
-        <dd>{item.freshnessReason}</dd>
-        <dt className="text-muted-foreground">Engine</dt>
-        <dd>
-          {item.engine.label} ({item.engine.provenance})
-        </dd>
-        <dt className="text-muted-foreground">Identity</dt>
-        <dd>{item.coordinationIdentity.label}</dd>
-        <dt className="text-muted-foreground">Providers</dt>
-        <dd>{item.providers.join(", ") || "Unknown"}</dd>
-        <dt className="text-muted-foreground">Harnesses</dt>
-        <dd>{item.harnesses.join(", ") || "Unknown"}</dd>
-        <dt className="text-muted-foreground">Limits</dt>
-        <dd>
-          {item.maxParallelAgents} parallel, depth {item.maxDepth}
-        </dd>
-        <dt className="text-muted-foreground">Blockers</dt>
-        <dd>{item.blockerCount}</dd>
-        <dt className="text-muted-foreground">Usage</dt>
-        <dd>{formatFleetUsage(item)}</dd>
-        <dt className="text-muted-foreground">Updated</dt>
-        <dd>{formatTime(item.updatedAt)}</dd>
-      </dl>
-      <div className="px-4 pb-4">
-        <button
+      <details className="beta-disclosure p-4">
+        <summary className="cursor-pointer text-sm font-medium">Run details</summary>
+        <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 break-words text-sm">
+          <dt className="text-muted-foreground">Project</dt>
+          <dd>{item.projectName}</dd>
+          <dt className="text-muted-foreground">Agents</dt>
+          <dd>
+            {item.aggregate.active} active · {item.aggregate.total} total
+          </dd>
+          <dt className="text-muted-foreground">State</dt>
+          <dd>
+            <StatusText status={item.status} freshness={item.freshness} />
+          </dd>
+          <dt className="text-muted-foreground">Freshness</dt>
+          <dd>{item.freshnessReason}</dd>
+          <dt className="text-muted-foreground">Engine</dt>
+          <dd>
+            {item.engine.label} ({item.engine.provenance})
+          </dd>
+          <dt className="text-muted-foreground">Identity</dt>
+          <dd>{item.coordinationIdentity.label}</dd>
+          <dt className="text-muted-foreground">Providers</dt>
+          <dd>{item.providers.join(", ") || "Unknown"}</dd>
+          <dt className="text-muted-foreground">Harnesses</dt>
+          <dd>{item.harnesses.join(", ") || "Unknown"}</dd>
+          <dt className="text-muted-foreground">Limits</dt>
+          <dd>
+            {item.maxParallelAgents} parallel, depth {item.maxDepth}
+          </dd>
+          <dt className="text-muted-foreground">Blockers</dt>
+          <dd>{item.blockerCount}</dd>
+          <dt className="text-muted-foreground">Usage</dt>
+          <dd>{formatFleetUsage(item)}</dd>
+          <dt className="text-muted-foreground">Updated</dt>
+          <dd>{formatTime(item.updatedAt)}</dd>
+        </dl>
+      </details>
+      <div className="flex flex-wrap gap-2 px-4 pb-4">
+        <Button
+          variant="outline"
+          size="workspace"
           type="button"
-          className="mr-2 rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
+
           disabled={operationWorkspace.state !== "live"}
           onClick={() =>
             operationWorkspace.id && onOpenWorkspace(item.projectId, operationWorkspace.id)
@@ -435,20 +462,22 @@ function FleetDetail({
           {operationWorkspace.state === "live"
             ? "Open operation workspace"
             : "Operation workspace missing"}
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="outline"
+          size="workspace"
           type="button"
-          className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
+
           disabled={item.initiatingChat.state !== "live"}
           onClick={() => onOpenChat(item.initiatingChat.id)}
         >
           {item.initiatingChat.state === "live"
             ? "Open initiating chat"
             : `Initiating chat ${item.initiatingChat.state}`}
-        </button>
+        </Button>
       </div>
       <div className="border-t p-4">
-        <h3 className="mb-2 text-sm font-semibold">Agents, runs, and chats</h3>
+        <h3 className="mb-2 text-sm font-semibold">Agents</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
@@ -474,12 +503,7 @@ function FleetDetail({
                     {agent.name}
                     <span className="block font-normal text-muted-foreground">{agent.status}</span>
                   </th>
-                  <td className="py-2 pr-3">
-                    {agent.provider}
-                    <span className="block text-muted-foreground">
-                      {agent.harness} · {agent.providerProvenance}
-                    </span>
-                  </td>
+                  <td className="py-2 pr-3">{agent.provider}</td>
                   <td className="py-2 pr-3">{agent.run.status ?? "No run"}</td>
                   <td className="py-2">
                     {agent.chat.id && agent.chat.state === "live" ? (
@@ -533,7 +557,7 @@ function FleetSelect({
       value={value}
       onChange={onChange}
       options={[
-        ["", `All ${label.toLocaleLowerCase()}s`],
+        ["", label === "Status" ? "All statuses" : `All ${label.toLocaleLowerCase()}s`],
         ...options.map(
           (option) => [option.id, `${option.label} (${option.count})`] as [string, string],
         ),
@@ -557,9 +581,9 @@ function LabeledSelect({
   return (
     <label htmlFor={id} className="grid gap-1 text-xs font-medium">
       {label}
-      <select
+      <NativeSelect
         id={id}
-        className="h-9 min-w-0 rounded-md border bg-background px-2 text-sm"
+        className="min-w-0"
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >
@@ -568,7 +592,7 @@ function LabeledSelect({
             {optionLabel}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     </label>
   )
 }

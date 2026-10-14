@@ -964,10 +964,11 @@ export class MainRuntimeLaunchService {
           if (
             terminal === "success" &&
             run.resolved_runtime !== "flapstack-native" &&
-            run.prompt_message_id?.startsWith("mcp-diff-feedback-") &&
-            db
-              .prepare("SELECT id FROM diff_feedback_batches WHERE id = ? AND run_id = ?")
-              .get(run.prompt_message_id.slice("mcp-diff-feedback-".length), runId)
+            (run.prompt_message_id?.startsWith("mcp-mobile-") ||
+              (run.prompt_message_id?.startsWith("mcp-diff-feedback-") &&
+                db
+                  .prepare("SELECT id FROM diff_feedback_batches WHERE id = ? AND run_id = ?")
+                  .get(run.prompt_message_id.slice("mcp-diff-feedback-".length), runId)))
           ) {
             persistInteractiveRuntimeAssistantFallback(
               db,
