@@ -63,12 +63,19 @@ describe("Linux package security report", () => {
       "# flapstack-install-mode-v1",
       'chmod 0755 -- "/opt/Flapstack-Preview"',
       'chmod 0755 -- "/opt/Flapstack-Preview/resources"',
+      'find "/opt/Flapstack-Preview" -type d -exec chmod 0755 -- {} +',
       'test -f "/opt/Flapstack-Preview/chrome-sandbox"',
       'test ! -L "/opt/Flapstack-Preview/chrome-sandbox"',
       'chown root:root -- "/opt/Flapstack-Preview/chrome-sandbox"',
       'chmod 4755 -- "/opt/Flapstack-Preview/chrome-sandbox"',
     ].join("\n")
     expect(() => assertDebPostInstallScript(previewScript, { channel: "preview" })).not.toThrow()
+    expect(() =>
+      assertDebPostInstallScript(
+        previewScript.replace('find "/opt/Flapstack-Preview" -type d -exec chmod 0755 -- {} +', ""),
+        { channel: "preview" },
+      ),
+    ).toThrow(/find/i)
     expect(() =>
       assertDebPostInstallScript(previewScript.replace("chmod 4755", "chmod 0755"), {
         channel: "preview",

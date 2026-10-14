@@ -257,6 +257,7 @@ export function assertDebPostInstallScript(contents, expected) {
     "# flapstack-install-mode-v1",
     `chmod 0755 -- "${applicationDirectory}"`,
     `chmod 0755 -- "${applicationDirectory}/resources"`,
+    `find "${applicationDirectory}" -type d -exec chmod 0755 -- {} +`,
     `test -f "${applicationDirectory}/chrome-sandbox"`,
     `test ! -L "${applicationDirectory}/chrome-sandbox"`,
     `chown root:root -- "${applicationDirectory}/chrome-sandbox"`,

@@ -8,6 +8,7 @@ test -d "/opt/Flapstack/resources"
 test ! -L "/opt/Flapstack/resources"
 chmod 0755 -- "/opt/Flapstack"
 chmod 0755 -- "/opt/Flapstack/resources"
+find "/opt/Flapstack" -type d -exec chmod 0755 -- {} +
 
 test -f "/opt/Flapstack/chrome-sandbox"
 test ! -L "/opt/Flapstack/chrome-sandbox"
