@@ -113,13 +113,6 @@ describe("MCP cross-harness thread spawn service", () => {
 
     expect(codexToClaude).toMatchObject({ ok: true, data: { launch: { status: "pending" } } })
     expect(claudeToCodex).toMatchObject({ ok: true, data: { launch: { status: "pending" } } })
-    const launched: string[] = []
-    expect(
-      await drainPendingAgentRuns(path, async (run) => {
-        launched.push(run.harness)
-      }),
-    ).toBe(2)
-    expect(launched.sort()).toEqual(["claude-code", "codex"])
     expect(
       sqlite
         .prepare(
@@ -132,6 +125,13 @@ describe("MCP cross-harness thread spawn service", () => {
       { initial_prompt: "Review this change.", messages: "[]" },
       { initial_prompt: "Implement this change.", messages: "[]" },
     ])
+    const launched: string[] = []
+    expect(
+      await drainPendingAgentRuns(path, async (run) => {
+        launched.push(run.harness)
+      }),
+    ).toBe(2)
+    expect(launched.sort()).toEqual(["claude-code", "codex"])
     const spawned = sqlite
       .prepare(
         "SELECT harness, permission_mode, parent_chat_id, initiator_chat_id, ancestor_chat_ids, worktree_path FROM chats WHERE parent_chat_id IS NOT NULL ORDER BY harness",

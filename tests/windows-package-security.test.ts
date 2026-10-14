@@ -99,7 +99,7 @@ describe("Windows package security report", () => {
       "ip-address": "10.4.0",
       "js-yaml": "5.4.1",
       nanoid: "3.3.18",
-      sharp: "0.35.4",
+      sharp: "0.35.5",
       tar: "7.5.22",
     })
     expect(packageJson.scripts["package:audit:preview:win"]).toContain("--channel=preview")

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest"
 const source = (path: string) => readFileSync(path, "utf8")
 
 describe("Stage 6 F1/F2 renderer contract", () => {
-  it("reuses feature explanations in Settings, onboarding, an empty state, and contextual help", () => {
+  it("keeps feature explanations in Settings, onboarding, and contextual help without empty-state subtitles", () => {
     const settings = source(
       "src/renderer/components/dialogs/settings-tabs/agents-feature-visibility-tab.tsx",
     )
@@ -16,7 +16,7 @@ describe("Stage 6 F1/F2 renderer contract", () => {
 
     expect(settings).toContain("feature.explanation.authority")
     expect(onboarding).toContain("feature.explanation.why")
-    expect(automations).toContain('<FeatureExplanationSummary featureId="automations"')
+    expect(automations).not.toContain("FeatureExplanationSummary")
     expect(automations).toContain('<FeatureHelpPopover featureId="automations"')
     expect(help).toContain("explainFeature(featureId)")
     expect(help).toContain("What is this?")

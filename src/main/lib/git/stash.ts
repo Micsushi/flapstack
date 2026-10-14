@@ -33,7 +33,10 @@ export async function createRollbackStash(cwd: string, sdkMessageUuid: string): 
     try {
       tempDir = await mkdtemp(join(tmpdir(), "checkpoint-index-"))
       const tempIndexPath = join(tempDir, "index")
-      const gitWithTempIndex = simpleGit(cwd).env({
+      const gitWithTempIndex = simpleGit({
+        baseDir: cwd,
+        allowEnvironment: ["GIT_INDEX_FILE"],
+      }).env({
         GIT_INDEX_FILE: tempIndexPath,
       })
       await gitWithTempIndex.raw(["add", "-A"])

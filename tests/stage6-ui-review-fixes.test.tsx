@@ -76,7 +76,9 @@ describe("Stage 6 UI review regressions", () => {
 
     expect(document).toContain('role="status"')
     expect(document).toContain('aria-live="polite"')
-    expect(document).toContain('@media(prefers-color-scheme:dark){#connection[data-mode="offline"]')
+    expect(document).toContain('aria-label="Connection settings" aria-live="polite"')
+    expect(document).toContain("--muted:#666")
+    expect(document).toContain("--surface:#171717;--muted:#aaa")
     expect(`${document}${app}`).not.toContain("Â")
   })
 

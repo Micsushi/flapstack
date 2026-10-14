@@ -31,6 +31,7 @@ export function createGit(worktreePath: string, timeout: number = GIT_TIMEOUTS.L
   const options: Partial<SimpleGitOptions> = {
     baseDir: worktreePath,
     binary: "git",
+    allowEnvironment: ["GIT_INDEX_FILE"],
     maxConcurrentProcesses: 6,
     timeout: {
       block: timeout,

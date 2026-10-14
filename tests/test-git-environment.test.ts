@@ -54,7 +54,7 @@ describe("isolated test Git environment", () => {
         args: [
           "config",
           "--file",
-          "C:\\Temp\\flapstack-test-git\\config",
+          "C:\\Temp\\flapstack-test-git\\.gitconfig",
           "user.name",
           "Human User",
         ],
@@ -64,7 +64,7 @@ describe("isolated test Git environment", () => {
         args: [
           "config",
           "--file",
-          "C:\\Temp\\flapstack-test-git\\config",
+          "C:\\Temp\\flapstack-test-git\\.gitconfig",
           "user.email",
           "human@example.com",
         ],
@@ -72,7 +72,9 @@ describe("isolated test Git environment", () => {
     ])
     expect(isolated.env).toEqual({
       PATH: "tool-path",
-      GIT_CONFIG_GLOBAL: "C:\\Temp\\flapstack-test-git\\config",
+      HOME: "C:\\Temp\\flapstack-test-git",
+      XDG_CONFIG_HOME: "C:\\Temp\\flapstack-test-git",
+      GIT_CONFIG_GLOBAL: "C:\\Temp\\flapstack-test-git\\.gitconfig",
     })
 
     isolated.cleanup()
@@ -108,7 +110,7 @@ describe("isolated test Git environment", () => {
         args: [
           "config",
           "--file",
-          "C:\\Temp\\flapstack-test-git\\config",
+          "C:\\Temp\\flapstack-test-git\\.gitconfig",
           "user.name",
           "Flapstack Test",
         ],
@@ -118,7 +120,7 @@ describe("isolated test Git environment", () => {
         args: [
           "config",
           "--file",
-          "C:\\Temp\\flapstack-test-git\\config",
+          "C:\\Temp\\flapstack-test-git\\.gitconfig",
           "user.email",
           "flapstack-test@example.invalid",
         ],

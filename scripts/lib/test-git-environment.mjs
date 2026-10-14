@@ -23,7 +23,7 @@ export function createIsolatedTestGitEnvironment(options = {}) {
   const directory = (
     options.makeDirectory ?? (() => mkdtempSync(paths.join(tmpdir(), "flapstack-test-git-")))
   )()
-  const configPath = paths.join(directory, "config")
+  const configPath = paths.join(directory, ".gitconfig")
   const runGit = (args) => {
     const result = runner("git", args, {
       encoding: "utf8",
@@ -55,7 +55,8 @@ export function createIsolatedTestGitEnvironment(options = {}) {
   runGit(["config", "--file", configPath, "user.email", email])
 
   return {
-    env: { ...testEnv, GIT_CONFIG_GLOBAL: configPath },
+    // simple-git filters GIT_* overrides; HOME keeps its children isolated too.
+    env: { ...testEnv, HOME: directory, XDG_CONFIG_HOME: directory, GIT_CONFIG_GLOBAL: configPath },
     cleanup: () => (options.remove ?? rmSync)(directory, { recursive: true, force: true }),
   }
 }
