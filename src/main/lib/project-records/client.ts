@@ -48,6 +48,7 @@ const BOARD_PATHS = new Set([
   "/v1/agents/start",
   "/v1/agents/stop",
   "/v1/agents/resume",
+  "/v1/agents/continue-answer",
   "/v1/agents/reconcile",
   "/v1/agents/release",
   "/v1/yap/input",
@@ -125,7 +126,11 @@ export class ProjectRecordsClient {
         body !== undefined
           ? // The service permits two five-minute passes, plus response/cleanup time.
             630_000
-          : 10_000),
+          : body !== undefined &&
+              ["/v1/agents/start", "/v1/agents/resume", "/v1/agents/continue-answer"].includes(path)
+            ? // Isolated Git preparation can exceed ten seconds on Windows.
+              60_000
+            : 10_000),
     )
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
     try {
@@ -249,6 +254,7 @@ export class ProjectRecordsClient {
         "/v1/agents/start",
         "/v1/agents/stop",
         "/v1/agents/resume",
+        "/v1/agents/continue-answer",
         "/v1/agents/reconcile",
         "/v1/agents/release",
         "/v1/yap/upload/start",
@@ -368,6 +374,7 @@ export class ProjectRecordsClient {
       "/v1/agents/start",
       "/v1/agents/stop",
       "/v1/agents/resume",
+      "/v1/agents/continue-answer",
       "/v1/agents/reconcile",
       "/v1/agents/release",
       "/v1/yap/upload/start",

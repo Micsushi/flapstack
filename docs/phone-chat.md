@@ -14,8 +14,9 @@ awake, connected, and running Flapstack.
 3. Open the link on your phone. Compare the certificate fingerprint with the
    desktop before trusting the connection and pairing the device.
 4. On the desktop, grant the paired phone access to the project with **Allow
-   chats and controls**. Copy the grant ID into **Access ID** on the phone and
-   connect. Existing grants retain their original capabilities; create a new
+   chats and controls**. The phone connects automatically when access is granted;
+   choose an access scope if you have more than one. Existing grants retain their
+   original capabilities; create a new
    project grant to enable starting chats.
 5. Choose **New chat**, select the project and agent, and send a message.
    Existing chats appear in the conversation list. The same messages are stored

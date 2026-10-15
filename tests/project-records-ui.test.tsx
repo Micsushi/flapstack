@@ -62,6 +62,7 @@ const fixture = vi.hoisted(() => {
     snapshot,
     extra: [] as ProjectRecordSnapshot[],
     mutate: vi.fn(),
+    continueAnswer: vi.fn(),
     setData: vi.fn(),
     cancel: vi.fn().mockResolvedValue(undefined),
   }
@@ -84,7 +85,12 @@ vi.mock("../src/renderer/lib/trpc", () => ({
       patch: { useMutation: () => ({ mutateAsync: fixture.mutate, isPending: false }) },
     },
   },
-  trpcClient: {},
+  trpcClient: {
+    projectRecords: {
+      continueAnswer: { mutate: fixture.continueAnswer },
+      answerContinuationIdentity: { query: async () => ({ storeIdentity: "1".repeat(64) }) },
+    },
+  },
 }))
 vi.mock("../src/renderer/features/project-records/record-action", () => ({
   retainRecordAction: vi.fn(),
@@ -886,5 +892,95 @@ it("keeps record references and agent review state visible in compact questions"
   } finally {
     await act(async () => root.unmount())
     fixture.extra = original
+  }
+})
+
+it("keeps the saved answer and newer draft when continuation fails, and retries the same request after remount", async () => {
+  const record = fixture.snapshot.document.records[0]!
+  const original = { ...record }
+  window.localStorage.clear()
+  fixture.continueAnswer.mockReset()
+  fixture.continueAnswer.mockRejectedValueOnce(new Error("Connection lost"))
+  fixture.continueAnswer.mockResolvedValueOnce({ runId: "run-1", phase: "running", replayed: true })
+  fixture.mutate.mockImplementationOnce(async (input) => {
+    Object.assign(record, input.changes)
+    return { conflict: false, snapshot: fixture.snapshot }
+  })
+  const container = document.createElement("div")
+  document.body.append(container)
+  let root = createRoot(container)
+  const render = () =>
+    act(async () =>
+      root.render(
+        <Provider>
+          <ProjectRecordsView />
+        </Provider>,
+      ),
+    )
+  const click = (label: string) =>
+    act(async () => {
+      Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === label)!
+        .click()
+    })
+  try {
+    await render()
+    await click("Alpha")
+    await click("Save and continue")
+    expect(record.answer).toBe("Alpha")
+    expect(container.textContent).toContain("Answer saved. Connection lost")
+    const first = fixture.continueAnswer.mock.calls[0]![0]
+    expect(first).toMatchObject({ path: fixture.path, recordId: "Q1", answer: "Alpha" })
+    await click("Beta")
+    await act(async () => root.unmount())
+    root = createRoot(container)
+    await render()
+    expect(container.querySelector("textarea")!.value).toBe("Beta")
+    expect(container.textContent).toContain("Continuation not confirmed.")
+    await click("Retry continuation")
+    expect(fixture.continueAnswer.mock.calls[1]![0]).toEqual(first)
+    expect(container.textContent).toContain("Continuation sent.")
+    expect(container.querySelector("textarea")!.value).toBe("Beta")
+    expect(record.answer).toBe("Alpha")
+    expect(
+      window.localStorage.getItem(
+        `records:answer-continuation:${JSON.stringify([fixture.path, "Q1"])}`,
+      ),
+    ).toBeNull()
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+    Object.assign(record, original)
+    window.localStorage.clear()
+    fixture.continueAnswer.mockReset()
+  }
+})
+
+it("never continues after a rejected answer save", async () => {
+  fixture.continueAnswer.mockClear()
+  fixture.mutate.mockResolvedValueOnce({ conflict: true, snapshot: fixture.snapshot })
+  const container = document.createElement("div")
+  const root = createRoot(container)
+  try {
+    await act(async () =>
+      root.render(
+        <Provider>
+          <ProjectRecordsView />
+        </Provider>,
+      ),
+    )
+    const click = (label: string) =>
+      act(async () => {
+        Array.from(container.querySelectorAll("button"))
+          .find((button) => button.textContent === label)!
+          .click()
+      })
+    await click("Alpha")
+    await click("Save and continue")
+    expect(fixture.continueAnswer).not.toHaveBeenCalled()
+    expect(container.querySelector("textarea")!.value).toBe("Alpha")
+  } finally {
+    await act(async () => root.unmount())
+    window.localStorage.clear()
   }
 })

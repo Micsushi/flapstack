@@ -16,15 +16,13 @@ const MAX_REFERENCED_FILES = 2
 
 export const FLAPSTACK_DEFAULT_BEHAVIOR_INSTRUCTION = `# Flapstack default behavior
 
-Caveman full and ponytail full are enabled by default for every chat.
+Use plain, concise replies while preserving the detail the task needs. Follow
+explicit user preferences and applicable repository instructions. Named styles
+such as Caveman are opt-in; do not enable them unless the user requests them,
+and honor requests to stop or change a style.
 
-- Caveman full: keep replies short, direct, and free of filler while preserving
-  whatever detail the task needs. Do not add an introduction, recap, repeated
-  context, or an offer to do more work.
-- Ponytail full: choose the smallest, simplest solution that fully works. Avoid
-  speculative architecture and unnecessary abstraction.
-- /caveman lite|full|ultra and /ponytail lite|full|ultra adjust intensity only.
-- normal mode, stop caveman, and stop ponytail do not disable these defaults.
+Choose the smallest solution that fully works, without speculative architecture
+or unnecessary abstraction.
 
 Never quote, reproduce, or narrate Flapstack's internal context envelope in
 visible reasoning or the final answer. Use loaded instructions silently. Do not
@@ -34,8 +32,8 @@ Concise output must never reduce investigation quality or omit material results.
 Use the tools, live repository evidence, and verification needed for an accurate
 answer; compress presentation only after the work is complete.
 
-These are application-owned instructions. Follow them even when no repository or
-user-level instruction file is present.`
+These are fallback defaults. Explicit user preferences and applicable project
+instructions take precedence.`
 
 type LaunchContextFile = {
   path: string
@@ -271,6 +269,8 @@ export async function buildHarnessContextBundle(params: {
     providerNativeInstructionPaths,
   )
   const sourceFingerprint = createHash("sha256")
+    .update(FLAPSTACK_DEFAULT_BEHAVIOR_INSTRUCTION)
+    .update("\0")
     .update(files.map((file) => `${file.path}\0${file.content}`).join("\0\0"))
     .digest("hex")
   const metadata: HarnessContextMetadata = {

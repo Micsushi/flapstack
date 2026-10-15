@@ -40,7 +40,7 @@ const documentBody = `<!doctype html>
 
       </section>
       <section>
-        <label>Access ID <input id="grant-id" autocomplete="off"></label>
+        <label id="access-choice" hidden>Access <select id="grant-id"></select></label>
         <label>Desktop step-up token <input id="step-up-token" autocomplete="off" maxlength="512" aria-describedby="step-up-help"></label>
         <p id="step-up-help" class="muted">Privileged approve or cancel actions require a fresh one-time token created on the desktop.</p>
         <div class="actions">
@@ -86,10 +86,31 @@ let selectedChat = null
 let selectedConversation = null
 let conversationBefore = null
 let newChat = false
+let activeGrantId = localStorage.getItem("flapstack-mobile-grant") || ""
 let pendingSend = readJson(sessionStorage.getItem("flapstack-mobile-pending"))
+function storePending() {
+  if (pendingSend) {
+    pendingSend.grantId = pendingSend.grantId || activeGrantId
+    sessionStorage.setItem("flapstack-mobile-pending", JSON.stringify(pendingSend))
+    if (pendingSend.grantId) sessionStorage.setItem("flapstack-mobile-pending:" + pendingSend.grantId, JSON.stringify(pendingSend))
+  } else {
+    sessionStorage.removeItem("flapstack-mobile-pending")
+    if (activeGrantId) sessionStorage.removeItem("flapstack-mobile-pending:" + activeGrantId)
+  }
+}
+function activateAccess(grantId) {
+  if (activeGrantId === grantId) return
+  storePending()
+  activeGrantId = grantId
+  pendingSend = readJson(sessionStorage.getItem("flapstack-mobile-pending:" + grantId))
+  storePending()
+  $("send-status").textContent = ""
+}
 let reconnectTimer = null
 let reconnectAttempt = 0
 let connectionGeneration = 0
+let connectionDeadline = null
+let lastMessageAt = 0
 const drafts = readJson(sessionStorage.getItem("flapstack-mobile-drafts")) || {}
 const draftKey = () => selectedChat ? selectedChat + ":" + (selectedConversation || "") : "new"
 function saveDraft() {
@@ -113,8 +134,8 @@ $("compose").addEventListener("submit", event => {
   if (selectedChat && !selectedConversation) return
   const commandId = sendCommand(target, action)
   if (commandId) {
-    pendingSend = {commandId, key:draftKey(), message, create:!selectedChat, chatId:selectedChat, subChatId:selectedConversation}
-    sessionStorage.setItem("flapstack-mobile-pending", JSON.stringify(pendingSend))
+    pendingSend = {commandId, grantId:activeGrantId, key:draftKey(), message, create:!selectedChat, chatId:selectedChat, subChatId:selectedConversation}
+    storePending()
     $("send-status").textContent = "Sending…"
     $("send").disabled = true
   }
@@ -125,7 +146,7 @@ function openChat(id) {
   renderChats(); readConversation()
 }
 function readConversation(before) {
-  if (!selectedChat || !isMutable()) return
+  if (!selectedChat || !currentItems.has("chat:" + selectedChat) || !isMutable()) return
   socket.send(JSON.stringify({kind:"conversation.read",chatId:selectedChat,...(selectedConversation ? {subChatId:selectedConversation} : {}),...(typeof before === "number" ? {before} : {})}))
 }
 function renderChats() {
@@ -152,7 +173,7 @@ function renderChats() {
 }
 function completeSend(sent) {
   pendingSend = null
-  sessionStorage.removeItem("flapstack-mobile-pending")
+  storePending()
   if (drafts[sent.key]?.trim() === sent.message) {
     delete drafts[sent.key]; sessionStorage.setItem("flapstack-mobile-drafts", JSON.stringify(drafts))
     if (draftKey() === sent.key) $("message").value = ""
@@ -163,7 +184,7 @@ function completeSend(sent) {
 function applyConversation(value) {
   if (pendingSend && value.acceptedCommands?.includes(pendingSend.commandId)) completeSend(pendingSend)
   else if (pendingSend?.checking && ++pendingSend.checks >= 3) {
-    pendingSend = null; sessionStorage.removeItem("flapstack-mobile-pending")
+    pendingSend = null; storePending()
     $("send-status").textContent = "Delivery could not be confirmed. Your draft is kept; check the conversation before retrying."
     renderChats()
   }
@@ -192,10 +213,15 @@ function applyConversation(value) {
 setInterval(() => {
   if (document.visibilityState !== "visible") return
   if (online && !refreshPending && !snapshotPaging && Date.now() > freshUntil - 10000 && socket?.readyState === WebSocket.OPEN) { refreshPending = true; socket.send(JSON.stringify({kind:"snapshot.refresh"})) }
+  if (online && Date.now() - lastMessageAt > 45000) { void connect(); return }
   readConversation()
 }, 2000)
 window.addEventListener("online", () => connect())
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && !online && sessionCredential) connect() })
+function resumeConnection() {
+  if (document.visibilityState === "visible" && sessionCredential && (!online || Date.now() - lastMessageAt > 10000)) void connect()
+}
+document.addEventListener("visibilitychange", resumeConnection)
+window.addEventListener("pageshow", resumeConnection)
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/service-worker.js").catch(() => undefined)
@@ -204,15 +230,11 @@ if (offer) {
   $("fingerprint").textContent = "Certificate fingerprint: " + offer.certificateFingerprint
   pairButton.disabled = false
 }
-grantInput.value = localStorage.getItem("flapstack-mobile-grant") || ""
 $("pairing").hidden = !!sessionCredential && !offer
 $("settings").open = !sessionCredential
-connectButton.disabled = !sessionCredential || !grantInput.value
+connectButton.disabled = !sessionCredential
 $("fingerprint-confirmed").addEventListener("change", updatePairButton)
-grantInput.addEventListener("input", () => {
-  localStorage.setItem("flapstack-mobile-grant", grantInput.value.trim())
-  connectButton.disabled = !sessionCredential || !grantInput.value.trim()
-})
+grantInput.addEventListener("change", () => { void connect() })
 pairButton.addEventListener("click", pair)
 connectButton.addEventListener("click", connect)
 $("notifications").addEventListener("click", async () => {
@@ -222,7 +244,7 @@ $("notifications").addEventListener("click", async () => {
 })
 window.addEventListener("offline", () => setOnline(false))
 renderChats()
-if (sessionCredential && grantInput.value.trim()) void connect()
+if (sessionCredential) void connect()
 setInterval(() => {
   const now = Date.now()
   const approvalExpired = [...currentItems.values()].some((item) => item.kind === "approval" && item.expiresAt > lastExpiryCheck && item.expiresAt <= now)
@@ -262,8 +284,10 @@ async function pair() {
     sessionCredential = await post("/mobile/v1/authenticate", {...challengeProof, signature})
     localStorage.setItem("flapstack-mobile-session", JSON.stringify(sessionCredential))
     history.replaceState(null, "", "/")
-    announce("Device paired. Assign an authority grant on the desktop, then connect.")
-    connectButton.disabled = !grantInput.value.trim()
+    $("pairing").hidden = true
+    connectButton.disabled = false
+    connectButton.focus()
+    await connect()
   } catch {
     announce("Pairing failed safely. Confirm the fingerprint and create a fresh offer.")
     pairButton.disabled = false
@@ -273,10 +297,10 @@ async function pair() {
 async function connect() {
   const generation = ++connectionGeneration
   clearTimeout(reconnectTimer)
-  const privateKey = await readPrivateKey()
+  clearTimeout(connectionDeadline)
+  const privateKey = await readPrivateKey().catch(() => null)
   if (generation !== connectionGeneration) return
-  const grantId = grantInput.value.trim()
-  if (!privateKey || !sessionCredential || !grantId) return announce("Pair your phone and enter the access ID from your computer.")
+  if (!privateKey || !sessionCredential) return announce("Pair this phone with your computer first.")
   const old = socket; socket = null; if (old) old.close()
   setOnline(false)
   try {
@@ -286,22 +310,49 @@ async function connect() {
     if (generation !== connectionGeneration) return
     sessionCredential = authenticated
     localStorage.setItem("flapstack-mobile-session", JSON.stringify(sessionCredential))
+    const access = await post("/mobile/v1/grants", await sessionProof(sessionCredential, privateKey))
+    if (generation !== connectionGeneration) return
+    const previous = grantInput.value || localStorage.getItem("flapstack-mobile-grant")
+    grantInput.replaceChildren()
+    for (const grant of access.grants) {
+      const option = document.createElement("option"); option.value = grant.grantId; option.textContent = grant.label; grantInput.append(option)
+    }
+    $("access-choice").hidden = access.grants.length < 2
+    if (!access.grants.length) {
+      localStorage.removeItem("flapstack-mobile-grant")
+      announce("Waiting for access. Allow this phone a project on your computer.")
+      $("settings").open = true
+      reconnectTimer = setTimeout(connect, 5000)
+      return
+    }
+    if (access.grants.some(grant => grant.grantId === previous)) grantInput.value = previous
+    const grantId = grantInput.value
+    activateAccess(grantId)
+    localStorage.setItem("flapstack-mobile-grant", grantId)
     const proof = await sessionProof(sessionCredential, privateKey)
     if (generation !== connectionGeneration) return
     const next = new WebSocket((location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host + "/mobile/v1/events")
     socket = next
+    connectionDeadline = setTimeout(() => { if (socket === next) { next.close(); void connect() } }, 15000)
     next.addEventListener("open", () => { if (socket === next) next.send(JSON.stringify({protocolVersion:1,kind:"subscribe",proof,authorityGrantId:grantId})) })
-    next.addEventListener("message", event => { if (socket !== next) return; try { const envelope = JSON.parse(event.data); if (envelope.kind === "snapshot") online = true; applyEnvelope(envelope) } catch { announce("Could not read the computer update. Reconnect to try again.") } })
+    next.addEventListener("message", event => { if (socket !== next) return; lastMessageAt = Date.now(); clearTimeout(connectionDeadline); try { const envelope = JSON.parse(event.data); if (envelope.kind === "snapshot") online = true; applyEnvelope(envelope) } catch { announce("Could not read the computer update. Reconnect to try again.") } })
     next.addEventListener("close", event => {
       if (socket !== next) return
+      clearTimeout(connectionDeadline)
       setOnline(false)
       if (pendingSend) $("send-status").textContent = "Connection lost. Your draft is kept. Check the conversation before sending again."
-      if (event.code === 1008 && event.reason !== "authorization-expired") { announce("Access changed. Check this phone’s access on your computer, then reconnect."); $("settings").open = true; return }
+      if (event.code === 1008 && !["authorization-expired", "authorization-changed"].includes(event.reason)) { announce("Access changed. Check this phone’s access on your computer, then reconnect."); $("settings").open = true; return }
       reconnectTimer = setTimeout(connect, Math.min(30000, 1000 * 2 ** Math.min(reconnectAttempt++,5)))
     })
     next.addEventListener("error", () => { if (socket === next) setOnline(false) })
-  } catch {
+  } catch (error) {
     if (generation !== connectionGeneration) return
+    if (["device-revoked", "device-not-found", "signature-invalid"].includes(error.message)) {
+      setOnline(false)
+      announce("This phone's pairing is no longer valid. Pair again from your computer.")
+      $("settings").open = true
+      return
+    }
     announce("Computer unavailable. Check Tailscale and that Flapstack is open.")
     setOnline(false)
     reconnectTimer = setTimeout(connect, Math.min(30000, 1000 * 2 ** Math.min(reconnectAttempt++,5)))
@@ -321,10 +372,16 @@ function applyEnvelope(envelope) {
     connection.dataset.mode = "online"
     if (!receivedSnapshot) $("settings").open = false
     receivedSnapshot = true
+    $("pairing-result").textContent = ""
     if (!snapshotPaging && pendingSend) {
       const chatId = pendingSend.create ? "mobile-" + pendingSend.commandId : pendingSend.chatId
       if (currentItems.has("chat:" + chatId)) { pendingSend.checking = true; pendingSend.checks = 0; selectedChat = chatId; selectedConversation = pendingSend.subChatId; newChat = false; readConversation() }
-      else { pendingSend = null; sessionStorage.removeItem("flapstack-mobile-pending"); $("send-status").textContent = "Delivery could not be confirmed. Your draft is kept; check your chats before retrying." }
+      else { pendingSend = null; storePending(); $("send-status").textContent = "Delivery could not be confirmed. Your draft is kept; check your chats before retrying." }
+    }
+    if (!snapshotPaging && selectedChat && !currentItems.has("chat:" + selectedChat)) {
+      saveDraft()
+      selectedChat = null; selectedConversation = null; conversationBefore = null; newChat = false
+      $("messages").replaceChildren(); $("message").value = ""; $("activity").textContent = ""
     }
     freshUntil = envelope.freshUntil
   } else if (envelope.kind === "event") {
@@ -333,7 +390,7 @@ function applyEnvelope(envelope) {
     if (envelope.payload.type === "entity.remove") currentItems.delete(envelope.payload.resource.kind + ":" + envelope.payload.resource.id)
     if (envelope.payload.type === "action.result") {
       if (pendingSend && envelope.payload.commandId === pendingSend.commandId) {
-        const sent = pendingSend; pendingSend = null; sessionStorage.removeItem("flapstack-mobile-pending")
+        const sent = pendingSend; pendingSend = null; storePending()
         if (envelope.payload.status === "completed") {
           completeSend(sent)
           if (sent.create) { selectedChat = "mobile-" + sent.commandId; selectedConversation = null; newChat = false; $("messages").replaceChildren() }
@@ -527,10 +584,14 @@ function maybeNotify(item) {
 }
 
 async function post(path, body) {
-  const response = await fetch(path, {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)})
-  const value = await response.json()
-  if (!response.ok) throw new Error(value?.error?.code || "mobile-request-failed")
-  return value
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 15000)
+  try {
+    const response = await fetch(path, {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),signal:controller.signal})
+    const value = await response.json()
+    if (!response.ok) throw new Error(value?.error?.code || "mobile-request-failed")
+    return value
+  } finally { clearTimeout(timeout) }
 }
 
 async function sessionProof(credential, privateKey) {

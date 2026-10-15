@@ -45,7 +45,10 @@ test("explicit Records modes never allow legacy fallback", async () => {
     startProjectRecordsRuntime({ ...options, env: { FLAPSTACK_PROJECT_RECORDS_MODE: "typo" } }),
     /Unknown/,
   )
-  const env = { FLAPSTACK_PROJECT_RECORDS_URL: "http://127.0.0.1:1234" }
+  const env = {
+    FLAPSTACK_PROJECT_RECORDS_URL: "http://127.0.0.1:1234",
+    FLAPSTACK_PROJECT_RECORDS_AGENT_CONFIG_FILE: "externally-owned-do-not-read.json",
+  }
   const stop = await startProjectRecordsRuntime({ ...options, env })
   stop()
   assert.equal(env.FLAPSTACK_PROJECT_RECORDS_URL, "http://127.0.0.1:1234")
@@ -70,11 +73,13 @@ if args[1] == 'init-sql':
  database.write_text('created once')
  sys.exit(0)
 token = pathlib.Path(args[args.index('--token-file')+1]).read_text().strip()
+config_file = args[args.index('--agent-config-file')+1] if '--agent-config-file' in args else None
+config = json.loads(pathlib.Path(config_file).read_text()) if config_file else None
 class Handler(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
   self.send_response(200 if self.headers.get('Authorization') == 'Bearer '+token else 401)
   self.end_headers()
-  self.wfile.write(json.dumps({'backend':'sqlite'}).encode())
+  self.wfile.write(json.dumps({'backend':'sqlite','configFile':config_file,'config':config}).encode())
 server = http.server.HTTPServer(('127.0.0.1',0), Handler)
 print('Project records writer listening on http://127.0.0.1:'+str(server.server_port),flush=True)
 server.serve_forever()
@@ -89,6 +94,10 @@ server.serve_forever()
     delete env.FLAPSTACK_PROJECT_RECORDS_TOKEN
     delete env.FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE
     delete env.FLAPSTACK_PROJECT_RECORDS_DATA
+    const configFile = join(root, "runner config.json")
+    const config = { workspaces: { example: root }, binary: "explicit-runner" }
+    await writeFile(configFile, JSON.stringify(config))
+    env.FLAPSTACK_PROJECT_RECORDS_AGENT_CONFIG_FILE = configFile
     stop = await startProjectRecordsRuntime({ userData: root, snapshotPath, env })
     assert.equal(env.FLAPSTACK_PROJECT_RECORDS_MODE, "standalone")
     assert.equal(projectRecordsEnabled(env), true)
@@ -102,9 +111,15 @@ server.serve_forever()
     )
     const token = await readFile(connection.tokenFile, "utf8")
     assert.equal(token.length, 64)
+    const storage = await fetch(`${connection.endpoint}/v1/storage`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then((response) => response.json())
+    assert.equal(storage.configFile, configFile)
+    assert.deepEqual(storage.config, config)
     assert.equal((await fetch(`${connection.endpoint}/v1/storage`)).status, 401)
     stop()
     await writeFile(join(root, "project-records", "records.sqlite3"), "retained data")
+    delete env.FLAPSTACK_PROJECT_RECORDS_AGENT_CONFIG_FILE
     delete env.FLAPSTACK_PROJECT_RECORDS_URL
     delete env.FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE
     stop = await startProjectRecordsRuntime({ userData: root, snapshotPath, env })
@@ -113,6 +128,10 @@ server.serve_forever()
       "retained data",
     )
     assert.equal(await readFile(managedRecordsConnection(env).tokenFile, "utf8"), token)
+    const restarted = await fetch(`${managedRecordsConnection(env).endpoint}/v1/storage`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then((response) => response.json())
+    assert.equal(restarted.configFile, null)
   } finally {
     stop?.()
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
@@ -148,6 +167,31 @@ test("runtime archive cannot escape its extraction directory", async () => {
       /Invalid bundled Records runtime path/,
     )
     await assert.rejects(readFile(join(root, "outside.py")))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("invalid runner configuration fails before creating runtime or data", async () => {
+  const root = await mkdtemp(join(tmpdir(), "flapstack-records-config-"))
+  const configFile = join(root, "config.json")
+  try {
+    for (const content of [undefined, "{", "[]", "null", "42", '\"text\"']) {
+      if (content !== undefined) await writeFile(configFile, content)
+      const env = { FLAPSTACK_PROJECT_RECORDS_AGENT_CONFIG_FILE: configFile }
+      await assert.rejects(
+        startProjectRecordsRuntime({ userData: root, snapshotPath: "unused", env }),
+        /configuration must be.*JSON object/,
+      )
+      assert.equal(managedRecordsConnection(env), undefined)
+      assert.equal(projectRecordsEnabled(env), true)
+      await assert.rejects(readFile(join(root, "project-records", "records.sqlite3")), {
+        code: "ENOENT",
+      })
+      await assert.rejects(readFile(join(root, "project-records", "desktop-token")), {
+        code: "ENOENT",
+      })
+    }
   } finally {
     await rm(root, { recursive: true, force: true })
   }

@@ -1,4 +1,6 @@
 import Database from "better-sqlite3"
+import { Readable } from "node:stream"
+import type { IncomingMessage, ServerResponse } from "node:http"
 import { generateKeyPairSync, sign, type KeyObject } from "node:crypto"
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -325,6 +327,68 @@ describe("mobile-pairing", () => {
     expect(preservedDevice).toMatchObject({ deviceId: credential.session.deviceId })
     expect(preservedDevice).not.toHaveProperty("revokedAt")
     restarted.stop()
+  })
+
+  it("discovers only the authenticated phone's active grants with scoped names", async () => {
+    const runtime = new MobileControlRuntime(database, { now: () => now })
+    try {
+      database
+        .insert(schema.projects)
+        .values([
+          { id: "allowed", name: "Allowed project", path: "/owned/allowed" },
+          { id: "private", name: "Other device private project", path: "/owned/private" },
+        ])
+        .run()
+      const key = ed25519Key()
+      const credential = createCredential(runtime.pairing, key)
+      const other = createCredential(runtime.pairing, ed25519Key(), "Other")
+      const allowed = await runtime.grants.createGrant(credential.session.deviceId, {
+        authority: ["control"],
+        capabilities: ["chat.create"],
+        resources: [{ kind: "project", id: "allowed" }],
+      })
+      await runtime.grants.createGrant(other.session.deviceId, {
+        authority: ["control"],
+        capabilities: ["chat.create"],
+        resources: [{ kind: "project", id: "private" }],
+      })
+      const invoke = async (proof: MobileSessionProof) => {
+        const request = Readable.from([
+          Buffer.from(JSON.stringify(proof)),
+        ]) as unknown as IncomingMessage
+        request.method = "POST"
+        request.url = "/mobile/v1/grants"
+        request.headers = { "content-type": "application/json" }
+        let status = 0,
+          body = ""
+        const response = {
+          writeHead(code: number) {
+            status = code
+          },
+          end(value: Buffer) {
+            body = value.toString()
+          },
+        } as unknown as ServerResponse
+        await runtime.handleRequest(request, response)
+        return { status, body: JSON.parse(body) }
+      }
+      const proof = sessionProof(credential, key.privateKey, "g".repeat(32))
+      await expect(invoke(proof)).resolves.toEqual({
+        status: 200,
+        body: { grants: [{ grantId: allowed.grantId, label: "Allowed project" }] },
+      })
+      await expect(invoke(proof)).resolves.toMatchObject({ status: 401 })
+      await runtime.grants.revokeGrant(allowed.grantId)
+      await expect(
+        invoke(sessionProof(credential, key.privateKey, "h".repeat(32))),
+      ).resolves.toEqual({ status: 200, body: { grants: [] } })
+      await runtime.pairing.revokeDevice(credential.session.deviceId, "user")
+      await expect(
+        invoke(sessionProof(credential, key.privateKey, "i".repeat(32))),
+      ).resolves.toMatchObject({ status: 410 })
+    } finally {
+      runtime.stop()
+    }
   })
 
   it("rotates session tokens atomically and rejects old, stale, mismatched, and expired proofs", () => {

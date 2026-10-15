@@ -24,8 +24,18 @@ export function AgentsMobileCompanionTab() {
     refetchInterval: 5000,
     refetchIntervalInBackground: false,
   })
-  const devices = trpc.mobileBridge.listDevices.useQuery()
-  const grants = trpc.mobileBridge.listGrants.useQuery({})
+  const devices = trpc.mobileBridge.listDevices.useQuery(undefined, {
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
+  })
+  const grants = trpc.mobileBridge.listGrants.useQuery(
+    {},
+    {
+      refetchInterval: 5000,
+      refetchIntervalInBackground: false,
+    },
+  )
+  const projects = trpc.projects.list.useQuery()
   const configure = trpc.mobileBridge.configure.useMutation()
   const createPairingOffer = trpc.mobileBridge.createPairingOffer.useMutation()
   const renameDevice = trpc.mobileBridge.renameDevice.useMutation()
@@ -67,7 +77,8 @@ export function AgentsMobileCompanionTab() {
   }, [bindAddress, interfaces.data, status.data?.bindAddress])
 
   useEffect(() => {
-    if (!grantDeviceId && activeDevices[0]) setGrantDeviceId(activeDevices[0].deviceId)
+    if (!activeDevices.some((device) => device.deviceId === grantDeviceId))
+      setGrantDeviceId(activeDevices[0]?.deviceId ?? "")
   }, [activeDevices, grantDeviceId])
 
   useEffect(() => {
@@ -434,7 +445,10 @@ export function AgentsMobileCompanionTab() {
             aria-label="Resource kind"
             className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             value={resourceKind}
-            onChange={(event) => setResourceKind(event.target.value as GrantResourceKind)}
+            onChange={(event) => {
+              setResourceKind(event.target.value as GrantResourceKind)
+              setResourceId("")
+            }}
           >
             {resourceKinds.map((kind) => (
               <option key={kind} value={kind}>
@@ -442,13 +456,29 @@ export function AgentsMobileCompanionTab() {
               </option>
             ))}
           </select>
-          <input
-            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-            aria-label="Exact resource ID"
-            placeholder="Exact resource ID"
-            value={resourceId}
-            onChange={(event) => setResourceId(event.target.value)}
-          />
+          {resourceKind === "project" ? (
+            <select
+              aria-label="Project to allow"
+              className="h-9 min-w-0 rounded-md border border-input bg-background px-3 text-sm"
+              value={resourceId}
+              onChange={(event) => setResourceId(event.target.value)}
+            >
+              <option value="">Choose a project</option>
+              {(projects.data ?? []).map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+              aria-label="Exact resource ID"
+              placeholder="Exact resource ID"
+              value={resourceId}
+              onChange={(event) => setResourceId(event.target.value)}
+            />
+          )}
         </div>
         <Button disabled={!grantDeviceId || !resourceId.trim()} onClick={() => void grantControl()}>
           Allow chats and controls

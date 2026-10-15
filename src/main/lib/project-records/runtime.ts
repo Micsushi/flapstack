@@ -64,6 +64,20 @@ async function startRuntime(options: {
   if (mode !== "standalone") throw new Error("Unknown Project Records mode.")
   if (endpoint || token || tokenFile)
     throw new Error("Standalone Records cannot also configure an external connection.")
+  const configuredAgentFile = env.FLAPSTACK_PROJECT_RECORDS_AGENT_CONFIG_FILE
+  const agentConfigFile = configuredAgentFile ? resolve(configuredAgentFile) : undefined
+  if (agentConfigFile) {
+    let config: unknown
+    try {
+      config = JSON.parse(await readFile(agentConfigFile, "utf8"))
+    } catch {
+      throw new Error(
+        "Records agent configuration must be a readable JSON object. Check FLAPSTACK_PROJECT_RECORDS_AGENT_CONFIG_FILE, then restart.",
+      )
+    }
+    if (!config || typeof config !== "object" || Array.isArray(config))
+      throw new Error("Records agent configuration must be a JSON object.")
+  }
   const root = resolve(
     env.FLAPSTACK_PROJECT_RECORDS_DATA ?? join(options.userData, "project-records"),
   )
@@ -89,7 +103,8 @@ async function startRuntime(options: {
     await mkdir(dirname(target), { recursive: true })
     await writeFile(target, content)
   }
-  const python = env.FLAPSTACK_PROJECT_RECORDS_PYTHON || "python"
+  const python =
+    env.FLAPSTACK_PROJECT_RECORDS_PYTHON || (process.platform === "win32" ? "python" : "python3")
   const writer = join(runtime, "writer.py")
   const database = join(root, "records.sqlite3")
   const desktopTokenFile = join(root, "desktop-token")
@@ -143,6 +158,7 @@ async function startRuntime(options: {
       desktopTokenFile,
       "--port",
       "0",
+      ...(agentConfigFile ? ["--agent-config-file", agentConfigFile] : []),
     ],
     { env: childEnv, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] },
   )

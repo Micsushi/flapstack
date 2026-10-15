@@ -10,6 +10,8 @@ const mock = vi.hoisted(() => ({
   invalidate: vi.fn(),
   create: vi.fn(),
   mutation: vi.fn(),
+  deviceQuery: vi.fn(),
+  grantQuery: vi.fn(),
   devices: [{ deviceId: "d", name: "Phone", pairedAt: 0 }],
 }))
 vi.mock("qrcode", () => ({
@@ -21,6 +23,7 @@ vi.mock("../src/renderer/components/dialogs/settings-tabs/remote-computer-client
 }))
 vi.mock("../src/renderer/lib/trpc", () => ({
   trpc: {
+    projects: { list: { useQuery: () => ({ data: [{ id: "project-1", name: "Flapstack" }] }) } },
     useUtils: () => ({
       mobileBridge: Object.fromEntries(
         ["getStatus", "listInterfaces", "listDevices", "listGrants"].map((key) => [
@@ -44,8 +47,18 @@ vi.mock("../src/renderer/lib/trpc", () => ({
           ],
         }),
       },
-      listDevices: { useQuery: () => ({ data: mock.devices }) },
-      listGrants: { useQuery: () => ({ data: [] }) },
+      listDevices: {
+        useQuery: (input: unknown, options: unknown) => {
+          mock.deviceQuery(input, options)
+          return { data: mock.devices }
+        },
+      },
+      listGrants: {
+        useQuery: (input: unknown, options: unknown) => {
+          mock.grantQuery(input, options)
+          return { data: [] }
+        },
+      },
       createPairingOffer: { useMutation: () => ({ mutateAsync: mock.create, isPending: false }) },
       ...Object.fromEntries(
         ["configure", "renameDevice", "revokeDevice", "createGrant", "revokeGrant"].map((key) => [
@@ -111,9 +124,12 @@ it("observes stopped health, hides stale QR and preserves name/resource drafts w
   await click("Create fresh pairing QR")
   expect(container.querySelector("img")).not.toBeNull()
   const name = container.querySelector('[aria-label="Name for Phone"]') as HTMLInputElement
-  const resource = container.querySelector("input[placeholder]") as HTMLInputElement
+  const resource = container.querySelector('[aria-label="Project to allow"]') as HTMLSelectElement
   await fill(name, "Draft name")
-  await fill(resource, "project-draft")
+  await act(async () => {
+    resource.value = "project-1"
+    resource.dispatchEvent(new Event("change", { bubbles: true }))
+  })
   mock.status.data = {
     ...running,
     state: "faulted",
@@ -125,7 +141,7 @@ it("observes stopped health, hides stale QR and preserves name/resource drafts w
   expect(container.querySelector("img")).toBeNull()
   expect(container.textContent).toContain("Bridge stopped: network-changed")
   expect(name.value).toBe("Draft name")
-  expect(resource.value).toBe("project-draft")
+  expect(resource.value).toBe("project-1")
   expect(mock.mutation).not.toHaveBeenCalled()
   await click("Refresh bridge health")
   expect(mock.invalidate).toHaveBeenCalled()
@@ -190,4 +206,37 @@ it("clears the previous QR while encoding an immediately returned replacement", 
   expect(container.querySelector("img")).toBeNull()
   await act(async () => finish("data:image/png;base64,bmV3"))
   expect(container.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,bmV3")
+})
+
+it("refreshes paired phones and access while the settings panel is visible", async () => {
+  await render()
+  expect(mock.deviceQuery).toHaveBeenCalledWith(undefined, {
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
+  })
+  expect(mock.grantQuery).toHaveBeenCalledWith(
+    {},
+    {
+      refetchInterval: 5000,
+      refetchIntervalInBackground: false,
+    },
+  )
+})
+
+it("grants the selected named project without requiring an internal ID", async () => {
+  await render()
+  const project = container.querySelector<HTMLSelectElement>('[aria-label="Project to allow"]')!
+  expect(project.textContent).toContain("Flapstack")
+  expect(container.querySelector('[aria-label="Exact resource ID"]')).toBeNull()
+  await act(async () => {
+    project.value = "project-1"
+    project.dispatchEvent(new Event("change", { bubbles: true }))
+  })
+  await click("Allow chats and controls")
+  expect(mock.mutation).toHaveBeenCalledWith(
+    expect.objectContaining({
+      deviceId: "d",
+      grant: expect.objectContaining({ resources: [{ kind: "project", id: "project-1" }] }),
+    }),
+  )
 })

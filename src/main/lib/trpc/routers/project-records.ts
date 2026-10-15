@@ -37,6 +37,38 @@ async function taskWorktrees() {
 }
 
 export const projectRecordsRouter = router({
+  answerContinuationIdentity: publicProcedure.query(async () =>
+    z
+      .object({
+        storeIdentity: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .parse(await (await configuredProjectRecordsClient()).operation("/v1/storage")),
+  ),
+  continueAnswer: publicProcedure
+    .input(
+      z
+        .object({
+          path: projectRecordPathSchema,
+          recordId: z.string().min(1).max(200),
+          answer: z.string().min(1).max(16_384),
+          requestId: z.string().uuid(),
+          storeIdentity: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .strict(),
+    )
+    .mutation(async ({ input }) =>
+      z
+        .object({
+          runId: z.string(),
+          phase: z.string(),
+          replayed: z.boolean(),
+        })
+        .parse(
+          await (
+            await configuredProjectRecordsClient()
+          ).operation("/v1/agents/continue-answer", { ...input, confirmed: true }),
+        ),
+    ),
   previewProposalChat: publicProcedure
     .input(yapPairInputSchema)
     .query(async ({ input }) =>

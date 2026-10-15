@@ -1,3 +1,4 @@
+import { buildRecordTaskRunContext } from "../../project-records/run-context"
 import { createACPProvider, type ACPProvider } from "@mcpc-tech/acp-ai-provider"
 import type { RequestPermissionRequest, RequestPermissionResponse } from "@agentclientprotocol/sdk"
 import { observable } from "@trpc/server/observable"
@@ -2016,6 +2017,10 @@ export const codexRouter = router({
               sessionMode: ownedSessionId ? "resumed" : "new",
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
+            const recordTaskContext = await buildRecordTaskRunContext(db, {
+              chatId: input.chatId,
+              cwd: input.cwd,
+            })
             let vaultContext = emptyProjectVaultRunContext({
               harness: "codex",
               runId: input.runId,
@@ -2079,7 +2084,12 @@ export const codexRouter = router({
                     : input.prompt,
                   input.mode,
                 ),
-                [contextBundle.context, vaultContext.context, extensionContext.context]
+                [
+                  contextBundle.context,
+                  vaultContext.context,
+                  extensionContext.context,
+                  recordTaskContext,
+                ]
                   .filter(Boolean)
                   .join("\n\n"),
               ),

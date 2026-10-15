@@ -13,6 +13,7 @@ import { MobileDeviceConnectionRegistry, MobilePairingService } from "../mobile-
 import { agentInputLifecycle } from "../agent-input/service"
 import { MobileScopeGrantService } from "./grants"
 import { MobileEventService } from "./service"
+import { MobileSnapshotProjector } from "./projector"
 import { openAppDatabase } from "../db/access"
 import { readMobileConversation } from "../mobile-actions/conversation"
 
@@ -40,12 +41,23 @@ export class MobileControlRuntime {
       now: options.now,
     })
     this.pairing.revokeActiveSessionsForRuntimeRestart()
-    this.handleRequest = createMobileHttpHandler(this.pairing)
     this.grants = new MobileScopeGrantService({
       database,
       connections: this.connections,
       now: options.now,
     })
+    const projector = new MobileSnapshotProjector(database, options.now)
+    this.handleRequest = createMobileHttpHandler(this.pairing, (deviceId) =>
+      this.grants.listActiveGrants(deviceId).map((grant) => ({
+        grantId: grant.grantId,
+        label: grant.resources
+          .map((resource) => {
+            const item = projector.readResource(grant, resource.kind, resource.id)
+            return item && "name" in item ? item.name : resource.kind
+          })
+          .join(", "),
+      })),
+    )
     this.actions = options.databasePath
       ? new MobileActionService({
           database,

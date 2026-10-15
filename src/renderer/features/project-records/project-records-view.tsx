@@ -483,6 +483,26 @@ function QuestionAnswer({
   draftKey?: string
 }) {
   const [drafts, setDrafts] = useAtom(pendingDraftsAtom)
+  const continuationKey = `records:answer-continuation:${JSON.stringify([path, record.id])}`
+  const [continuing, setContinuing] = useState(false)
+  const [continuationMessage, setContinuationMessage] = useState<string | null>(null)
+  const [pendingContinuation, setPendingContinuation] = useState<{
+    answer: string
+    requestId: string
+    storeIdentity: string
+  } | null>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(continuationKey) ?? "null")
+      return saved &&
+        typeof saved.answer === "string" &&
+        typeof saved.requestId === "string" &&
+        typeof saved.storeIdentity === "string"
+        ? saved
+        : null
+    } catch {
+      return null
+    }
+  })
   const key = draftKey ?? `${path}:${record.id}`
   const reviewState = questionReviewState(record)
   const canAnswer = record.state !== "superseded" && record.state !== "agent_research"
@@ -500,6 +520,42 @@ function QuestionAnswer({
         delete next[key]
         return next
       })
+    return success
+  }
+  const continueAnswer = async (retry: boolean) => {
+    if (continuing || busy) return
+    setContinuing(true)
+    setContinuationMessage(null)
+    let saved = retry
+    try {
+      if (!retry && !(await saveDraft(true))) return
+      saved = true
+      const intent = retry
+        ? pendingContinuation
+        : {
+            answer: draft,
+            requestId: crypto.randomUUID(),
+            ...(await trpcClient.projectRecords.answerContinuationIdentity.query()),
+          }
+      if (!intent) return
+      // Persist before sending: a lost response must retry the same runtime intent.
+      localStorage.setItem(continuationKey, JSON.stringify(intent))
+      setPendingContinuation(intent)
+      await trpcClient.projectRecords.continueAnswer.mutate({
+        path,
+        recordId: record.id,
+        ...intent,
+      })
+      localStorage.removeItem(continuationKey)
+      setPendingContinuation(null)
+      setContinuationMessage("Continuation sent.")
+    } catch (error) {
+      setContinuationMessage(
+        `${saved ? "Answer saved. " : ""}${error instanceof Error ? error.message : "Could not save and continue."}`,
+      )
+    } finally {
+      setContinuing(false)
+    }
   }
   return (
     <div className="mt-3 max-w-prose space-y-3">
@@ -580,19 +636,67 @@ function QuestionAnswer({
             />
           </label>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" disabled={busy || !draft.trim()} onClick={() => void saveDraft(true)}>
+            <Button
+              size="sm"
+              disabled={busy || continuing || !draft.trim()}
+              onClick={() => void saveDraft(true)}
+            >
               Submit answer
             </Button>
+            {!draftKey && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || continuing || !!pendingContinuation || !draft.trim()}
+                onClick={() => void continueAnswer(false)}
+              >
+                {continuing ? "Continuing..." : "Save and continue"}
+              </Button>
+            )}
             <Button
               size="sm"
               variant="outline"
-              disabled={busy}
+              disabled={busy || continuing}
               onClick={() => void saveDraft(false)}
             >
               Save draft
             </Button>
           </div>
         </>
+      )}
+      {!draftKey && pendingContinuation && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-sm">Continuation not confirmed.</p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || continuing}
+            onClick={() => void continueAnswer(true)}
+          >
+            Retry continuation
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={continuing}
+            onClick={() => {
+              try {
+                localStorage.removeItem(continuationKey)
+                setPendingContinuation(null)
+                setContinuationMessage("Retry dismissed. Any work already started continues.")
+              } catch {
+                setContinuationMessage("Could not dismiss the saved retry.")
+              }
+            }}
+          >
+            Dismiss retry
+          </Button>
+        </div>
+      )}
+      {continuationMessage && (
+        <p role="status" className="text-sm break-words">
+          {continuationMessage}
+        </p>
       )}
       {!!record.followUps?.length && (
         <section

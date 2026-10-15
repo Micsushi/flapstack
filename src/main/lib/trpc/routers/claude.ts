@@ -1,3 +1,4 @@
+import { buildRecordTaskRunContext } from "../../project-records/run-context"
 import { fetchToolsForServer } from "../../claude/mcp-discovery"
 import { observable } from "@trpc/server/observable"
 import { and, eq } from "drizzle-orm"
@@ -1337,6 +1338,9 @@ export const claudeRouter = router({
               providerNativeInstructions: !isUsingOllama,
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
+            const recordTaskContext = isUsingOllama
+              ? ""
+              : await buildRecordTaskRunContext(db, { chatId: input.chatId, cwd: input.cwd })
             let vaultContext = emptyProjectVaultRunContext({
               harness: HARNESS,
               runId: launchRunId,
@@ -1393,7 +1397,12 @@ export const claudeRouter = router({
             metadata.extensionPolicy = extensionContext.manifest
             const contextualPrompt = prependStartupContext(
               applyChatModeInstruction(finalPrompt, input.mode),
-              [contextBundle.context, vaultContext.context, extensionContext.context]
+              [
+                contextBundle.context,
+                vaultContext.context,
+                extensionContext.context,
+                recordTaskContext,
+              ]
                 .filter(Boolean)
                 .join("\n\n"),
             )
@@ -1772,7 +1781,12 @@ export const claudeRouter = router({
               const freshPrompt = buildPrompt(
                 prependStartupContext(
                   applyChatModeInstruction(finalPrompt, input.mode),
-                  [contextBundle.context, vaultContext.context, extensionContext.context]
+                  [
+                    contextBundle.context,
+                    vaultContext.context,
+                    extensionContext.context,
+                    recordTaskContext,
+                  ]
                     .filter(Boolean)
                     .join("\n\n"),
                 ),

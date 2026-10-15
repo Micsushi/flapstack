@@ -2,7 +2,7 @@ import { Readable } from "node:stream"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { describe, expect, it, vi } from "vitest"
 import { createMobilePairingHttpHandler } from "../src/main/lib/mobile-bridge/pairing-http"
-import type { MobilePairingService } from "../src/main/lib/mobile-pairing"
+import { MobilePairingError, type MobilePairingService } from "../src/main/lib/mobile-pairing"
 import { MOBILE_CONTROL_PROTOCOL_VERSION, mobileControlLimits } from "../src/shared/mobile-control"
 
 const token = "t".repeat(32)
@@ -56,6 +56,42 @@ describe("mobile pairing HTTPS handler", () => {
     expect(pairing.authenticateChallenge).toHaveBeenCalledOnce()
     expect(pairing.createChallenge).toHaveBeenCalledWith("device-1")
     expect(pairing.rotateSession).toHaveBeenCalledOnce()
+  })
+
+  it("discovers access only for the authenticated device and rejects invalid proofs", async () => {
+    const proof = {
+      sessionId: "session-1",
+      deviceId: "device-1",
+      sessionToken: token,
+      nonce: "n".repeat(32),
+      issuedAt: 1_800_000_000_000,
+      rotation: 0,
+      signature,
+    }
+    const authenticateSession = vi.fn(() => ({ deviceId: "authenticated-device" }))
+    const listAccess = vi.fn((deviceId: string) => [
+      { grantId: deviceId, label: "Allowed project" },
+    ])
+    const handler = createMobilePairingHttpHandler(
+      { authenticateSession } as unknown as MobilePairingService,
+      listAccess,
+    )
+    await expect(invoke(handler, "/mobile/v1/grants", proof)).resolves.toMatchObject({
+      status: 200,
+      body: { grants: [{ grantId: "authenticated-device", label: "Allowed project" }] },
+    })
+    expect(listAccess).toHaveBeenCalledWith("authenticated-device")
+    listAccess.mockClear()
+    await expect(
+      invoke(handler, "/mobile/v1/grants", { ...proof, otherDeviceId: "victim" }),
+    ).resolves.toMatchObject({ status: 400 })
+    authenticateSession.mockImplementation(() => {
+      throw new MobilePairingError("replay", "invalid or replayed proof")
+    })
+    await expect(invoke(handler, "/mobile/v1/grants", proof)).resolves.toMatchObject({
+      status: 401,
+    })
+    expect(listAccess).not.toHaveBeenCalled()
   })
 
   it("bounds and validates requests before dispatch and returns redacted recovery errors", async () => {

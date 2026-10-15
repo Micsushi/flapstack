@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -56,8 +57,21 @@ describe("harness launch context", () => {
     expect(context).toContain(vaultPage)
     expect(context).toContain("Current product context lives here.")
     expect(context).toContain(FLAPSTACK_DEFAULT_BEHAVIOR_INSTRUCTION)
-    expect(context).toContain("Caveman full and ponytail full are enabled by default")
+    expect(context).toContain("Named styles")
+    expect(context).not.toContain("do not disable these defaults")
     expect(context).not.toContain("Loaded context")
+  })
+
+  it("refreshes resumed sessions that only fingerprinted external files", async () => {
+    const bundle = await buildHarnessContextBundle({
+      cwd: rootPath,
+      harness: "codex",
+      vaultConfigPath: noVaultConfigPath(),
+      sessionMode: "resumed",
+      previousSourceFingerprint: createHash("sha256").update("").digest("hex"),
+    })
+    expect(bundle.context).toContain("Caveman are opt-in")
+    expect(bundle.context).not.toContain("--- FLAPSTACK COMPACT CONTEXT")
   })
 
   it("wraps the user request after the loaded context", () => {
@@ -193,8 +207,8 @@ describe("harness launch context", () => {
       })
 
       expect(context).toContain("--- FLAPSTACK DEFAULTS ---")
-      expect(context).toContain("Caveman full")
-      expect(context).toContain("Ponytail full")
+      expect(context).toContain("Caveman are opt-in")
+      expect(context).toContain("Explicit user preferences and applicable project")
     },
   )
 

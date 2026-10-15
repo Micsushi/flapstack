@@ -43,6 +43,7 @@ const routes: Record<string, PairingRoute> = {
 
 export function createMobilePairingHttpHandler(
   pairing: MobilePairingService,
+  listAccess?: (deviceId: string) => unknown,
 ): MobileBridgeRequestHandler {
   return async (request, response) => {
     try {
@@ -51,6 +52,12 @@ export function createMobilePairingHttpHandler(
       const contentType = firstHeader(request.headers["content-type"])
       if (!contentType || !/^application\/json(?:\s*;|$)/i.test(contentType))
         throw new MobileHttpError(415, "content-type-required", "Use application/json.")
+      if (pathname(request) === "/mobile/v1/grants" && listAccess) {
+        const proof = mobileSessionProofSchema.parse(await readJson(request))
+        const session = pairing.authenticateSession(proof)
+        writeJson(response, 200, { grants: listAccess(session.deviceId) })
+        return
+      }
       const route = routes[pathname(request)]
       if (!route)
         throw new MobileHttpError(404, "route-not-found", "Mobile pairing route was not found.")
@@ -65,8 +72,11 @@ export function createMobilePairingHttpHandler(
   }
 }
 
-export function createMobileHttpHandler(pairing: MobilePairingService): MobileBridgeRequestHandler {
-  const pairingHandler = createMobilePairingHttpHandler(pairing)
+export function createMobileHttpHandler(
+  pairing: MobilePairingService,
+  listAccess?: (deviceId: string) => unknown,
+): MobileBridgeRequestHandler {
+  const pairingHandler = createMobilePairingHttpHandler(pairing, listAccess)
   return async (request, response) => {
     const asset = request.method === "GET" ? getMobileCompanionAsset(pathname(request)) : null
     if (!asset) return pairingHandler(request, response)

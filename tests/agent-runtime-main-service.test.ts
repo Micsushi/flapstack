@@ -1,3 +1,4 @@
+import * as recordTaskContext from "../src/main/lib/project-records/run-context"
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { execFileSync } from "node:child_process"
@@ -740,6 +741,66 @@ describe("process-wide Runtime launch service", () => {
       expect(prompts[0]).toContain("# Current request\n\nPrompt")
       expect(prompts[1]).toContain("Follow up")
       expect(prompts[1]).not.toContain("CANONICAL BOARD TASK CONTEXT")
+    },
+  )
+
+  it.each(["codex", "claude-code"] as const)(
+    "refreshes canonical task context on first and continued %s turns",
+    async (runtime) => {
+      const context = vi
+        .spyOn(recordTaskContext, "buildRecordTaskRunContext")
+        .mockResolvedValueOnce("CURRENT TASK REVISION ONE")
+        .mockResolvedValueOnce("CURRENT TASK REVISION TWO")
+      try {
+        const first = `record-${runtime}`
+        const second = `${first}-followup`
+        seedDirectRun(first, testRuntimeSnapshotSqlValues(runtime, runtime), runtime, runtime)
+        sqlite.prepare("UPDATE sub_chats SET messages = ? WHERE id = ?").run(
+          JSON.stringify([
+            {
+              id: "record-context-link",
+              role: "user",
+              parts: [{ type: "text", text: "STALE TASK SNAPSHOT" }],
+            },
+            {
+              id: "discussion",
+              role: "user",
+              parts: [{ type: "text", text: "Earlier discussion" }],
+            },
+            { id: `mcp-${first}`, role: "user", parts: [{ type: "text", text: "Prompt" }] },
+          ]),
+          `sub-${first}`,
+        )
+        const prompts: string[] = []
+        const adapter = directAdapter(runtime)
+        adapter.startTurn = async (_context, _session, prompt) => {
+          prompts.push(prompt)
+          return { providerTurnId: `turn-${prompts.length}` }
+        }
+        const service = getMainRuntimeLaunchService(path, {
+          codexFactory: () => (runtime === "codex" ? adapter : directAdapter("codex")),
+          claudeCodeFactory: () =>
+            runtime === "claude-code" ? adapter : directAdapter("claude-code"),
+          enableCodex: true,
+          enableClaudeCode: true,
+        })
+        await service.launch(queued(first, runtime))
+        seedFollowupRun(second, first, runtime)
+        const followup = queued(second, runtime)
+        followup.chatId = `chat-${first}`
+        followup.subChatId = `sub-${first}`
+        followup.prompt = "Follow up"
+        await service.launch(followup)
+        expect(prompts[0]).toContain("CURRENT TASK REVISION ONE")
+        expect(prompts[0]).toContain("Earlier discussion")
+        expect(prompts[0]).not.toContain("STALE TASK SNAPSHOT")
+        expect(prompts[1]).toContain("CURRENT TASK REVISION TWO")
+        expect(prompts[1]).toContain("Follow up")
+        expect(prompts[1]).not.toContain("CURRENT TASK REVISION ONE")
+        expect(context).toHaveBeenCalledTimes(2)
+      } finally {
+        context.mockRestore()
+      }
     },
   )
 

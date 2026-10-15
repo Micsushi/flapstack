@@ -63,11 +63,21 @@ separate reviewed import, not an automatic conversion.
   to choose another local directory. This is a data directory, not a Git checkout.
 
 Standalone currently requires an installed Python 3 interpreter. Set
-`FLAPSTACK_PROJECT_RECORDS_PYTHON` to its executable path when `python` is not
-available. Python is not installed automatically or bundled in this foundation.
+`FLAPSTACK_PROJECT_RECORDS_PYTHON` to its executable path when the default
+(`python` on Windows, `python3` elsewhere) is not available. Python is not installed automatically or bundled in this foundation.
 An initialization, authentication, or startup failure does not switch to a
 different task database. The configured Records mode continues blocking legacy
 task writes. Fix the configuration and restart the application.
+
+To enable the standalone Records agent runner, set
+`FLAPSTACK_PROJECT_RECORDS_AGENT_CONFIG_FILE` to an existing local JSON object
+file in the Records runner configuration format, including explicit project
+`workspaces` and the runner `binary` when it is not on PATH. Flapstack validates
+that the file is readable JSON before starting and passes its absolute path to
+Records. Records remains responsible for workspace, setup, and permission checks;
+this setting does not create grants or select repositories automatically. Keep
+the file private and outside commits. In connected mode, configure the external
+Records service directly; Flapstack ignores this setting.
 
 The compatible Records engine accepts documents up to 16 MiB. Flapstack bounds
 service responses at 32 MiB to allow envelope and serialization overhead; a
@@ -130,6 +140,17 @@ versions, execution policy and project assignments. Agent runs shows worker atte
 a finished worker does not by itself mark its task verified. Yap keeps source
 material, proposed destinations and approval separate. Review each action before
 applying it; unselected or uncertain actions remain available for correction.
+
+**Submit answer** in Questions & progress and **Save answer** on the Board save
+without starting work. **Save and continue** also sends that saved answer to the
+one current associated worker. Paused or stopped work, ambiguous worker matches,
+and invalid claims require review in Agent runs; this action does not bypass them.
+If delivery fails, the answer stays saved. **Retry continuation** survives reopening
+the app and retries the same delivery without resaving or replacing a newer draft.
+**Dismiss retry** removes the retry reminder; it does not stop work already started.
+Continuation requires a compatible updated Project Records service as well as the
+desktop changes. Updating source alone does not update a packaged app's pinned
+companion runtime.
 
 Workers started by the Records Board receive their own scoped Records tools.
 Ordinary desktop chats do not inherit the desktop's Records authority. Historical

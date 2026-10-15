@@ -1,3 +1,4 @@
+import { buildRecordTaskRunContext } from "./project-records/run-context"
 import type { AgentActivityInvalidation } from "../../shared/agent-activity"
 import { broadcastAgentActivityInvalidation } from "./agent-runtime/activity-service"
 import Database from "better-sqlite3"
@@ -345,6 +346,21 @@ export class MainRuntimeLaunchService {
         }
       }
       const persistedSession = await this.loadPersistedSession(run.runId)
+      let recordTaskContext = ""
+      if (
+        resolvedLaunch.resolvedRuntime === "codex" ||
+        resolvedLaunch.resolvedRuntime === "claude-code"
+      ) {
+        const sqlite = this.open()
+        try {
+          recordTaskContext = await buildRecordTaskRunContext(drizzle(sqlite, { schema }), {
+            chatId: run.chatId,
+            cwd: run.worktreePath || run.projectPath || "",
+          })
+        } finally {
+          sqlite.close()
+        }
+      }
       const prompt = resolveRuntimeTurnPrompt(
         {
           ...run,
@@ -352,7 +368,10 @@ export class MainRuntimeLaunchService {
             !persistedSession &&
             run.harness !== "local" &&
             resolvedLaunch.resolvedRuntime !== "flapstack-native"
-              ? prependPreSessionChatContext(run.prompt, this.loadPreSessionUserMessages(run.runId))
+              ? prependPreSessionChatContext(
+                  run.prompt,
+                  this.loadPreSessionUserMessages(run.runId, Boolean(recordTaskContext)),
+                )
               : run.prompt,
         },
         resolvedLaunch,
@@ -362,7 +381,7 @@ export class MainRuntimeLaunchService {
         chatId: run.chatId,
         subChatId: run.subChatId,
         launch: resolvedLaunch,
-        prompt,
+        prompt: recordTaskContext ? `${recordTaskContext}\n\n${prompt}` : prompt,
         instructions,
         outputSchema: run.outputSchema,
         persistedSession,
@@ -1100,7 +1119,10 @@ export class MainRuntimeLaunchService {
     }
   }
 
-  private loadPreSessionUserMessages(runId: string): BoundedPreSessionContext {
+  private loadPreSessionUserMessages(
+    runId: string,
+    replaceRecordSnapshot = false,
+  ): BoundedPreSessionContext {
     const db = this.open()
     try {
       const row = db
@@ -1117,6 +1139,12 @@ export class MainRuntimeLaunchService {
       if (promptIndex <= 0) return { messages: [], omitted: false }
       const earlierUserMessages = messages.slice(0, promptIndex).flatMap((message) => {
         if (message.role !== "user" || !Array.isArray(message.parts)) return []
+        if (
+          replaceRecordSnapshot &&
+          typeof message.id === "string" &&
+          message.id.startsWith("record-context-")
+        )
+          return []
         const text = message.parts
           .flatMap((part) =>
             part &&

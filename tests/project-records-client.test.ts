@@ -158,3 +158,91 @@ it("sends only the native pair receipt operations without exposing them through 
   )
   expect(fetch).toHaveBeenCalledTimes(4)
 })
+
+it("allows explicit answer continuation through native and Board POST routes only", async () => {
+  const fetch = vi
+    .fn()
+    .mockImplementation(async () =>
+      response(200, { runId: "run-1", phase: "running", replayed: false }),
+    )
+  const client = new ProjectRecordsClient({
+    endpoint: "http://127.0.0.1:47831",
+    token: "fixture",
+    fetch,
+  })
+  const path = "/v1/agents/continue-answer"
+  const body = {
+    path: "lanes/vault/questions.md",
+    recordId: "Q1",
+    answer: "Alpha",
+    requestId: "request-1",
+    storeIdentity: "1".repeat(64),
+    confirmed: true,
+  }
+  expect(await client.operation(path, body)).toMatchObject({ runId: "run-1" })
+  expect(
+    (await client.boardRequest({ path, method: "POST", body: JSON.stringify(body) })).status,
+  ).toBe(200)
+  await expect(client.operation(path)).rejects.toThrow("method")
+  await expect(client.boardRequest({ path, method: "GET" })).rejects.toThrow("unsupported")
+  expect(fetch).toHaveBeenCalledTimes(2)
+})
+
+it.each([
+  { endpoint: "/v1/agents/start", body: {}, deadline: 60_000 },
+  { endpoint: "/v1/agents/resume", body: {}, deadline: 60_000 },
+  { endpoint: "/v1/agents/continue-answer", body: {}, deadline: 60_000 },
+  { endpoint: "/v1/agents", body: undefined, deadline: 10_000 },
+  { endpoint: "/v1/yap/inference", body: {}, deadline: 630_000 },
+  { endpoint: "/v1/agents/start", body: {}, deadline: 25, override: 25 },
+])(
+  "bounds $endpoint at $deadline ms while respecting explicit overrides",
+  async ({ endpoint, body, deadline, override }) => {
+    vi.useFakeTimers()
+    let signal!: AbortSignal
+    const fetch = vi.fn().mockImplementation(
+      (_url, options) =>
+        new Promise((_resolve, reject) => {
+          signal = options.signal
+          signal.addEventListener("abort", () => reject(new Error("aborted")))
+        }),
+    )
+    const client = new ProjectRecordsClient({
+      endpoint: "http://127.0.0.1:47831",
+      token: "fixture",
+      fetch,
+      timeoutMs: override,
+    })
+    try {
+      const result = client.operation(endpoint, body).catch((error) => error)
+      if (deadline === 60_000) {
+        await vi.advanceTimersByTimeAsync(10_000)
+        expect(signal.aborted).toBe(false)
+        await vi.advanceTimersByTimeAsync(49_999)
+      } else {
+        await vi.advanceTimersByTimeAsync(deadline - 1)
+      }
+      expect(signal.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(signal.aborted).toBe(true)
+      expect(await result).toBeInstanceOf(Error)
+      expect((await result).message).toContain("unavailable")
+    } finally {
+      vi.useRealTimers()
+    }
+  },
+)
+
+it("does not expose dispatch just because execution requests have a longer timeout", async () => {
+  const fetch = vi.fn()
+  const client = new ProjectRecordsClient({
+    endpoint: "http://127.0.0.1:47831",
+    token: "fixture",
+    fetch,
+  })
+  await expect(client.operation("/v1/agents/dispatch", {})).rejects.toThrow("unsupported")
+  await expect(
+    client.boardRequest({ path: "/v1/agents/dispatch", method: "POST", body: "{}" }),
+  ).rejects.toThrow("unsupported")
+  expect(fetch).not.toHaveBeenCalled()
+})
