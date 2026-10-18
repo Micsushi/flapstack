@@ -1,3 +1,4 @@
+import type { MessageReply } from "../../../shared/message-replies"
 import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { count } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
@@ -36,6 +37,7 @@ export type MobileActionDispatchers = {
     subChatId: string,
     commandId: string,
     message: string,
+    reply?: MessageReply,
   ): boolean | Promise<boolean>
   answerClarification(
     requestId: string,
@@ -194,6 +196,7 @@ export class MobileActionService {
             command.action.subChatId,
             command.commandId,
             command.action.message,
+            command.action.reply,
           )) ?? false
         )
       case "clarification.answer":
@@ -293,12 +296,12 @@ export function createProductionMobileActionDispatchers(
         sqlite.close()
       }
     },
-    async sendChat(chatId, subChatId, commandId, message) {
+    async sendChat(chatId, subChatId, commandId, message, reply) {
       const { sendMobileChat } = await import("./chat")
       const { publishLocalProductInvalidation } = await import("../mcp-control/invalidation-bridge")
       const sqlite = openAppDatabase(databasePath)
       try {
-        const result = sendMobileChat(sqlite, { chatId, subChatId, commandId, message })
+        const result = sendMobileChat(sqlite, { chatId, subChatId, commandId, message, reply })
         publishLocalProductInvalidation({
           version: 1,
           source: "product-mcp",

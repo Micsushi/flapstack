@@ -9,7 +9,7 @@ export const mobileControlLimits = {
   sessionIdleTtlMs: 15 * 60_000,
   sessionAbsoluteTtlMs: 12 * 60 * 60_000,
   commandTtlMs: 60_000,
-  commandBytes: 32 * 1024,
+  commandBytes: 96 * 1024,
   eventBytes: 64 * 1024,
   snapshotBytes: 512 * 1024,
   snapshotItems: 500,
@@ -749,6 +749,14 @@ export const mobileCommandActionSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("chat.send"),
       message: boundedText(8_000),
+      reply: z
+        .object({
+          messageId: z.string().min(1).max(260),
+          role: z.enum(["user", "assistant"]),
+          text: z.string().min(1).max(8_000),
+        })
+        .strict()
+        .optional(),
       subChatId: identifierSchema,
     })
     .strict(),

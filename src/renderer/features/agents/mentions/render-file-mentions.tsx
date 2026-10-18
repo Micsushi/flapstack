@@ -1,5 +1,7 @@
 "use client"
 
+import { parseMessageReply } from "../../../../shared/message-replies"
+
 import { createContext, useContext, useMemo } from "react"
 import { getFileIconByExtension } from "./agents-file-mention"
 import { SkillIcon, CustomAgentIcon, OriginalMCPIcon } from "../../../components/ui/icons"
@@ -177,7 +179,7 @@ function parseMention(id: string): ParsedMention | null {
       path: "",
       repository: "",
       type: "quote",
-      fullText,
+      fullText: parseMessageReply(fullText)?.text ?? fullText,
     }
   }
 
@@ -529,12 +531,25 @@ export function extractTextMentions(text: string): {
 } {
   const textMentions: ParsedMention[] = []
   let cleanedText = text
+  const separator = text.indexOf("\n\n")
+  const phoneReply = separator >= 0 ? parseMessageReply(text.slice(0, separator)) : null
+  if (phoneReply) {
+    textMentions.push({
+      id: phoneReply.messageId,
+      label: `Reply to ${phoneReply.role === "user" ? "you" : "agent"}`,
+      path: "",
+      repository: "",
+      type: "quote",
+      fullText: phoneReply.text,
+    })
+    cleanedText = text.slice(separator + 2)
+  }
 
   const regex = /@\[([^\]]+)\]/g
   let match: RegExpExecArray | null
   const mentionsToRemove: string[] = []
 
-  while ((match = regex.exec(text)) !== null) {
+  while ((match = regex.exec(cleanedText)) !== null) {
     const id = match[1]
     if (
       id.startsWith(MENTION_PREFIXES.QUOTE) ||
@@ -590,6 +605,23 @@ export function TextMentionBlock({ mention }: { mention: ParsedMention }) {
     mention.type !== "chatHistory"
   )
     return null
+
+  if (mention.type === "quote" && /^Reply to (you|agent)$/.test(mention.label)) {
+    return (
+      <details className="min-w-0 max-w-full rounded-lg bg-muted/50 px-3 py-2 text-sm">
+        <summary className="cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <span className="font-medium">{mention.label}</span>
+          <span className="ml-2 text-muted-foreground">
+            {mention.fullText?.slice(0, 100)}
+            {(mention.fullText?.length ?? 0) > 100 ? "…" : ""}
+          </span>
+        </summary>
+        <p className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words">
+          {mention.fullText}
+        </p>
+      </details>
+    )
+  }
 
   const displayTitle =
     mention.type === "chatHistory"

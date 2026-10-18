@@ -533,6 +533,13 @@
       "when": 1790000000002,
       "tag": "0075_record_task_worktree_base_branch",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "6",
+      "when": 1790000000003,
+      "tag": "0076_side_questions",
+      "breakpoints": true
     }
   ]
 }

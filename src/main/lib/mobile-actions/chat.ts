@@ -1,3 +1,5 @@
+import { formatMessageReply, type MessageReply } from "../../../shared/message-replies"
+import { readMobileConversation } from "./conversation"
 import type Database from "better-sqlite3"
 import { randomUUID } from "node:crypto"
 import { queueChatRun } from "../run-launch-service"
@@ -75,12 +77,33 @@ export function sendMobileChat(
     subChatId: string
     commandId: string
     message: string
+    reply?: MessageReply
   },
 ): boolean {
+  if (input.reply) {
+    const source = readMobileConversation(
+      database,
+      input.chatId,
+      input.subChatId,
+      undefined,
+      input.reply.messageId,
+    ).messages[0]
+    const liveRunId = /^live-(.+):\d+$/.exec(input.reply.messageId)?.[1]
+    const liveSource =
+      input.reply.role === "assistant" &&
+      liveRunId &&
+      database
+        .prepare("SELECT id FROM agent_runs WHERE id = ? AND chat_id = ? AND sub_chat_id = ?")
+        .get(liveRunId, input.chatId, input.subChatId)
+    if ((!source || source.role !== input.reply.role) && !liveSource)
+      throw new Error("The referenced message is unavailable in this conversation.")
+  }
   const queued = queueChatRun(database, {
     chatId: input.chatId,
     subChatId: input.subChatId,
-    initialPrompt: input.message,
+    initialPrompt: input.reply
+      ? formatMessageReply(input.reply) + "\n\n" + input.message
+      : input.message,
     idempotencyKey: `mobile-${input.commandId}`,
   })
   if (!queued.ok) throw new Error(queued.message)

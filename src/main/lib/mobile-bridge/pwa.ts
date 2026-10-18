@@ -1,3 +1,4 @@
+import { formatMessageReply, parseMessageReply } from "../../../shared/message-replies"
 export type MobileCompanionAsset = {
   status: 200
   contentType: string
@@ -22,7 +23,7 @@ const documentBody = `<!doctype html>
     <style>
       :root{font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#202020;background:#fff;color-scheme:light dark;--surface:#fff;--muted:#666;--line:#e5e5e5;--soft:#f4f4f4;--fg:#202020}
       *{box-sizing:border-box}body{margin:0}main{max-width:52rem;margin:auto;padding:0 1rem env(safe-area-inset-bottom);min-height:100dvh;display:flex;flex-direction:column}
-      header{display:flex;align-items:center;justify-content:space-between;gap:.75rem;min-height:64px}h1{font-size:20px;margin:0}h2{font-size:18px;margin:0 0 16px}button,input,textarea,select{font:inherit;color:inherit;min-height:44px;border-radius:10px;border:1px solid var(--line);background:var(--surface);padding:10px 12px}button{cursor:pointer}button:hover{background:var(--soft)}button:disabled{opacity:.45;cursor:default}button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--fg);outline-offset:2px}label{display:block;margin:12px 0}input:not([type=checkbox]):not([type=radio]),textarea{width:100%}input[type=checkbox],input[type=radio]{min-height:24px;width:24px;vertical-align:middle}textarea{resize:vertical}section{margin:16px 0}summary{cursor:pointer;min-height:44px;padding:10px 0}.muted{color:var(--muted)}.danger{color:#bb2222}.actions{display:flex;gap:8px;flex-wrap:wrap}.item{padding:16px 0;border-top:1px solid var(--line)}#connection{font-size:13px;font-weight:400;color:var(--muted)}#settings{border-bottom:1px solid var(--line);padding-bottom:12px}#settings>summary{display:none}#settings:not([open]){margin:0;padding:0;border:0}#connection{border:0;padding-right:0}#chat-toolbar{position:sticky;top:0;z-index:1;background:var(--surface);display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line);padding:8px 0}#chat-title{flex:1;font-size:16px;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}#chat-list{display:grid;gap:4px}#chat-list button{text-align:left;border:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#conversation{flex:1;min-height:30dvh}#chat-list:not([hidden]){flex:1;align-content:start}#pairing-result:empty,#send-status:empty{display:none}#messages{padding:24px 0;display:flex;flex-direction:column;gap:24px}.message{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;margin:0}.message.user{align-self:flex-end;background:var(--soft);padding:12px 16px;border-radius:16px;max-width:88%}.message.assistant{line-height:1.65}#compose{position:sticky;bottom:0;padding:12px 0 max(12px,env(safe-area-inset-bottom));background:var(--surface)}#composer{display:flex;align-items:flex-end;border:1px solid var(--line);border-radius:18px;padding:6px;gap:6px}#message{border:0;resize:none;max-height:160px;min-height:48px;background:transparent}#send{background:var(--fg);color:var(--surface);border:0;flex-shrink:0}#new-options{display:flex;gap:8px;padding-bottom:12px}#new-options select{min-width:0;max-width:60%}#pairing-result{margin:8px 0;font-size:14px}#activity{font-size:14px;color:var(--muted)}[hidden]{display:none!important}
+      header{display:flex;align-items:center;justify-content:space-between;gap:.75rem;min-height:64px}h1{font-size:20px;margin:0}h2{font-size:18px;margin:0 0 16px}button,input,textarea,select{font:inherit;color:inherit;min-height:44px;border-radius:10px;border:1px solid var(--line);background:var(--surface);padding:10px 12px}button{cursor:pointer}button:hover{background:var(--soft)}button:disabled{opacity:.45;cursor:default}button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--fg);outline-offset:2px}label{display:block;margin:12px 0}input:not([type=checkbox]):not([type=radio]),textarea{width:100%}input[type=checkbox],input[type=radio]{min-height:24px;width:24px;vertical-align:middle}textarea{resize:vertical}section{margin:16px 0}summary{cursor:pointer;min-height:44px;padding:10px 0}.muted{color:var(--muted)}.danger{color:#bb2222}.actions{display:flex;gap:8px;flex-wrap:wrap}.item{padding:16px 0;border-top:1px solid var(--line)}#connection{font-size:13px;font-weight:400;color:var(--muted)}#settings{border-bottom:1px solid var(--line);padding-bottom:12px}#settings>summary{display:none}#settings:not([open]){margin:0;padding:0;border:0}#connection{border:0;padding-right:0}#chat-toolbar{position:sticky;top:0;z-index:1;background:var(--surface);display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line);padding:8px 0}#chat-title{flex:1;font-size:16px;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}#chat-list{display:grid;gap:4px}#chat-list button{text-align:left;border:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#conversation{flex:1;min-height:30dvh}#chat-list:not([hidden]){flex:1;align-content:start}#pairing-result:empty,#send-status:empty{display:none}#messages{padding:24px 0;display:flex;flex-direction:column;gap:24px}.message{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;margin:0}.message.user{align-self:flex-end;background:var(--soft);padding:12px 16px;border-radius:16px;max-width:88%}.message.assistant{line-height:1.65}.reply-preview{border-left:1px solid var(--line);padding:8px 12px;margin:8px 0;font-size:14px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}.reply-action{display:block;font-size:13px;border:0;background:transparent;color:var(--muted);padding:4px 8px}.side-entry{padding:12px 0;border-bottom:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere}#side-questions{border-top:1px solid var(--line)}#side-form{display:flex;gap:6px;align-items:flex-end}#side-message{min-height:48px}#compose{position:sticky;bottom:0;padding:12px 0 max(12px,env(safe-area-inset-bottom));background:var(--surface)}#composer{display:flex;align-items:flex-end;border:1px solid var(--line);border-radius:18px;padding:6px;gap:6px}#message{border:0;resize:none;max-height:160px;min-height:48px;background:transparent}#send{background:var(--fg);color:var(--surface);border:0;flex-shrink:0}#new-options{display:flex;gap:8px;padding-bottom:12px}#new-options select{min-width:0;max-width:60%}#pairing-result{margin:8px 0;font-size:14px}#activity{font-size:14px;color:var(--muted)}[hidden]{display:none!important}
       @media(prefers-color-scheme:dark){:root{color:#eee;background:#171717;--surface:#171717;--muted:#aaa;--line:#363636;--soft:#292929;--fg:#eee}.danger{color:#ff8e8e}}
       @media(min-width:700px){main{padding-inline:32px}#conversation{min-height:50dvh}}
     </style>
@@ -54,15 +55,17 @@ const documentBody = `<!doctype html>
       <p id="pairing-result" role="status"></p>
       <div id="chat-toolbar"><button id="back" hidden>Chats</button><strong id="chat-title">Chats</strong><button id="new-chat">New chat</button></div>
       <nav id="chat-list" aria-label="Conversations"></nav>
-      <section id="conversation" hidden><button id="older" hidden>Earlier messages</button><select id="conversation-select" aria-label="Conversation" hidden></select><div id="messages" role="log" aria-label="Messages"></div><p id="activity" role="status"></p></section>
-      <form id="compose" hidden><div id="new-options"><select id="project" aria-label="Project"></select><select id="harness" aria-label="Agent"><option value="codex">Codex</option><option value="claude-code">Claude</option></select></div><div id="composer"><textarea id="message" aria-label="Message" placeholder="Message Flapstack" maxlength="8000" rows="1"></textarea><button id="send" type="submit">Send</button></div><p id="send-status" role="status"></p></form>
+      <section id="conversation" hidden><button id="older" hidden>Earlier messages</button><select id="conversation-select" aria-label="Conversation" hidden></select><div id="messages" role="log" aria-label="Messages"></div><p id="activity" role="status"></p><details id="side-questions"><summary>Side question</summary><button id="side-older" hidden>Earlier questions</button><div id="side-messages" role="log" aria-label="Side conversation"></div><form id="side-form"><textarea id="side-message" aria-label="Side question" placeholder="Ask a question…" maxlength="8000" rows="1"></textarea><button id="side-send" type="submit">Ask</button></form><p id="side-status" role="status"></p></details></section>
+      <form id="compose" hidden><div id="new-options"><select id="project" aria-label="Project"></select><select id="harness" aria-label="Agent"><option value="codex">Codex</option><option value="claude-code">Claude</option></select></div><div id="reply-preview" class="reply-preview" hidden><span id="reply-text"></span><button id="remove-reply" type="button" aria-label="Remove reply">×</button></div><div id="composer"><textarea id="message" aria-label="Message" placeholder="Message Flapstack" maxlength="8000" rows="1"></textarea><button id="send" type="submit">Send</button></div><p id="send-status" role="status"></p></form>
       <details id="attention"><summary>Activity & approvals</summary><div id="items"></div></details>
     </main>
     <script type="module" src="/mobile-app.js"></script>
   </body>
 </html>`
 
-const applicationBody = String.raw`
+const applicationBody =
+  `const formatMessageReply = ${formatMessageReply.toString()};\nconst parseMessageReply = ${parseMessageReply.toString()};\n` +
+  String.raw`
 const $ = (id) => document.getElementById(id)
 const connection = $("connection")
 const pairButton = $("pair-device")
@@ -86,6 +89,15 @@ let selectedChat = null
 let selectedConversation = null
 let conversationBefore = null
 let newChat = false
+let newChatProject = ""
+let promotedChat = null
+let sideKey = ""
+let sideEntries = []
+let sideBefore = null
+let sideBusy = false
+let sideGeneration = 0
+const replies = readJson(sessionStorage.getItem("flapstack-mobile-replies")) || {}
+const sideDrafts = readJson(sessionStorage.getItem("flapstack-mobile-side-drafts")) || {}
 let activeGrantId = localStorage.getItem("flapstack-mobile-grant") || ""
 let pendingSend = readJson(sessionStorage.getItem("flapstack-mobile-pending"))
 function storePending() {
@@ -100,11 +112,15 @@ function storePending() {
 }
 function activateAccess(grantId) {
   if (activeGrantId === grantId) return
+  saveDraft()
   storePending()
+  selectedChat = null; selectedConversation = null; conversationBefore = null; newChat = false; newChatProject = ""
+  $("messages").replaceChildren(); $("message").value = ""; $("activity").textContent = ""
   activeGrantId = grantId
   pendingSend = readJson(sessionStorage.getItem("flapstack-mobile-pending:" + grantId))
   storePending()
   $("send-status").textContent = ""
+  resetSide(); renderReply()
 }
 let reconnectTimer = null
 let reconnectAttempt = 0
@@ -112,29 +128,38 @@ let connectionGeneration = 0
 let connectionDeadline = null
 let lastMessageAt = 0
 const drafts = readJson(sessionStorage.getItem("flapstack-mobile-drafts")) || {}
-const draftKey = () => selectedChat ? selectedChat + ":" + (selectedConversation || "") : "new"
+const draftKey = () => selectedChat ? selectedChat + ":" + (selectedConversation || "") : "new:" + activeGrantId + ":" + newChatProject
 function saveDraft() {
   if (!selectedChat && !newChat) return
   drafts[draftKey()] = $("message").value
   sessionStorage.setItem("flapstack-mobile-drafts", JSON.stringify(drafts))
 }
+function renderReply() {
+  const reply = replies[draftKey()]
+  $("reply-preview").hidden = !reply || !selectedChat
+  $("reply-text").textContent = reply ? (reply.role === "user" ? "You: " : "Flapstack: ") + reply.text.slice(0,220) : ""
+}
+function saveReplies() { sessionStorage.setItem("flapstack-mobile-replies", JSON.stringify(replies)); renderReply() }
+$("remove-reply").addEventListener("click", () => { delete replies[draftKey()]; saveReplies() })
 $("message").addEventListener("input", () => { saveDraft(); $("message").style.height = "auto"; $("message").style.height = Math.min($("message").scrollHeight,160) + "px" })
 connection.addEventListener("click", () => { $("settings").open = !$("settings").open })
 $("back").addEventListener("click", () => { saveDraft(); selectedChat = null; selectedConversation = null; newChat = false; renderChats() })
-$("new-chat").addEventListener("click", () => { saveDraft(); selectedChat = null; selectedConversation = null; newChat = true; $("message").value = drafts.new || ""; $("messages").replaceChildren(); renderChats(); $("message").focus() })
+$("new-chat").addEventListener("click", () => { saveDraft(); selectedChat = null; selectedConversation = null; newChat = true; $("messages").replaceChildren(); renderChats(); $("message").value = drafts[draftKey()] || ""; $("message").focus() })
+$("project").addEventListener("change", () => { saveDraft(); newChatProject = $("project").value; $("message").value = drafts[draftKey()] || "" })
 $("older").addEventListener("click", () => readConversation(conversationBefore))
 $("conversation-select").addEventListener("change", () => { saveDraft(); selectedConversation = $("conversation-select").value; $("message").value = drafts[draftKey()] || ""; $("messages").replaceChildren(); readConversation() })
 $("compose").addEventListener("submit", event => {
   event.preventDefault()
   const message = $("message").value.trim()
-  if (!message || pendingSend) return
+  if (!message || pendingSend || $("side-questions").open) return
   const target = selectedChat ? currentItems.get("chat:" + selectedChat) : currentItems.get("project:" + $("project").value)
   if (!target) return announce("Connect and choose an available project first.")
-  const action = selectedChat ? {type:"chat.send", subChatId:selectedConversation, message} : {type:"chat.create", harness:$("harness").value, message}
+  const reply = selectedChat ? replies[draftKey()] : null
+  const action = selectedChat ? {type:"chat.send", subChatId:selectedConversation, message, ...(reply ? {reply} : {})} : {type:"chat.create", harness:$("harness").value, message}
   if (selectedChat && !selectedConversation) return
   const commandId = sendCommand(target, action)
   if (commandId) {
-    pendingSend = {commandId, grantId:activeGrantId, key:draftKey(), message, create:!selectedChat, chatId:selectedChat, subChatId:selectedConversation}
+    pendingSend = {commandId, grantId:activeGrantId, key:draftKey(), message, reply, create:!selectedChat, chatId:selectedChat, subChatId:selectedConversation}
     storePending()
     $("send-status").textContent = "Sending…"
     $("send").disabled = true
@@ -150,10 +175,11 @@ function readConversation(before) {
   socket.send(JSON.stringify({kind:"conversation.read",chatId:selectedChat,...(selectedConversation ? {subChatId:selectedConversation} : {}),...(typeof before === "number" ? {before} : {})}))
 }
 function renderChats() {
+  renderReply(); syncSide()
   $("new-chat").hidden = newChat
   $("back").hidden = !selectedChat && !newChat
   $("conversation").hidden = !selectedChat && !newChat
-  $("compose").hidden = !selectedChat && !newChat
+  $("compose").hidden = (!selectedChat && !newChat) || $("side-questions").open
   $("chat-list").hidden = !!selectedChat || newChat
   $("new-options").hidden = !newChat
   $("chat-title").textContent = selectedChat ? currentItems.get("chat:" + selectedChat)?.name || "Chat" : newChat ? "New chat" : "Chats"
@@ -166,18 +192,24 @@ function renderChats() {
     const button = document.createElement("button"); button.textContent = item.name; button.addEventListener("click", () => openChat(item.id)); list.append(button)
   }
   if (!list.children.length) { const empty = document.createElement("p"); empty.className = "muted"; empty.textContent = online ? "Start a chat in a connected project." : "Connect your computer to see your chats."; list.append(empty) }
-  const value = $("project").value
+  const value = newChatProject || $("project").value
   $("project").replaceChildren()
   for (const item of currentItems.values()) if (item.kind === "project") { const option = document.createElement("option"); option.value = item.id; option.textContent = item.name; $("project").append(option) }
   if ([...$("project").options].some(option => option.value === value)) $("project").value = value
+  if (newChatProject !== $("project").value) {
+    saveDraft(); newChatProject = $("project").value
+    if (newChat) $("message").value = drafts[draftKey()] || ""
+  }
 }
 function completeSend(sent) {
   pendingSend = null
   storePending()
-  if (drafts[sent.key]?.trim() === sent.message) {
+  const matchesDraft = drafts[sent.key]?.trim() === sent.message
+  if (matchesDraft) {
     delete drafts[sent.key]; sessionStorage.setItem("flapstack-mobile-drafts", JSON.stringify(drafts))
     if (draftKey() === sent.key) $("message").value = ""
   }
+  if (matchesDraft && sent.reply && JSON.stringify(replies[sent.key]) === JSON.stringify(sent.reply)) { delete replies[sent.key]; saveReplies() }
   $("send-status").textContent = "Sent"
   renderChats()
 }
@@ -202,8 +234,18 @@ function applyConversation(value) {
   const fragment = document.createDocumentFragment()
   for (const message of value.messages) {
     let element = [...root.children].find(child => child.dataset.message === message.id)
-    if (!element) { element = document.createElement("p"); element.dataset.message = message.id; element.className = "message " + message.role; element.setAttribute("aria-label", message.role === "user" ? "You" : "Flapstack"); fragment.append(element) }
-    if (element.textContent !== message.text) element.textContent = message.text
+    if (!element) { element = document.createElement("div"); element.dataset.message = message.id; element.className = "message " + message.role; element.setAttribute("aria-label", message.role === "user" ? "You" : "Flapstack"); fragment.append(element) }
+    if (element.dataset.text !== message.text || element.dataset.reply !== JSON.stringify(message.reply)) {
+      element.dataset.text = message.text; element.dataset.reply = JSON.stringify(message.reply); element.replaceChildren()
+      const separator = message.text.indexOf("\n\n")
+      const quoted = message.reply || (separator >= 0 ? parseMessageReply(message.text.slice(0,separator)) : null)
+      const body = quoted && !message.reply ? message.text.slice(separator+2) : message.text
+      if (quoted) { const quote = document.createElement("div"); quote.className = "reply-preview"; quote.textContent = (quoted.role === "user" ? "You: " : "Flapstack: ") + quoted.text.slice(0,220); element.append(quote) }
+      const text = document.createElement("span"); text.textContent = body; element.append(text)
+      const reply = document.createElement("button"); reply.type = "button"; reply.className = "reply-action"; reply.textContent = "Reply"; reply.setAttribute("aria-label", "Reply to " + (message.role === "user" ? "your message" : "Flapstack"))
+      reply.addEventListener("click", () => { $("side-questions").open = false; syncSide(); replies[draftKey()] = {messageId: message.id, role: message.role, text: body}; saveReplies(); $("message").focus() })
+      element.append(reply)
+    }
   }
   if (value.pageBefore !== null) root.prepend(fragment); else root.append(fragment)
   if (value.status === "idle") for (const element of [...root.children]) if (element.dataset.message?.startsWith("live-")) element.remove()
@@ -215,6 +257,7 @@ setInterval(() => {
   if (online && !refreshPending && !snapshotPaging && Date.now() > freshUntil - 10000 && socket?.readyState === WebSocket.OPEN) { refreshPending = true; socket.send(JSON.stringify({kind:"snapshot.refresh"})) }
   if (online && Date.now() - lastMessageAt > 45000) { void connect(); return }
   readConversation()
+  if ($("side-questions").open && !sideBusy) void refreshSide()
 }, 2000)
 window.addEventListener("online", () => connect())
 function resumeConnection() {
@@ -382,6 +425,9 @@ function applyEnvelope(envelope) {
       saveDraft()
       selectedChat = null; selectedConversation = null; conversationBefore = null; newChat = false
       $("messages").replaceChildren(); $("message").value = ""; $("activity").textContent = ""
+    }
+    if (!snapshotPaging && promotedChat && currentItems.has("chat:" + promotedChat.chatId)) {
+      saveDraft(); selectedChat = promotedChat.chatId; selectedConversation = promotedChat.subChatId; newChat = false; promotedChat = null; $("messages").replaceChildren(); $("message").value = drafts[draftKey()] || ""; readConversation()
     }
     freshUntil = envelope.freshUntil
   } else if (envelope.kind === "event") {
@@ -582,6 +628,98 @@ function maybeNotify(item) {
     try { new Notification("Approval needs attention", {body: item.action + ". Delivery is best effort."}) } catch { announce("Notification delivery failed. Check the attention cards here.") }
   }
 }
+
+function resetSide() {
+  sideGeneration++; sideKey = ""; sideEntries = []; sideBefore = null; sideBusy = false
+  $("side-questions").open = false; $("side-messages").replaceChildren(); $("side-message").value = ""; $("side-status").textContent = ""
+}
+function syncSide() {
+  const key = selectedChat && selectedConversation ? activeGrantId + ":" + draftKey() : ""
+  if (key !== sideKey) { resetSide(); sideKey = key; $("side-message").value = sideDrafts[key]?.question || "" }
+  $("side-questions").hidden = !key
+  $("compose").hidden = (!selectedChat && !newChat) || $("side-questions").open
+  $("side-send").disabled = !key || !isMutable() || sideBusy || (capabilities && !capabilities.includes("chat.send"))
+}
+async function sideRequest(request) {
+  if (!isMutable() || !selectedChat || !selectedConversation) throw new Error("Reconnect to ask a question.")
+  const context = {grantId: activeGrantId, chatId: selectedChat, subChatId: selectedConversation}
+  const generation = sideGeneration
+  const privateKey = await readPrivateKey()
+  const proof = await sessionProof(sessionCredential, privateKey)
+  if (generation !== sideGeneration) throw new Error("Conversation changed.")
+  const result = await post("/mobile/v1/side-questions", {proof, request: {...context, ...request}})
+  if (generation !== sideGeneration) throw new Error("Conversation changed.")
+  return result
+}
+function renderSide() {
+  const root = $("side-messages"); root.replaceChildren()
+  for (const entry of sideEntries) {
+    const item = document.createElement("div"); item.className = "side-entry"
+    const question = document.createElement("strong"); question.textContent = entry.question; item.append(question)
+    const answer = document.createElement("p"); answer.textContent = entry.answer || (entry.status === "running" ? "Thinking…" : entry.status === "cancelled" ? "Stopped" : entry.error || "No answer"); item.append(answer)
+    const actions = document.createElement("div"); actions.className = "actions"
+    const add = (label, operation) => { const button = document.createElement("button"); button.type = "button"; button.textContent = label; button.disabled = sideBusy || !isMutable(); button.onclick = () => void changeSide({operation, id:entry.id}); actions.append(button) }
+    if (entry.status === "running") add("Stop", "cancel")
+    if (entry.status === "failed" || entry.status === "cancelled") add("Retry", "retry")
+    if (entry.status === "completed" && (!capabilities || capabilities.includes("chat.create"))) add("Open as chat", "promote")
+    item.append(actions); root.append(item)
+  }
+  $("side-older").hidden = !sideBefore
+  syncSide()
+}
+async function refreshSide(before) {
+  if (!sideKey || !$("side-questions").open || !isMutable() || sideBusy) return
+  const generation = sideGeneration; sideBusy = true; renderSide()
+  try {
+    const result = await sideRequest({operation:"list", ...(typeof before === "number" ? {before} : {})})
+    if (generation !== sideGeneration) return
+    const incoming = new Map(result.entries.map(entry => [entry.id,entry]))
+    sideEntries = [...sideEntries.filter(entry => !incoming.has(entry.id)), ...result.entries].sort((a,b) => a.createdAt-b.createdAt)
+    sideBefore = result.before; renderSide()
+  } catch { if (generation === sideGeneration) $("side-status").textContent = "Could not load side questions. Reconnect and try again." }
+  finally { if (generation === sideGeneration) { sideBusy = false; renderSide() } }
+}
+async function changeSide(request) {
+  if (sideBusy) return
+  const generation = sideGeneration, key = sideKey
+  sideBusy = true; renderSide(); $("side-status").textContent = ""
+  try {
+    const result = await sideRequest(request)
+    if (generation !== sideGeneration) return
+    if (result.entry) {
+      sideEntries = [...sideEntries.filter(entry => entry.id !== result.entry.id), result.entry].sort((a,b) => a.createdAt-b.createdAt)
+      if (request.operation === "ask" && $("side-message").value.trim() === request.question) { $("side-message").value = ""; delete sideDrafts[key]; sessionStorage.setItem("flapstack-mobile-side-drafts", JSON.stringify(sideDrafts)) }
+    }
+    if (result.chatId) { promotedChat = result; socket.send(JSON.stringify({kind:"snapshot.refresh"})); $("side-status").textContent = "Opening chat…" }
+    renderSide()
+  } catch { if (generation === sideGeneration) $("side-status").textContent = "Could not complete that action. Your question is kept; try again." }
+  finally { if (generation === sideGeneration) { sideBusy = false; renderSide() } }
+}
+$("side-questions").addEventListener("toggle", () => { syncSide(); if ($("side-questions").open) void refreshSide() })
+$("side-older").addEventListener("click", () => void refreshSide(sideBefore))
+$("side-message").addEventListener("input", () => { sideDrafts[sideKey] = {question: $("side-message").value}; sessionStorage.setItem("flapstack-mobile-side-drafts", JSON.stringify(sideDrafts)) })
+$("side-form").addEventListener("submit", async event => {
+  event.preventDefault()
+  const question = $("side-message").value.trim()
+  if (!question || !sideKey || sideBusy) return
+  const key = sideKey, generation = sideGeneration
+  const saved = sideDrafts[key]
+  let request = saved?.requestId && saved.question === question ? saved : {operation:"ask", question, requestId:crypto.randomUUID()}
+  sideDrafts[key] = request; sessionStorage.setItem("flapstack-mobile-side-drafts", JSON.stringify(sideDrafts))
+  sideBusy = true; renderSide()
+  try {
+    const current = await sideRequest({operation:"list", requestId:request.requestId})
+    if (generation !== sideGeneration) return
+    if (!current.accepted) {
+      const latest = current.entries.at(-1)
+      request = {operation:"ask", question, requestId:request.requestId, ...(latest?.threadId && !latest.promotedChatId ? {threadId:latest.threadId} : {})}
+      sideDrafts[key] = request; sessionStorage.setItem("flapstack-mobile-side-drafts", JSON.stringify(sideDrafts))
+    }
+    sideBusy = false
+    await changeSide(request)
+  } catch { if (generation === sideGeneration) $("side-status").textContent = "Could not check delivery. Your question is kept; try again." }
+  finally { if (generation === sideGeneration) { sideBusy = false; renderSide() } }
+})
 
 async function post(path, body) {
   const controller = new AbortController()

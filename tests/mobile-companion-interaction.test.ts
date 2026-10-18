@@ -56,6 +56,8 @@ function companion() {
     };
     window.pendingCommand = () => pendingSend?.commandId;
     window.activateAccess = activateAccess;
+    window.stubSide = callback => { sideRequest = callback; };
+    window.refreshSide = refreshSide;
     window.connectWithAccess = async (grants) => {
       socket = null;
       readPrivateKey = async () => ({});
@@ -72,6 +74,8 @@ function companion() {
     connected: (value: boolean) => void
     prepareReconnect: (callback: () => void) => void
     pendingCommand: () => string | undefined
+    stubSide: (callback: (request: Record<string, unknown>) => Promise<unknown>) => void
+    refreshSide: () => Promise<void>
     activateAccess: (grantId: string) => void
     connectWithAccess: (grants: { grantId: string; label: string }[]) => Promise<void>
   }
@@ -352,4 +356,239 @@ it("switches access without reading the previous chat or losing its pending deli
   app.api.activateAccess("access-a")
   expect(app.api.pendingCommand()).toBe(commandA)
   expect(app.send.mock.calls.every(([value]) => JSON.parse(value).kind !== "command")).toBe(true)
+})
+
+it("keeps new-chat drafts scoped to their access and project", () => {
+  const app = companion()
+  const projectA = { kind: "project", id: "project-a", name: "A", version: 1 }
+  const projectB = { kind: "project", id: "project-b", name: "B", version: 1 }
+  app.api.activateAccess("access-a")
+  app.api.connected(true)
+  app.snapshot([projectA, projectB])
+  app.button("New chat")!.click()
+  const input = app.window.document.getElementById("message") as HTMLTextAreaElement
+  const project = app.window.document.getElementById("project") as HTMLSelectElement
+  input.value = "Only for project A"
+  input.dispatchEvent(new app.window.Event("input"))
+  project.value = "project-b"
+  project.dispatchEvent(new app.window.Event("change"))
+  expect(input.value).toBe("")
+  project.value = "project-a"
+  project.dispatchEvent(new app.window.Event("change"))
+  expect(input.value).toBe("Only for project A")
+  app.api.activateAccess("access-b")
+  app.snapshot([projectB])
+  expect(app.window.document.getElementById("compose")!.hidden).toBe(true)
+  app.button("New chat")!.click()
+  expect(input.value).toBe("")
+  app.api.activateAccess("access-a")
+  app.snapshot([projectA, projectB])
+  app.button("New chat")!.click()
+  project.value = "project-a"
+  project.dispatchEvent(new app.window.Event("change"))
+  expect(input.value).toBe("Only for project A")
+})
+
+function openConversation(app: ReturnType<typeof companion>) {
+  app.api.activateAccess("access")
+  app.api.connected(true)
+  app.snapshot([{ kind: "chat", id: "chat", name: "Chat", version: 1 }])
+  app.button("Chat")!.click()
+  app.api.receive({
+    kind: "conversation",
+    conversation: {
+      chatId: "chat",
+      subChatId: "sub",
+      conversations: [{ id: "sub" }],
+      messages: [
+        { id: "user", role: "user", text: "My earlier request" },
+        { id: "assistant", role: "assistant", text: "I am working" },
+      ],
+      status: "running",
+      pageBefore: null,
+      before: null,
+    },
+  })
+  app.send.mockClear()
+}
+it("replies to either role and preserves or removes the reference with the draft", () => {
+  const app = companion()
+  openConversation(app)
+  const buttons = [...app.window.document.querySelectorAll<HTMLButtonElement>(".reply-action")]
+  buttons[0].click()
+  expect(app.window.document.getElementById("reply-text")!.textContent).toContain(
+    "You: My earlier request",
+  )
+  app.window.document.getElementById("remove-reply")!.click()
+  expect(app.window.document.getElementById("reply-preview")!.hidden).toBe(true)
+  buttons[1].click()
+  app.button("Chats")!.click()
+  app.button("Chat")!.click()
+  app.api.receive({
+    kind: "conversation",
+    conversation: {
+      chatId: "chat",
+      subChatId: "sub",
+      conversations: [{ id: "sub" }],
+      messages: [],
+      status: "running",
+      pageBefore: null,
+      before: null,
+    },
+  })
+  expect(app.window.document.getElementById("reply-text")!.textContent).toContain(
+    "Flapstack: I am working",
+  )
+  const input = app.window.document.getElementById("message") as HTMLTextAreaElement
+  input.value = "Explain that"
+  input.dispatchEvent(new app.window.Event("input"))
+  app.window.document
+    .getElementById("compose")!
+    .dispatchEvent(new app.window.Event("submit", { cancelable: true }))
+  const sent = app.send.mock.calls
+    .map(([value]) => JSON.parse(value))
+    .find((value) => value.kind === "command")
+  expect(sent.action.reply).toEqual({
+    messageId: "assistant",
+    role: "assistant",
+    text: "I am working",
+  })
+  expect(sent.action.message).toContain("Explain that")
+  app.api.receive({
+    kind: "event",
+    payload: { type: "action.result", commandId: sent.commandId, status: "completed" },
+  })
+  expect(app.window.document.getElementById("reply-preview")!.hidden).toBe(true)
+})
+it("asks, stops, retries and promotes side questions without sending or steering the main chat", async () => {
+  const app = companion()
+  openConversation(app)
+  let entry = {
+    id: "side",
+    threadId: "side",
+    question: "Progress?",
+    answer: "",
+    status: "running",
+    createdAt: 1,
+    error: null,
+  }
+  const call = vi.fn(async (request: Record<string, unknown>) => {
+    if (request.operation === "list") return { entries: [entry], before: null }
+    if (request.operation === "cancel") entry = { ...entry, status: "cancelled" }
+    if (request.operation === "retry")
+      entry = { ...entry, status: "completed", answer: "Still working" }
+    if (request.operation === "promote") return { chatId: "promoted", subChatId: "promoted-sub" }
+    return { entry }
+  })
+  app.api.stubSide(call)
+  const panel = app.window.document.getElementById("side-questions") as HTMLDetailsElement
+  panel.open = true
+  await vi.waitFor(() => expect(app.button("Stop")?.disabled).toBe(false))
+  const input = app.window.document.getElementById("side-message") as HTMLTextAreaElement
+  input.value = "Progress?"
+  app.window.document
+    .getElementById("side-form")!
+    .dispatchEvent(new app.window.Event("submit", { cancelable: true }))
+  await vi.waitFor(() =>
+    expect(call).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: "ask", question: "Progress?" }),
+    ),
+  )
+  await vi.waitFor(() => expect(app.button("Stop")!.disabled).toBe(false))
+  app.button("Stop")!.click()
+  expect(call.mock.calls).toEqual(expect.arrayContaining([[{ operation: "cancel", id: "side" }]]))
+  await vi.waitFor(() => expect(app.button("Retry")).toBeTruthy())
+  app.button("Retry")!.click()
+  await vi.waitFor(() => expect(app.button("Open as chat")).toBeTruthy())
+  app.button("Open as chat")!.click()
+  await vi.waitFor(() => expect(call).toHaveBeenCalledWith({ operation: "promote", id: "side" }))
+  expect(
+    app.send.mock.calls
+      .map(([value]) => JSON.parse(value))
+      .some((value) => value.kind === "command"),
+  ).toBe(false)
+})
+
+it("starts a fresh side conversation after promotion and refreshes an unaccepted retry", async () => {
+  const app = companion()
+  openConversation(app)
+  let promoted = false,
+    fail = true
+  const old = {
+    id: "old",
+    threadId: "old",
+    question: "Old",
+    answer: "Done",
+    status: "completed",
+    createdAt: 1,
+    promotedChatId: null as string | null,
+  }
+  const call = vi.fn(async (request: Record<string, unknown>) => {
+    if (request.operation === "list")
+      return {
+        entries: [{ ...old, promotedChatId: promoted ? "promoted" : null }],
+        accepted: false,
+        before: null,
+      }
+    if (fail) {
+      fail = false
+      throw new Error("not accepted")
+    }
+    return {
+      entry: {
+        ...old,
+        id: request.requestId,
+        threadId: request.threadId || request.requestId,
+        question: request.question,
+        status: "running",
+      },
+    }
+  })
+  app.api.stubSide(call)
+  const panel = app.window.document.getElementById("side-questions") as HTMLDetailsElement
+  panel.open = true
+  await vi.waitFor(() => expect(app.button("Open as chat")?.disabled).toBe(false))
+  const input = app.window.document.getElementById("side-message") as HTMLTextAreaElement
+  input.value = "Another question"
+  const submit = () =>
+    app.window.document
+      .getElementById("side-form")!
+      .dispatchEvent(new app.window.Event("submit", { cancelable: true }))
+  submit()
+  await vi.waitFor(() =>
+    expect(app.window.document.getElementById("side-status")!.textContent).toContain(
+      "Could not complete",
+    ),
+  )
+  const first = call.mock.calls.find(([r]) => r.operation === "ask")![0]
+  expect(first.threadId).toBe("old")
+  promoted = true
+  submit()
+  await vi.waitFor(() =>
+    expect(call.mock.calls.filter(([r]) => r.operation === "ask")).toHaveLength(2),
+  )
+  const second = call.mock.calls.filter(([r]) => r.operation === "ask")[1][0]
+  expect(second.requestId).toBe(first.requestId)
+  expect(second.threadId).toBeUndefined()
+})
+
+it("hides the main composer while the side panel is open and restores it on close", async () => {
+  const app = companion()
+  openConversation(app)
+  app.api.stubSide(async () => ({ entries: [], before: null }))
+  const panel = app.window.document.getElementById("side-questions") as HTMLDetailsElement
+  const compose = app.window.document.getElementById("compose")!
+  panel.open = true
+  await vi.waitFor(() => expect(compose.hidden).toBe(true))
+  const input = app.window.document.getElementById("message") as HTMLTextAreaElement
+  input.value = "Do not send"
+  compose.dispatchEvent(new app.window.Event("submit", { cancelable: true }))
+  expect(
+    app.send.mock.calls
+      .map(([value]) => JSON.parse(value))
+      .some((value) => value.kind === "command"),
+  ).toBe(false)
+  panel.open = false
+  await vi.waitFor(() => expect(compose.hidden).toBe(false))
+  expect(input.value).toBe("Do not send")
 })

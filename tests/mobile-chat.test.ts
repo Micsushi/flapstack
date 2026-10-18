@@ -1,3 +1,4 @@
+import { formatMessageReply } from "../src/shared/message-replies"
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
@@ -193,4 +194,126 @@ it("preserves submission order for turns queued in the same second", async () =>
       (message: { parts: Array<{ text: string }> }) => message.parts[0].text,
     ),
   ).toEqual(["First", "Second"])
+})
+
+it("sends a full 8000 character reply separately from the user message and rejects cross-chat references", () => {
+  const id = createMobileChat(db, {
+    projectId: "project",
+    commandId: "reply",
+    message: "Start",
+    harness: "codex",
+  })
+  const subChatId = readMobileConversation(db, id).subChatId!
+  const text = "x".repeat(8000)
+  db.prepare("UPDATE sub_chats SET messages=? WHERE id=?").run(
+    JSON.stringify([{ id: "source", role: "assistant", parts: [{ type: "text", text }] }]),
+    subChatId,
+  )
+  const input = {
+    chatId: id,
+    subChatId,
+    commandId: "reply-send",
+    message: "Please explain",
+    reply: { messageId: "source:0", role: "assistant" as const, text },
+  }
+  expect(sendMobileChat(db, input)).toBe(true)
+  expect(sendMobileChat(db, input)).toBe(true)
+  const row = db
+    .prepare("SELECT initial_prompt FROM agent_runs WHERE prompt_message_id=?")
+    .get("mcp-mobile-reply-send") as { initial_prompt: string }
+  expect(row.initial_prompt).toBe(formatMessageReply(input.reply) + "\n\nPlease explain")
+  expect(() =>
+    sendMobileChat(db, {
+      ...input,
+      commandId: "wrong-ref",
+      reply: { ...input.reply, messageId: "another-chat-message:0" },
+    }),
+  ).toThrow("referenced message")
+})
+it("decodes desktop reply references before redacting phone transcript", () => {
+  const id = createMobileChat(db, {
+    projectId: "project",
+    commandId: "encoded",
+    message: "Start",
+    harness: "codex",
+  })
+  const subChatId = readMobileConversation(db, id).subChatId!
+  const reply = formatMessageReply({
+    messageId: "source",
+    role: "assistant",
+    text: "password=secret-value",
+  })
+  const text = "@[quote:preview:" + Buffer.from(reply).toString("base64") + "] Explain it"
+  db.prepare("UPDATE sub_chats SET messages=? WHERE id=?").run(
+    JSON.stringify([{ id: "reply", role: "user", parts: [{ type: "text", text }] }]),
+    subChatId,
+  )
+  const visible = JSON.stringify(readMobileConversation(db, id).messages)
+  expect(visible).toContain("password=[redacted]")
+  expect(visible).toContain("Explain it")
+  expect(visible).not.toContain("secret-value")
+  expect(visible).not.toContain("@[quote:")
+})
+
+it("keeps long reply metadata intact outside the paginated text chunks", () => {
+  const id = createMobileChat(db, {
+    projectId: "project",
+    commandId: "long-reference",
+    message: "Start",
+    harness: "codex",
+  })
+  const subChatId = readMobileConversation(db, id).subChatId!
+  const reference = {
+    messageId: "source",
+    role: "assistant" as const,
+    text: "x".repeat(8000) + " password=hidden",
+  }
+  const text = formatMessageReply(reference) + "\n\n" + "y".repeat(9000)
+  db.prepare("UPDATE sub_chats SET messages=? WHERE id=?").run(
+    JSON.stringify([{ id: "reply", role: "user", parts: [{ type: "text", text }] }]),
+    subChatId,
+  )
+  const messages = readMobileConversation(db, id).messages.filter((m) => m.id.startsWith("reply:"))
+  expect(messages.map((m) => m.text).join("")).toBe("y".repeat(9000))
+  expect(messages[0].reply).toEqual({
+    ...reference,
+    text: "x".repeat(8000) + " password=[redacted]",
+  })
+  expect(JSON.parse(JSON.stringify(messages))[0].reply.text).toContain("password=[redacted]")
+  expect(messages[1].reply).toBeUndefined()
+})
+
+it("decodes and redacts mixed desktop selection quotes before a reply reference", () => {
+  const id = createMobileChat(db, {
+    projectId: "project",
+    commandId: "mixed-reference",
+    message: "Start",
+    harness: "codex",
+  })
+  const subChatId = readMobileConversation(db, id).subChatId!
+  const encode = (text: string) => "@[quote:preview:" + Buffer.from(text).toString("base64") + "] "
+  const text =
+    "@[file:src/example.ts] " +
+    encode("Selected text password=selection-secret") +
+    encode(
+      formatMessageReply({
+        messageId: "source",
+        role: "assistant",
+        text: "Reply text password=reply-secret",
+      }),
+    ) +
+    "Explain both"
+  db.prepare("UPDATE sub_chats SET messages=? WHERE id=?").run(
+    JSON.stringify([{ id: "mixed", role: "user", parts: [{ type: "text", text }] }]),
+    subChatId,
+  )
+  const message = readMobileConversation(db, id).messages.find((m) => m.id === "mixed:0")!
+  expect(message.reply).toEqual({
+    messageId: "source",
+    role: "assistant",
+    text: "Reply text password=[redacted]",
+  })
+  expect(message.text).toContain("Selected text password=[redacted]")
+  expect(message.text).toContain("Explain both")
+  expect(JSON.stringify(message)).not.toMatch(/selection-secret|reply-secret|@\[quote:/)
 })

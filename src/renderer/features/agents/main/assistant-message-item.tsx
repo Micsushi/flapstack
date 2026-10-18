@@ -1,4 +1,5 @@
 "use client"
+import { MessageReplyContext } from "./message-reply-context"
 
 import { useAtomValue } from "jotai"
 import { DiscussionAnnotationAction } from "../../discussions"
@@ -702,6 +703,7 @@ function AssistantMessageOptionsMenu({
   subChatId,
   messageId,
   onFork,
+  onReply,
 }: {
   includeToolbarActions: boolean
   text: string
@@ -711,13 +713,13 @@ function AssistantMessageOptionsMenu({
   subChatId: string
   messageId: string
   onFork?: () => void
+  onReply?: () => void
 }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           aria-label="Assistant message options"
-          tabIndex={-1}
           className="p-1 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
         >
           <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
@@ -737,6 +739,7 @@ function AssistantMessageOptionsMenu({
             <AgentMessageUsage metadata={metadata} isStreaming={false} isMobile={isMobile} />
           </div>
         )}
+        {onReply && <DropdownMenuItem onClick={onReply}>Reply</DropdownMenuItem>}
         {onFork && <DropdownMenuItem onClick={onFork}>Fork from here</DropdownMenuItem>}
       </DropdownMenuContent>
     </DropdownMenu>
@@ -757,6 +760,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   const selectedProject = useAtomValue(selectedProjectAtom)
   const projectPath = selectedProject?.path
   const onOpenFile = useFileOpen()
+  const onReply = useContext(MessageReplyContext)
   const onFork = useContext(ForkContext)
   const isDev = import.meta.env.DEV
   const reasoningStartedAtRef = useRef(
@@ -1346,6 +1350,16 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
                     chatId={chatId}
                     subChatId={subChatId}
                     messageId={message.id}
+                    onReply={
+                      onReply
+                        ? () =>
+                            onReply({
+                              id: message.id,
+                              role: "assistant",
+                              text: getMessageTextContent(message),
+                            })
+                        : undefined
+                    }
                     onFork={onFork ? () => onFork(message.id) : undefined}
                   />
                 </span>
@@ -1358,6 +1372,16 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
                     chatId={chatId}
                     subChatId={subChatId}
                     messageId={message.id}
+                    onReply={
+                      onReply
+                        ? () =>
+                            onReply({
+                              id: message.id,
+                              role: "assistant",
+                              text: getMessageTextContent(message),
+                            })
+                        : undefined
+                    }
                     onFork={onFork ? () => onFork(message.id) : undefined}
                   />
                 </span>

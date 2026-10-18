@@ -1,3 +1,5 @@
+import { createMobileSideQuestionDispatch } from "../mobile-bridge/side-questions"
+import { getSideQuestionService } from "../side-questions"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type { ProductMcpRendererInvalidation } from "../../../shared/product-mcp-invalidation"
 import * as schema from "../db/schema"
@@ -47,16 +49,26 @@ export class MobileControlRuntime {
       now: options.now,
     })
     const projector = new MobileSnapshotProjector(database, options.now)
-    this.handleRequest = createMobileHttpHandler(this.pairing, (deviceId) =>
-      this.grants.listActiveGrants(deviceId).map((grant) => ({
-        grantId: grant.grantId,
-        label: grant.resources
-          .map((resource) => {
-            const item = projector.readResource(grant, resource.kind, resource.id)
-            return item && "name" in item ? item.name : resource.kind
+    this.handleRequest = createMobileHttpHandler(
+      this.pairing,
+      (deviceId) =>
+        this.grants.listActiveGrants(deviceId).map((grant) => ({
+          grantId: grant.grantId,
+          label: grant.resources
+            .map((resource) => {
+              const item = projector.readResource(grant, resource.kind, resource.id)
+              return item && "name" in item ? item.name : resource.kind
+            })
+            .join(", "),
+        })),
+      options.databasePath
+        ? createMobileSideQuestionDispatch({
+            database,
+            grants: this.grants,
+            projector,
+            service: getSideQuestionService,
           })
-          .join(", "),
-      })),
+        : undefined,
     )
     this.actions = options.databasePath
       ? new MobileActionService({

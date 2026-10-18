@@ -1,3 +1,4 @@
+import { parseMessageReply, type MessageReply } from "../../../shared/message-replies"
 import type Database from "better-sqlite3"
 import { redactMobileText } from "../../../shared/mobile-control"
 import { createAgentActivityStore } from "../agent-runtime/activity-store"
@@ -7,6 +8,7 @@ export function readMobileConversation(
   chatId: string,
   subChatId?: string,
   before?: number,
+  messageId?: string,
 ) {
   const conversations = database
     .prepare("SELECT id, name FROM sub_chats WHERE chat_id = ? ORDER BY created_at, id")
@@ -16,12 +18,44 @@ export function readMobileConversation(
     .prepare("SELECT messages FROM sub_chats WHERE chat_id = ? AND id = ?")
     .get(chatId, selected ?? "") as { messages: string } | undefined
   if (!row) throw new Error("Conversation unavailable.")
-  const messages: Array<{ id: string; role: "user" | "assistant"; text: string }> = []
+  const messages: Array<{
+    id: string
+    role: "user" | "assistant"
+    text: string
+    reply?: MessageReply
+  }> = []
   const append = (id: string, role: "user" | "assistant", text: string) => {
+    const separator = text.indexOf("\n\n")
+    let reference = separator >= 0 ? parseMessageReply(text.slice(0, separator)) : null
+    if (reference) text = text.slice(separator + 2)
+    // Desktop selection quotes and reply references can appear together, in
+    // either order. Decode every quote before applying phone redaction.
+    text = text.replace(/@\[quote:[^:\]]*:([A-Za-z0-9+/=]+)\]\s*/g, (_token, encoded: string) => {
+      const decoded = Buffer.from(encoded, "base64").toString("utf8")
+      const reply = parseMessageReply(decoded)
+      if (reply && !reference) {
+        reference = reply
+        return ""
+      }
+      return "Quoted context:\n" + (reply?.text ?? decoded) + "\n\n"
+    })
+    const reply = reference
+      ? {
+          ...reference,
+          messageId: redactMobileText(reference.messageId, reference.messageId.length),
+          text: redactMobileText(reference.text, reference.text.length),
+        }
+      : undefined
     const safe = redactMobileText(text, text.length)
-    // Chunk long messages without dropping their remaining text.
-    for (let offset = 0; offset < safe.length; offset += 8_000)
-      messages.push({ id: `${id}:${offset}`, role, text: safe.slice(offset, offset + 8_000) })
+    // Keep reference metadata outside text chunks so a long quote cannot split
+    // its JSON framing or turn redacted credentials into malformed metadata.
+    for (let offset = 0; offset < Math.max(1, safe.length); offset += 8_000)
+      messages.push({
+        id: `${id}:${offset}`,
+        role,
+        text: safe.slice(offset, offset + 8_000),
+        ...(offset === 0 && reply ? { reply } : {}),
+      })
   }
   const parsed: unknown = JSON.parse(row.messages)
   if (Array.isArray(parsed))
@@ -70,7 +104,9 @@ export function readMobileConversation(
       ...item,
       name: item.name ? redactMobileText(item.name) : null,
     })),
-    messages: messages.slice(start, end),
+    messages: messageId
+      ? messages.filter((message) => message.id === messageId)
+      : messages.slice(start, end),
     acceptedCommands: acceptedCommands.map((row) =>
       row.prompt_message_id.slice("mcp-mobile-".length),
     ),

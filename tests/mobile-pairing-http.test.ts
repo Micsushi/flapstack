@@ -94,6 +94,45 @@ describe("mobile pairing HTTPS handler", () => {
     expect(listAccess).not.toHaveBeenCalled()
   })
 
+  it("authenticates every side-question operation before scoped dispatch", async () => {
+    const proof = {
+      sessionId: "session-1",
+      deviceId: "device-1",
+      sessionToken: token,
+      nonce: "n".repeat(32),
+      issuedAt: 1_800_000_000_000,
+      rotation: 0,
+      signature,
+    }
+    const session = { deviceId: "authenticated-device", scopeVersion: 4 }
+    const authenticateSession = vi.fn(() => session)
+    const dispatch = vi.fn(() => ({ entries: [], before: null }))
+    const handler = createMobilePairingHttpHandler(
+      { authenticateSession } as unknown as MobilePairingService,
+      undefined,
+      dispatch,
+    )
+    const request = { grantId: "grant", chatId: "chat", subChatId: "sub", operation: "list" }
+    await expect(
+      invoke(handler, "/mobile/v1/side-questions", { proof, request }),
+    ).resolves.toMatchObject({ status: 200, body: { entries: [] } })
+    expect(dispatch).toHaveBeenCalledWith(session, request)
+    dispatch.mockClear()
+    authenticateSession.mockImplementation(() => {
+      throw new MobilePairingError("replay", "Reused proof")
+    })
+    await expect(
+      invoke(handler, "/mobile/v1/side-questions", { proof, request }),
+    ).resolves.toMatchObject({ status: 401 })
+    expect(dispatch).not.toHaveBeenCalled()
+    await expect(
+      invoke(handler, "/mobile/v1/side-questions", {
+        proof,
+        request: { ...request, visibleMessages: [] },
+      }),
+    ).resolves.toMatchObject({ status: 400 })
+  })
+
   it("bounds and validates requests before dispatch and returns redacted recovery errors", async () => {
     const pairing = {
       pairDevice: vi.fn(() => {

@@ -1,3 +1,4 @@
+import { mobileSideQuestionSchema, type MobileSideQuestionDispatch } from "./side-questions"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { z } from "zod"
 import {
@@ -44,6 +45,7 @@ const routes: Record<string, PairingRoute> = {
 export function createMobilePairingHttpHandler(
   pairing: MobilePairingService,
   listAccess?: (deviceId: string) => unknown,
+  sideQuestions?: MobileSideQuestionDispatch,
 ): MobileBridgeRequestHandler {
   return async (request, response) => {
     try {
@@ -56,6 +58,16 @@ export function createMobilePairingHttpHandler(
         const proof = mobileSessionProofSchema.parse(await readJson(request))
         const session = pairing.authenticateSession(proof)
         writeJson(response, 200, { grants: listAccess(session.deviceId) })
+        return
+      }
+      if (pathname(request) === "/mobile/v1/side-questions" && sideQuestions) {
+        const input = z
+          .object({ proof: mobileSessionProofSchema, request: mobileSideQuestionSchema })
+          .strict()
+          .parse(await readJson(request))
+        const session = pairing.authenticateSession(input.proof)
+        const result = sideQuestions(session, input.request)
+        writeJson(response, 200, result, 1024 * 1024)
         return
       }
       const route = routes[pathname(request)]
@@ -75,8 +87,9 @@ export function createMobilePairingHttpHandler(
 export function createMobileHttpHandler(
   pairing: MobilePairingService,
   listAccess?: (deviceId: string) => unknown,
+  sideQuestions?: MobileSideQuestionDispatch,
 ): MobileBridgeRequestHandler {
-  const pairingHandler = createMobilePairingHttpHandler(pairing, listAccess)
+  const pairingHandler = createMobilePairingHttpHandler(pairing, listAccess, sideQuestions)
   return async (request, response) => {
     const asset = request.method === "GET" ? getMobileCompanionAsset(pathname(request)) : null
     if (!asset) return pairingHandler(request, response)
@@ -123,9 +136,14 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   }
 }
 
-function writeJson(response: ServerResponse, status: number, value: unknown): void {
+function writeJson(
+  response: ServerResponse,
+  status: number,
+  value: unknown,
+  maxBytes = mobileControlLimits.commandBytes,
+): void {
   const body = Buffer.from(JSON.stringify(value))
-  if (body.byteLength > mobileControlLimits.commandBytes) {
+  if (body.byteLength > maxBytes) {
     writeJson(response, 500, {
       error: {
         code: "response-too-large",

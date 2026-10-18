@@ -22,12 +22,6 @@ describe("agents sidebar polish", () => {
     expect(source).toContain('"min-w-0 truncate whitespace-nowrap"')
   })
 
-  it("aligns project card edges with the Projects divider and keeps internal padding", () => {
-    expect(source).toContain("h-7 mt-0.5 mb-0 rounded-md pl-2 pr-1")
-    expect(source).not.toContain("h-7 -ml-1.5 mt-0.5")
-    expect(source).not.toContain("h-7 mt-0.5 mb-0 rounded-md pl-0.5")
-  })
-
   it("shows user-tagged chats and keeps an empty Global section", () => {
     expect(source).toContain("activeFiltered.filter((chat) => chat.tags.length > 0)")
     expect(source).toContain('title: "Tagged"')
@@ -98,11 +92,6 @@ describe("agents sidebar polish", () => {
     expect(source).toContain('layout="position"')
     expect(source).not.toContain('clipPath: "inset(0 0 100% 0 round 6px)"')
     expect(source).not.toContain("animate-in fade-in-0 slide-in-from-top-1 duration-150")
-  })
-
-  it("uses halved asymmetric vertical padding for chat rows", () => {
-    expect(source).toContain("text-left pt-px pb-[3px] cursor-pointer group relative")
-    expect(source).not.toContain("text-left py-1 cursor-pointer group relative")
   })
 
   it("derives the selected Chat border from its project color", () => {

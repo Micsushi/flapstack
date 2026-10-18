@@ -1,3 +1,4 @@
+import { sideQuestionsRouter } from "./side-questions"
 import { router } from "../index"
 import { projectsRouter } from "./projects"
 import { tasksRouter } from "./tasks"
@@ -96,6 +97,7 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
   return router({
     projectRecords: projectRecordsRouter,
     discussions: discussionsRouter,
+    sideQuestions: sideQuestionsRouter,
     sleepPrevention: sleepPreventionRouter,
     diffAnnotations: diffAnnotationsRouter,
     workspaceEditing: workspaceEditingRouter,

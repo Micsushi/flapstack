@@ -3,7 +3,13 @@ import { validateLocalModelEndpoint } from "../../../shared/local-model-contract
 /** Bounded local-only Ollama requests, including the complete response body. */
 export async function requestOllamaJson(
   endpoint: "/api/tags" | "/api/generate" | "/api/show",
-  options: { timeoutMs: number; maxBytes: number; body?: unknown; baseUrl?: string },
+  options: {
+    timeoutMs: number
+    maxBytes: number
+    body?: unknown
+    baseUrl?: string
+    signal?: AbortSignal
+  },
 ): Promise<unknown> {
   const config = validateLocalModelEndpoint(options.baseUrl ?? "http://localhost:11434")
   if (!config.valid) throw new Error(config.message)
@@ -16,7 +22,9 @@ export async function requestOllamaJson(
       headers: options.body === undefined ? undefined : { "Content-Type": "application/json" },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       redirect: "error",
-      signal: controller.signal,
+      signal: options.signal
+        ? AbortSignal.any([controller.signal, options.signal])
+        : controller.signal,
     })
     if (!response.ok || !response.body) throw new Error("Local model request failed")
     reader = response.body.getReader()

@@ -25,15 +25,42 @@ interface AgentTextContextItemProps {
   text: string
   preview: string
   onRemove?: () => void
+  replyRole?: "user" | "assistant"
 }
 
-export function AgentTextContextItem({ text, preview, onRemove }: AgentTextContextItemProps) {
+export function AgentTextContextItem({
+  text,
+  preview,
+  onRemove,
+  replyRole,
+}: AgentTextContextItemProps) {
   const [isHovered, setIsHovered] = useState(false)
 
   // Get a short title from the preview (first line or first ~15 chars)
   const title = preview.split("\n")[0]?.slice(0, 20) || preview.slice(0, 20)
   const displayTitle = title.length < preview.length ? `${title}...` : title
 
+  if (replyRole)
+    return (
+      <div className="flex min-w-0 max-w-full items-center gap-3 rounded-lg bg-muted/50 px-3 py-2">
+        <div className="min-w-0 flex-1" title={text}>
+          <span className="text-xs font-medium">
+            Reply to {replyRole === "user" ? "you" : "agent"}
+          </span>
+          <p className="truncate text-sm text-muted-foreground">{preview}</p>
+        </div>
+        {onRemove && (
+          <button
+            type="button"
+            aria-label="Remove reply"
+            onClick={onRemove}
+            className="rounded-md p-2 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <X className="size-4" />
+          </button>
+        )}
+      </div>
+    )
   return (
     <div
       className="relative flex items-center gap-2 pl-1 pr-2 py-1 rounded-lg bg-muted/50 cursor-default min-w-[120px] max-w-[200px]"

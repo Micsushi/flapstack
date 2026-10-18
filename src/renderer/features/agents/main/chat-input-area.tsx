@@ -2237,6 +2237,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         key={tc.id}
                         text={tc.text}
                         preview={tc.preview}
+                        replyRole={tc.replyRole}
                         onRemove={() => onRemoveTextContext(tc.id)}
                       />
                     ))}

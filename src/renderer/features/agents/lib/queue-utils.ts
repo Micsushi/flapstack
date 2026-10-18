@@ -1,3 +1,4 @@
+import { formatMessageReply } from "../../../../shared/message-replies"
 /**
  * Queue utilities for managing message queue in agents chat
  * Adapted from canvas chat queue implementation
@@ -29,6 +30,7 @@ export interface SelectedTextContext {
   id: string
   text: string
   sourceMessageId: string
+  replyRole?: "user" | "assistant"
   preview: string // Truncated for display (~50 chars)
   createdAt: Date
 }
@@ -37,6 +39,7 @@ export interface QueuedTextContext {
   id: string
   text: string
   sourceMessageId: string
+  replyRole?: "user" | "assistant"
 }
 
 // Text context selected from diff sidebar
@@ -127,8 +130,7 @@ export function buildQueuedMessageParts(item: AgentQueueItem): any[] {
 
   const mentions = [
     ...(item.textContexts || []).map((context) => {
-      const preview = context.text.slice(0, 50).replace(/[:\[\]]/g, "")
-      return `@[${MENTION_PREFIXES.QUOTE}${preview}:${utf8ToBase64(context.text)}]`
+      return textContextMention(context)
     }),
     ...(item.diffTextContexts || []).map((context) => {
       const preview = context.text.slice(0, 50).replace(/[:\[\]]/g, "")
@@ -218,6 +220,7 @@ export function toQueuedTextContext(ctx: SelectedTextContext): QueuedTextContext
     id: ctx.id,
     text: ctx.text,
     sourceMessageId: ctx.sourceMessageId,
+    replyRole: ctx.replyRole,
   }
 }
 
@@ -249,4 +252,18 @@ export function createTextPreview(text: string, maxLength: number = 50): string 
   const trimmed = text.trim().replace(/\s+/g, " ")
   if (trimmed.length <= maxLength) return trimmed
   return trimmed.slice(0, maxLength) + "..."
+}
+
+export function textContextMention(context: QueuedTextContext): string {
+  const preview = context.replyRole
+    ? `Reply to ${context.replyRole === "user" ? "you" : "agent"}`
+    : context.text.slice(0, 50).replace(/[:\[\]]/g, "")
+  const text = context.replyRole
+    ? formatMessageReply({
+        messageId: context.sourceMessageId,
+        role: context.replyRole,
+        text: context.text,
+      })
+    : context.text
+  return `@[${MENTION_PREFIXES.QUOTE}${preview}:${utf8ToBase64(text)}]`
 }

@@ -1,6 +1,16 @@
 "use client"
+import { MessageReplyContext } from "./message-reply-context"
 
-import { createContext, memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  useContext,
+  createContext,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import { useAtom, useAtomValue } from "jotai"
 import { ArrowUpToLine, MoreHorizontal } from "lucide-react"
 import {
@@ -131,6 +141,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
   toolRegistry,
 }: IsolatedMessageGroupProps) {
   // Subscribe to specific atoms - NOT the whole messages array
+  const onReply = useContext(MessageReplyContext)
   const perChatKey = `${subChatId}:${userMsgId}`
   const userMsg = useAtomValue(messageAtomFamily(getPerChatMessageKey(subChatId, userMsgId)))
   const assistantIds = useAtomValue(assistantIdsPerChatAtomFamily(perChatKey))
@@ -241,7 +252,6 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
-          tabIndex={-1}
           aria-label="User message options"
           className="p-1.5 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
         >
@@ -276,6 +286,13 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
               </>
             )}
           </div>
+        )}
+        {onReply && textContent.trim() && (
+          <DropdownMenuItem
+            onClick={() => onReply({ id: userMsgId, role: "user", text: textContent })}
+          >
+            Reply
+          </DropdownMenuItem>
         )}
         {canEditLatest && (
           <DropdownMenuItem
@@ -457,7 +474,6 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                         data-message-inline-action
                         onClick={() => onRollback(userMsg)}
                         disabled={isRollingBack}
-                        tabIndex={-1}
                         className={cn(
                           "hidden @[420px]:inline-flex",
                           "p-1.5 rounded-md transition-all duration-150 ease-out hover:bg-accent/80 active:scale-[0.97]",

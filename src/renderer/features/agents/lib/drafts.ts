@@ -31,6 +31,7 @@ export interface DraftTextContext {
   id: string
   text: string
   sourceMessageId: string
+  replyRole?: "user" | "assistant"
   preview: string
   createdAt: string // ISO string instead of Date
 }
@@ -498,6 +499,7 @@ export function toDraftTextContext(ctx: SelectedTextContext): DraftTextContext {
     id: ctx.id,
     text: ctx.text,
     sourceMessageId: ctx.sourceMessageId,
+    replyRole: ctx.replyRole,
     preview: ctx.preview,
     createdAt: ctx.createdAt instanceof Date ? ctx.createdAt.toISOString() : String(ctx.createdAt),
   }
@@ -602,6 +604,7 @@ export function fromDraftTextContext(draft: DraftTextContext): SelectedTextConte
     id: draft.id,
     text: draft.text,
     sourceMessageId: draft.sourceMessageId,
+    replyRole: draft.replyRole,
     preview: draft.preview,
     createdAt: new Date(draft.createdAt),
   }

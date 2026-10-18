@@ -3794,3 +3794,19 @@ export const orchestrationWorktreeDeclarations = sqliteTable(
     check("orchestration_worktree_declarations_revision_check", sql`${table.revision} > 0`),
   ],
 )
+
+// Side questions retain their own context and never append to the source conversation.
+export const sideQuestions = sqliteTable(
+  "side_questions",
+  {
+    id: text("id").primaryKey(),
+    subChatId: text("sub_chat_id")
+      .notNull()
+      .references(() => subChats.id, { onDelete: "cascade" }),
+    threadId: text("thread_id").notNull(),
+    body: text("body").notNull(),
+    contextJson: text("context_json").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [index("side_questions_source_order_idx").on(table.subChatId, table.createdAt)],
+)
