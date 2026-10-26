@@ -458,7 +458,7 @@ describe("terminal initial command formatting", () => {
   })
 
   it("keeps shutdown sticky and drains a crash fallback that already started", async () => {
-    const manager = new TerminalManager()
+    const manager = new TerminalManager({ platform: "win32" })
     const internals = manager as unknown as {
       createSessionImplementation(params: InternalCreateSessionParams): Promise<SessionResult>
       sessions: Map<string, TerminalSession>

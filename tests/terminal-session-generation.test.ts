@@ -12,6 +12,7 @@ function fixture() {
   const manager = new TerminalManager({ platform: "linux" })
   const internals = manager as unknown as {
     sessions: Map<string, TerminalSession>
+    linuxProcesses: WeakMap<TerminalSession, { capture(): number[]; survivors(): number[] }>
     finishSessionExit(session: TerminalSession, code: number): void
     handleSessionExit(
       session: TerminalSession,
@@ -30,6 +31,8 @@ function fixture() {
     lastActive: 0,
   } as unknown as TerminalSession
   internals.sessions.set(session.paneId, session)
+  // Synthetic sessions bypass creation, including its Linux ownership registration.
+  internals.linuxProcesses.set(session, { capture: () => [], survivors: () => [] })
   return { manager, internals, session }
 }
 afterEach(() => {

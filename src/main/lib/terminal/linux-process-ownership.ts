@@ -41,7 +41,8 @@ export class LinuxProcessOwnership {
   constructor(private readonly rootPid: number) {
     try {
       const root = readProcess(rootPid)
-      if (!root || root.session !== rootPid)
+      // forkpty can return before its child calls setsid; own that child, not its inherited session.
+      if (!root || (root.session !== rootPid && root.parent !== process.pid))
         throw new Error("Linux PTY session ownership is unavailable.")
       this.identities.set(rootPid, root)
     } catch (error) {
