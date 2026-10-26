@@ -20,11 +20,13 @@ import {
   quotaPercentUsed,
   usagePaceStatus,
   type CurrentUsageSummary,
+  type ProviderFreshnessInput,
   type UsageHistoryMetric,
   type UsageHistoryGraphMode,
   type UsageHistoryRange,
   type UsageStatus,
 } from "./agents-usage-helpers"
+import { UsageProviderSettingsForm } from "./usage-provider-settings"
 import { AdvancedUsageExplorer } from "../../../features/usage/advanced-usage-explorer"
 
 const PROVIDER_IDS = ["codex", "anthropic", "cursor", "openrouter", "nanogpt", "local"] as const
@@ -86,11 +88,37 @@ function isProviderErrorStatus(status: string): boolean {
   ].includes(status)
 }
 
-function InlineError({ label, message }: { label: string; message: string }) {
+function InlineError({
+  label,
+  message,
+  onRetry,
+  retrying = false,
+}: {
+  label: string
+  message: string
+  onRetry?: () => void | Promise<unknown>
+  retrying?: boolean
+}) {
   return (
-    <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-2">
-      <p className="text-xs font-medium text-destructive">{label}</p>
-      <p className="mt-0.5 break-words text-xs text-destructive/90">{message}</p>
+    <div
+      role="alert"
+      className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-2"
+    >
+      <div className="min-w-0">
+        <p className="text-xs font-medium text-destructive">{label}</p>
+        <p className="mt-0.5 break-words text-xs text-destructive/90">{message}</p>
+      </div>
+      {onRetry && (
+        <button
+          type="button"
+          data-dev-usage-action="retry"
+          onClick={() => void onRetry()}
+          disabled={retrying}
+          className="shrink-0 rounded border border-destructive/40 px-2 py-1 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:cursor-wait disabled:opacity-60"
+        >
+          {retrying ? "Retrying…" : "Retry"}
+        </button>
+      )}
     </div>
   )
 }
@@ -767,7 +795,7 @@ function formatResetCountdown(value: CurrentUsageSummary["resetAt"], now: number
   const resetAt = value == null ? 0 : new Date(value).getTime()
   if (!Number.isFinite(resetAt) || resetAt <= 0) return null
   const seconds = Math.floor((resetAt - now) / 1_000)
-  if (seconds < 0) return "Resetting…"
+  if (resetAt <= now) return "Awaiting update"
   const totalHours = Math.floor(seconds / 3_600)
   const days = Math.floor(totalHours / 24)
   const hours = totalHours % 24
@@ -783,17 +811,34 @@ function formatResetCountdown(value: CurrentUsageSummary["resetAt"], now: number
 function CurrentUsageCard({
   summary,
   detailed = false,
+  providerState,
+  cadenceSeconds = 300,
+  pollingEnabled,
 }: {
   summary: CurrentUsageSummary
   detailed?: boolean
+  providerState?: ProviderFreshnessInput
+  cadenceSeconds?: number
+  pollingEnabled?: boolean
 }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    if (!summary.resetAt) return
     setNow(Date.now())
     const timer = window.setInterval(() => setNow(Date.now()), 1_000)
     return () => window.clearInterval(timer)
   }, [summary.resetAt])
+  const resetExpired = summary.resetAt != null && new Date(summary.resetAt).getTime() <= now
+  const freshness = providerState ? providerFreshness(providerState, now, cadenceSeconds) : null
+  const sampleFreshness = providerFreshness(
+    { status: "ok", lastSuccessAt: summary.capturedAt },
+    now,
+    cadenceSeconds,
+  )
+  const lastKnown =
+    resetExpired ||
+    pollingEnabled === false ||
+    freshness?.state !== "current" ||
+    sampleFreshness.state !== "current"
   const percentUsed = quotaPercentUsed(summary)
   const pace =
     percentUsed == null
@@ -810,7 +855,7 @@ function CurrentUsageCard({
         detailed ? "min-h-64 rounded-xl p-5" : "rounded-lg p-3"
       }`}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p
             className={`truncate font-medium text-foreground ${detailed ? "text-base" : "text-sm"}`}
@@ -826,7 +871,9 @@ function CurrentUsageCard({
             <span
               className="rounded-md border border-border bg-foreground/[0.045] px-2.5 py-1 text-xs font-medium tabular-nums text-muted-foreground"
               title={
-                summary.resetAt ? `Resets ${new Date(summary.resetAt).toLocaleString()}` : undefined
+                summary.resetAt
+                  ? `Reported reset: ${new Date(summary.resetAt).toLocaleString(undefined, { timeZoneName: "short" })}`
+                  : undefined
               }
             >
               {countdown}
@@ -835,12 +882,23 @@ function CurrentUsageCard({
         </div>
       </div>
 
+      {lastKnown && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {resetExpired
+            ? "Reset time passed; waiting for a new provider report."
+            : pollingEnabled === false
+              ? "Polling is off. Values are from the last report."
+              : freshness?.state === "stale" || sampleFreshness.state === "stale"
+                ? "Provider data is stale. Values are from the last report."
+                : "Current provider status is unavailable."}
+        </p>
+      )}
       {percentUsed != null ? (
         <div className={detailed ? "mt-6" : "mt-4"}>
           <div className={detailed ? "flex items-end justify-between gap-4" : ""}>
             <div>
               <span
-                className={`${detailed ? "text-4xl" : "text-2xl"} font-semibold tabular-nums ${usageTextClass(pace!.status)}`}
+                className={`${detailed ? "text-4xl" : "text-2xl"} font-semibold tabular-nums ${lastKnown ? "text-muted-foreground" : usageTextClass(pace!.status)}`}
               >
                 {Math.round(percentUsed)}%
               </span>
@@ -853,11 +911,13 @@ function CurrentUsageCard({
                 <p className="text-xl font-medium tabular-nums text-foreground">
                   {Math.round(100 - percentUsed)}%
                 </p>
-                <p className="text-[10px] text-muted-foreground">remaining</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {lastKnown ? "last reported remaining" : "remaining"}
+                </p>
               </div>
             )}
           </div>
-          {detailed && pace?.paceApplied && pace.expectedUsed != null && (
+          {detailed && !lastKnown && pace?.paceApplied && pace.expectedUsed != null && (
             <p className="mt-4 text-xs text-muted-foreground">
               Pace target {pace.expectedUsed.toFixed(1)}% by now
             </p>
@@ -866,22 +926,28 @@ function CurrentUsageCard({
             value={percentUsed}
             aria-label={`${metricLabel}: ${Math.round(percentUsed)} percent used`}
             className={`${detailed ? "mt-2 h-2.5" : "mt-2 h-1.5"} bg-foreground/10`}
-            indicatorClassName={usageBarClass(pace!.status)}
+            indicatorClassName={lastKnown ? "bg-muted-foreground" : usageBarClass(pace!.status)}
           />
           {detailed ? (
             <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-4">
               <span
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${usageBadgeClass(pace!.status)}`}
-                title={pace!.label}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${lastKnown ? "bg-muted text-muted-foreground" : usageBadgeClass(pace!.status)}`}
+                title={
+                  lastKnown
+                    ? "Last reported usage; current availability is unverified."
+                    : pace!.label
+                }
               >
-                <span aria-hidden="true">
-                  {pace!.status === "healthy"
-                    ? "✓"
-                    : pace!.status === "underuse" || pace!.status === "very_underuse"
-                      ? "↓"
-                      : "△"}
-                </span>
-                {pace!.label}
+                {!lastKnown && (
+                  <span aria-hidden="true">
+                    {pace!.status === "healthy"
+                      ? "✓"
+                      : pace!.status === "underuse" || pace!.status === "very_underuse"
+                        ? "↓"
+                        : "△"}
+                  </span>
+                )}
+                {lastKnown ? "Last-known usage" : pace!.label}
               </span>
               <span className="text-[10px] text-muted-foreground">
                 Updated {relativeTime(summary.capturedAt) ?? "time not reported"}
@@ -890,9 +956,9 @@ function CurrentUsageCard({
           ) : (
             <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
               <span
-                className={`inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium ${usageBadgeClass(pace!.status)}`}
+                className={`inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium ${lastKnown ? "bg-muted text-muted-foreground" : usageBadgeClass(pace!.status)}`}
               >
-                {pace!.shortLabel}
+                {lastKnown ? "Last-known usage" : pace!.shortLabel}
               </span>
             </div>
           )}
@@ -922,7 +988,14 @@ function CurrentUsageCard({
 function AllProvidersOverview({
   summaries,
   onSelectProvider,
+  cardContext,
 }: {
+  cardContext: (
+    summary: CurrentUsageSummary,
+  ) => Pick<
+    Parameters<typeof CurrentUsageCard>[0],
+    "providerState" | "cadenceSeconds" | "pollingEnabled"
+  >
   summaries: CurrentUsageSummary[]
   onSelectProvider: (providerId: ProviderId) => void
 }) {
@@ -956,6 +1029,7 @@ function AllProvidersOverview({
                     <CurrentUsageCard
                       key={`${summary.providerId}|${summary.accountTag}|${summary.metricKey ?? ""}`}
                       summary={summary}
+                      {...cardContext(summary)}
                     />
                   ))
                 ) : (
@@ -970,13 +1044,6 @@ function AllProvidersOverview({
       </div>
     </div>
   )
-}
-
-function parseThresholdList(value: string): number[] {
-  return value
-    .split(",")
-    .map((entry) => Number(entry.trim()))
-    .filter((entry) => Number.isFinite(entry) && entry >= 0)
 }
 
 export function AgentsUsageTab() {
@@ -1045,9 +1112,6 @@ export function AgentsUsageTab() {
   const setProviderEnabled = trpc.usage.setProviderEnabled.useMutation({
     onSettled: () => void utils.usage.getSettings.invalidate(),
   })
-  const setProviderSettings = trpc.usage.setProviderSettings.useMutation({
-    onSettled: () => void utils.usage.getSettings.invalidate(),
-  })
   const setSettings = trpc.usage.setSettings.useMutation({
     onSettled: () => void utils.usage.getSettings.invalidate(),
   })
@@ -1092,6 +1156,20 @@ export function AgentsUsageTab() {
       ).filter(hasDisplayableCurrentUsage),
     [currentSamples],
   )
+  const cardContext = (summary: CurrentUsageSummary) => ({
+    providerState: statesQuery.error
+      ? undefined
+      : states.find(
+          (state) =>
+            state.providerId === summary.providerId &&
+            (state.accountTag ?? "") === summary.accountTag,
+        ),
+    cadenceSeconds:
+      settings?.providers[summary.providerId as ProviderId]?.cadenceSecondsOverride ??
+      settings?.cadenceSeconds ??
+      300,
+    pollingEnabled: settings?.providers[summary.providerId as ProviderId]?.enabled,
+  })
   const visibleProviders = (capabilities?.providers ?? []).filter(
     (provider) => !selectedProvider || provider.id === selectedProvider,
   )
@@ -1101,20 +1179,80 @@ export function AgentsUsageTab() {
       (selectedAccount === undefined || state.accountTag === selectedAccount),
   )
   const queryErrors = [
-    { label: "Provider capabilities", error: capabilitiesQuery.error },
-    { label: "Provider states", error: statesQuery.error },
-    { label: "Usage settings", error: settingsQuery.error },
-    { label: "Daemon status", error: daemonQuery.error },
-    { label: "Current samples", error: samplesQuery.error },
-    { label: "Usage history", error: historySamplesQuery.error },
-    { label: "Current provider cards", error: currentSamplesQuery.error },
-    { label: "Historical cycles", error: cyclesQuery.error },
-    { label: "Alert history", error: alertEventsQuery.error },
-    { label: "Credential status", error: secretPresenceQuery.error },
-  ].flatMap((entry) => (entry.error ? [{ label: entry.label, message: entry.error.message }] : []))
+    {
+      label: "Provider capabilities",
+      error: capabilitiesQuery.error,
+      retry: capabilitiesQuery.refetch,
+      retrying: capabilitiesQuery.isFetching,
+    },
+    {
+      label: "Provider states",
+      error: statesQuery.error,
+      retry: statesQuery.refetch,
+      retrying: statesQuery.isFetching,
+    },
+    {
+      label: "Usage settings",
+      error: settingsQuery.error,
+      retry: settingsQuery.refetch,
+      retrying: settingsQuery.isFetching,
+    },
+    {
+      label: "Daemon status",
+      error: daemonQuery.error,
+      retry: daemonQuery.refetch,
+      retrying: daemonQuery.isFetching,
+    },
+    {
+      label: "Current samples",
+      error: samplesQuery.error,
+      retry: samplesQuery.refetch,
+      retrying: samplesQuery.isFetching,
+    },
+    {
+      label: "Usage history",
+      error: historySamplesQuery.error,
+      retry: historySamplesQuery.refetch,
+      retrying: historySamplesQuery.isFetching,
+    },
+    {
+      label: "Current provider cards",
+      error: currentSamplesQuery.error,
+      retry: currentSamplesQuery.refetch,
+      retrying: currentSamplesQuery.isFetching,
+    },
+    {
+      label: "Historical cycles",
+      error: cyclesQuery.error,
+      retry: cyclesQuery.refetch,
+      retrying: cyclesQuery.isFetching,
+    },
+    {
+      label: "Alert history",
+      error: alertEventsQuery.error,
+      retry: alertEventsQuery.refetch,
+      retrying: alertEventsQuery.isFetching,
+    },
+    {
+      label: "Credential status",
+      error: secretPresenceQuery.error,
+      retry: secretPresenceQuery.refetch,
+      retrying: secretPresenceQuery.isFetching,
+    },
+  ].flatMap((entry) =>
+    entry.error
+      ? [
+          {
+            label: entry.label,
+            message: entry.error.message,
+            retry: entry.retry,
+            retrying: entry.retrying,
+          },
+        ]
+      : [],
+  )
   const operationErrors = [
     { label: "Provider setting", error: setProviderEnabled.error },
-    { label: "Provider details", error: setProviderSettings.error },
     { label: "Usage setting", error: setSettings.error },
     { label: "Organization scope", error: setOrganizationScope.error },
     { label: "Credential update", error: setSecret.error },
@@ -1153,7 +1291,7 @@ export function AgentsUsageTab() {
       data-refreshing={refresh.isPending ? "true" : "false"}
       data-daemon-health={daemon?.health ?? "loading"}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-col space-y-1.5">
           <h3 className="text-sm font-semibold text-foreground">Usage &amp; Limits</h3>
           <p className="text-xs text-muted-foreground">Limits and spend from connected accounts.</p>
@@ -1181,6 +1319,8 @@ export function AgentsUsageTab() {
               key={error.label}
               label={`${error.label} could not load`}
               message={error.message}
+              onRetry={error.retry}
+              retrying={error.retrying}
             />
           ))}
         </div>
@@ -1337,11 +1477,16 @@ export function AgentsUsageTab() {
                 key={`${summary.providerId}|${summary.accountTag}|${summary.metricKey ?? ""}`}
                 summary={summary}
                 detailed
+                {...cardContext(summary)}
               />
             ))}
           </div>
         ) : (
-          <AllProvidersOverview summaries={currentSummaries} onSelectProvider={selectProvider} />
+          <AllProvidersOverview
+            summaries={currentSummaries}
+            onSelectProvider={selectProvider}
+            cardContext={cardContext}
+          />
         )}
       </section>
 
@@ -1631,7 +1776,7 @@ export function AgentsUsageTab() {
               </p>
             ) : (
               <div className="bg-background rounded-lg border border-border overflow-hidden">
-                {visibleProviders.map((provider, index) => {
+                {(capabilities?.providers ?? []).map((provider, index) => {
                   const providerStates = visibleStates.filter(
                     (state) => state.providerId === provider.id,
                   )
@@ -1640,9 +1785,10 @@ export function AgentsUsageTab() {
                   return (
                     <div
                       key={provider.id}
+                      hidden={!!selectedProvider && provider.id !== selectedProvider}
                       className={index === 0 ? "p-4" : "p-4 border-t border-border"}
                     >
-                      <div className="flex items-start justify-between gap-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium text-foreground">
@@ -1749,88 +1895,10 @@ export function AgentsUsageTab() {
                         )}
                       </div>
                       {providerSettings && (
-                        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-5">
-                          <label className="text-xs text-muted-foreground">
-                            Poll seconds (blank = global)
-                            <input
-                              type="number"
-                              min={30}
-                              defaultValue={providerSettings.cadenceSecondsOverride ?? ""}
-                              onBlur={(event) => {
-                                const value = event.target.value.trim()
-                                setProviderSettings.mutate({
-                                  providerId: provider.id,
-                                  cadenceSecondsOverride: value ? Number(value) : null,
-                                })
-                              }}
-                              className="mt-1 w-full bg-transparent border border-border rounded px-2 py-1"
-                            />
-                          </label>
-                          <label className="text-xs text-muted-foreground">
-                            Quota alerts %
-                            <input
-                              defaultValue={providerSettings.thresholds.quotaPercent.join(", ")}
-                              onBlur={(event) =>
-                                setProviderSettings.mutate({
-                                  providerId: provider.id,
-                                  thresholds: {
-                                    quotaPercent: parseThresholdList(event.target.value),
-                                  },
-                                })
-                              }
-                              className="mt-1 w-full bg-transparent border border-border rounded px-2 py-1"
-                            />
-                          </label>
-                          <label className="text-xs text-muted-foreground">
-                            Spend alerts USD
-                            <input
-                              defaultValue={providerSettings.thresholds.spendUsd.join(", ")}
-                              onBlur={(event) =>
-                                setProviderSettings.mutate({
-                                  providerId: provider.id,
-                                  thresholds: { spendUsd: parseThresholdList(event.target.value) },
-                                })
-                              }
-                              className="mt-1 w-full bg-transparent border border-border rounded px-2 py-1"
-                            />
-                          </label>
-                          <label className="text-xs text-muted-foreground">
-                            Spend rate USD/hour
-                            <input
-                              type="number"
-                              min={0}
-                              step="any"
-                              defaultValue={providerSettings.thresholds.spendRateUsdPerHour ?? ""}
-                              onBlur={(event) => {
-                                const value = event.target.value.trim()
-                                setProviderSettings.mutate({
-                                  providerId: provider.id,
-                                  thresholds: {
-                                    spendRateUsdPerHour: value ? Number(value) : null,
-                                  },
-                                })
-                              }}
-                              className="mt-1 w-full bg-transparent border border-border rounded px-2 py-1"
-                            />
-                          </label>
-                          <label className="text-xs text-muted-foreground">
-                            Spend spike multiplier
-                            <input
-                              type="number"
-                              min={0}
-                              step="any"
-                              defaultValue={providerSettings.thresholds.spikeMultiplier ?? ""}
-                              onBlur={(event) => {
-                                const value = event.target.value.trim()
-                                setProviderSettings.mutate({
-                                  providerId: provider.id,
-                                  thresholds: { spikeMultiplier: value ? Number(value) : null },
-                                })
-                              }}
-                              className="mt-1 w-full bg-transparent border border-border rounded px-2 py-1"
-                            />
-                          </label>
-                        </div>
+                        <UsageProviderSettingsForm
+                          providerId={provider.id}
+                          saved={providerSettings}
+                        />
                       )}
                     </div>
                   )

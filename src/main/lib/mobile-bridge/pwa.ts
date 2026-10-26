@@ -16,7 +16,7 @@ const documentBody = `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
     <meta name="theme-color" content="#171717">
     <link rel="manifest" href="/manifest.webmanifest">
     <title>Flapstack</title>
@@ -31,6 +31,7 @@ const documentBody = `<!doctype html>
   <body>
     <main>
       <header><h1>Flapstack</h1><button id="connection" data-mode="offline" aria-label="Connection settings" aria-live="polite">Offline · read-only</button></header>
+      <section id="app-update" hidden aria-label="Companion update"><p id="update-status" role="status"></p><button id="reload-update" type="button" aria-describedby="update-status">Reload to update</button></section>
       <details id="settings"><summary>Connection</summary>
       <section id="pairing">
         <h2>Pair this device</h2>
@@ -73,6 +74,17 @@ const connectButton = $("connect")
 const grantInput = $("grant-id")
 const itemsRoot = $("items")
 let offer = readOffer()
+let pairingBusy = false
+let waitingWorker = null
+let updateNeedsReload = false
+let updateApplying = false
+let updateError = ""
+let updateTimer = null
+let sideRequests = 0
+let navigationGeneration = 0
+const controlCommands = readJson(sessionStorage.getItem("flapstack-mobile-controls")) || {}
+const controlKey = target => JSON.stringify([activeGrantId,target.kind,target.id,target.version])
+function storeControls() { sessionStorage.setItem("flapstack-mobile-controls", JSON.stringify(controlCommands)) }
 let socket = null
 let sessionCredential = readJson(localStorage.getItem("flapstack-mobile-session"))
 let currentItems = new Map()
@@ -112,6 +124,7 @@ function storePending() {
 }
 function activateAccess(grantId) {
   if (activeGrantId === grantId) return
+  navigationGeneration++
   saveDraft()
   storePending()
   selectedChat = null; selectedConversation = null; conversationBefore = null; newChat = false; newChatProject = ""
@@ -143,11 +156,11 @@ function saveReplies() { sessionStorage.setItem("flapstack-mobile-replies", JSON
 $("remove-reply").addEventListener("click", () => { delete replies[draftKey()]; saveReplies() })
 $("message").addEventListener("input", () => { saveDraft(); $("message").style.height = "auto"; $("message").style.height = Math.min($("message").scrollHeight,160) + "px" })
 connection.addEventListener("click", () => { $("settings").open = !$("settings").open })
-$("back").addEventListener("click", () => { saveDraft(); selectedChat = null; selectedConversation = null; newChat = false; renderChats() })
-$("new-chat").addEventListener("click", () => { saveDraft(); selectedChat = null; selectedConversation = null; newChat = true; $("messages").replaceChildren(); renderChats(); $("message").value = drafts[draftKey()] || ""; $("message").focus() })
-$("project").addEventListener("change", () => { saveDraft(); newChatProject = $("project").value; $("message").value = drafts[draftKey()] || "" })
+$("back").addEventListener("click", () => { navigationGeneration++; saveDraft(); selectedChat = null; selectedConversation = null; newChat = false; renderChats() })
+$("new-chat").addEventListener("click", () => { navigationGeneration++; saveDraft(); selectedChat = null; selectedConversation = null; newChat = true; $("messages").replaceChildren(); renderChats(); $("message").value = drafts[draftKey()] || ""; $("message").focus() })
+$("project").addEventListener("change", () => { navigationGeneration++; saveDraft(); newChatProject = $("project").value; $("message").value = drafts[draftKey()] || "" })
 $("older").addEventListener("click", () => readConversation(conversationBefore))
-$("conversation-select").addEventListener("change", () => { saveDraft(); selectedConversation = $("conversation-select").value; $("message").value = drafts[draftKey()] || ""; $("messages").replaceChildren(); readConversation() })
+$("conversation-select").addEventListener("change", () => { navigationGeneration++; saveDraft(); selectedConversation = $("conversation-select").value; $("message").value = drafts[draftKey()] || ""; $("messages").replaceChildren(); readConversation() })
 $("compose").addEventListener("submit", event => {
   event.preventDefault()
   const message = $("message").value.trim()
@@ -159,16 +172,17 @@ $("compose").addEventListener("submit", event => {
   if (selectedChat && !selectedConversation) return
   const commandId = sendCommand(target, action)
   if (commandId) {
-    pendingSend = {commandId, grantId:activeGrantId, key:draftKey(), message, reply, create:!selectedChat, chatId:selectedChat, subChatId:selectedConversation}
+    pendingSend = {commandId, navigationGeneration, grantId:activeGrantId, key:draftKey(), message, reply, create:!selectedChat, chatId:selectedChat, subChatId:selectedConversation}
     storePending()
     $("send-status").textContent = "Sending…"
     $("send").disabled = true
   }
 })
 function openChat(id) {
+  navigationGeneration++
   saveDraft(); selectedChat = id; selectedConversation = null; newChat = false
   $("messages").replaceChildren(); $("activity").textContent = "Loading…"
-  renderChats(); readConversation()
+  renderChats(); $("back").focus(); readConversation()
 }
 function readConversation(before) {
   if (!selectedChat || !currentItems.has("chat:" + selectedChat) || !isMutable()) return
@@ -176,6 +190,12 @@ function readConversation(before) {
 }
 function renderChats() {
   renderReply(); syncSide()
+  if (selectedChat && !snapshotPaging && !currentItems.has("chat:" + selectedChat)) {
+    saveDraft(); navigationGeneration++; selectedChat = null; selectedConversation = null; conversationBefore = null
+    $("messages").replaceChildren(); $("message").value = ""; $("activity").textContent = ""
+    announce("This chat is no longer available in this access scope.")
+    $("new-chat").focus()
+  }
   $("new-chat").hidden = newChat
   $("back").hidden = !selectedChat && !newChat
   $("conversation").hidden = !selectedChat && !newChat
@@ -201,6 +221,10 @@ function renderChats() {
     if (newChat) $("message").value = drafts[draftKey()] || ""
   }
 }
+function readPendingConversation() {
+  if (!pendingSend || !isMutable()) return
+  socket.send(JSON.stringify({kind:"conversation.read",chatId:pendingSend.create ? "mobile-" + pendingSend.commandId : pendingSend.chatId,...(pendingSend.subChatId ? {subChatId:pendingSend.subChatId} : {})}))
+}
 function completeSend(sent) {
   pendingSend = null
   storePending()
@@ -210,12 +234,21 @@ function completeSend(sent) {
     if (draftKey() === sent.key) $("message").value = ""
   }
   if (matchesDraft && sent.reply && JSON.stringify(replies[sent.key]) === JSON.stringify(sent.reply)) { delete replies[sent.key]; saveReplies() }
-  $("send-status").textContent = "Sent"
+  if (draftKey() === sent.key) $("send-status").textContent = "Sent"
+  else announce("Your earlier message was saved on the host.")
   renderChats()
 }
 function applyConversation(value) {
-  if (pendingSend && value.acceptedCommands?.includes(pendingSend.commandId)) completeSend(pendingSend)
-  else if (pendingSend?.checking && ++pendingSend.checks >= 3) {
+  if (pendingSend && value.acceptedCommands?.includes(pendingSend.commandId)) {
+    const sent = pendingSend
+    const follow = sent.create && sent.navigationGeneration === navigationGeneration && newChat
+    completeSend(sent)
+    if (follow) {
+      selectedChat = value.chatId; selectedConversation = value.subChatId; newChat = false
+      $("message").value = drafts[draftKey()] || ""; $("send-status").textContent = "Sent"
+    }
+  }
+  else if (pendingSend?.checking && value.chatId === (pendingSend.create ? "mobile-" + pendingSend.commandId : pendingSend.chatId) && (!pendingSend.subChatId || value.subChatId === pendingSend.subChatId) && ++pendingSend.checks >= 3) {
     pendingSend = null; storePending()
     $("send-status").textContent = "Delivery could not be confirmed. Your draft is kept; check the conversation before retrying."
     renderChats()
@@ -250,13 +283,14 @@ function applyConversation(value) {
   if (value.pageBefore !== null) root.prepend(fragment); else root.append(fragment)
   if (value.status === "idle") for (const element of [...root.children]) if (element.dataset.message?.startsWith("live-")) element.remove()
   $("activity").textContent = value.status === "running" ? "Working…" : value.status === "pending" ? "Queued on your computer" : value.status === "failed" ? "The run failed on your computer. Your message was saved." : ""
-  if (atBottom && value.pageBefore === null) $("compose").scrollIntoView?.({block:"end"})
+  if (atBottom && value.pageBefore === null && !$("attention").open && !$("side-questions").open) $("compose").scrollIntoView?.({block:"end"})
 }
 setInterval(() => {
   if (document.visibilityState !== "visible") return
   if (online && !refreshPending && !snapshotPaging && Date.now() > freshUntil - 10000 && socket?.readyState === WebSocket.OPEN) { refreshPending = true; socket.send(JSON.stringify({kind:"snapshot.refresh"})) }
   if (online && Date.now() - lastMessageAt > 45000) { void connect(); return }
   readConversation()
+  if (pendingSend?.checking) readPendingConversation()
   if ($("side-questions").open && !sideBusy) void refreshSide()
 }, 2000)
 window.addEventListener("online", () => connect())
@@ -266,17 +300,75 @@ function resumeConnection() {
 document.addEventListener("visibilitychange", resumeConnection)
 window.addEventListener("pageshow", resumeConnection)
 
+function updateBlockReason() {
+  if (pairingBusy || sideBusy || sideRequests) return "Finish the current request before updating."
+  if (pendingSend) return "Waiting for message delivery. Reconnect and check the conversation before updating."
+  if (Object.values(controlCommands).some(command => command.status === "pending")) return "Waiting for a host receipt before updating."
+  if ([...itemsRoot.querySelectorAll("textarea,input")].some(input => input.type === "checkbox" || input.type === "radio" ? input.checked : input.value.trim())) return "Finish or clear the activity form before updating."
+  return ""
+}
+function renderUpdate() {
+  const blocked = updateBlockReason()
+  $("app-update").hidden = !waitingWorker && !updateNeedsReload && !updateError && !updateApplying
+  $("reload-update").disabled = updateApplying || !!blocked
+  const label = waitingWorker || updateNeedsReload ? "Reload to update" : "Check again"
+  if ($("reload-update").textContent !== label) $("reload-update").textContent = label
+  const message = updateApplying ? "Updating… Message and side-question drafts stay in this tab." : blocked || updateError || "Update ready. Message and side-question drafts stay in this tab. Reloading never confirms or resends an earlier action."
+  if ($("update-status").textContent !== message) $("update-status").textContent = message
+}
+function failUpdate(message) {
+  clearTimeout(updateTimer)
+  updateApplying = false
+  updateError = message
+  render(); renderUpdate(); updatePairButton()
+}
+function finishUpdate() {
+  if (!updateApplying) return
+  if (updateBlockReason()) return failUpdate("Update ready. Finish the current request or activity form, then reload.")
+  try { saveDraft(); storePending() } catch { return failUpdate("Could not keep your draft. Copy it before trying again.") }
+  clearTimeout(updateTimer)
+  location.reload()
+}
+async function watchUpdate() {
+  try {
+    const registration = await navigator.serviceWorker.register("/service-worker.js")
+    const refresh = () => { waitingWorker = registration.waiting; renderUpdate() }
+    const watch = () => { registration.installing?.addEventListener("statechange", refresh); refresh() }
+    registration.addEventListener("updatefound", watch)
+    updateError = ""; watch()
+  } catch { updateError = "Could not check for an update. Try again."; renderUpdate() }
+}
+$("reload-update").addEventListener("click", () => {
+  if (updateApplying || updateBlockReason()) return renderUpdate()
+  if (!waitingWorker && !updateNeedsReload) return void watchUpdate()
+  const unknown = Object.values(controlCommands).some(command => command.status === "unknown") || Object.values(sideDrafts).some(draft => draft.requestId) || Object.keys(sessionStorage).some(key => key.startsWith("flapstack-mobile-pending:"))
+  if (unknown && !confirm("An earlier action has no confirmed outcome. Check it on your computer. Reload now without resending it?")) return
+  try { saveDraft(); storePending() } catch { return failUpdate("Could not keep your draft. Copy it before trying again.") }
+  updateApplying = true; updateError = ""
+  render(); renderUpdate(); updatePairButton()
+  if (updateNeedsReload) return finishUpdate()
+  updateTimer = setTimeout(() => failUpdate("The update did not finish. Your drafts are kept. Try again."), 10000)
+  try { waitingWorker.postMessage({type:"activate-update"}) } catch { failUpdate("The update could not start. Your drafts are kept. Try again.") }
+})
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/service-worker.js").catch(() => undefined)
+  const initialController = navigator.serviceWorker.controller
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!initialController && !updateApplying) return
+    updateNeedsReload = true
+    if (updateApplying) finishUpdate()
+    else renderUpdate()
+  })
+  void watchUpdate()
 }
 if (offer) {
   $("fingerprint").textContent = "Certificate fingerprint: " + offer.certificateFingerprint
-  pairButton.disabled = false
+  updatePairButton()
 }
 $("pairing").hidden = !!sessionCredential && !offer
 $("settings").open = !sessionCredential
 connectButton.disabled = !sessionCredential
 $("fingerprint-confirmed").addEventListener("change", updatePairButton)
+$("device-name").addEventListener("input", updatePairButton)
 grantInput.addEventListener("change", () => { void connect() })
 pairButton.addEventListener("click", pair)
 connectButton.addEventListener("click", connect)
@@ -287,11 +379,14 @@ $("notifications").addEventListener("click", async () => {
 })
 window.addEventListener("offline", () => setOnline(false))
 renderChats()
-if (sessionCredential) void connect()
+if (sessionCredential && !offer) void connect()
 setInterval(() => {
   const now = Date.now()
   const approvalExpired = [...currentItems.values()].some((item) => item.kind === "approval" && item.expiresAt > lastExpiryCheck && item.expiresAt <= now)
   lastExpiryCheck = now
+  updatePairButton()
+  renderUpdate()
+  if (Object.values(controlCommands).some(command => command.status === "pending" && now >= command.expiresAt)) render()
   if (online && Date.now() >= freshUntil) {
     render()
   } else if (approvalExpired) {
@@ -300,12 +395,20 @@ setInterval(() => {
 }, 1000)
 
 function updatePairButton() {
-  pairButton.disabled = !offer || !$("fingerprint-confirmed").checked
+  pairButton.disabled = updateApplying || pairingBusy || !offer || Date.now() >= offer.expiresAt || !$("fingerprint-confirmed").checked || !$("device-name").value.trim()
 }
 
 async function pair() {
+  if (updateApplying || pairingBusy || !$("fingerprint-confirmed").checked || !$("device-name").value.trim()) return
   if (!offer || Date.now() >= offer.expiresAt) return announce("Pairing offer expired. Create a fresh QR from desktop Flapstack.")
-  pairButton.disabled = true
+  pairingBusy = true
+  connectionGeneration++
+  clearTimeout(reconnectTimer); clearTimeout(connectionDeadline)
+  const previousSocket = socket; socket = null; previousSocket?.close()
+  setOnline(false)
+  updatePairButton()
+  $("fingerprint-confirmed").disabled = true
+  $("device-name").disabled = true
   try {
     const keys = await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"}, false, ["sign","verify"])
     const spki = await crypto.subtle.exportKey("spki", keys.publicKey)
@@ -330,14 +433,20 @@ async function pair() {
     $("pairing").hidden = true
     connectButton.disabled = false
     connectButton.focus()
+    pairingBusy = false
     await connect()
   } catch {
     announce("Pairing failed safely. Confirm the fingerprint and create a fresh offer.")
-    pairButton.disabled = false
+  } finally {
+    pairingBusy = false
+    $("fingerprint-confirmed").disabled = false
+    $("device-name").disabled = false
+    updatePairButton()
   }
 }
 
 async function connect() {
+  if (pairingBusy) return
   const generation = ++connectionGeneration
   clearTimeout(reconnectTimer)
   clearTimeout(connectionDeadline)
@@ -381,10 +490,11 @@ async function connect() {
     next.addEventListener("message", event => { if (socket !== next) return; lastMessageAt = Date.now(); clearTimeout(connectionDeadline); try { const envelope = JSON.parse(event.data); if (envelope.kind === "snapshot") online = true; applyEnvelope(envelope) } catch { announce("Could not read the computer update. Reconnect to try again.") } })
     next.addEventListener("close", event => {
       if (socket !== next) return
+      const interruptedSnapshot = snapshotPaging && event.reason === "invalid-snapshot-page"
       clearTimeout(connectionDeadline)
       setOnline(false)
       if (pendingSend) $("send-status").textContent = "Connection lost. Your draft is kept. Check the conversation before sending again."
-      if (event.code === 1008 && !["authorization-expired", "authorization-changed"].includes(event.reason)) { announce("Access changed. Check this phone’s access on your computer, then reconnect."); $("settings").open = true; return }
+      if (event.code === 1008 && !interruptedSnapshot && !["authorization-expired", "authorization-changed"].includes(event.reason)) { announce("Access changed. Check this phone’s access on your computer, then reconnect."); $("settings").open = true; return }
       reconnectTimer = setTimeout(connect, Math.min(30000, 1000 * 2 ** Math.min(reconnectAttempt++,5)))
     })
     next.addEventListener("error", () => { if (socket === next) setOnline(false) })
@@ -418,7 +528,12 @@ function applyEnvelope(envelope) {
     $("pairing-result").textContent = ""
     if (!snapshotPaging && pendingSend) {
       const chatId = pendingSend.create ? "mobile-" + pendingSend.commandId : pendingSend.chatId
-      if (currentItems.has("chat:" + chatId)) { pendingSend.checking = true; pendingSend.checks = 0; selectedChat = chatId; selectedConversation = pendingSend.subChatId; newChat = false; readConversation() }
+      if (currentItems.has("chat:" + chatId)) {
+        pendingSend.checking = true
+        pendingSend.checks = 0
+        freshUntil = envelope.freshUntil
+        readPendingConversation()
+      }
       else { pendingSend = null; storePending(); $("send-status").textContent = "Delivery could not be confirmed. Your draft is kept; check your chats before retrying." }
     }
     if (!snapshotPaging && selectedChat && !currentItems.has("chat:" + selectedChat)) {
@@ -426,7 +541,7 @@ function applyEnvelope(envelope) {
       selectedChat = null; selectedConversation = null; conversationBefore = null; newChat = false
       $("messages").replaceChildren(); $("message").value = ""; $("activity").textContent = ""
     }
-    if (!snapshotPaging && promotedChat && currentItems.has("chat:" + promotedChat.chatId)) {
+    if (!snapshotPaging && promotedChat && promotedChat.navigationGeneration === navigationGeneration && currentItems.has("chat:" + promotedChat.chatId)) {
       saveDraft(); selectedChat = promotedChat.chatId; selectedConversation = promotedChat.subChatId; newChat = false; promotedChat = null; $("messages").replaceChildren(); $("message").value = drafts[draftKey()] || ""; readConversation()
     }
     freshUntil = envelope.freshUntil
@@ -439,10 +554,25 @@ function applyEnvelope(envelope) {
         const sent = pendingSend; pendingSend = null; storePending()
         if (envelope.payload.status === "completed") {
           completeSend(sent)
-          if (sent.create) { selectedChat = "mobile-" + sent.commandId; selectedConversation = null; newChat = false; $("messages").replaceChildren() }
+          if (sent.create && sent.navigationGeneration === navigationGeneration && draftKey() === sent.key) { promotedChat = {chatId:"mobile-" + sent.commandId, subChatId:null, navigationGeneration} }
           readConversation()
-        } else $("send-status").textContent = "Not sent. Your draft is kept. Check access and try again."
-      } else announce("Action " + envelope.payload.status + ".")
+        } else if (draftKey() === sent.key) $("send-status").textContent = "Not sent. Your draft is kept. Check access and try again."
+        else announce("Your earlier message was not sent. Its draft is kept; return to that conversation to retry.")
+      } else {
+        const command = Object.values(controlCommands).find(command => command.commandId === envelope.payload.commandId)
+        if (command && command.action === envelope.payload.action) {
+          command.status = envelope.payload.status
+          command.summary = envelope.payload.summary || ""
+          storeControls()
+        }
+      }
+    }
+    if (envelope.payload.type === "scope.revoked") {
+      saveDraft(); currentItems.clear(); setOnline(false)
+      announce("Access was revoked. Review this phone’s access on the computer before reconnecting.")
+      $("settings").open = true
+      socket.close(1000, "scope-revoked")
+      return
     }
     if (envelope.payload.type === "resnapshot.required") {
       announce("State changed. Reconnect for a fresh snapshot.")
@@ -453,8 +583,12 @@ function applyEnvelope(envelope) {
 }
 
 function render() {
+  for (const command of Object.values(controlCommands)) if (command.status === "pending" && (!online || Date.now() >= command.expiresAt)) { command.status = "unknown"; storeControls() }
   renderChats()
   if (online) connection.textContent = Date.now() < freshUntil ? "Online · current" : "State is stale · read-only"
+  const focused = document.activeElement
+  const focusedRow = focused?.closest("article")?.dataset.key
+  const focusedLabel = focused?.tagName === "BUTTON" ? focused.textContent : null
   const savedInputs = new Map([...itemsRoot.children].map(row => [row.dataset.key, [...row.querySelectorAll("input,textarea")].map(input => ({value:input.value,checked:input.checked,focused:document.activeElement === input,start:input.selectionStart,end:input.selectionEnd}))]))
   itemsRoot.replaceChildren()
   for (const id of notificationAttempts.keys()) if (!currentItems.has("approval:" + id)) notificationAttempts.delete(id)
@@ -504,6 +638,14 @@ function render() {
       maybeNotify(item)
     }
     row.append(actions)
+    const command = controlCommands[controlKey(item)]
+    if (command) {
+      const feedback = document.createElement("p")
+      feedback.setAttribute("role", "status")
+      feedback.tabIndex = -1
+      feedback.textContent = command.status === "pending" ? "Waiting for host receipt. Do not send again." : command.status === "unknown" ? "Delivery is unknown. Check the host before retrying; this action may have run." : "Host receipt: " + command.status + (command.summary ? ". " + command.summary : "")
+      row.append(feedback)
+    }
     if (item.kind === "approval" || item.kind === "orchestration" || item.kind === "run" || item.kind === "automation") {
       const safety = document.createElement("p")
       safety.className = "muted"
@@ -513,6 +655,13 @@ function render() {
     itemsRoot.append(row)
     const saved = savedInputs.get(row.dataset.key)
     if (saved) [...row.querySelectorAll("input,textarea")].forEach((input,index) => { const previous = saved[index]; if (!previous) return; input.value = previous.value; input.checked = previous.checked; if (previous.focused) { input.focus({preventScroll:true}); if (typeof previous.start === "number" && (input.tagName === "TEXTAREA" || input.type === "text")) input.setSelectionRange(previous.start,previous.end) } })
+  }
+  if (focusedRow && document.activeElement === document.body) {
+    const row = [...itemsRoot.children].find(row => row.dataset.key === focusedRow)
+    const next = row && [...row.querySelectorAll("button")].find(button => button.textContent === focusedLabel && !button.disabled)
+    if (next) next.focus({preventScroll:true})
+    else if (row?.querySelector('[role="status"]')) row.querySelector('[role="status"]').focus({preventScroll:true})
+    else $("attention").querySelector("summary").focus({preventScroll:true})
   }
   if (!currentItems.size) itemsRoot.innerHTML = '<p class="muted">No authorized work is available.</p>'
 }
@@ -525,7 +674,8 @@ function renderClarification(row, item) {
     for (const question of item.questions) {
       const selected = [...form.querySelectorAll('[name="' + cssEscape(question.id) + '"]:checked')].map((input) => input.value)
       const custom = form.querySelector('[data-custom="' + cssEscape(question.id) + '"]')
-      if (custom && custom.value.trim()) selected.push(custom.value.trim())
+      if (custom && custom.value.trim()) { if (!question.multiSelect) selected.length = 0; selected.push(custom.value.trim()) }
+      if (!selected.length) return announce("Answer each question before sending.")
       if (selected.length) answers[question.id] = selected
     }
     sendCommand(item, {type:"clarification.answer",requestId:item.id,answers})
@@ -561,7 +711,7 @@ function renderClarification(row, item) {
   const submit = document.createElement("button")
   submit.type = "submit"
   submit.textContent = "Answer all questions"
-  submit.disabled = !isMutable()
+  submit.disabled = !isMutable() || controlCommands[controlKey(item)]?.status === "pending" || (capabilities && !capabilities.includes("clarification.answer"))
   form.append(submit)
   row.append(form)
 }
@@ -573,7 +723,7 @@ function cssEscape(value) {
 function actionButton(label, target, createAction) {
   const button = document.createElement("button")
   button.textContent = label
-  button.disabled = !isMutable() || (capabilities && !capabilities.includes(createAction().type))
+  button.disabled = !isMutable() || controlCommands[controlKey(target)]?.status === "pending" || (capabilities && !capabilities.includes(createAction().type))
   button.addEventListener("click", () => {
     const action = createAction()
     if (action.type === "run.steer" && !action.message) return announce("Enter a steering message first.")
@@ -583,13 +733,16 @@ function actionButton(label, target, createAction) {
 }
 
 function isMutable() {
-  return online && !snapshotPaging && Date.now() < freshUntil && socket && socket.readyState === WebSocket.OPEN
+  return !updateApplying && online && !snapshotPaging && Date.now() < freshUntil && socket && socket.readyState === WebSocket.OPEN
 }
 
 function sendCommand(target, action) {
+  if (updateApplying) return announce("The companion is updating. Wait before sending an action.")
   if (!isMutable()) return announce("State is stale or offline. Cached data is read-only.")
   if (capabilities && !capabilities.includes(action.type)) return announce("Allow this action in your phone’s access settings on the computer first.")
-  if (!action.type.startsWith("chat.") && !confirm("Confirm " + action.type + " for this exact " + target.kind + "?")) return
+  const previous = controlCommands[controlKey(target)]
+  if (!action.type.startsWith("chat.") && previous?.status === "pending") return
+  if (!action.type.startsWith("chat.") && !confirm((previous?.status === "unknown" ? "Delivery is unknown. Check the host before retrying. " : "") + "Confirm " + action.type + " for this exact " + target.kind + "?")) return
   if (!isMutable() || currentItems.get(target.kind + ":" + target.id) !== target || (target.kind === "approval" && Date.now() >= target.expiresAt)) return announce("This action expired or changed. Review the current work.")
   const now = Date.now()
   const privileged = ["run.cancel","orchestration.cancel","automation.cancel","approval.approve"].includes(action.type)
@@ -605,7 +758,17 @@ function sendCommand(target, action) {
     target:{kind:target.kind,id:target.id,version:target.version}, action
   }
   // Wire contract marker used by static audits: {"kind":"command"}
-  socket.send(JSON.stringify(command))
+  try { socket.send(JSON.stringify(command)) } catch {
+    announce("Connection failed. Delivery is unknown. Check the host before retrying; your draft is kept.")
+    setOnline(false)
+    return
+  }
+  if (!action.type.startsWith("chat.")) {
+    controlCommands[controlKey(target)] = {commandId:command.commandId,action:action.type,status:"pending",expiresAt:command.expiresAt}
+    const keys = Object.keys(controlCommands)
+    for (const key of keys.slice(0, Math.max(0,keys.length - 100))) if (controlCommands[key].status !== "pending") delete controlCommands[key]
+    storeControls(); render()
+  }
   if (privileged) $("step-up-token").value = ""
   return command.commandId
 }
@@ -641,15 +804,19 @@ function syncSide() {
   $("side-send").disabled = !key || !isMutable() || sideBusy || (capabilities && !capabilities.includes("chat.send"))
 }
 async function sideRequest(request) {
-  if (!isMutable() || !selectedChat || !selectedConversation) throw new Error("Reconnect to ask a question.")
-  const context = {grantId: activeGrantId, chatId: selectedChat, subChatId: selectedConversation}
-  const generation = sideGeneration
-  const privateKey = await readPrivateKey()
-  const proof = await sessionProof(sessionCredential, privateKey)
-  if (generation !== sideGeneration) throw new Error("Conversation changed.")
-  const result = await post("/mobile/v1/side-questions", {proof, request: {...context, ...request}})
-  if (generation !== sideGeneration) throw new Error("Conversation changed.")
-  return result
+  sideRequests++
+  try {
+    if (!isMutable() || !selectedChat || !selectedConversation) throw new Error("Reconnect to ask a question.")
+    const context = {grantId: activeGrantId, chatId: selectedChat, subChatId: selectedConversation}
+    const generation = sideGeneration
+    const privateKey = await readPrivateKey()
+    const proof = await sessionProof(sessionCredential, privateKey)
+    if (generation !== sideGeneration) throw new Error("Conversation changed.")
+    if (updateApplying) throw new Error("The companion is updating.")
+    const result = await post("/mobile/v1/side-questions", {proof, request: {...context, ...request}})
+    if (generation !== sideGeneration) throw new Error("Conversation changed.")
+    return result
+  } finally { sideRequests-- }
 }
 function renderSide() {
   const root = $("side-messages"); root.replaceChildren()
@@ -690,7 +857,7 @@ async function changeSide(request) {
       sideEntries = [...sideEntries.filter(entry => entry.id !== result.entry.id), result.entry].sort((a,b) => a.createdAt-b.createdAt)
       if (request.operation === "ask" && $("side-message").value.trim() === request.question) { $("side-message").value = ""; delete sideDrafts[key]; sessionStorage.setItem("flapstack-mobile-side-drafts", JSON.stringify(sideDrafts)) }
     }
-    if (result.chatId) { promotedChat = result; socket.send(JSON.stringify({kind:"snapshot.refresh"})); $("side-status").textContent = "Opening chat…" }
+    if (result.chatId) { promotedChat = {...result,navigationGeneration}; socket.send(JSON.stringify({kind:"snapshot.refresh"})); $("side-status").textContent = "Opening chat…" }
     renderSide()
   } catch { if (generation === sideGeneration) $("side-status").textContent = "Could not complete that action. Your question is kept; try again." }
   finally { if (generation === sideGeneration) { sideBusy = false; renderSide() } }
@@ -829,15 +996,22 @@ const manifestBody = JSON.stringify({
 })
 
 const serviceWorkerBody = `
-const CACHE = "mobile-companion-v2"
+const CACHE = "mobile-companion-v4"
 const ASSETS = ["/", "/mobile-app.js", "/manifest.webmanifest"]
 self.addEventListener("install", (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS))))
-self.addEventListener("activate", (event) => event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))))
+self.addEventListener("activate", (event) => event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith("mobile-companion-") && key !== CACHE).map((key) => caches.delete(key))))))
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "activate-update") event.waitUntil(self.skipWaiting())
+})
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return
   const url = new URL(event.request.url)
-  if (url.searchParams.has("pair")) return
-  event.respondWith(fetch(event.request).catch(() => caches.match(event.request).then((match) => match || caches.match("/"))))
+  if (url.origin !== self.location.origin || url.searchParams.has("pair") || !ASSETS.includes(url.pathname)) return
+  event.respondWith(fetch(event.request).catch(async (error) => {
+    const match = await (await caches.open(CACHE)).match(url.pathname)
+    if (match) return match
+    throw error
+  }))
 })
 `
 

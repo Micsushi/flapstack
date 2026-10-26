@@ -17,7 +17,7 @@ type McpSecretBundle = {
   oauth?: McpServerConfig["_oauth"]
 }
 
-function credentialId(scope: string | null, serverName: string): string {
+export function mcpCredentialId(scope: string | null, serverName: string): string {
   return `mcp.${createHash("sha256")
     .update(`${scope ?? "__global__"}\0${serverName}`)
     .digest("hex")}`
@@ -45,7 +45,7 @@ function protectMcpServerSecretsWithPersistence(
   const headers = config.headers as Record<string, string> | undefined
   const oauth = config._oauth
   if (!headers && !oauth) return { config, persistence: null }
-  const id = credentialId(scope, serverName)
+  const id = mcpCredentialId(scope, serverName)
   const result = getCredentialService().setOpaque(
     id,
     JSON.stringify({ headers, oauth } satisfies McpSecretBundle),
@@ -57,16 +57,26 @@ function protectMcpServerSecretsWithPersistence(
   return { config: protectedConfig, persistence: result.persistence }
 }
 
-export function hydrateMcpServerSecrets(config: McpServerConfig): McpServerConfig {
+export function hydrateMcpServerSecrets(
+  config: McpServerConfig,
+  expandEnvironment = true,
+): McpServerConfig {
   const ref = config[SECRET_REF_KEY]
   if (typeof ref !== "string") return config
   const raw = getCredentialService().resolveOpaque(ref)
-  if (!raw) return config
+  if (!raw) {
+    if (!expandEnvironment)
+      throw new Error("MCP credentials could not be read. Unlock secure storage and retry.")
+    return config
+  }
   try {
     const bundle = JSON.parse(raw) as McpSecretBundle
     const headers = bundle.headers
       ? Object.fromEntries(
-          Object.entries(bundle.headers).map(([name, value]) => [name, expandEnvVars(value)]),
+          Object.entries(bundle.headers).map(([name, value]) => [
+            name,
+            expandEnvironment ? expandEnvVars(value) : value,
+          ]),
         )
       : undefined
     return {
@@ -75,6 +85,8 @@ export function hydrateMcpServerSecrets(config: McpServerConfig): McpServerConfi
       ...(bundle.oauth ? { _oauth: bundle.oauth } : {}),
     }
   } catch {
+    if (!expandEnvironment)
+      throw new Error("MCP credentials could not be read. Unlock secure storage and retry.")
     return config
   }
 }

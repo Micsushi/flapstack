@@ -33,7 +33,9 @@ The browser retains its pairing key on that device and authenticates again after
 a disconnect or application restart. A revoked grant or device needs desktop
 attention. Offline controls cannot send messages. Drafts stay in the current
 browser tab's session storage across reloads and reconnects; closing the tab may
-remove them. Unconfirmed sends are never automatically replayed. Check the
+remove them. If a paged snapshot is interrupted, the browser reconnects and
+continues recovery instead of treating the temporary page failure as an access
+change. Unconfirmed sends are never automatically replayed. Check the
 conversation before retrying if delivery could not be confirmed.
 
 The app shell can be added to the phone's home screen. Notifications are best
@@ -54,3 +56,18 @@ not establish that a physical phone can reach the current host. Release checking
 must include a real phone: new chat, streamed response, follow-up, agent question,
 background/reopen, reconnect without pairing again, and visibility of those same
 messages on the computer.
+
+## Control receipts and navigation
+
+Steering, answers and run controls wait for a matching host receipt. A rejected
+command keeps its draft for an explicit retry. A disconnect or missing receipt
+means delivery is unknown: check the host before retrying because the action
+may already have run. The companion never replays these controls automatically.
+Receipt state is retained in this browser tab; clearing its session storage
+removes that local evidence.
+
+A late send result or reconnect does not replace a chat you opened meanwhile.
+If access removes the selected chat, the companion returns to the conversation
+list and retains its text draft in this tab. Pairing requires fingerprint
+confirmation, and expired desktop QR codes are hidden until you create a fresh
+offer. A QR encoding failure can be retried without creating another offer.

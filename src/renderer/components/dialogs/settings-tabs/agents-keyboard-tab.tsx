@@ -133,6 +133,8 @@ export function AgentsKeyboardTab() {
   const [errors, setErrors] = useState<Partial<Record<ShortcutActionId, string>>>({})
   const [migrationDiagnostics, setMigrationDiagnostics] = useState<string[]>([])
 
+  useEffect(() => () => setRecordingId(null), [setRecordingId])
+
   useEffect(() => {
     if (
       storedConfig.version !== 2 ||

@@ -156,10 +156,12 @@ export function filterSupersededPersonalAccountRows(rows: UsageSummaryRow[]): Us
 
 /** Build one honest current card per provider/account from the currently loaded
  * samples. Metrics can arrive in separate provider rows (for example, one cost
- * bucket and one token bucket), so each field uses its newest non-null value
+ * bucket and one token bucket), so cost and tokens use their newest non-null value
+ * while quota values and reset time stay together as one provider snapshot
  * rather than inventing totals or treating missing data as zero. */
 export function buildCurrentUsageSummaries(rows: UsageSummaryRow[]): CurrentUsageSummary[] {
   const summaries = new Map<string, CurrentUsageSummary>()
+  const quotaSnapshots = new Set<string>()
   const sorted = [...rows].sort(
     (left, right) => timestamp(right.capturedAt) - timestamp(left.capturedAt),
   )
@@ -201,17 +203,23 @@ export function buildCurrentUsageSummaries(rows: UsageSummaryRow[]): CurrentUsag
     }
     if (summary.totalTokens == null && row.totalTokens != null)
       summary.totalTokens = row.totalTokens
-    if (summary.percentUsed == null && row.percentUsed != null)
-      summary.percentUsed = row.percentUsed
-    if (summary.quotaUsed == null && row.quotaUsed != null) summary.quotaUsed = row.quotaUsed
-    if (summary.quotaLimit == null && row.quotaLimit != null) summary.quotaLimit = row.quotaLimit
     if (
-      summary.quotaUnit == null &&
-      row.quotaUnit != null &&
-      (row.quotaUsed != null || row.quotaLimit != null)
-    )
-      summary.quotaUnit = row.quotaUnit
-    if (summary.resetAt == null && row.resetAt != null) summary.resetAt = row.resetAt
+      !quotaSnapshots.has(key) &&
+      (row.percentUsed != null ||
+        row.quotaUsed != null ||
+        row.quotaLimit != null ||
+        row.resetAt != null)
+    ) {
+      quotaSnapshots.add(key)
+      summary.capturedAt = row.capturedAt ?? null
+      summary.source = row.source ?? null
+      summary.sourceTag = row.sourceTag ?? null
+      summary.percentUsed = row.percentUsed ?? null
+      summary.quotaUsed = row.quotaUsed ?? null
+      summary.quotaLimit = row.quotaLimit ?? null
+      summary.quotaUnit = row.quotaUnit ?? null
+      summary.resetAt = row.resetAt ?? null
+    }
   }
 
   return [...summaries.values()]

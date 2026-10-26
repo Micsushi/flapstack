@@ -7,9 +7,9 @@ import type {
 import { recordAppAction } from "../../lib/app-action-history"
 import { trpc, trpcClient } from "../../lib/trpc"
 
-export function useDiscussions(scope: DiscussionScope) {
+export function useDiscussions(scope: DiscussionScope, includeArchived = false) {
   const query = trpc.discussions.list.useInfiniteQuery(
-    { scope, limit: 20 },
+    { scope, limit: 20, includeArchived },
     { getNextPageParam: (page) => page.nextCursor ?? undefined, refetchOnWindowFocus: true },
   )
   const utils = trpc.useUtils()
@@ -29,11 +29,15 @@ export function useDiscussions(scope: DiscussionScope) {
     setError(null)
     try {
       const result = await action()
-      await refresh()
+      try {
+        await refresh()
+      } catch {
+        setError("Saved, but the topic list could not refresh. Refresh to load the saved result.")
+      }
       return result
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save. Your draft is retained.")
-      await refresh()
+      await refresh().catch(() => {})
       return undefined
     } finally {
       lock.current = false
@@ -107,6 +111,7 @@ export function useDiscussions(scope: DiscussionScope) {
     })
   return {
     captureMixed,
+    run,
     topics: query.data?.pages.flatMap((page) => page.topics) ?? [],
     loadMore: () => query.fetchNextPage(),
     hasMore: query.hasNextPage,
@@ -155,7 +160,18 @@ export function useDiscussionDraft<T>(key: string, fallback: T) {
       }
     })
   }
-  return [state.value, save, state.storageError] as const
+  const clear = (expected: T, replacement: T) => {
+    setState((current) => {
+      if (JSON.stringify(current.value) !== JSON.stringify(expected)) return current
+      try {
+        window.localStorage.removeItem(key)
+        return { value: replacement, storageError: false }
+      } catch {
+        return { ...current, storageError: true }
+      }
+    })
+  }
+  return [state.value, save, state.storageError, clear] as const
 }
 export function discussionDraftKey(scope: DiscussionScope, id: string) {
   return `flapstack.discussion-draft:${JSON.stringify([scope.hostId, scope.projectId, scope.chatId, id])}`

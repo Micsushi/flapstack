@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import { win32 as windowsPath } from "node:path"
 import { FALLBACK_SHELL, SHELL_CRASH_THRESHOLD_MS } from "./env"
 import { portManager } from "./port-manager"
+import { LinuxProcessOwnership } from "./linux-process-ownership"
 import {
   MAX_TERMINAL_COLS,
   MAX_TERMINAL_ROWS,
@@ -11,6 +12,7 @@ import {
 import {
   captureTerminalPtyOwnedProcesses,
   createSession,
+  isTerminalProcessAlive,
   releaseTerminalPtyResources,
   setupInitialCommands,
   terminateUnreadyWindowsPty,
@@ -30,13 +32,22 @@ import {
 
 export class TerminalManager extends EventEmitter {
   private sessions = new Map<string, TerminalSession>()
-  private pendingSessions = new Map<string, Promise<SessionResult>>()
+  private pendingSessions = new Map<
+    string,
+    { workspaceId: string; promise: Promise<SessionResult> }
+  >()
+  private pendingStops = new WeakMap<TerminalSession, Promise<boolean>>()
+  private stoppingSessions = new WeakSet<TerminalSession>()
+  private stopProcessIds = new WeakMap<TerminalSession, number[]>()
   private inFlightCreations = new Set<Promise<SessionResult>>()
   private cleanupOwnedProcessIds = new Set<number>()
   private cleanupWindowsProcessIdentities = new Map<number, WindowsProcessIdentity>()
   private cleanupOwnershipIssues: string[] = []
   private shuttingDown = false
   private cleanupPromise: Promise<TerminalCleanupResult> | undefined
+  private linuxProcesses = new WeakMap<TerminalSession, LinuxProcessOwnership>()
+  private unstoredLinuxSessions = new Set<TerminalSession>()
+  private readonly usesLinuxOwnership: boolean
 
   constructor(
     private readonly cleanupOptions?: {
@@ -48,6 +59,8 @@ export class TerminalManager extends EventEmitter {
     },
   ) {
     super()
+    this.usesLinuxOwnership =
+      process.platform === "linux" && (cleanupOptions?.platform ?? process.platform) === "linux"
   }
 
   async createOrAttach(params: CreateSessionParams, enableReplay = false): Promise<SessionResult> {
@@ -105,11 +118,17 @@ export class TerminalManager extends EventEmitter {
     // Deduplicate concurrent calls (prevents race in React Strict Mode)
     const pending = this.pendingSessions.get(paneId)
     if (pending) {
-      return pending
+      return pending.promise
     }
 
     // Return existing session if alive
     const existing = this.sessions.get(paneId)
+    if (existing && this.pendingStops.has(existing)) {
+      throw new Error("Terminal is stopping. Retry after the stop completes.")
+    }
+    if (existing && !existing.isAlive && this.stoppingSessions.has(existing)) {
+      throw new Error("Terminal cleanup is incomplete. Retry closing this tab before reconnecting.")
+    }
     if (existing?.isAlive) {
       existing.lastActive = Date.now()
       if (cols !== undefined && rows !== undefined) {
@@ -124,12 +143,16 @@ export class TerminalManager extends EventEmitter {
 
     // Create new session
     const creationPromise = this.doCreateSession(params)
-    this.pendingSessions.set(paneId, creationPromise)
+    this.pendingSessions.set(paneId, {
+      workspaceId: params.workspaceId || "",
+      promise: creationPromise,
+    })
 
     try {
       return await creationPromise
     } finally {
-      if (this.pendingSessions.get(paneId) === creationPromise) this.pendingSessions.delete(paneId)
+      if (this.pendingSessions.get(paneId)?.promise === creationPromise)
+        this.pendingSessions.delete(paneId)
     }
   }
 
@@ -155,6 +178,9 @@ export class TerminalManager extends EventEmitter {
     const session = await createSession(params, (id, data) => {
       this.emit(`data:${id}`, data)
     })
+    if (this.usesLinuxOwnership) {
+      this.linuxProcesses.set(session, new LinuxProcessOwnership(session.pty.pid))
+    }
     if (this.shuttingDown) {
       await this.releaseUnstoredSession(session)
       throw new Error("Terminal manager is shutting down.")
@@ -197,21 +223,47 @@ export class TerminalManager extends EventEmitter {
   ): Promise<void> {
     const { paneId } = params
     session.isAlive = false
+    const platform = this.cleanupOptions?.platform ?? process.platform
+    if (this.usesLinuxOwnership && !this.stoppingSessions.has(session) && !this.shuttingDown) {
+      try {
+        const ownership = this.linuxProcesses.get(session)!
+        ownership.capture()
+        if (ownership.survivors().length > 0) this.stoppingSessions.add(session)
+      } catch (error) {
+        console.error("[TerminalManager] Linux exit ownership is unresolved:", error)
+        this.stoppingSessions.add(session)
+      }
+    }
+    const exitedPtyStopped =
+      platform !== "win32" ||
+      this.stoppingSessions.has(session) ||
+      this.shuttingDown ||
+      this.stopExitedWindowsPty(session, this.captureCleanupProcessOwnership(session))
     void releaseTerminalPtyResources(session.pty, this.cleanupOptions?.platform ?? process.platform)
     // A late exit belongs to this PTY instance, never its replacement in the same pane.
     if (this.sessions.get(paneId) !== session) return
+    if (!exitedPtyStopped) {
+      this.stoppingSessions.add(session)
+      this.finishSessionExit(session, exitCode, signal)
+      return
+    }
 
     // Check if shell crashed quickly - try fallback
     const sessionDuration = Date.now() - session.startTime
     const crashedQuickly = sessionDuration < SHELL_CRASH_THRESHOLD_MS && exitCode !== 0
 
-    if (crashedQuickly && !session.usedFallback && !this.shuttingDown) {
+    if (
+      crashedQuickly &&
+      !session.usedFallback &&
+      !this.shuttingDown &&
+      !this.stoppingSessions.has(session)
+    ) {
       console.warn(
         `[TerminalManager] Shell "${session.shell}" exited with code ${exitCode} after ${sessionDuration}ms, retrying with fallback shell "${FALLBACK_SHELL}"`,
       )
 
       const fallback = this.doCreateSession({ ...params, useFallbackShell: true })
-      this.pendingSessions.set(paneId, fallback)
+      this.pendingSessions.set(paneId, { workspaceId: session.workspaceId, promise: fallback })
       try {
         await fallback
         if (!this.shuttingDown) return // Recovered - don't emit exit
@@ -220,7 +272,8 @@ export class TerminalManager extends EventEmitter {
           console.error("[TerminalManager] Fallback shell also failed:", fallbackError)
         }
       } finally {
-        if (this.pendingSessions.get(paneId) === fallback) this.pendingSessions.delete(paneId)
+        if (this.pendingSessions.get(paneId)?.promise === fallback)
+          this.pendingSessions.delete(paneId)
       }
     }
 
@@ -239,16 +292,24 @@ export class TerminalManager extends EventEmitter {
 
       // Clean up session after delay
       const timeout = setTimeout(() => {
-        this.removeSession(session)
+        if (!this.stoppingSessions.has(session)) this.removeSession(session)
       }, 5000)
       timeout.unref()
     } catch (error) {
       console.error("[TerminalManager] Failed to finalize terminal exit:", error)
-      this.removeSession(session)
+      if (!this.stoppingSessions.has(session)) this.removeSession(session)
     }
   }
 
   private async releaseUnstoredSession(session: TerminalSession): Promise<void> {
+    if (this.usesLinuxOwnership) {
+      this.unstoredLinuxSessions.add(session)
+      if (await this.killSessionWithTimeout(session.paneId, session)) {
+        session.replay?.dispose()
+        this.unstoredLinuxSessions.delete(session)
+      }
+      return
+    }
     session.replay?.dispose()
     this.captureCleanupProcessOwnership(session)
     session.isAlive = false
@@ -329,18 +390,8 @@ export class TerminalManager extends EventEmitter {
   }
 
   async kill(params: { paneId: string }): Promise<void> {
-    const { paneId } = params
-    const session = this.sessions.get(paneId)
-
-    if (!session) {
-      console.warn(`Cannot kill terminal ${paneId}: session not found`)
-      return
-    }
-
-    if (session.isAlive) {
-      session.pty.kill()
-    } else {
-      this.removeSession(session)
+    if (!(await this.stopPane(params.paneId))) {
+      throw new Error("Terminal stop could not be confirmed. The session was retained for retry.")
     }
   }
 
@@ -387,96 +438,144 @@ export class TerminalManager extends EventEmitter {
   }
 
   async killByWorkspaceId(workspaceId: string): Promise<{ killed: number; failed: number }> {
-    const sessionsToKill = Array.from(this.sessions.entries()).filter(
-      ([, session]) => session.workspaceId === workspaceId,
-    )
-
-    if (sessionsToKill.length === 0) {
-      return { killed: 0, failed: 0 }
-    }
-
+    const paneIds = new Set([
+      ...Array.from(this.sessions)
+        .filter(([, session]) => session.workspaceId === workspaceId)
+        .map(([paneId]) => paneId),
+      ...Array.from(this.pendingSessions)
+        .filter(([, creation]) => creation.workspaceId === workspaceId)
+        .map(([paneId]) => paneId),
+    ])
     const results = await Promise.all(
-      sessionsToKill.map(([paneId, session]) => this.killSessionWithTimeout(paneId, session)),
+      Array.from(paneIds, (paneId) => this.stopPane(paneId, workspaceId)),
     )
 
     const killed = results.filter(Boolean).length
     return { killed, failed: results.length - killed }
   }
 
-  private async killSessionWithTimeout(paneId: string, session: TerminalSession): Promise<boolean> {
-    if (!session.isAlive) {
-      await releaseTerminalPtyResources(
-        session.pty,
-        this.cleanupOptions?.platform ?? process.platform,
-      )
+  private async stopPane(paneId: string, workspaceId?: string): Promise<boolean> {
+    // Creation may fail after storing a PTY or be superseded by a fallback.
+    for (
+      let creation = this.pendingSessions.get(paneId);
+      creation;
+      creation = this.pendingSessions.get(paneId)
+    ) {
+      await Promise.allSettled([creation.promise])
+    }
+    const session = this.sessions.get(paneId)
+    if (!session || (workspaceId !== undefined && session.workspaceId !== workspaceId)) return true
+    return this.killSessionWithTimeout(paneId, session)
+  }
+
+  private killSessionWithTimeout(paneId: string, session: TerminalSession): Promise<boolean> {
+    const pending = this.pendingStops.get(session)
+    if (pending) return pending
+    this.stoppingSessions.add(session)
+    const stop = this.stopSession(paneId, session)
+    this.pendingStops.set(session, stop)
+    void stop.finally(() => this.pendingStops.delete(session))
+    return stop
+  }
+
+  private async stopSession(paneId: string, session: TerminalSession): Promise<boolean> {
+    try {
+      if (this.usesLinuxOwnership) {
+        const ownership = this.linuxProcesses.get(session)
+        const subscription = session.pty.onExit(() => {
+          session.isAlive = false
+        })
+        try {
+          for (const pid of ownership?.capture() ?? []) this.cleanupOwnedProcessIds.add(pid)
+          if (!ownership || !(await ownership.stop())) return false
+          for (const pid of ownership.capture()) this.cleanupOwnedProcessIds.add(pid)
+          for (let attempt = 0; session.isAlive && attempt < 20; attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 25))
+          }
+          if (session.isAlive) return false
+        } finally {
+          subscription.dispose()
+        }
+        if (!(await releaseTerminalPtyResources(session.pty, "linux"))) return false
+        if (this.sessions.get(paneId) === session) {
+          portManager.unregisterSession(paneId)
+          this.removeSession(session)
+        }
+        return true
+      }
+      const previousProcessIds = this.stopProcessIds.get(session)
+      const processIds = [
+        ...new Set([
+          ...(previousProcessIds ?? []),
+          ...(!session.isAlive && previousProcessIds
+            ? []
+            : this.captureCleanupProcessOwnership(session)),
+        ]),
+      ]
+      this.stopProcessIds.set(session, processIds)
+      const platform = this.cleanupOptions?.platform ?? process.platform
+      if (session.isAlive) {
+        const exited = await new Promise<boolean>((resolve) => {
+          let settled = false
+          let escalation: ReturnType<typeof setTimeout> | undefined
+          let timeout: ReturnType<typeof setTimeout> | undefined
+          // Observe this PTY generation, not a replacement using the same pane ID.
+          const subscription = session.pty.onExit(() => finish(true))
+          const finish = (success: boolean) => {
+            if (settled) return
+            settled = true
+            subscription.dispose()
+            if (escalation) clearTimeout(escalation)
+            if (timeout) clearTimeout(timeout)
+            resolve(success)
+          }
+          escalation = setTimeout(() => {
+            try {
+              if (session.isAlive) session.pty.kill(platform === "win32" ? undefined : "SIGKILL")
+            } catch (error) {
+              console.error(`Failed to escalate terminal stop ${paneId}:`, error)
+            }
+            if (!settled) timeout = setTimeout(() => finish(!session.isAlive), 500)
+          }, 2000)
+          try {
+            session.pty.kill()
+          } catch (error) {
+            console.error(`Failed to stop terminal ${paneId}:`, error)
+            finish(false)
+          }
+        })
+        if (!exited) return false
+        session.isAlive = false
+      } else if (platform === "win32" && !this.stopExitedWindowsPty(session, processIds)) {
+        return false
+      }
+      const released = await releaseTerminalPtyResources(session.pty, platform)
+      const waitForOwnedProcesses =
+        this.cleanupOptions?.waitForOwnedProcesses ?? waitForTerminalProcessesToExit
+      const survivors = await waitForOwnedProcesses(processIds)
+      if (!released || survivors.length > 0) return false
       if (this.sessions.get(paneId) === session) {
+        portManager.unregisterSession(paneId)
         this.removeSession(session)
       }
       return true
+    } catch (error) {
+      console.error(`Could not confirm terminal stop ${paneId}:`, error)
+      return false
     }
+  }
 
-    return new Promise<boolean>((resolve) => {
-      let resolved = false
-      let sigtermTimeout: ReturnType<typeof setTimeout> | undefined
-      let sigkillTimeout: ReturnType<typeof setTimeout> | undefined
-
-      const cleanup = (success: boolean): void => {
-        if (resolved) return
-        resolved = true
-        this.off(`exit:${paneId}`, exitHandler)
-        if (sigtermTimeout) clearTimeout(sigtermTimeout)
-        if (sigkillTimeout) clearTimeout(sigkillTimeout)
-        void (async () => {
-          try {
-            await releaseTerminalPtyResources(
-              session.pty,
-              this.cleanupOptions?.platform ?? process.platform,
-            )
-          } catch (error) {
-            console.error(`Failed to release terminal ${paneId} resources:`, error)
-          }
-          if (this.sessions.get(paneId) === session) {
-            this.removeSession(session)
-          }
-          resolve(success)
-        })()
-      }
-
-      const exitHandler = () => cleanup(true)
-      this.once(`exit:${paneId}`, exitHandler)
-
-      // Escalate to SIGKILL after 2s
-      sigtermTimeout = setTimeout(() => {
-        if (resolved || !session.isAlive) return
-
-        try {
-          session.pty.kill("SIGKILL")
-        } catch (error) {
-          console.error(`Failed to send SIGKILL to terminal ${paneId}:`, error)
-        }
-
-        // Force cleanup after another 500ms
-        sigkillTimeout = setTimeout(() => {
-          if (resolved) return
-          if (session.isAlive) {
-            console.error(`Terminal ${paneId} did not exit after SIGKILL, forcing cleanup`)
-            session.isAlive = false
-          }
-          cleanup(false)
-        }, 500)
-        sigkillTimeout.unref()
-      }, 2000)
-      sigtermTimeout.unref()
-
-      // Send SIGTERM
-      try {
-        session.pty.kill()
-      } catch (error) {
-        console.error(`Failed to send SIGTERM to terminal ${paneId}:`, error)
-        session.isAlive = false
-        cleanup(false)
-      }
-    })
+  private stopExitedWindowsPty(session: TerminalSession, processIds: number[]): boolean {
+    this.stopProcessIds.set(session, processIds)
+    if (!processIds.some((processId) => isTerminalProcessAlive(processId))) return true
+    // A natural shell exit can leave the winpty agent and its native handle alive.
+    try {
+      session.pty.kill()
+      return true
+    } catch (error) {
+      console.error(`Could not stop exited terminal ${session.paneId}:`, error)
+      return false
+    }
   }
 
   getSessionCountByWorkspaceId(workspaceId: string): number {
@@ -537,16 +636,31 @@ export class TerminalManager extends EventEmitter {
           `Terminal cleanup left owned processes running: ${result.survivingProcessIds.join(", ")}`,
         )
       }
+      if (this.usesLinuxOwnership && !result.ownershipComplete) {
+        throw new Error(
+          `Terminal cleanup could not be confirmed: ${result.ownershipIssues.join("; ")}`,
+        )
+      }
     })
   }
 
   cleanupWithResult(): Promise<TerminalCleanupResult> {
     this.shuttingDown = true
-    this.cleanupPromise ??= this.performCleanup()
+    this.cleanupPromise ??= this.performCleanup().then((result) => {
+      if (
+        this.usesLinuxOwnership &&
+        (!result.ownershipComplete || result.survivingProcessIds.length > 0)
+      )
+        this.cleanupPromise = undefined
+      return result
+    })
     return this.cleanupPromise
   }
 
   private async performCleanup(): Promise<TerminalCleanupResult> {
+    if (this.usesLinuxOwnership) {
+      return this.performLinuxCleanup()
+    }
     for (const session of this.sessions.values()) {
       this.captureCleanupProcessOwnership(session)
     }
@@ -625,6 +739,42 @@ export class TerminalManager extends EventEmitter {
     if (this.sessions.get(session.paneId) !== session) return
     session.replay?.dispose()
     this.sessions.delete(session.paneId)
+  }
+
+  private async performLinuxCleanup(): Promise<TerminalCleanupResult> {
+    while (this.inFlightCreations.size > 0) {
+      await Promise.allSettled(Array.from(this.inFlightCreations))
+    }
+    const sessions = new Set([...this.sessions.values(), ...this.unstoredLinuxSessions])
+    const ownedProcessIds = new Set(this.cleanupOwnedProcessIds)
+    const survivingProcessIds = new Set<number>()
+    const ownershipIssues: string[] = []
+    await Promise.all(
+      Array.from(sessions, async (session) => {
+        const stopped = await this.killSessionWithTimeout(session.paneId, session)
+        const ownership = this.linuxProcesses.get(session)
+        try {
+          if (!ownership) throw new Error("Linux process ownership is unavailable.")
+          for (const pid of ownership.capture()) ownedProcessIds.add(pid)
+          for (const pid of ownership.survivors()) survivingProcessIds.add(pid)
+        } catch (error) {
+          ownershipIssues.push(`${session.paneId}: ${String(error)}`)
+        }
+        if (stopped) {
+          session.replay?.dispose()
+          this.unstoredLinuxSessions.delete(session)
+        } else {
+          ownershipIssues.push(`${session.paneId}: terminal stop failed; retained for retry.`)
+        }
+      }),
+    )
+    if (ownershipIssues.length === 0) this.removeAllListeners()
+    return {
+      ownedProcessIds: [...ownedProcessIds],
+      survivingProcessIds: [...survivingProcessIds],
+      ownershipComplete: ownershipIssues.length === 0,
+      ownershipIssues,
+    }
   }
 
   subscribeReplay(

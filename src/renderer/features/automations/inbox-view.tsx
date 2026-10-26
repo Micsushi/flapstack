@@ -10,81 +10,140 @@ import {
 } from "../../components/ui/workspace"
 import { Button } from "../../components/ui/button"
 import "./inbox-styles.css"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSetAtom } from "jotai"
 import { ArrowLeft, CheckCheck, ExternalLink, Inbox, Mail, MailOpen } from "lucide-react"
 import { trpc } from "../../lib/trpc"
-import { chatSourceModeAtom } from "../../lib/atoms"
-import {
-  desktopViewAtom,
-  openAgentChatIdsAtom,
-  selectedAgentChatIdAtom,
-  selectedChatIsRemoteAtom,
-  selectedChatScopeAtom,
-} from "../agents/atoms"
-import { detailsSidebarOpenAtom, detailsSidebarTabAtom } from "../details-sidebar/atoms"
+import { desktopViewAtom } from "../agents/atoms"
 import { AUTOMATION_A11Y, formatAutomationError } from "./automation-ui-model"
 import { moveAutomationInboxFocus } from "./inbox-state"
-import { automationEvidenceRunIdAtom } from "./state"
-import { useBetaFeatures } from "../settings/use-beta-features"
+import { useAutomationEvidenceNavigation } from "./use-automation-evidence-navigation"
 
 export function InboxView() {
-  const betaFeatures = useBetaFeatures()
   const setView = useSetAtom(desktopViewAtom)
   const [unreadOnly, setUnreadOnly] = useState(false)
-  const [selectedIndex, setSelectedIndex] = useState(0)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const itemRefs = useRef(new Map<string, HTMLButtonElement>())
   const utils = trpc.useUtils()
-  const inbox = trpc.automations.inbox.useQuery(
+  const inbox = trpc.automations.inbox.useInfiniteQuery(
     { unreadOnly, limit: 200 },
-    { refetchInterval: 5_000 },
+    { refetchInterval: 5_000, getNextPageParam: (page) => page.nextCursor ?? undefined },
   )
-  const projects = trpc.projects.list.useQuery()
-  const tasks = trpc.tasks.list.useQuery({ includeArchived: false })
   const markRead = trpc.automations.markInboxRead.useMutation()
   const markAll = trpc.automations.markAllInboxRead.useMutation()
-  const navigate = useEvidenceNavigation(projects.data ?? [], tasks.data ?? [])
-  const items = inbox.data?.items ?? []
+  const items = useMemo(
+    () => [
+      ...new Map(
+        inbox.data?.pages.flatMap((page) => page.items).map((item) => [item.id, item]) ?? [],
+      ).values(),
+    ],
+    [inbox.data],
+  )
+  const unreadCount = inbox.data?.pages[0]?.unreadCount
+  const [failedRead, setFailedRead] = useState<(typeof items)[number] | null>(null)
+  const clearFailedRead = useCallback(() => setFailedRead(null), [])
+  const { beginNavigation, cancelNavigation, navigate } =
+    useAutomationEvidenceNavigation(clearFailedRead)
+  const selectedIndex = Math.max(
+    0,
+    items.findIndex((item) => item.id === selectedId),
+  )
 
   useEffect(() => {
-    if (selectedIndex >= items.length) setSelectedIndex(Math.max(0, items.length - 1))
-  }, [items.length, selectedIndex])
+    if (!items.some((item) => item.id === selectedId)) setSelectedId(items[0]?.id ?? null)
+  }, [items, selectedId])
+
+  const readCacheSnapshot = () =>
+    new Map(
+      [false, true].map(
+        (unreadOnly) =>
+          [
+            unreadOnly,
+            utils.automations.inbox.getInfiniteData({ unreadOnly, limit: 200 }),
+          ] as const,
+      ),
+    )
+
+  const applyRead = (
+    ids: Set<string> | null,
+    changed: number,
+    before: ReturnType<typeof readCacheSnapshot>,
+  ) => {
+    for (const unreadOnly of [false, true]) {
+      utils.automations.inbox.setInfiniteData({ unreadOnly, limit: 200 }, (data) =>
+        data && data === before.get(unreadOnly)
+          ? {
+              ...data,
+              pages: data.pages.map((page) => ({
+                ...page,
+                unreadCount: ids ? Math.max(0, page.unreadCount - changed) : 0,
+                nextCursor: !ids && unreadOnly ? null : page.nextCursor,
+                items: page.items.flatMap((item) =>
+                  !ids || ids.has(item.id)
+                    ? unreadOnly
+                      ? []
+                      : [{ ...item, unread: false }]
+                    : [item],
+                ),
+              })),
+            }
+          : data,
+      )
+    }
+  }
 
   const selected = items[selectedIndex] ?? null
-  const openItem = async (item: (typeof items)[number]) => {
-    try {
-      if (item.unread) {
-        await markRead.mutateAsync({ ids: [item.id], unread: false })
-        await utils.automations.inbox.invalidate()
+  const openItem = async (item: (typeof items)[number], withoutMarkingRead = false) => {
+    const isCurrent = beginNavigation()
+    setFailedRead(null)
+    setMessage(null)
+    if (item.unread && !withoutMarkingRead) {
+      const before = readCacheSnapshot()
+      let result: { changed: number }
+      try {
+        result = await markRead.mutateAsync({ ids: [item.id], unread: false })
+      } catch (error) {
+        if (isCurrent()) {
+          setMessage(
+            `Could not save read status for “${item.title}”: ${formatAutomationError(error)}`,
+          )
+          setFailedRead(item)
+        }
+        return
       }
-      navigate(item)
+      applyRead(new Set([item.id]), result.changed, before)
+      // A refresh failure must not turn a successful read write into a failed write.
+      void utils.automations.inbox.invalidate().catch(() => {
+        // The inbox query retains its refresh error and Retry action.
+      })
+    }
+    try {
+      if (isCurrent()) await navigate(item, isCurrent)
     } catch (error) {
-      setMessage(formatAutomationError(error))
+      if (isCurrent()) setMessage(formatAutomationError(error))
     }
   }
 
   const onListKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === "ArrowDown") {
       event.preventDefault()
-      setSelectedIndex(
-        moveAutomationInboxFocus({
-          direction: "next",
-          currentIndex: selectedIndex,
-          itemIds: items.map((item) => item.id),
-          elements: itemRefs.current,
-        }),
-      )
+      const index = moveAutomationInboxFocus({
+        direction: "next",
+        currentIndex: selectedIndex,
+        itemIds: items.map((item) => item.id),
+        elements: itemRefs.current,
+      })
+      setSelectedId(items[index]?.id ?? null)
     } else if (event.key === "ArrowUp") {
       event.preventDefault()
-      setSelectedIndex(
-        moveAutomationInboxFocus({
-          direction: "previous",
-          currentIndex: selectedIndex,
-          itemIds: items.map((item) => item.id),
-          elements: itemRefs.current,
-        }),
-      )
+      const index = moveAutomationInboxFocus({
+        direction: "previous",
+        currentIndex: selectedIndex,
+        itemIds: items.map((item) => item.id),
+        elements: itemRefs.current,
+      })
+      setSelectedId(items[index]?.id ?? null)
     } else if (event.key === "Enter" && selected) {
       event.preventDefault()
       void openItem(selected)
@@ -92,12 +151,20 @@ export function InboxView() {
   }
 
   const markEverythingRead = async () => {
+    const isCurrent = beginNavigation()
+    setFailedRead(null)
+    const before = readCacheSnapshot()
     try {
       const result = await markAll.mutateAsync()
-      setMessage(`${result.changed} inbox items marked read.`)
-      await utils.automations.inbox.invalidate()
+      applyRead(null, result.changed, before)
+      if (isCurrent()) {
+        setMessage(`${result.changed} inbox items marked read.`)
+      }
+      void utils.automations.inbox.invalidate().catch(() => {
+        // The query exposes refresh failure without replacing a confirmed write.
+      })
     } catch (error) {
-      setMessage(formatAutomationError(error))
+      if (isCurrent()) setMessage(formatAutomationError(error))
     }
   }
 
@@ -128,7 +195,7 @@ export function InboxView() {
             size="workspace"
             type="button"
             onClick={() => void markEverythingRead()}
-            disabled={(inbox.data?.unreadCount ?? 0) === 0 || markAll.isPending}
+            disabled={unreadCount === undefined || unreadCount === 0 || markAll.isPending}
             className="gap-2"
           >
             <CheckCheck className="h-4 w-4" />
@@ -141,13 +208,18 @@ export function InboxView() {
             <input
               type="checkbox"
               checked={unreadOnly}
-              onChange={(event) => setUnreadOnly(event.target.checked)}
+              onChange={(event) => {
+                cancelNavigation()
+                setFailedRead(null)
+                setMessage(null)
+                setUnreadOnly(event.target.checked)
+              }}
               aria-label={AUTOMATION_A11Y.unreadFilter}
             />
             Unread only
           </label>
           <span className="text-xs text-muted-foreground" aria-live="polite">
-            {inbox.data?.unreadCount ?? 0} unread
+            {unreadCount !== undefined ? `${unreadCount} unread` : "Unread count unavailable"}
           </span>
         </div>
         {message && (
@@ -155,17 +227,31 @@ export function InboxView() {
             {message}
           </p>
         )}
+        {failedRead && (
+          <div className="mb-3 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="workspace"
+              onClick={() => void openItem(failedRead)}
+            >
+              Retry marking read
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="workspace"
+              className="h-auto whitespace-normal text-left"
+              onClick={() => void openItem(failedRead, true)}
+            >
+              Open evidence without marking read
+            </Button>
+          </div>
+        )}
 
-        {inbox.isLoading ? (
+        {inbox.isLoading && !inbox.data ? (
           <p className="py-12 text-center text-sm text-muted-foreground">Loading local inbox…</p>
-        ) : inbox.error ? (
-          <p
-            role="alert"
-            className="rounded-lg border border-red-500/30 bg-red-500/5 p-4 text-sm text-red-700 dark:text-red-300"
-          >
-            {inbox.error.message}
-          </p>
-        ) : items.length === 0 ? (
+        ) : inbox.error && !inbox.data ? null : !inbox.data ? null : items.length === 0 ? (
           <div className="rounded-lg border border-dashed p-10 text-center">
             <MailOpen className="mx-auto h-6 w-6 text-muted-foreground" />
             <p className="mt-2 text-sm font-medium">No automation inbox items</p>
@@ -189,7 +275,7 @@ export function InboxView() {
                   }}
                   type="button"
                   aria-current={index === selectedIndex ? "true" : undefined}
-                  onFocus={() => setSelectedIndex(index)}
+                  onFocus={() => setSelectedId(item.id)}
                   onClick={() => void openItem(item)}
                   className={`border p-3 ${index === selectedIndex ? "border-ring/50 bg-muted/30" : "bg-card"}`}
                 >
@@ -224,56 +310,39 @@ export function InboxView() {
             ))}
           </ul>
         )}
+
+        {(inbox.data || inbox.error) && (
+          <Button
+            variant="outline"
+            size="workspace"
+            type="button"
+            className="mt-3"
+            disabled={inbox.isFetching}
+            onClick={() =>
+              void (inbox.isFetchNextPageError || (!inbox.error && inbox.hasNextPage)
+                ? inbox.fetchNextPage()
+                : inbox.refetch())
+            }
+          >
+            {inbox.isFetchingNextPage
+              ? "Loading more…"
+              : inbox.error
+                ? "Retry"
+                : inbox.hasNextPage
+                  ? "Load more inbox items"
+                  : "Refresh inbox"}
+          </Button>
+        )}
+        {inbox.error && (
+          <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">
+            {inbox.isFetchNextPageError
+              ? "More inbox items could not be loaded; showing the last available items."
+              : inbox.data
+                ? "Inbox refresh failed; showing the last available items."
+                : inbox.error.message}
+          </p>
+        )}
       </WorkspaceContent>
     </WorkspacePage>
   )
-}
-
-function useEvidenceNavigation(
-  projects: Array<{ id: string; name: string }>,
-  tasks: Array<{ id: string; name: string; projectId: string }>,
-) {
-  const setChat = useSetAtom(selectedAgentChatIdAtom)
-  const setOpenChats = useSetAtom(openAgentChatIdsAtom)
-  const setRemote = useSetAtom(selectedChatIsRemoteAtom)
-  const setScope = useSetAtom(selectedChatScopeAtom)
-  const setSource = useSetAtom(chatSourceModeAtom)
-  const setView = useSetAtom(desktopViewAtom)
-  const setDetailsOpen = useSetAtom(detailsSidebarOpenAtom)
-  const setDetailsTab = useSetAtom(detailsSidebarTabAtom)
-  const setRun = useSetAtom(automationEvidenceRunIdAtom)
-  return (item: {
-    chatId: string | null
-    taskId: string | null
-    projectId: string | null
-    runId: string | null
-  }) => {
-    if (item.taskId) {
-      const task = tasks.find((candidate) => candidate.id === item.taskId)
-      const projectId = item.projectId ?? task?.projectId ?? ""
-      const project = projects.find((candidate) => candidate.id === projectId)
-      setScope({
-        type: "task",
-        id: item.taskId,
-        name: task?.name ?? "Task",
-        projectId,
-        projectName: project?.name ?? null,
-      })
-    } else if (item.projectId) {
-      const project = projects.find((candidate) => candidate.id === item.projectId)
-      setScope({ type: "project", id: item.projectId, name: project?.name ?? "Project" })
-    }
-    if (item.chatId) {
-      setChat(item.chatId)
-      setOpenChats((current) =>
-        current.includes(item.chatId!) ? current : [...current, item.chatId!],
-      )
-      setRemote(false)
-      setSource("local")
-      setDetailsOpen(true)
-      setDetailsTab("details")
-      setRun(item.runId)
-    }
-    setView(null)
-  }
 }

@@ -1,6 +1,14 @@
 import type { inferRouterOutputs } from "@trpc/server"
-import { useEffect, useMemo, useState } from "react"
-import { ArchiveRestore, Download, GitBranch, Loader2, ShieldCheck, Upload } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import {
+  ArchiveRestore,
+  Download,
+  GitBranch,
+  Loader2,
+  RefreshCw,
+  ShieldCheck,
+  Upload,
+} from "lucide-react"
 import type { AppRouter } from "../../../../main/lib/trpc/routers"
 import type { PortableScopeId } from "../../../../shared/portability"
 import {
@@ -34,6 +42,17 @@ export function AgentsPortabilityTab() {
   const [importProjectRoots, setImportProjectRoots] = useState("")
   const [importVaultRoots, setImportVaultRoots] = useState("")
   const [activeExportId, setActiveExportId] = useState<string | null>(null)
+  const importGeneration = useRef(0)
+  const syncGeneration = useRef(0)
+  const browseGeneration = useRef(0)
+  useEffect(
+    () => () => {
+      importGeneration.current += 1
+      syncGeneration.current += 1
+      browseGeneration.current += 1
+    },
+    [],
+  )
   const [plan, setPlan] = useState<ImportPlan | null>(null)
   const [page, setPage] = useState(0)
   const [resolutions, setResolutions] = useState<Record<string, Resolution>>({})
@@ -92,10 +111,23 @@ export function AgentsPortabilityTab() {
     createExport.isPending ||
     dryRun.isPending ||
     applyImport.isPending ||
+    prepareImportConfirmation.isPending ||
+    restoreBackup.isPending ||
+    recover.isPending ||
+    unlinkSync.isPending ||
     linkSync.isPending ||
     pullSync.isPending ||
     commitSync.isPending ||
     pushSync.isPending
+  const queryError = capabilities.error ?? projects.error ?? privateSync.error
+  const isRefreshingReads = capabilities.isFetching || projects.isFetching || privateSync.isFetching
+  const capabilitiesUnavailable =
+    capabilities.isLoading || Boolean(capabilities.error) || !capabilities.data
+  const privateSyncUnavailable =
+    privateSync.isLoading || (Boolean(privateSync.error) && !privateSync.data)
+  const retryReads = async () => {
+    await Promise.all([capabilities.refetch(), projects.refetch(), privateSync.refetch()])
+  }
 
   useEffect(() => {
     setSyncPage((current) =>
@@ -103,18 +135,30 @@ export function AgentsPortabilityTab() {
     )
   }, [syncPreview])
 
-  const run = async (label: string, action: () => Promise<void>) => {
+  const run = async (
+    label: string,
+    action: (isCurrent: () => boolean) => Promise<void>,
+    scope?: "import" | "sync" | "browse",
+  ) => {
+    const generation =
+      scope === "sync" ? syncGeneration : scope === "browse" ? browseGeneration : importGeneration
+    const expectedGeneration = generation.current
+    const isCurrent = () => !scope || generation.current === expectedGeneration
     setError("")
     setStatus(label)
     try {
-      await action()
+      await action(isCurrent)
     } catch (caught) {
+      if (!isCurrent()) return
       setError(caught instanceof Error ? caught.message : String(caught))
       setStatus("")
     }
   }
 
   const invalidateImportPlan = () => {
+    importGeneration.current += 1
+    setError("")
+    setStatus("Import inputs changed. Run dry-run again.")
     setPlan(null)
     setResolutions({})
     setPage(0)
@@ -128,6 +172,24 @@ export function AgentsPortabilityTab() {
           Secrets stay out. Imports always dry-run. Git actions require an exact preview.
         </p>
       </header>
+
+      {queryError && (
+        <div className="flex items-start justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+          <p className="text-sm text-destructive" role="alert">
+            Portability settings unavailable: {queryError.message}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            disabled={isRefreshingReads}
+            onClick={() => void retryReads()}
+          >
+            <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry reads
+          </Button>
+        </div>
+      )}
 
       <section
         className="space-y-4 rounded-lg border border-border p-4"
@@ -152,6 +214,7 @@ export function AgentsPortabilityTab() {
                 <input
                   type="checkbox"
                   checked={selectedScopes.includes(scope.id)}
+                  disabled={capabilitiesUnavailable}
                   onChange={() => setSelectedScopes(toggle(selectedScopes, scope.id))}
                 />
                 <span>
@@ -170,6 +233,7 @@ export function AgentsPortabilityTab() {
                 <input
                   type="checkbox"
                   checked={selectedProjects.includes(project.id)}
+                  disabled={projects.isLoading || Boolean(projects.error)}
                   onChange={() => setSelectedProjects(toggle(selectedProjects, project.id))}
                 />
                 <span className="truncate">{project.name}</span>
@@ -185,22 +249,41 @@ export function AgentsPortabilityTab() {
             <LabeledInput
               label="Output directory"
               value={outputPath}
-              onChange={setOutputPath}
+              onChange={(value) => {
+                browseGeneration.current += 1
+                setOutputPath(value)
+              }}
               placeholder="/path/backup.flapstack-export"
             />
           </div>
           <Button
             variant="outline"
-            onClick={() =>
-              void chooseExportPath.mutateAsync().then((path) => path && setOutputPath(path))
-            }
+            onClick={() => {
+              browseGeneration.current += 1
+              void run(
+                "Choosing output directory...",
+                async (isCurrent) => {
+                  const path = await chooseExportPath.mutateAsync()
+                  if (!isCurrent()) return
+                  if (path) setOutputPath(path)
+                  setStatus(path ? "Output directory selected." : "Selection cancelled.")
+                },
+                "browse",
+              )
+            }}
           >
             Browse…
           </Button>
         </div>
         <div className="flex gap-2">
           <Button
-            disabled={busy || !outputPath || selectedScopes.length === 0}
+            disabled={
+              busy ||
+              capabilitiesUnavailable ||
+              Boolean(projects.error) ||
+              !outputPath ||
+              selectedScopes.length === 0
+            }
             onClick={() => {
               const operationId = crypto.randomUUID()
               setActiveExportId(operationId)
@@ -255,6 +338,7 @@ export function AgentsPortabilityTab() {
               label="Bundle directory"
               value={bundlePath}
               onChange={(value) => {
+                browseGeneration.current += 1
                 setBundlePath(value)
                 invalidateImportPlan()
               }}
@@ -263,14 +347,23 @@ export function AgentsPortabilityTab() {
           </div>
           <Button
             variant="outline"
-            onClick={() =>
-              void chooseDirectory.mutateAsync({ title: "Choose portable bundle" }).then((path) => {
-                if (path) {
-                  setBundlePath(path)
-                  invalidateImportPlan()
-                }
-              })
-            }
+            onClick={() => {
+              browseGeneration.current += 1
+              void run(
+                "Choosing portable bundle...",
+                async (isCurrent) => {
+                  const path = await chooseDirectory.mutateAsync({
+                    title: "Choose portable bundle",
+                  })
+                  if (!isCurrent()) return
+                  if (path) {
+                    setBundlePath(path)
+                    invalidateImportPlan()
+                  } else setStatus("Selection cancelled.")
+                },
+                "browse",
+              )
+            }}
           >
             Browse…
           </Button>
@@ -279,24 +372,29 @@ export function AgentsPortabilityTab() {
           variant="outline"
           disabled={busy || !bundlePath}
           onClick={() =>
-            void run("Verifying and staging import…", async () => {
-              const next = await dryRun.mutateAsync({
-                bundlePath,
-                targetRoots: {
-                  ...(importExtensionsRoot ? { extensions: importExtensionsRoot } : {}),
-                  projects: parseTargetRootMappings(importProjectRoots),
-                  projectVaults: parseTargetRootMappings(importVaultRoots),
-                },
-              })
-              setPlan(next)
-              setResolutions({})
-              setPage(0)
-              setStatus(
-                next.mappingRequirements.length > 0
-                  ? `Dry-run ready without writes. ${next.mappingRequirements.length} portable target mapping${next.mappingRequirements.length === 1 ? " is" : "s are"} required before apply.`
-                  : `Dry-run ready: ${next.summary.create} create, ${next.summary.update} update, ${next.summary.conflict} conflict, ${next.summary.skip} skip.`,
-              )
-            })
+            void run(
+              "Verifying and staging import…",
+              async (isCurrent) => {
+                const next = await dryRun.mutateAsync({
+                  bundlePath,
+                  targetRoots: {
+                    ...(importExtensionsRoot ? { extensions: importExtensionsRoot } : {}),
+                    projects: parseTargetRootMappings(importProjectRoots),
+                    projectVaults: parseTargetRootMappings(importVaultRoots),
+                  },
+                })
+                if (!isCurrent()) return
+                setPlan(next)
+                setResolutions({})
+                setPage(0)
+                setStatus(
+                  next.mappingRequirements.length > 0
+                    ? `Dry-run ready without writes. ${next.mappingRequirements.length} portable target mapping${next.mappingRequirements.length === 1 ? " is" : "s are"} required before apply.`
+                    : `Dry-run ready: ${next.summary.create} create, ${next.summary.update} update, ${next.summary.conflict} conflict, ${next.summary.skip} skip.`,
+                )
+              },
+              "import",
+            )
           }
         >
           <Upload className="mr-2 h-4 w-4" />
@@ -427,12 +525,13 @@ export function AgentsPortabilityTab() {
                           <select
                             aria-label={`Resolve conflict ${entry.id}`}
                             value={resolutions[entry.id] ?? ""}
-                            onChange={(event) =>
+                            onChange={(event) => {
+                              importGeneration.current += 1
                               setResolutions((current) => ({
                                 ...current,
                                 [entry.id]: event.target.value as Resolution,
                               }))
-                            }
+                            }}
                             className="rounded border border-input bg-background p-1"
                           >
                             <option value="">Choose…</option>
@@ -474,29 +573,37 @@ export function AgentsPortabilityTab() {
               variant="destructive"
               disabled={busy || unresolved.length > 0 || plan.mappingRequirements.length > 0}
               onClick={() => {
-                void run("Binding reviewed import…", async () => {
-                  const confirmation = await prepareImportConfirmation.mutateAsync({
-                    planId: plan.id,
-                    resolutions,
-                  })
-                  if (
-                    !window.confirm(
-                      `${importApplyConfirmation(plan.summary)}\n\nConfirmation: ${confirmation.confirmationHash}\nReviewed targets: ${JSON.stringify(confirmation.targetRoots)}`,
+                void run(
+                  "Binding reviewed import…",
+                  async (isCurrent) => {
+                    const confirmation = await prepareImportConfirmation.mutateAsync({
+                      planId: plan.id,
+                      resolutions,
+                    })
+                    if (!isCurrent()) return
+                    if (
+                      !window.confirm(
+                        `${importApplyConfirmation(plan.summary)}\n\nConfirmation: ${confirmation.confirmationHash}\nReviewed targets: ${JSON.stringify(confirmation.targetRoots)}`,
+                      )
                     )
-                  )
-                    return
-                  const result = await applyImport.mutateAsync({
-                    planId: plan.id,
-                    expectedFingerprint: plan.bundleFingerprint,
-                    expectedConfirmationHash: confirmation.confirmationHash,
-                    confirmed: true,
-                    resolutions,
-                  })
-                  setLastBackup({ operationId: result.operationId, backupPath: result.backupPath })
-                  setStatus(
-                    `Import applied: ${result.applied} changes, ${result.skipped} skipped. Backup: ${result.backupPath}${result.conflictArtifactPath ? `. Conflict artifacts: ${result.conflictArtifactPath}` : ""}`,
-                  )
-                })
+                      return
+                    const result = await applyImport.mutateAsync({
+                      planId: plan.id,
+                      expectedFingerprint: plan.bundleFingerprint,
+                      expectedConfirmationHash: confirmation.confirmationHash,
+                      confirmed: true,
+                      resolutions,
+                    })
+                    setLastBackup({
+                      operationId: result.operationId,
+                      backupPath: result.backupPath,
+                    })
+                    setStatus(
+                      `Import applied: ${result.applied} changes, ${result.skipped} skipped. Backup: ${result.backupPath}${result.conflictArtifactPath ? `. Conflict artifacts: ${result.conflictArtifactPath}` : ""}`,
+                    )
+                  },
+                  "import",
+                )
               }}
             >
               Apply reviewed import
@@ -511,6 +618,7 @@ export function AgentsPortabilityTab() {
             <Button
               variant="outline"
               className="mt-2"
+              disabled={busy}
               onClick={() => {
                 if (
                   !window.confirm(
@@ -534,6 +642,7 @@ export function AgentsPortabilityTab() {
         )}
         <Button
           variant="ghost"
+          disabled={busy}
           onClick={() => {
             if (
               !window.confirm(
@@ -565,7 +674,27 @@ export function AgentsPortabilityTab() {
             credentials.
           </p>
         </div>
-        {privateSync.data ? (
+        {privateSync.isLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading private sync state…
+          </div>
+        ) : privateSync.error && !privateSync.data ? (
+          <div className="flex items-start justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-sm text-destructive" role="alert">
+              Private sync state unavailable: {privateSync.error.message}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={privateSync.isFetching}
+              onClick={() => void privateSync.refetch()}
+            >
+              <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+            </Button>
+          </div>
+        ) : privateSync.data ? (
           <div className="space-y-3">
             <div className="rounded bg-muted p-3 text-xs">
               <p className="font-medium">Linked: {privateSync.data.repoPath}</p>
@@ -584,23 +713,31 @@ export function AgentsPortabilityTab() {
                 <Button
                   key={action}
                   variant="outline"
-                  onClick={() =>
-                    void run(`Previewing ${action}…`, async () => {
-                      setSyncPreview(null)
-                      setSyncPage(0)
-                      const preview = await utils.client.importExport.previewPrivateSync.query({
-                        action,
-                      })
-                      setSyncPreview(preview)
-                      setStatus(`${action} preview ready.`)
-                    })
-                  }
+                  disabled={busy}
+                  onClick={() => {
+                    syncGeneration.current += 1
+                    void run(
+                      `Previewing ${action}…`,
+                      async (isCurrent) => {
+                        setSyncPreview(null)
+                        setSyncPage(0)
+                        const preview = await utils.client.importExport.previewPrivateSync.query({
+                          action,
+                        })
+                        if (!isCurrent()) return
+                        setSyncPreview(preview)
+                        setStatus(`${action} preview ready.`)
+                      },
+                      "sync",
+                    )
+                  }}
                 >
                   Preview {action}
                 </Button>
               ))}
               <Button
                 variant="destructive"
+                disabled={busy}
                 onClick={() => {
                   if (
                     !window.confirm(
@@ -608,6 +745,8 @@ export function AgentsPortabilityTab() {
                     )
                   )
                     return
+                  syncGeneration.current += 1
+                  setSyncPreview(null)
                   void run("Unlinking…", async () => {
                     await unlinkSync.mutateAsync({ confirmed: true })
                     await privateSync.refetch()
@@ -676,6 +815,7 @@ export function AgentsPortabilityTab() {
                       )
                     )
                       return
+                    syncGeneration.current += 1
                     void run(`Running ${syncPreview.action}…`, async () => {
                       if (syncPreview.action === "pull")
                         await pullSync.mutateAsync({
@@ -712,17 +852,30 @@ export function AgentsPortabilityTab() {
                 <LabeledInput
                   label="Local repository path"
                   value={syncRepo}
-                  onChange={setSyncRepo}
+                  onChange={(value) => {
+                    browseGeneration.current += 1
+                    setSyncRepo(value)
+                  }}
                   placeholder="/path/to/private-sync"
                 />
               </div>
               <Button
                 variant="outline"
-                onClick={() =>
-                  void chooseDirectory
-                    .mutateAsync({ title: "Choose private sync repository" })
-                    .then((path) => path && setSyncRepo(path))
-                }
+                onClick={() => {
+                  browseGeneration.current += 1
+                  void run(
+                    "Choosing private sync repository...",
+                    async (isCurrent) => {
+                      const path = await chooseDirectory.mutateAsync({
+                        title: "Choose private sync repository",
+                      })
+                      if (!isCurrent()) return
+                      if (path) setSyncRepo(path)
+                      setStatus(path ? "Repository path selected." : "Selection cancelled.")
+                    },
+                    "browse",
+                  )
+                }}
               >
                 Browse…
               </Button>
@@ -752,7 +905,14 @@ export function AgentsPortabilityTab() {
               </div>
             </fieldset>
             <Button
-              disabled={busy || !syncRepo || !syncRemote || syncScopes.length === 0}
+              disabled={
+                busy ||
+                privateSyncUnavailable ||
+                capabilitiesUnavailable ||
+                !syncRepo ||
+                !syncRemote ||
+                syncScopes.length === 0
+              }
               onClick={() => {
                 if (
                   !window.confirm(

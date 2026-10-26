@@ -126,19 +126,47 @@ export function AgentsLayout() {
   }, [setSidebarWidth, sidebarWidth])
 
   // Fetch projects to validate selectedProject exists
-  const { data: projects, isLoading: isLoadingProjects } = trpc.projects.list.useQuery()
+  const {
+    data: projects,
+    isLoading: isLoadingProjects,
+    isError: isProjectsError,
+  } = trpc.projects.list.useQuery(undefined, {
+    placeholderData: (previous) => previous,
+  })
+
+  // The sidebar list excludes archives; direct navigation may still select one.
+  const selectedProjectQuery = trpc.projects.get.useQuery(
+    { id: selectedProject?.id ?? "" },
+    {
+      enabled: Boolean(
+        selectedProject && projects && !projects.some((p) => p.id === selectedProject.id),
+      ),
+    },
+  )
 
   // Validated project - only valid if exists in DB
   // While loading, trust localStorage value to prevent clearing on app restart
   const validatedProject = useMemo(() => {
     if (!selectedProject) return null
     // While loading, trust localStorage value to prevent flicker and clearing
-    if (isLoadingProjects) return selectedProject
+    if (isLoadingProjects || isProjectsError) return selectedProject
     // After loading, validate against DB
     if (!projects) return null
-    const exists = projects.some((p) => p.id === selectedProject.id)
+    const exists =
+      projects.some((p) => p.id === selectedProject.id) ||
+      selectedProjectQuery.data ||
+      selectedProjectQuery.isLoading ||
+      selectedProjectQuery.error
     return exists ? selectedProject : null
-  }, [selectedProject, projects, isLoadingProjects])
+  }, [
+    selectedProject,
+    projects,
+    isLoadingProjects,
+    isProjectsError,
+    selectedProjectQuery.data,
+    selectedProjectQuery.isLoading,
+    selectedProjectQuery.error,
+  ])
 
   // Clear invalid project from storage (only after loading completes)
   useEffect(() => {

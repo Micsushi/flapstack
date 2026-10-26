@@ -2,6 +2,7 @@ import { app, BrowserWindow } from "electron"
 import { createHash } from "node:crypto"
 import { join } from "node:path"
 import { z } from "zod"
+import { profileActionHistory, personalityHistoryPort } from "../../agent-profiles/action-history"
 import {
   agentPersonalityTraitsSchema,
   agentPersonalityVersionRefSchema,
@@ -78,7 +79,12 @@ export const agentPersonalitiesRouter = router({
         })
         .strict(),
     )
-    .mutation(({ input }) => changed(createAgentPersonalityStore().update(input))),
+    .mutation(async ({ input }) => {
+      const store = createAgentPersonalityStore()
+      const owner = `personalities:${app.getPath("userData")}`
+      const port = personalityHistoryPort(store, owner, input.personalityId, input.scope)
+      return changed(await profileActionHistory.change(owner, port, () => store.update(input)))
+    }),
 
   archive: publicProcedure
     .input(
@@ -90,7 +96,12 @@ export const agentPersonalitiesRouter = router({
         })
         .strict(),
     )
-    .mutation(({ input }) => changed(createAgentPersonalityStore().archive(input))),
+    .mutation(async ({ input }) => {
+      const store = createAgentPersonalityStore()
+      const owner = `personalities:${app.getPath("userData")}`
+      const port = personalityHistoryPort(store, owner, input.personalityId, input.scope, "archive")
+      return changed(await profileActionHistory.change(owner, port, () => store.archive(input)))
+    }),
 
   restore: publicProcedure
     .input(
@@ -102,7 +113,33 @@ export const agentPersonalitiesRouter = router({
         })
         .strict(),
     )
-    .mutation(({ input }) => changed(createAgentPersonalityStore().restore(input))),
+    .mutation(async ({ input }) => {
+      const store = createAgentPersonalityStore()
+      const owner = `personalities:${app.getPath("userData")}`
+      const port = personalityHistoryPort(store, owner, input.personalityId, input.scope, "archive")
+      return changed(await profileActionHistory.change(owner, port, () => store.restore(input)))
+    }),
+
+  applyHistory: publicProcedure
+    .input(
+      z
+        .object({
+          actionId: z.string().uuid(),
+          direction: z.enum(["undo", "redo"]),
+          sequence: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+        })
+        .strict(),
+    )
+    .mutation(async ({ input }) =>
+      changed(
+        await profileActionHistory.apply(
+          `personalities:${app.getPath("userData")}`,
+          input.actionId,
+          input.direction,
+          input.sequence,
+        ),
+      ),
+    ),
 
   previewInlineConversion: publicProcedure
     .input(

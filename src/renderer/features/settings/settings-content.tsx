@@ -57,7 +57,7 @@ export function SettingsContent() {
   // Escape key closes settings
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && !e.defaultPrevented) {
         e.preventDefault()
         if (searchQuery) {
           setSearchQuery("")

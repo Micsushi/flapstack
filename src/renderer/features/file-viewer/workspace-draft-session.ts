@@ -89,7 +89,25 @@ export function createWorkspaceDraftSession(
   }
   const applySave = (result: Saved) => {
     pendingSave = null
-    const conflict = !result.ok && (result.reason === "conflict" || result.reason === "expired")
+    if (
+      !result.ok &&
+      result.reason === "rejected" &&
+      result.draft.content !== state.draft?.content
+    ) {
+      blocked = true
+      publish({
+        interruptedSave: false,
+        autosave: false,
+        error:
+          "The stored draft changed. Your local text is preserved; save a separate copy before continuing.",
+      })
+      return false
+    }
+    const conflict =
+      !result.ok &&
+      (result.reason === "conflict" ||
+        result.reason === "expired" ||
+        (result.reason === "rejected" && state.conflict))
     publish({
       ...("draft" in result ? { draft: result.draft } : {}),
       ...(result.ok
@@ -102,12 +120,15 @@ export function createWorkspaceDraftSession(
           }
         : {}),
       interruptedSave: false,
+      ...(!result.ok && result.reason === "rejected" ? { autosave: false } : {}),
       conflict,
       error: result.ok
         ? null
         : conflict
           ? "File changed or save history expired. Your draft is preserved; review before saving."
-          : `Save did not complete (${result.reason}). Your draft is preserved.`,
+          : "message" in result
+            ? result.message
+            : `Save did not complete (${result.reason}). Your draft is preserved.`,
     })
     if (result.ok) {
       try {
@@ -238,6 +259,43 @@ export function createWorkspaceDraftSession(
         const synced = await syncBuffer()
         return saved && synced
       }),
+    reopen: () => {
+      cancelAutosave()
+      return enqueue(async () => {
+        const previous = state.draft
+        const opened = await client.open({
+          ...target,
+          ...(previous
+            ? {
+                recovery: {
+                  draftId: previous.id,
+                  leaseToken,
+                  content: previous.content,
+                  ...(pendingUpdate ? { pendingUpdateContent: pendingUpdate.content } : {}),
+                },
+              }
+            : {}),
+        })
+        const localChanged = !!pendingUpdate || (!!previous && state.content !== previous.content)
+        leaseToken = opened.leaseToken
+        // Retrying ownership changes only the token, never an uncertain save's identity/revision.
+        if (pendingUpdate) pendingUpdate = { ...pendingUpdate, leaseToken }
+        if (pendingSave) pendingSave = { ...pendingSave, leaseToken }
+        blocked = false
+        publish({
+          phase: "ready",
+          content: localChanged ? state.content : opened.draft.content,
+          draft: opened.draft,
+          disk: null,
+          conflict: opened.conflict,
+          error: null,
+          autosave: false,
+          autosaveAllowed: opened.autosaveAllowed === true,
+        })
+        const saved = pendingSave ? applySave(await client.save(pendingSave)) : true
+        return (await syncBuffer()) && saved
+      })
+    },
     refreshDisk: () =>
       enqueue(async () => {
         if (!state.draft) return false
@@ -259,6 +317,19 @@ export function createWorkspaceDraftSession(
           return false
         }
       }),
+    releaseLeasePreservingText: () => {
+      cancelAutosave()
+      return enqueue(async () => {
+        await client.release(draftTarget())
+        blocked = true
+        publish({
+          autosave: false,
+          error:
+            "The editor lease was released. Local text is retained; reacquire the editor to continue.",
+        })
+        return true
+      })
+    },
     release: (isIdle: () => boolean = () => true) => {
       if (isIdle()) cancelAutosave()
       return enqueue(async () => {

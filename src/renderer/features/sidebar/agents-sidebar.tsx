@@ -47,6 +47,8 @@ import { configureChatDragFeedback } from "../agents/lib/chat-drag-feedback"
 import {
   ChevronDown,
   ChevronRight,
+  AlertCircle,
+  Loader2,
   MoreHorizontal,
   Pin,
   MessageSquarePlus,
@@ -152,6 +154,7 @@ import {
 } from "../agents/atoms"
 import {
   useAgentSubChatStore,
+  getAgentSubChatStore,
   OPEN_SUB_CHATS_CHANGE_EVENT,
   type OpenSubChatsChangeDetail,
 } from "../agents/stores/sub-chat-store"
@@ -191,7 +194,6 @@ import { resolveSectionHeaderScopeSelection } from "./section-header-scope"
 import { TypewriterText } from "../../components/ui/typewriter-text"
 import { exportChat, copyChat, type ExportFormat } from "../agents/lib/export-chat"
 import { ScopedSearchPanel } from "../search/scoped-search-panel"
-import { StartAgentDialog } from "../agent-profiles/start-agent-dialog"
 import { getModelChipMeta } from "../agents/constants"
 import { hasProviderChipIcon, ProviderChipIcon } from "../agents/components/provider-chip-icon"
 import { focusScopedSearchResultAtom } from "../agents/search/chat-search-atoms"
@@ -1775,6 +1777,8 @@ function chatListSectionPropsAreEqual(
   if (prevProps.archivePending !== nextProps.archivePending) return false
   if (prevProps.archiveBatchPending !== nextProps.archiveBatchPending) return false
   if (prevProps.lifecyclePending !== nextProps.lifecyclePending) return false
+  if (prevProps.onOpenWorkBoard !== nextProps.onOpenWorkBoard) return false
+  if (prevProps.onCreateProjectTask !== nextProps.onCreateProjectTask) return false
   if (prevProps.title !== nextProps.title) return false
   if (prevProps.lifecycleTarget?.type !== nextProps.lifecycleTarget?.type) return false
   if (prevProps.lifecycleTarget?.id !== nextProps.lifecycleTarget?.id) return false
@@ -1936,7 +1940,7 @@ interface ChatListSectionProps {
   onCreateGlobalChat?: () => void
   onCreateProjectChat?: (projectId: string) => void
   onCreateProjectTask?: (projectId: string) => void
-  onCreateTaskChat?: (taskId: string) => void
+  onOpenWorkBoard?: () => void
   onOpenRepositoryOverview?: (projectId: string) => void
   onChangeProjectColor?: (projectId: string, color: string) => void
   onSetProjectQuickAccess?: (projectId: string, isInQuickAccess: boolean) => void
@@ -2026,7 +2030,7 @@ const ChatListSection = React.memo(function ChatListSection({
   onCreateGlobalChat,
   onCreateProjectChat,
   onCreateProjectTask,
-  onCreateTaskChat,
+  onOpenWorkBoard,
   onOpenRepositoryOverview,
   onChangeProjectColor,
   onSetProjectQuickAccess,
@@ -2051,7 +2055,6 @@ const ChatListSection = React.memo(function ChatListSection({
   const isProjectSection = kind === "project"
   const isTaskSection = kind === "task"
   const isReferenceSection = kind === "pinned" || kind === "starred" || kind === "tagged"
-  const [startAgentDialogOpen, setStartAgentDialogOpen] = useState(false)
   const isTopLevelScopedSection = isGlobalSection || isProjectSection
   const sectionDragKind =
     lifecycleTarget?.type === "project"
@@ -2268,7 +2271,7 @@ const ChatListSection = React.memo(function ChatListSection({
             onSelect={() => onCreateProjectTask?.(lifecycleTarget.id)}
           >
             <ListPlus className="h-3.5 w-3.5 text-muted-foreground" />
-            New task
+            New task in Work board
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           {onOpenRepositoryOverview && (
@@ -2336,47 +2339,49 @@ const ChatListSection = React.memo(function ChatListSection({
           <DropdownMenuSeparator />
         </>
       )}
-      {lifecycleTarget.type === "task" && (
+      {lifecycleTarget.type === "task" ? (
+        <>
+          <p className="px-2 py-1.5 text-xs text-muted-foreground">
+            Historical task. Read-only; existing chats remain available.
+          </p>
+          <DropdownMenuItem className="gap-2" onSelect={() => onOpenWorkBoard?.()}>
+            <Columns3 className="h-3.5 w-3.5 text-muted-foreground" />
+            Open Work board
+          </DropdownMenuItem>
+        </>
+      ) : (
         <>
           <DropdownMenuItem
             className="gap-2"
-            onSelect={() => onCreateTaskChat?.(lifecycleTarget.id)}
+            onSelect={() =>
+              onToggleLifecyclePin(
+                lifecycleTarget.type,
+                lifecycleTarget.id,
+                lifecycleTarget.isPinned,
+              )
+            }
+            disabled={lifecyclePending}
           >
-            <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
-            New chat
+            <Pin className="h-3.5 w-3.5 text-muted-foreground" />
+            {lifecycleTarget.isPinned ? "Unpin" : "Pin"}
           </DropdownMenuItem>
-          <DropdownMenuItem className="gap-2" onSelect={() => setStartAgentDialogOpen(true)}>
-            <Network className="h-3.5 w-3.5 text-muted-foreground" />
-            Start named agent
+          <DropdownMenuItem
+            className="gap-2"
+            onSelect={() => onToggleLifecycleStar(lifecycleTarget.type, lifecycleTarget.id)}
+          >
+            <Star className="h-3.5 w-3.5 text-muted-foreground" />
+            {lifecycleTarget.isStarred ? "Unstar" : "Star"}
           </DropdownMenuItem>
-          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="gap-2"
+            onSelect={() => onArchiveLifecycle(lifecycleTarget.type, lifecycleTarget.id)}
+            disabled={lifecyclePending}
+          >
+            <ArchiveIcon className="h-3.5 w-3.5 text-muted-foreground" />
+            Archive
+          </DropdownMenuItem>
         </>
       )}
-      <DropdownMenuItem
-        className="gap-2"
-        onSelect={() =>
-          onToggleLifecyclePin(lifecycleTarget.type, lifecycleTarget.id, lifecycleTarget.isPinned)
-        }
-        disabled={lifecyclePending}
-      >
-        <Pin className="h-3.5 w-3.5 text-muted-foreground" />
-        {lifecycleTarget.isPinned ? "Unpin" : "Pin"}
-      </DropdownMenuItem>
-      <DropdownMenuItem
-        className="gap-2"
-        onSelect={() => onToggleLifecycleStar(lifecycleTarget.type, lifecycleTarget.id)}
-      >
-        <Star className="h-3.5 w-3.5 text-muted-foreground" />
-        {lifecycleTarget.isStarred ? "Unstar" : "Star"}
-      </DropdownMenuItem>
-      <DropdownMenuItem
-        className="gap-2"
-        onSelect={() => onArchiveLifecycle(lifecycleTarget.type, lifecycleTarget.id)}
-        disabled={lifecyclePending}
-      >
-        <ArchiveIcon className="h-3.5 w-3.5 text-muted-foreground" />
-        Archive
-      </DropdownMenuItem>
     </>
   ) : null
 
@@ -2396,7 +2401,7 @@ const ChatListSection = React.memo(function ChatListSection({
             onClick={() => onCreateProjectTask?.(lifecycleTarget.id)}
           >
             <ListPlus className="h-3.5 w-3.5 text-muted-foreground" />
-            New task
+            New task in Work board
           </ContextMenuItem>
           <ContextMenuSeparator />
           {onOpenRepositoryOverview && (
@@ -2464,57 +2469,54 @@ const ChatListSection = React.memo(function ChatListSection({
           <ContextMenuSeparator />
         </>
       )}
-      {lifecycleTarget.type === "task" && (
+      {lifecycleTarget.type === "task" ? (
         <>
-          <ContextMenuItem className="gap-2" onClick={() => onCreateTaskChat?.(lifecycleTarget.id)}>
-            <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
-            New chat
+          <p className="px-2 py-1.5 text-xs text-muted-foreground">
+            Historical task. Read-only; existing chats remain available.
+          </p>
+          <ContextMenuItem className="gap-2" onClick={() => onOpenWorkBoard?.()}>
+            <Columns3 className="h-3.5 w-3.5 text-muted-foreground" />
+            Open Work board
           </ContextMenuItem>
-          <ContextMenuItem className="gap-2" onClick={() => setStartAgentDialogOpen(true)}>
-            <Network className="h-3.5 w-3.5 text-muted-foreground" />
-            Start named agent
+        </>
+      ) : (
+        <>
+          <ContextMenuItem
+            className="gap-2"
+            onClick={() =>
+              onToggleLifecyclePin(
+                lifecycleTarget.type,
+                lifecycleTarget.id,
+                lifecycleTarget.isPinned,
+              )
+            }
+            disabled={lifecyclePending}
+          >
+            <Pin className="h-3.5 w-3.5 text-muted-foreground" />
+            {lifecycleTarget.isPinned ? "Unpin" : "Pin"}
           </ContextMenuItem>
-          <ContextMenuSeparator />
+          <ContextMenuItem
+            className="gap-2"
+            onClick={() => onToggleLifecycleStar(lifecycleTarget.type, lifecycleTarget.id)}
+          >
+            <Star className="h-3.5 w-3.5 text-muted-foreground" />
+            {lifecycleTarget.isStarred ? "Unstar" : "Star"}
+          </ContextMenuItem>
+          <ContextMenuItem
+            className="gap-2"
+            onClick={() => onArchiveLifecycle(lifecycleTarget.type, lifecycleTarget.id)}
+            disabled={lifecyclePending}
+          >
+            <ArchiveIcon className="h-3.5 w-3.5 text-muted-foreground" />
+            Archive
+          </ContextMenuItem>
         </>
       )}
-      <ContextMenuItem
-        className="gap-2"
-        onClick={() =>
-          onToggleLifecyclePin(lifecycleTarget.type, lifecycleTarget.id, lifecycleTarget.isPinned)
-        }
-        disabled={lifecyclePending}
-      >
-        <Pin className="h-3.5 w-3.5 text-muted-foreground" />
-        {lifecycleTarget.isPinned ? "Unpin" : "Pin"}
-      </ContextMenuItem>
-      <ContextMenuItem
-        className="gap-2"
-        onClick={() => onToggleLifecycleStar(lifecycleTarget.type, lifecycleTarget.id)}
-      >
-        <Star className="h-3.5 w-3.5 text-muted-foreground" />
-        {lifecycleTarget.isStarred ? "Unstar" : "Star"}
-      </ContextMenuItem>
-      <ContextMenuItem
-        className="gap-2"
-        onClick={() => onArchiveLifecycle(lifecycleTarget.type, lifecycleTarget.id)}
-        disabled={lifecyclePending}
-      >
-        <ArchiveIcon className="h-3.5 w-3.5 text-muted-foreground" />
-        Archive
-      </ContextMenuItem>
     </>
   ) : null
 
   return (
     <>
-      {lifecycleTarget?.type === "task" && (
-        <StartAgentDialog
-          open={startAgentDialogOpen}
-          onOpenChange={setStartAgentDialogOpen}
-          source={{ kind: "task", taskId: lifecycleTarget.id }}
-          projectId={parentProjectId ?? null}
-        />
-      )}
       {showBeforeSectionDrop && effectiveSectionDragId && (
         <DropSeparator
           className={sectionDropSeparatorClass}
@@ -2556,6 +2558,7 @@ const ChatListSection = React.memo(function ChatListSection({
                 onPointerDown={handleSectionPointerDragStart}
                 onClick={handleHeaderClick}
                 onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return
                   if (event.key !== "Enter" && event.key !== " ") return
                   event.preventDefault()
                   handleHeaderClick()
@@ -2625,6 +2628,9 @@ const ChatListSection = React.memo(function ChatListSection({
                   >
                     {title}
                   </h3>
+                  {isTaskSection && (
+                    <span className="shrink-0 text-[11px] text-white/90">Read-only</span>
+                  )}
                   {canCollapse && (
                     <SidebarDisclosure
                       isCollapsed={isCollapsed}
@@ -2652,7 +2658,7 @@ const ChatListSection = React.memo(function ChatListSection({
                           onCreateProjectChat?.(lifecycleTarget.id)
                         }
                       } else {
-                        onCreateTaskChat?.(lifecycleTarget!.id)
+                        onOpenWorkBoard?.()
                       }
                     }}
                     onContextMenu={(event) => {
@@ -2677,19 +2683,19 @@ const ChatListSection = React.memo(function ChatListSection({
                       isGlobalSection
                         ? "New global chat"
                         : lifecycleTarget?.type === "project"
-                          ? "New project chat (Ctrl/Cmd+click: new task)"
-                          : "New task chat"
+                          ? "New project chat (Ctrl/Cmd+click: new task in Work board)"
+                          : "Open Work board for current tasks"
                     }
                     title={
                       lifecycleTarget?.type === "project"
-                        ? "New chat · Ctrl/Cmd+click for new task"
+                        ? "New chat · Ctrl/Cmd+click for Work board"
                         : undefined
                     }
                   >
                     {isGlobalSection || lifecycleTarget?.type === "project" ? (
                       <SquarePen className="h-3.5 w-3.5" />
                     ) : (
-                      <Plus className="h-3.5 w-3.5" />
+                      <Columns3 className="h-3.5 w-3.5" />
                     )}
                   </button>
                 )}
@@ -2715,7 +2721,13 @@ const ChatListSection = React.memo(function ChatListSection({
                         <MoreHorizontal className="h-3.5 w-3.5" />
                       </button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-52" sideOffset={4}>
+                    <DropdownMenuContent
+                      align="end"
+                      className="w-52"
+                      sideOffset={4}
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                    >
                       {dropdownLifecycleMenu}
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -3128,10 +3140,16 @@ function AgentsSidebarInner({
     if (!betaFeatures.branchesAndWorktrees) setRepositoryOverviewProjectId(null)
   }, [betaFeatures.branchesAndWorktrees])
   const [isSearchFocused, setIsSearchFocused] = useState(false)
+  const [searchDismissed, setSearchDismissed] = useState(false)
+  const chatNavigationRequest = useRef(0)
+  const navigatedChat = useRef<{ id: string; projectId: string | null } | null>(null)
+  const searchResultsRef = useRef<HTMLDivElement>(null)
   const [isArchiveOpen, setIsArchiveOpen] = useState(false)
   const [archiveSearchQuery, setArchiveSearchQuery] = useState("")
   const [isArchiveSelectMode, setIsArchiveSelectMode] = useState(false)
   const [selectedArchivedChatIds, setSelectedArchivedChatIds] = useState<Set<string>>(new Set())
+  const selectedArchivedChatIdsRef = useRef(selectedArchivedChatIds)
+  selectedArchivedChatIdsRef.current = selectedArchivedChatIds
   const [focusedChatIndex, setFocusedChatIndex] = useState<number>(-1) // -1 means no focus
   const hoveredChatIndexRef = useRef<number>(-1) // Track hovered chat for X hotkey - ref to avoid re-renders
 
@@ -3202,10 +3220,6 @@ function AgentsSidebarInner({
     isRemote?: boolean
   } | null>(null)
   const [renameLoading, setRenameLoading] = useState(false)
-  const [newTaskProject, setNewTaskProject] = useState<{
-    id: string
-    name: string
-  } | null>(null)
   const [projectSectionDialog, setProjectSectionDialog] = useState<
     { mode: "create" } | { mode: "rename"; sectionId: string } | null
   >(null)
@@ -3357,7 +3371,7 @@ function AgentsSidebarInner({
 
   // Desktop: use selectedProject instead of teams
   const [selectedProject, setSelectedProject] = useAtom(selectedProjectAtom)
-  const setSelectedChatScope = useSetAtom(selectedChatScopeAtom)
+  const [selectedChatScope, setSelectedChatScope] = useAtom(selectedChatScopeAtom)
 
   // Keep chatSourceModeAtom for backwards compatibility (used in other places)
   const [chatSourceMode, setChatSourceMode] = useAtom(chatSourceModeAtom)
@@ -3377,7 +3391,18 @@ function AgentsSidebarInner({
   }, [])
 
   // Fetch all local chats (no project filter)
-  const { data: localChats } = trpc.chats.list.useQuery({})
+  const {
+    data: localChats,
+    isLoading: isLocalChatsLoading,
+    isError: isLocalChatsError,
+    isFetching: isLocalChatsFetching,
+    refetch: refetchLocalChats,
+  } = trpc.chats.list.useQuery(
+    {},
+    {
+      placeholderData: (previous) => previous,
+    },
+  )
   const { data: tagAssignments = [] } = trpc.chats.listTagAssignments.useQuery()
   const { data: agentMetadata } = trpc.chats.listAgentMetadata.useQuery(undefined, {
     refetchInterval: 2_000,
@@ -3566,8 +3591,25 @@ function AgentsSidebarInner({
   )
 
   // Fetch all projects for git info
-  const { data: projects } = trpc.projects.list.useQuery()
-  const { data: tasks } = trpc.tasks.list.useQuery({ includeArchived: false })
+  const {
+    data: projects,
+    isLoading: isProjectsLoading,
+    isError: isProjectsError,
+    isFetching: isProjectsFetching,
+    refetch: refetchProjects,
+  } = trpc.projects.list.useQuery(undefined, {
+    placeholderData: (previous) => previous,
+  })
+  const {
+    data: tasks,
+    isLoading: isTasksLoading,
+    isError: isTasksError,
+    isFetching: isTasksFetching,
+    refetch: refetchTasks,
+  } = trpc.tasks.list.useQuery(
+    { includeArchived: false },
+    { placeholderData: (previous) => previous },
+  )
   const { data: archiveSummary } = trpc.chats.archiveSummary.useQuery(undefined, {
     staleTime: 30_000,
   })
@@ -3629,22 +3671,20 @@ function AgentsSidebarInner({
     onError: () => toast.error("Failed to restore project"),
   })
 
-  const restoreTaskMutation = trpc.tasks.restore.useMutation({
-    onSuccess: () => {
-      utils.tasks.list.invalidate()
-      utils.tasks.listArchived.invalidate()
-      utils.chats.list.invalidate()
-    },
-    onError: () => toast.error("Failed to restore task"),
-  })
-
   const deleteArchivedChatsMutation = trpc.chats.deleteArchived.useMutation({
-    onSuccess: ({ deletedCount, failedChatIds }) => {
+    onSuccess: ({ deletedCount, failedChatIds }, variables) => {
       utils.chats.list.invalidate()
       utils.chats.listArchived.invalidate()
       utils.chats.getFileStats.invalidate()
-      setSelectedArchivedChatIds(new Set())
-      setIsArchiveSelectMode(false)
+      const requestedIds = new Set(variables?.ids ?? [])
+      const failedIds = new Set(failedChatIds)
+      const remaining = new Set(
+        [...selectedArchivedChatIdsRef.current].filter(
+          (id) => !requestedIds.has(id) || failedIds.has(id),
+        ),
+      )
+      setSelectedArchivedChatIds(remaining)
+      if (remaining.size === 0) setIsArchiveSelectMode(false)
       if (failedChatIds.length > 0) {
         toast.warning(
           `Deleted ${deletedCount} archived ${deletedCount === 1 ? "chat" : "chats"}; ${failedChatIds.length} could not be cleaned up and remain available to retry.`,
@@ -3693,14 +3733,6 @@ function AgentsSidebarInner({
     onError: (error) => toast.error(error.message || "Failed to clone project"),
   })
 
-  const createTaskMutation = trpc.tasks.create.useMutation({
-    onSuccess: () => {
-      utils.tasks.list.invalidate()
-      toast.success("Task created")
-    },
-    onError: () => toast.error("Failed to create task"),
-  })
-
   // Remove workspace item from stack by chatId
   const removeWorkspaceFromStack = useCallback(
     (chatId: string) => {
@@ -3726,6 +3758,7 @@ function AgentsSidebarInner({
 
   // Archive chat mutation
   const archiveChatMutation = trpc.chats.archive.useMutation({
+    onError: (error) => toast.error(error.message || "Failed to archive chat. Retry the archive."),
     onSuccess: (_, variables) => {
       // Hide tooltip if visible (element may be removed from DOM before mouseLeave fires)
       if (agentTooltipTimerRef.current) {
@@ -3802,6 +3835,11 @@ function AgentsSidebarInner({
         const lastItem = undoStack[undoStack.length - 1]
         if (!lastItem) return
 
+        if (lastItem.type === "task") {
+          toast.info("Historical tasks are read-only. Use Work board for current tasks.")
+          return
+        }
+
         // Clear timeout and remove from stack
         clearTimeout(lastItem.timeoutId)
         setUndoStack((prev) => prev.slice(0, -1))
@@ -3832,8 +3870,6 @@ function AgentsSidebarInner({
           store.setActiveSubChat(lastItem.subChatId)
         } else if (lastItem.type === "project") {
           restoreProjectMutation.mutate({ id: lastItem.projectId })
-        } else if (lastItem.type === "task") {
-          restoreTaskMutation.mutate({ id: lastItem.taskId })
         }
       }
     }
@@ -3846,7 +3882,6 @@ function AgentsSidebarInner({
     restoreChatMutation,
     restoreRemoteChatMutation,
     restoreProjectMutation,
-    restoreTaskMutation,
     setSelectedChatId,
   ])
 
@@ -3856,6 +3891,7 @@ function AgentsSidebarInner({
 
   // Batch archive mutation
   const archiveChatsBatchMutation = trpc.chats.archiveBatch.useMutation({
+    onError: (error) => toast.error(error.message || "Failed to archive chats. Retry the archive."),
     onSuccess: (_, variables) => {
       // Hide tooltip if visible (element may be removed from DOM before mouseLeave fires)
       if (agentTooltipTimerRef.current) {
@@ -3900,7 +3936,7 @@ function AgentsSidebarInner({
     selectedProject?.id ?? null,
     selectedChatId,
     selectedChatIsRemote,
-    localChats,
+    navigatedChat.current ? [...(localChats ?? []), navigatedChat.current] : localChats,
     () => setSelectedChatId(null),
   )
 
@@ -4013,8 +4049,13 @@ function AgentsSidebarInner({
 
   // Rename mutation
   const renameChatMutation = trpc.chats.rename.useMutation({
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       utils.chats.list.invalidate()
+      utils.chats.get.invalidate({ id: variables.id })
+      const subChatStore = useAgentSubChatStore.getState()
+      if (subChatStore.chatId === variables.id && subChatStore.allSubChats[0]) {
+        subChatStore.updateSubChatName(subChatStore.allSubChats[0].id, variables.name)
+      }
     },
     onError: () => {
       toast.error("Failed to rename agent")
@@ -4231,62 +4272,6 @@ function AgentsSidebarInner({
   })
   replayArchiveProjectRef.current = archiveProjectMutation.mutateAsync
 
-  const pinTaskMutation = trpc.tasks.pin.useMutation({
-    onSuccess: () => {
-      utils.tasks.list.invalidate()
-    },
-    onError: () => toast.error("Failed to pin task"),
-  })
-
-  const unpinTaskMutation = trpc.tasks.unpin.useMutation({
-    onSuccess: () => {
-      utils.tasks.list.invalidate()
-    },
-    onError: () => toast.error("Failed to unpin task"),
-  })
-
-  const replayArchiveTaskRef = useRef<((input: { id: string }) => Promise<unknown>) | null>(null)
-  const archiveTaskMutation = trpc.tasks.archive.useMutation({
-    onSuccess: (_, variables) => {
-      utils.tasks.list.invalidate()
-      utils.tasks.listArchived.invalidate()
-      utils.chats.list.invalidate()
-
-      const selectedChat = selectedChatId
-        ? agentChats.find((chat) => chat.id === selectedChatId && !chat.isRemote)
-        : null
-      if (selectedChat?.taskId === variables.id) {
-        setSelectedChatId(null)
-      }
-
-      if (!replayingActionHistoryRef.current) {
-        recordAppAction({
-          label: "Archive task",
-          undo: async () => {
-            replayingActionHistoryRef.current = true
-            try {
-              await restoreTaskMutation.mutateAsync({ id: variables.id })
-            } finally {
-              replayingActionHistoryRef.current = false
-            }
-          },
-          redo: async () => {
-            replayingActionHistoryRef.current = true
-            try {
-              await replayArchiveTaskRef.current?.({ id: variables.id })
-            } finally {
-              replayingActionHistoryRef.current = false
-            }
-          },
-        })
-      }
-
-      toast.success("Task archived")
-    },
-    onError: () => toast.error("Failed to archive task"),
-  })
-  replayArchiveTaskRef.current = archiveTaskMutation.mutateAsync
-
   const handleToggleLifecyclePin = useCallback(
     (type: "project" | "task", id: string, isPinned: boolean) => {
       if (type === "project") {
@@ -4297,14 +4282,8 @@ function AgentsSidebarInner({
         }
         return
       }
-
-      if (isPinned) {
-        unpinTaskMutation.mutate({ id })
-      } else {
-        pinTaskMutation.mutate({ id })
-      }
     },
-    [pinProjectMutation, unpinProjectMutation, pinTaskMutation, unpinTaskMutation],
+    [pinProjectMutation, unpinProjectMutation],
   )
 
   const handleToggleLifecycleStar = useCallback((type: "project" | "task", id: string) => {
@@ -4324,11 +4303,9 @@ function AgentsSidebarInner({
     (type: "project" | "task", id: string) => {
       if (type === "project") {
         archiveProjectMutation.mutate({ id })
-      } else {
-        archiveTaskMutation.mutate({ id })
       }
     },
-    [archiveProjectMutation, archiveTaskMutation],
+    [archiveProjectMutation],
   )
 
   const pinnedChatIds = useMemo(() => {
@@ -4471,10 +4448,6 @@ function AgentsSidebarInner({
               }
             : old,
         )
-        const subChatStore = useAgentSubChatStore.getState()
-        if (subChatStore.chatId === chatId && subChatStore.allSubChats[0]) {
-          subChatStore.updateSubChatName(subChatStore.allSubChats[0].id, newName)
-        }
 
         try {
           await renameChatMutation.mutateAsync({
@@ -4501,12 +4474,13 @@ function AgentsSidebarInner({
         redo: () => rename(newName),
       })
       setRenameDialogOpen(false)
+      setRenamingChat(null)
     } catch (error) {
       console.error("[handleRenameSave] Rename failed:", error)
       toast.error(isRemote ? "Failed to rename remote chat" : "Failed to rename chat")
+      throw error
     } finally {
       setRenameLoading(false)
-      setRenamingChat(null)
     }
   }
 
@@ -5771,13 +5745,11 @@ function AgentsSidebarInner({
     (item: (typeof archivedLifecycleItems)[number]) => {
       if (item.type === "project") {
         restoreProjectMutation.mutate({ id: item.id })
-      } else if (item.type === "task") {
-        restoreTaskMutation.mutate({ id: item.id })
-      } else {
+      } else if (item.type === "chat") {
         restoreChatMutation.mutate({ id: item.id })
       }
     },
-    [restoreChatMutation, restoreProjectMutation, restoreTaskMutation],
+    [restoreChatMutation, restoreProjectMutation],
   )
 
   // Handle bulk archive of selected chats
@@ -6243,91 +6215,45 @@ function AgentsSidebarInner({
     ],
   )
 
+  const openWorkBoard = useCallback(() => {
+    // Local task/project IDs are not canonical Records locators.
+    if (!betaFeatures.planning) {
+      setSettingsActiveTab("beta")
+      setDesktopView("settings")
+      toast.info("Enable Work board & planning in Beta features to use Work board.")
+    } else {
+      setRecordsNavigation({ view: "board" })
+      setDesktopView("tasks")
+    }
+    setSearchQuery("")
+    setIsArchiveOpen(false)
+    if (isMobileFullscreen) onChatSelect?.()
+  }, [
+    betaFeatures.planning,
+    setSettingsActiveTab,
+    setRecordsNavigation,
+    setDesktopView,
+    isMobileFullscreen,
+    onChatSelect,
+  ])
+
   const createProjectTask = useCallback(
-    (projectId: string) => {
-      const project = projects?.find((candidate) => candidate.id === projectId)
-      if (!project) return
-
-      setNewTaskProject({
-        id: project.id,
-        name: project.gitRepo || project.name,
-      })
-    },
-    [projects],
-  )
-
-  const openNewTaskChat = useCallback(
-    (taskId: string) => {
-      const task = tasks?.find((candidate) => candidate.id === taskId)
-      if (!task) return
-      const project = projects?.find((candidate) => candidate.id === task.projectId)
-      if (!project) return
-
-      remindAboutProjectDrafts(project)
-
-      triggerHaptic("light")
-      localStorage.setItem("flapstack:new-chat-scope", "task")
-      localStorage.setItem("flapstack:new-chat-task-id", task.id)
-      setSelectedChatScope({
-        type: "task",
-        id: task.id,
-        name: task.name,
-        projectId: project.id,
-        projectName: project.name,
-      })
-      setSelectedProject({
-        id: project.id,
-        name: project.name,
-        path: project.path,
-        gitRemoteUrl: project.gitRemoteUrl,
-        gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
-        gitOwner: project.gitOwner,
-        gitRepo: project.gitRepo,
-      })
-      setSelectedChatId(null)
-      setSelectedChatIsRemote(false)
-      setSelectedDraftId(null)
-      startNewChatFormSession((session) => session + 1)
-      setShowNewChatForm(true)
-      setDesktopView(null)
-      setSearchQuery("")
-      if (isMobileFullscreen && onChatSelect) {
-        onChatSelect()
+    (_projectId: string) => {
+      openWorkBoard()
+      if (betaFeatures.planning) {
+        toast.info("Choose New task on Work board, then select its Records project.")
       }
     },
-    [
-      tasks,
-      projects,
-      remindAboutProjectDrafts,
-      triggerHaptic,
-      setSelectedChatScope,
-      setSelectedProject,
-      setSelectedChatId,
-      setSelectedChatIsRemote,
-      setSelectedDraftId,
-      startNewChatFormSession,
-      setShowNewChatForm,
-      setDesktopView,
-      isMobileFullscreen,
-      onChatSelect,
-    ],
-  )
-
-  const handleCreateTaskSave = useCallback(
-    async (name: string) => {
-      if (!newTaskProject) return
-
-      await createTaskMutation.mutateAsync({
-        projectId: newTaskProject.id,
-        name,
-      })
-      setNewTaskProject(null)
-    },
-    [createTaskMutation, newTaskProject],
+    [openWorkBoard, betaFeatures.planning],
   )
 
   const handleChatClick = useCallback(
-    async (chatId: string, e?: React.MouseEvent, globalIndex?: number) => {
+    async (
+      chatId: string,
+      e?: React.MouseEvent,
+      globalIndex?: number,
+      searchTarget?: { subChatId?: string | null; messageId?: string | null; query: string },
+    ) => {
       // Shift+click for range selection (works in both normal and multi-select mode)
       if (e?.shiftKey) {
         e.preventDefault()
@@ -6387,20 +6313,50 @@ function AgentsSidebarInner({
       // Extract original ID for remote chats
       const originalId = isRemote ? chatId.replace(/^remote_/, "") : chatId
 
+      const request = ++chatNavigationRequest.current
+      const knownChat = agentChats.find((candidate) => candidate.id === originalId)
+      const destination =
+        !isRemote && (searchTarget || !knownChat)
+          ? await utils.chats.get.fetch({ id: originalId }).catch(() => null)
+          : null
+      if (request !== chatNavigationRequest.current) return
+      if (!isRemote && (searchTarget || !knownChat) && !destination) {
+        toast.error("This chat could not be opened. Your search is preserved; try again.")
+        return
+      }
+      if (
+        searchTarget?.subChatId &&
+        !destination?.subChats.some((item) => item.id === searchTarget.subChatId)
+      ) {
+        toast.error("This conversation is no longer available. Search again for current results.")
+        return
+      }
+
       // Prevent opening same chat in multiple windows.
       // Claim new chat BEFORE releasing old one - if claim fails, we keep the current chat.
       if (window.desktopApi?.claimChat) {
-        const result = await window.desktopApi.claimChat(originalId)
+        const result = await window.desktopApi.claimChat(originalId).catch(() => null)
+        if (request !== chatNavigationRequest.current) return
+        if (!result) {
+          toast.error("This chat could not be opened. Your search is preserved; try again.")
+          return
+        }
         if (!result.ok) {
           toast.info("This chat is already open in another window", {
             description: "Switching to the existing window.",
             duration: 3000,
           })
-          await window.desktopApi.focusChatOwner(originalId)
+          await window.desktopApi.focusChatOwner(originalId).catch(() => {})
           return
         }
       }
 
+      navigatedChat.current = !isRemote ? (destination ?? knownChat ?? null) : null
+      if (searchTarget?.subChatId) {
+        getAgentSubChatStore(originalId)
+          .getState()
+          .queueNavigation(originalId, searchTarget.subChatId)
+      }
       if (!isRemote) {
         window.dispatchEvent(
           new CustomEvent(CHAT_WORKBENCH_SELECT_CHAT_EVENT, {
@@ -6412,10 +6368,24 @@ function AgentsSidebarInner({
       setSelectedChatId(originalId)
       setSelectedChatIsRemote(isRemote)
       if (!isRemote) {
-        const chat = agentChats.find((candidate) => candidate.id === originalId)
+        const chat = destination ?? knownChat
+        const project =
+          destination?.project ?? projects?.find((candidate) => candidate.id === chat?.projectId)
+        setSelectedProject(
+          project
+            ? {
+                id: project.id,
+                name: project.name,
+                path: project.path,
+                gitRemoteUrl: project.gitRemoteUrl,
+                gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+                gitOwner: project.gitOwner,
+                gitRepo: project.gitRepo,
+              }
+            : null,
+        )
         if (chat?.taskId && chat.projectId) {
           const task = tasks?.find((candidate) => candidate.id === chat.taskId)
-          const project = projects?.find((candidate) => candidate.id === chat.projectId)
           setSelectedChatScope({
             type: "task",
             id: chat.taskId,
@@ -6424,7 +6394,6 @@ function AgentsSidebarInner({
             projectName: project?.name ?? null,
           })
         } else if (chat?.projectId) {
-          const project = projects?.find((candidate) => candidate.id === chat.projectId)
           setSelectedChatScope({
             type: "project",
             id: chat.projectId,
@@ -6438,12 +6407,23 @@ function AgentsSidebarInner({
       setChatSourceMode(isRemote ? "sandbox" : "local")
       setShowNewChatForm(false) // Clear new chat form state when selecting a workspace
       setDesktopView(null) // Clear automations/inbox view when selecting a chat
+      if (searchTarget) {
+        setSearchDismissed(true)
+        setIsSearchFocused(false)
+        searchInputRef.current?.blur()
+        window.setTimeout(() => {
+          if (request === chatNavigationRequest.current) focusScopedSearchResult(searchTarget)
+        }, 0)
+      }
       // On mobile, notify parent to switch to chat mode
       if (isMobileFullscreen && onChatSelect) {
         onChatSelect()
       }
     },
     [
+      utils,
+      setSelectedProject,
+      focusScopedSearchResult,
       filteredChats,
       selectedChatId,
       selectedChatIds,
@@ -6465,6 +6445,7 @@ function AgentsSidebarInner({
 
   const handleSelectScope = useCallback(
     (scope: SelectedChatScope) => {
+      chatNavigationRequest.current += 1
       triggerHaptic("light")
       setSelectedChatScope(scope)
       if (!scope) {
@@ -6602,9 +6583,17 @@ function AgentsSidebarInner({
       }
 
       const isLocalMode = !chat?.branch
-      const sessionCount = isLocalMode
-        ? 0
-        : await utils.terminal.getActiveSessionCount.fetch({ workspaceId: chatId })
+      let sessionCount = 0
+      try {
+        if (!isLocalMode) {
+          sessionCount = await utils.terminal.getActiveSessionCount.fetch({ workspaceId: chatId })
+        }
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Could not check terminals. Retry the archive.",
+        )
+        return
+      }
 
       const needsConfirmation = sessionCount > 0
 
@@ -6791,6 +6780,8 @@ function AgentsSidebarInner({
         e.stopPropagation()
 
         // Focus search input
+        setSearchDismissed(false)
+        setIsSearchFocused(true)
         searchInputRef.current?.focus()
         searchInputRef.current?.select()
       }
@@ -7091,7 +7082,7 @@ function AgentsSidebarInner({
     onBulkPin: handleBulkPin,
     onBulkUnpin: handleBulkUnpin,
     onBulkArchive: handleBulkArchive,
-    onCreateTaskChat: openNewTaskChat,
+    onOpenWorkBoard: openWorkBoard,
     onOpenRepositoryOverview: betaFeatures.branchesAndWorktrees
       ? setRepositoryOverviewProjectId
       : undefined,
@@ -7211,10 +7202,7 @@ function AgentsSidebarInner({
           lifecyclePending={
             pinProjectMutation.isPending ||
             unpinProjectMutation.isPending ||
-            archiveProjectMutation.isPending ||
-            pinTaskMutation.isPending ||
-            unpinTaskMutation.isPending ||
-            archiveTaskMutation.isPending
+            archiveProjectMutation.isPending
           }
         />
         {section.kind === "global" && sectionIndex < sectionCount - 1 && (
@@ -7346,38 +7334,41 @@ function AgentsSidebarInner({
             ref={searchInputRef}
             aria-label="Search projects and chats"
             value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            onFocus={() => setIsSearchFocused(true)}
+            onChange={(event) => {
+              setSearchQuery(event.target.value)
+              setSearchDismissed(false)
+            }}
+            onFocus={() => {
+              setIsSearchFocused(true)
+              setSearchDismissed(false)
+            }}
             onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 event.preventDefault()
                 searchInputRef.current?.blur()
                 setIsSearchFocused(false)
+                setSearchDismissed(true)
                 setFocusedChatIndex(-1)
                 return
               }
-              if (event.key === "ArrowDown") {
-                event.preventDefault()
-                setFocusedChatIndex((current) =>
-                  current === -1 ? 0 : Math.min(current + 1, filteredChats.length - 1),
-                )
-                return
-              }
-              if (event.key === "ArrowUp") {
-                event.preventDefault()
-                setFocusedChatIndex((current) =>
-                  current === -1 ? filteredChats.length - 1 : Math.max(current - 1, 0),
-                )
-                return
-              }
-              if (event.key === "Enter" && focusedChatIndex >= 0) {
-                event.preventDefault()
-                const focusedChat = filteredChats[focusedChatIndex]
-                if (focusedChat) {
-                  handleChatClick(focusedChat.id)
-                  searchInputRef.current?.blur()
-                  setFocusedChatIndex(-1)
+              if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter") {
+                if (searchResultsRef.current?.hidden) {
+                  event.preventDefault()
+                  setSearchDismissed(false)
+                  setIsSearchFocused(true)
+                  return
+                }
+                const results =
+                  searchResultsRef.current?.querySelectorAll<HTMLButtonElement>(
+                    "[data-search-result]",
+                  )
+                const target =
+                  event.key === "ArrowUp" ? results?.[results.length - 1] : results?.[0]
+                if (target) {
+                  event.preventDefault()
+                  if (event.key === "Enter") target.click()
+                  else target.focus()
                 }
               }
             }}
@@ -7387,29 +7378,45 @@ function AgentsSidebarInner({
             )}
           />
         </div>
-        {(isSearchFocused || searchQuery.trim().length > 0) && (
-          <div
-            className="absolute inset-x-2 top-full z-30 pt-2"
-            onMouseDown={(event) => event.preventDefault()}
-          >
-            <ScopedSearchPanel
-              selectedChatId={selectedLocalChat?.id ?? null}
-              selectedProjectId={selectedLocalChat?.projectId ?? null}
-              selectedTaskId={selectedLocalChat?.taskId ?? null}
-              onNavigateChat={(chatId, subChatId, messageId, query) => {
-                if (subChatId) {
-                  useAgentSubChatStore.getState().queueNavigation(chatId, subChatId)
-                }
-                void handleChatClick(chatId).then(() => {
-                  window.setTimeout(() => {
-                    focusScopedSearchResult({ query: query ?? "", messageId })
-                  }, 0)
-                })
-                searchInputRef.current?.blur()
-              }}
-            />
-          </div>
-        )}
+        <div
+          ref={searchResultsRef}
+          hidden={!isSearchFocused && (searchDismissed || !searchQuery.trim())}
+          className="absolute inset-x-2 top-full z-30 pt-2"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault()
+              searchInputRef.current?.focus()
+              setSearchDismissed(true)
+              setIsSearchFocused(false)
+            }
+          }}
+        >
+          <ScopedSearchPanel
+            query={searchQuery}
+            selectedChatId={selectedChatIsRemote ? null : selectedChatId}
+            selectedProjectId={
+              selectedLocalChat?.projectId ??
+              (selectedChatScope?.type === "project"
+                ? selectedChatScope.id
+                : selectedChatScope?.type === "task"
+                  ? selectedChatScope.projectId
+                  : !selectedChatId
+                    ? selectedProject?.id
+                    : null)
+            }
+            selectedTaskId={
+              selectedLocalChat?.taskId ??
+              (selectedChatScope?.type === "task" ? selectedChatScope.id : null)
+            }
+            onNavigateChat={(chatId, subChatId, messageId, query) => {
+              void handleChatClick(chatId, undefined, undefined, {
+                subChatId,
+                messageId,
+                query: query ?? "",
+              })
+            }}
+          />
+        </div>
       </div>
 
       {/* Keep work intake, workflows and runs together before supporting project tools. */}
@@ -7627,6 +7634,35 @@ function AgentsSidebarInner({
             !isMultiSelectMode && "pl-1",
           )}
         >
+          {!searchQuery && isLocalChatsLoading && localChats === undefined && (
+            <div
+              data-sidebar-chat-list-state="loading"
+              role="status"
+              aria-live="polite"
+              className="mx-2 mt-3.5 mb-1 flex min-h-8 items-center gap-2 rounded-md px-2 text-xs text-muted-foreground"
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              Loading chats…
+            </div>
+          )}
+          {!searchQuery && isLocalChatsError && (
+            <div
+              data-sidebar-chat-list-state="error"
+              role="alert"
+              className="mx-2 mt-3.5 mb-1 flex min-h-8 items-center gap-2 rounded-md bg-destructive/10 px-2 text-xs text-destructive"
+            >
+              <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1">Chats could not be loaded.</span>
+              <button
+                type="button"
+                className="min-h-8 flex-shrink-0 rounded px-2 font-medium underline underline-offset-2 hover:bg-destructive/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-wait disabled:opacity-60"
+                onClick={() => void refetchLocalChats()}
+                disabled={isLocalChatsFetching}
+              >
+                {isLocalChatsFetching ? "Retrying…" : "Retry"}
+              </button>
+            </div>
+          )}
           {!searchQuery && (
             <SidebarGroupHeader
               title="Quick access"
@@ -7696,10 +7732,7 @@ function AgentsSidebarInner({
                       lifecyclePending={
                         pinProjectMutation.isPending ||
                         unpinProjectMutation.isPending ||
-                        archiveProjectMutation.isPending ||
-                        pinTaskMutation.isPending ||
-                        unpinTaskMutation.isPending ||
-                        archiveTaskMutation.isPending
+                        archiveProjectMutation.isPending
                       }
                     />
                     {!collapsedSectionIds.has(section.kind) &&
@@ -7724,11 +7757,7 @@ function AgentsSidebarInner({
                             }}
                             parentProjectId={task.projectId}
                             chats={task.chats}
-                            lifecyclePending={
-                              pinTaskMutation.isPending ||
-                              unpinTaskMutation.isPending ||
-                              archiveTaskMutation.isPending
-                            }
+                            lifecyclePending={false}
                           />
                         ))}
                   </div>
@@ -7898,14 +7927,79 @@ function AgentsSidebarInner({
             isOpen={Boolean(searchQuery) || !collapsedSectionIds.has("projects-group")}
           >
             <div className="mx-2">
-              {!searchQuery && visibleProjectSections.length === 0 && (
+              {!searchQuery && isTasksLoading && (
                 <div
-                  data-sidebar-empty-state="projects"
-                  className="mb-0.5 ml-7 flex h-7 items-center text-xs text-muted-foreground/60"
+                  data-sidebar-task-list-state="loading"
+                  role="status"
+                  aria-live="polite"
+                  className="mb-1 flex min-h-8 items-center gap-2 rounded-md px-2 text-xs text-muted-foreground"
                 >
-                  No chats
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  Loading tasks…
                 </div>
               )}
+              {!searchQuery && isTasksError && (
+                <div
+                  data-sidebar-task-list-state="error"
+                  role="alert"
+                  className="mb-1 flex min-h-8 items-center gap-2 rounded-md bg-destructive/10 px-2 text-xs text-destructive"
+                >
+                  <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 flex-1">Tasks could not be loaded.</span>
+                  <button
+                    type="button"
+                    className="min-h-8 flex-shrink-0 rounded px-2 font-medium underline underline-offset-2 hover:bg-destructive/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-wait disabled:opacity-60"
+                    onClick={() => void refetchTasks()}
+                    disabled={isTasksFetching}
+                  >
+                    {isTasksFetching ? "Retrying…" : "Retry"}
+                  </button>
+                </div>
+              )}
+              {!searchQuery && isProjectsLoading && projects === undefined && (
+                <div
+                  data-sidebar-project-list-state="loading"
+                  role="status"
+                  aria-live="polite"
+                  className="mb-1 flex min-h-8 items-center gap-2 rounded-md px-2 text-xs text-muted-foreground"
+                >
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  Loading projects…
+                </div>
+              )}
+              {!searchQuery && isProjectsError && (
+                <div
+                  data-sidebar-project-list-state="error"
+                  role="alert"
+                  className="mb-1 flex min-h-8 items-center gap-2 rounded-md bg-destructive/10 px-2 text-xs text-destructive"
+                >
+                  <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 flex-1">Project details could not be loaded.</span>
+                  <button
+                    type="button"
+                    className="min-h-8 flex-shrink-0 rounded px-2 font-medium underline underline-offset-2 hover:bg-destructive/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-wait disabled:opacity-60"
+                    onClick={() => void refetchProjects()}
+                    disabled={isProjectsFetching}
+                  >
+                    {isProjectsFetching ? "Retrying…" : "Retry"}
+                  </button>
+                </div>
+              )}
+              {!searchQuery &&
+                !isTasksLoading &&
+                !isTasksError &&
+                !isProjectsLoading &&
+                !isProjectsError &&
+                !isLocalChatsLoading &&
+                !isLocalChatsError &&
+                visibleProjectSections.length === 0 && (
+                  <div
+                    data-sidebar-empty-state="projects"
+                    className="mb-0.5 ml-7 flex h-7 items-center text-xs text-muted-foreground/60"
+                  >
+                    No chats
+                  </div>
+                )}
               <AnimatePresence initial={false} mode="popLayout">
                 {visibleProjectSections.map((section, index) =>
                   renderSidebarSection(section, index, visibleProjectSections.length),
@@ -8122,20 +8216,40 @@ function AgentsSidebarInner({
                               <span className="truncate block text-sm leading-tight flex-1">
                                 {item.title}
                               </span>
-                              {(!isArchiveSelectMode || item.type !== "chat") && (
+                              {item.type === "task" ? (
                                 <button
-                                  onClick={() => handleRestoreLifecycleItem(item)}
-                                  tabIndex={-1}
-                                  className="flex-shrink-0 text-muted-foreground hover:text-foreground active:text-foreground transition-[opacity,transform,color] duration-150 ease-out opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto active:scale-[0.97]"
-                                  aria-label={`Restore archived ${item.type}`}
+                                  type="button"
+                                  onClick={openWorkBoard}
+                                  className="shrink-0 rounded p-1 hover:bg-foreground/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                                  aria-label="Open Work board for current tasks"
                                 >
-                                  <UnarchiveIcon className="h-3.5 w-3.5" />
+                                  <Columns3 className="h-3.5 w-3.5" />
                                 </button>
+                              ) : (
+                                (!isArchiveSelectMode || item.type !== "chat") && (
+                                  <button
+                                    onClick={() => handleRestoreLifecycleItem(item)}
+                                    tabIndex={-1}
+                                    className="flex-shrink-0 text-muted-foreground hover:text-foreground active:text-foreground transition-[opacity,transform,color] duration-150 ease-out opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto active:scale-[0.97]"
+                                    aria-label={`Restore archived ${item.type}`}
+                                  >
+                                    <UnarchiveIcon className="h-3.5 w-3.5" />
+                                  </button>
+                                )
                               )}
                             </div>
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-[11px] text-muted-foreground/60 truncate">
-                                {item.subtitle}
+                              <span
+                                className={cn(
+                                  "text-[11px] truncate",
+                                  item.type === "task"
+                                    ? "text-foreground/80"
+                                    : "text-muted-foreground/60",
+                                )}
+                              >
+                                {item.type === "task"
+                                  ? `Historical task · read-only · ${item.subtitle}`
+                                  : item.subtitle}
                               </span>
                               <span className="text-[11px] text-muted-foreground/60 flex-shrink-0">
                                 {formatTime(
@@ -8305,16 +8419,6 @@ function AgentsSidebarInner({
         onSave={handleRenameSave}
         currentName={renamingChat?.name || ""}
         isLoading={renameLoading}
-      />
-
-      <RenameDialog
-        isOpen={Boolean(newTaskProject)}
-        onClose={() => setNewTaskProject(null)}
-        onSave={handleCreateTaskSave}
-        currentName=""
-        isLoading={createTaskMutation.isPending}
-        title={newTaskProject ? `New task for ${newTaskProject.name}` : "New task"}
-        placeholder="Task name"
       />
 
       <RenameDialog

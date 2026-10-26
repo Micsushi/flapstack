@@ -5,10 +5,12 @@ import { getDatabase } from "../../db"
 import {
   WorkspaceEditingService,
   WorkspaceEditConflictError,
+  WorkspaceDraftSaveRejectedError,
 } from "../../workspace-editing/service"
 import {
   workspaceEditScopeSchema,
   workspaceEditTargetSchema,
+  openWorkspaceDraftSchema,
   saveWorkspaceEditSchema,
   revertWorkspaceEditSchema,
   saveAsWorkspaceEditSchema,
@@ -40,7 +42,12 @@ async function mutation(action: () => ReturnType<WorkspaceEditingService["save"]
       : { ok: false as const, reason: operation.state, operation }
   } catch (error) {
     if (error instanceof WorkspaceEditConflictError)
-      return { ok: false as const, reason: "conflict" as const, diskSha256: error.diskSha256 }
+      return {
+        ok: false as const,
+        reason: "conflict" as const,
+        diskSha256: error.diskSha256,
+        notApplied: error.notApplied,
+      }
     throw error
   }
 }
@@ -58,13 +65,20 @@ export const workspaceEditingRouter = router({
         ? { ok: true as const, ...result }
         : { ok: false as const, reason: result.operation.state, ...result }
     } catch (error) {
+      if (error instanceof WorkspaceDraftSaveRejectedError)
+        return {
+          ok: false as const,
+          reason: "rejected" as const,
+          draft: error.draft,
+          message: error.message,
+        }
       if (error instanceof WorkspaceEditConflictError)
         return { ok: false as const, reason: "conflict" as const, diskSha256: error.diskSha256 }
       throw error
     }
   }),
   openDraft: procedure
-    .input(workspaceEditTargetSchema)
+    .input(openWorkspaceDraftSchema)
     .mutation(({ input, ctx }) => service().openDraft(input, draftOwner(ctx))),
   updateDraft: procedure
     .input(updateWorkspaceDraftSchema)

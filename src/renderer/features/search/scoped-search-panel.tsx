@@ -21,6 +21,7 @@ import { SearchFeedback } from "./search-feedback"
 type Scope = "all" | "project" | "task" | "chat"
 
 type ScopedSearchPanelProps = {
+  query?: string
   selectedChatId?: string | null
   selectedProjectId?: string | null
   selectedTaskId?: string | null
@@ -39,12 +40,14 @@ function resultLabel(type: string) {
 }
 
 export function ScopedSearchPanel({
+  query: externalQuery,
   selectedChatId,
   selectedProjectId,
   selectedTaskId,
   onNavigateChat,
 }: ScopedSearchPanelProps) {
-  const [query, setQuery] = useState("")
+  const [localQuery, setQuery] = useState("")
+  const query = externalQuery ?? localQuery
   const [scope, setScope] = useState<Scope>("all")
   const [includeArchived, setIncludeArchived] = useState(false)
   const [visibleCount, setVisibleCount] = useState(RESULT_PAGE_SIZE)
@@ -74,18 +77,22 @@ export function ScopedSearchPanel({
   )
 
   return (
-    <div className="rounded-lg border border-border/70 bg-background/90 p-2">
+    <div className="rounded-lg border border-border/70 bg-background p-2">
       <div className="flex items-center gap-2">
-        <div className="relative min-w-0 flex-1">
-          <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            aria-label="Search workspace context"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search all context..."
-            className="h-8 rounded-md pl-7 text-xs"
-          />
-        </div>
+        {externalQuery === undefined ? (
+          <div className="relative min-w-0 flex-1">
+            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              aria-label="Search workspace context"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search all context..."
+              className="h-8 rounded-md pl-7 text-xs"
+            />
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground">Search in</span>
+        )}
         <Select value={scope} onValueChange={(value) => setScope(value as Scope)}>
           <SelectTrigger aria-label="Search scope" className="h-8 w-24 rounded-md text-xs">
             <SelectValue />
@@ -117,7 +124,24 @@ export function ScopedSearchPanel({
         </div>
       )}
       {canSearch && (
-        <div className="mt-2 max-h-52 space-y-1 overflow-y-auto">
+        <div
+          className="mt-2 max-h-52 space-y-1 overflow-y-auto"
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return
+            const results = Array.from(
+              event.currentTarget.querySelectorAll<HTMLButtonElement>("[data-search-result]"),
+            )
+            const index = results.indexOf(event.target as HTMLButtonElement)
+            if (index < 0) return
+            event.preventDefault()
+            results[
+              Math.max(
+                0,
+                Math.min(results.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)),
+              )
+            ]?.focus()
+          }}
+        >
           <SearchFeedback
             error={error ? "Search is unavailable. Retry to load current results." : null}
             busy={isFetching}
@@ -166,6 +190,7 @@ export function ScopedSearchPanel({
 
               return (
                 <button
+                  data-search-result
                   key={key}
                   type="button"
                   className={cn(

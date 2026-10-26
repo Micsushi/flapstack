@@ -1,4 +1,4 @@
-import { useMemo, useReducer, useState, type FormEvent } from "react"
+import { useMemo, useReducer, useRef, useState, type FormEvent } from "react"
 import type {
   UsageBudgetAction,
   UsageBudgetReset,
@@ -68,6 +68,8 @@ export function AdvancedUsageExplorer() {
   const [savedViewName, setSavedViewName] = useState("")
   const [includeRedactedRawPayload, setIncludeRedactedRawPayload] = useState(false)
   const [budget, setBudget] = useState<BudgetDraft>(() => emptyBudget(timezone))
+  const budgetSubmission = useRef<BudgetDraft | null>(null)
+  const [budgetValidation, setBudgetValidation] = useState<string | null>(null)
   const utils = trpc.useUtils()
 
   const explorer = trpc.usage.queryExplorer.useQuery(state.query)
@@ -92,13 +94,28 @@ export function AdvancedUsageExplorer() {
     },
   })
   const createBudget = trpc.usage.createBudget.useMutation({
-    onSuccess: () => budgetSaved("Budget created."),
+    onSuccess: (result) => budgetSaved("Budget created.", result),
+    onSettled: () => {
+      budgetSubmission.current = null
+    },
   })
   const updateBudget = trpc.usage.updateBudget.useMutation({
-    onSuccess: () => budgetSaved("Budget updated."),
+    onSuccess: (result) => budgetSaved("Budget updated.", result),
+    onSettled: () => {
+      budgetSubmission.current = null
+    },
   })
   const deleteBudget = trpc.usage.deleteBudget.useMutation({
-    onSuccess: () => budgetSaved("Budget deleted."),
+    onSuccess: (_result, input) => {
+      setBudget((current) =>
+        current.id === input.id ? { ...current, id: null, expectedVersion: null } : current,
+      )
+      dispatch({
+        type: "message",
+        message: "Budget deleted. Any open draft is retained as an unsaved copy.",
+      })
+      void utils.usage.listBudgets.invalidate()
+    },
   })
   const exportUsage = trpc.usage.exportAdvancedUsage.useMutation({
     onSuccess: (result) => {
@@ -125,9 +142,16 @@ export function AdvancedUsageExplorer() {
   const selectedQuality = selectedAggregate?.quality ?? "unknown"
   const selectedQualityCopy = qualityCopy(selectedQuality)
 
-  function budgetSaved(message: string) {
-    setBudget(emptyBudget(timezone))
-    dispatch({ type: "message", message })
+  function budgetSaved(message: string, result: { id: string; version: number }) {
+    const submitted = budgetSubmission.current
+    setBudget((current) =>
+      current === submitted
+        ? emptyBudget(timezone)
+        : submitted && current.id === submitted.id
+          ? { ...current, id: result.id, expectedVersion: result.version }
+          : current,
+    )
+    dispatch({ type: "message", message: `${message} Only the submitted values were saved.` })
     void utils.usage.listBudgets.invalidate()
   }
 
@@ -176,7 +200,9 @@ export function AdvancedUsageExplorer() {
 
   function submitBudget(event: FormEvent) {
     event.preventDefault()
-    const definition = usageBudgetCreateSchema.parse({
+    if (budgetSubmission.current || deleteBudget.isPending) return
+    setBudgetValidation(null)
+    const parsed = usageBudgetCreateSchema.safeParse({
       name: budget.name,
       enabled: budget.enabled,
       scope: budgetScope(budget),
@@ -184,12 +210,20 @@ export function AdvancedUsageExplorer() {
       action: budget.action,
       reset: budgetReset(budget),
     })
+    if (!parsed.success) {
+      setBudgetValidation(parsed.error.issues.map((issue) => issue.message).join(" "))
+      return
+    }
+    const definition = parsed.data
+    budgetSubmission.current = budget
     if (budget.id && budget.expectedVersion) {
       updateBudget.mutate({ id: budget.id, expectedVersion: budget.expectedVersion, ...definition })
     } else {
       createBudget.mutate(definition)
     }
   }
+
+  const budgetPending = createBudget.isPending || updateBudget.isPending || deleteBudget.isPending
 
   return (
     <section
@@ -636,7 +670,16 @@ export function AdvancedUsageExplorer() {
       <details className="rounded border border-border bg-background p-3">
         <summary className="cursor-pointer text-xs font-medium">Scoped budgets</summary>
         <div className="mt-3 space-y-3" aria-label={ADVANCED_USAGE_A11Y.budgets}>
-          <form onSubmit={submitBudget} className="grid grid-cols-1 gap-2 md:grid-cols-4">
+          {budgetValidation && (
+            <p role="alert" className="text-xs text-destructive">
+              {budgetValidation}
+            </p>
+          )}
+          <form
+            aria-busy={budgetPending}
+            onSubmit={submitBudget}
+            className="grid grid-cols-1 gap-2 md:grid-cols-4"
+          >
             <FilterInput
               label="Budget name"
               required
@@ -746,17 +789,27 @@ export function AdvancedUsageExplorer() {
                 setBudget({ ...budget, resetType: resetType as BudgetDraft["resetType"] })
               }
             />
+            {["daily", "weekly", "monthly"].includes(budget.resetType) && (
+              <p className="self-center text-xs text-muted-foreground">
+                Reset timezone: {budget.timezone}
+              </p>
+            )}
             <CheckFilter
               label="Enabled"
               checked={budget.enabled}
               onChange={() => setBudget({ ...budget, enabled: !budget.enabled })}
             />
-            <button type="submit" className="rounded border border-border px-2 py-1.5 text-xs">
-              {budget.id ? "Update budget" : "Create budget"}
+            <button
+              type="submit"
+              disabled={budgetPending}
+              className="rounded border border-border px-2 py-1.5 text-xs disabled:opacity-50"
+            >
+              {budgetPending ? "Saving…" : budget.id ? "Update budget" : "Create budget"}
             </button>
             {budget.id && (
               <button
                 type="button"
+                disabled={budgetPending}
                 onClick={() => setBudget(emptyBudget(timezone))}
                 className="rounded border border-border px-2 py-1.5 text-xs"
               >
@@ -775,14 +828,21 @@ export function AdvancedUsageExplorer() {
                   <button
                     type="button"
                     className="underline"
-                    onClick={() => setBudget(editBudget(item, timezone))}
+                    disabled={budgetPending}
+                    onClick={() => {
+                      setBudgetValidation(null)
+                      setBudget(editBudget(item, timezone))
+                    }}
                   >
                     Edit
                   </button>
                   <button
                     type="button"
-                    className="underline"
+                    className="underline disabled:opacity-50"
+                    disabled={budgetPending}
                     onClick={() =>
+                      !budgetSubmission.current &&
+                      !budgetPending &&
                       deleteBudget.mutate({ id: item.id, expectedVersion: item.version })
                     }
                   >

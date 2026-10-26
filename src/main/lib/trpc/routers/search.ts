@@ -1,4 +1,4 @@
-import { and, eq, isNull, like, or } from "drizzle-orm"
+import { and, eq, isNull, or, sql, type SQL, type SQLWrapper } from "drizzle-orm"
 import { z } from "zod"
 import {
   attachments,
@@ -119,11 +119,12 @@ export const searchRouter = router({
     )
     .query(({ input }) => {
       const db = getDatabase()
-      const pattern = `%${input.query}%`
+      const pattern = `%${input.query.replace(/[\\%_]/g, "\\$&")}%`
+      const contains = (column: SQLWrapper) => sql`${column} LIKE ${pattern} ESCAPE '\\'`
       const results: SearchResult[] = []
 
       if (input.scope === "all") {
-        const projectConditions = [like(projects.name, pattern)]
+        const projectConditions = [contains(projects.name)]
         if (!input.includeArchived) projectConditions.push(isNull(projects.archivedAt))
         for (const project of db
           .select()
@@ -140,7 +141,7 @@ export const searchRouter = router({
       }
 
       if (input.scope === "all" || input.scope === "project") {
-        const taskConditions = [or(like(tasks.name, pattern), like(tasks.description, pattern))]
+        const taskConditions = [or(contains(tasks.name), contains(tasks.description))]
         if (input.scope === "project" && input.scopeId) {
           taskConditions.push(eq(tasks.projectId, input.scopeId))
         }
@@ -161,7 +162,7 @@ export const searchRouter = router({
         }
       }
 
-      const chatConditions = [like(chats.name, pattern)]
+      const chatConditions = [contains(chats.name)]
       if (input.scope === "project" && input.scopeId)
         chatConditions.push(eq(chats.projectId, input.scopeId))
       if (input.scope === "task" && input.scopeId)
@@ -184,24 +185,26 @@ export const searchRouter = router({
         })
       }
 
-      const messageConditions = [like(subChats.messages, pattern)]
+      // Match decoded visible text, not its JSON spelling (quotes, newlines and Unicode escapes).
+      const messageConditions: SQL[] = []
       if (input.scope === "chat" && input.scopeId)
         messageConditions.push(eq(subChats.chatId, input.scopeId))
-      for (const subChat of db
-        .select()
+      if (input.scope === "project" && input.scopeId)
+        messageConditions.push(eq(chats.projectId, input.scopeId))
+      if (input.scope === "task" && input.scopeId)
+        messageConditions.push(eq(chats.taskId, input.scopeId))
+      if (!input.includeArchived) messageConditions.push(isNull(chats.archivedAt))
+      for (const { subChat, parent } of db
+        .select({ subChat: subChats, parent: chats })
         .from(subChats)
+        .innerJoin(chats, eq(chats.id, subChats.chatId))
         .where(and(...messageConditions))
         .all()) {
+        if (!isChatSearchVisible(db, parent, input.includeArchived)) continue
         const matchingMessages = extractMessageTexts(subChat.messages).filter((entry) =>
           entry.text.toLowerCase().includes(input.query.toLowerCase()),
         )
         if (matchingMessages.length === 0) continue
-        const parent = db.select().from(chats).where(eq(chats.id, subChat.chatId)).get()
-        if (!parent) continue
-        if (!isChatSearchVisible(db, parent, input.includeArchived)) continue
-        if (input.scope === "project" && input.scopeId && parent.projectId !== input.scopeId)
-          continue
-        if (input.scope === "task" && input.scopeId && parent.taskId !== input.scopeId) continue
         for (const match of matchingMessages) {
           results.push({
             type: "message",
@@ -216,7 +219,7 @@ export const searchRouter = router({
         }
       }
 
-      const attachmentConditions = [like(attachments.name, pattern)]
+      const attachmentConditions = [contains(attachments.name)]
       if (input.scope === "task" && input.scopeId)
         attachmentConditions.push(eq(attachments.taskId, input.scopeId))
       if (input.scope === "chat" && input.scopeId)

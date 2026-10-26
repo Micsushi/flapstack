@@ -1203,7 +1203,14 @@ async function planFileDiffs(input: {
   const targetCollisionKeys = new Set<string>()
   for (const scope of input.manifest.scopes) {
     const indexPath = join(input.bundleRoot, scope.contentPath, "files.json")
-    const index = fileIndexSchema.parse(await readJsonFile(indexPath)) as PortableFileIndexEntry[]
+    const rawIndex = await readJsonFile(indexPath)
+    // Each indexed file needs a unique entry in the already bounded checksum document.
+    if (Array.isArray(rawIndex) && rawIndex.length > PORTABILITY_LIMITS.checksumEntries) {
+      throw new Error(
+        `Portable file index exceeds the ${PORTABILITY_LIMITS.checksumEntries}-entry limit.`,
+      )
+    }
+    const index = fileIndexSchema.parse(rawIndex) as PortableFileIndexEntry[]
     for (const entry of index) {
       if (!entry.bundlePath.startsWith(`${scope.contentPath}/files/`))
         throw new Error("Portable file index escapes its scope.")

@@ -15,6 +15,7 @@ import {
   desktopViewAtom,
   openAgentChatIdsAtom,
   selectedAgentChatIdAtom,
+  selectedProjectAtom,
   showNewChatFormAtom,
 } from "../agents/atoms"
 import { OrchestrationActivityPanel } from "../agents/ui/orchestration-activity-panel"
@@ -42,6 +43,16 @@ const DEFAULT_FILTERS: OrchestrationFleetFilters = {
 }
 
 export function OrchestrationFleetView() {
+  const utils = trpc.useUtils()
+  const setSelectedProject = useSetAtom(selectedProjectAtom)
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
+  const workspaceRequest = useRef(0)
+  useEffect(
+    () => () => {
+      workspaceRequest.current += 1
+    },
+    [],
+  )
   const [source, setSource] = useState("records")
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
   const [cursor, setCursor] = useState<string | undefined>()
@@ -80,10 +91,38 @@ export function OrchestrationFleetView() {
     setShowNewChatForm(false)
     setDesktopView(null)
   }
-  const openWorkspace = (projectId: string, workspaceId: string) => {
-    writeSavedWorkspaceSelection(projectId, workspaceId)
-    setShowNewChatForm(false)
-    setDesktopView("saved-workspaces")
+  const openWorkspace = async (projectId: string, workspaceId: string) => {
+    const request = ++workspaceRequest.current
+    setWorkspaceError(null)
+    try {
+      const [project, workspace] = await Promise.all([
+        utils.projects.get.fetch({ id: projectId }),
+        utils.savedWorkspaces.get.fetch({ workspaceId }),
+      ])
+      if (request !== workspaceRequest.current) return
+      if (!project) throw new Error("This workspace's project is no longer available.")
+      if (!workspace || workspace.archivedAt !== null) {
+        throw new Error("This workspace is no longer available. Refresh the runs and try again.")
+      }
+      writeSavedWorkspaceSelection(projectId, workspaceId)
+      setSelectedProject({
+        id: project.id,
+        name: project.name,
+        path: project.path,
+        gitRemoteUrl: project.gitRemoteUrl,
+        gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+        gitOwner: project.gitOwner,
+        gitRepo: project.gitRepo,
+      })
+      setShowNewChatForm(false)
+      setDesktopView("saved-workspaces")
+    } catch (error) {
+      if (request === workspaceRequest.current) {
+        setWorkspaceError(
+          error instanceof Error ? error.message : "Could not open the workspace. Try again.",
+        )
+      }
+    }
   }
 
   return (
@@ -98,6 +137,11 @@ export function OrchestrationFleetView() {
           </NativeSelect>
         </label>
       </WorkspaceHeader>
+      {workspaceError && (
+        <p role="alert" className="px-5 py-3 text-sm text-destructive">
+          {workspaceError}
+        </p>
+      )}
       <section
         hidden={source !== "records"}
         className="min-h-[32rem]"

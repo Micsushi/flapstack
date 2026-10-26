@@ -359,12 +359,27 @@ export function ProjectVaultCustomNotesPanel({ projectId }: { projectId: string 
             </div>
           </div>
         )}
+        {graph.error && (
+          <div className="space-y-2 border-b border-red-500/30 bg-red-500/5 p-3">
+            <p className="text-xs text-destructive" role="alert">
+              Custom note list unavailable: {graph.error.message}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={graph.isFetching}
+              onClick={() => void graph.refetch()}
+            >
+              <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry notes
+            </Button>
+          </div>
+        )}
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {graph.isFetching ? (
             <p className="flex items-center gap-2 p-2 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading notes…
             </p>
-          ) : notes.length === 0 ? (
+          ) : graph.error && notes.length === 0 ? null : notes.length === 0 ? (
             <p className="p-2 text-xs text-muted-foreground">
               No custom notes yet. Seed notes remain in the main tree.
             </p>
@@ -396,12 +411,49 @@ export function ProjectVaultCustomNotesPanel({ projectId }: { projectId: string 
           <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
             Select a custom note or create one.
           </div>
-        ) : note.isFetching || !note.data || !editor ? (
+        ) : note.error && !note.data ? (
+          <div className="flex flex-1 flex-col items-start justify-center gap-3 p-6">
+            <p className="text-sm text-destructive" role="alert">
+              Note cannot be opened: {note.error.message}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={note.isFetching}
+              onClick={() => void note.refetch()}
+            >
+              <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" /> Retry note
+            </Button>
+          </div>
+        ) : !note.data || !editor ? (
           <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading note…
           </div>
         ) : (
           <>
+            {note.error && (
+              <div className="flex items-center justify-between gap-3 border-b border-red-500/30 bg-red-500/5 px-4 py-2">
+                <p className="text-xs text-destructive" role="alert">
+                  Note refresh unavailable: {note.error.message}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={note.isFetching}
+                  onClick={() => void note.refetch()}
+                >
+                  <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+                </Button>
+              </div>
+            )}
+            {note.isFetching && (
+              <p
+                className="flex items-center gap-2 border-b px-4 py-1.5 text-xs text-muted-foreground"
+                role="status"
+              >
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Refreshing note…
+              </p>
+            )}
             <div className="flex h-12 items-center border-b px-4">
               <div className="min-w-0">
                 <h2 className="truncate text-sm font-semibold">{note.data.title}</h2>

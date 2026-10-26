@@ -1,11 +1,12 @@
 "use client"
 
 import { useAtomValue, useSetAtom } from "jotai"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { ChevronLeft } from "lucide-react"
 import { toast } from "sonner"
 
 import { IconSpinner, KeyFilledIcon, SettingsFilledIcon } from "../../components/ui/icons"
+import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import { Label } from "../../components/ui/label"
 import { Logo } from "../../components/ui/logo"
@@ -38,83 +39,117 @@ export function ApiKeyOnboardingPage() {
   const setCredential = trpc.credentials.set.useMutation()
   const utils = trpc.useUtils()
 
+  const busy = useRef(false)
+  const secretInput = useRef<HTMLInputElement>(null)
+  const generation = useRef(0)
+  const mounted = useRef(true)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [refreshNeeded, setRefreshNeeded] = useState(false)
+
+  const finishRequest = () => {
+    busy.current = false
+    if (mounted.current) setIsSubmitting(false)
+    requestAnimationFrame(() => {
+      if (document.activeElement === document.body) secretInput.current?.focus()
+    })
+  }
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      generation.current += 1
+    }
+  }, [billingMethod])
+
   const handleBack = () => {
+    generation.current += 1
     setBillingMethod(null)
   }
 
-  // Submit for API key mode (simple - just the key)
-  const submitApiKey = async (key: string) => {
-    if (!isValidApiKey(key)) return
+  const refreshStatus = async (requestGeneration: number) => {
+    try {
+      await utils.credentials.status.invalidate({ id: "claude.custom-api-token" }, undefined, {
+        throwOnError: true,
+      })
+      if (generation.current !== requestGeneration) return
+      setRefreshNeeded(false)
+      setError(null)
+      setApiKeyOnboardingCompleted(true)
+    } catch {
+      if (generation.current !== requestGeneration) return
+      setRefreshNeeded(true)
+      setError("Credential saved, but its status could not be refreshed.")
+    }
+  }
 
+  const submit = async () => {
+    if (busy.current || refreshNeeded) return
+    const secret = isCustomModel ? token : apiKey
+    if (isCustomModel ? !model.trim() || !secret.trim() || !baseUrl.trim() : !isValidApiKey(secret))
+      return
+    busy.current = true
     setIsSubmitting(true)
-
+    setError(null)
+    const requestGeneration = generation.current
     try {
       const status = await setCredential.mutateAsync({
         id: "claude.custom-api-token",
-        secret: key.trim(),
-        metadata: { model: defaultModel, baseUrl: defaultBaseUrl },
+        secret: secret.trim(),
+        metadata: isCustomModel
+          ? { model: model.trim(), baseUrl: baseUrl.trim() }
+          : { model: defaultModel, baseUrl: defaultBaseUrl },
       })
-      setApiKey("")
-      await utils.credentials.status.invalidate({ id: "claude.custom-api-token" })
-      setApiKeyOnboardingCompleted(true)
+      if (generation.current !== requestGeneration) return
+      setSaved(true)
+      if (isCustomModel) setToken("")
+      else setApiKey("")
       if (status.persistence === "session") {
-        toast.warning("Claude API key is available for this session only", {
+        toast.warning("Credential is available for this session only", {
           description: status.warning,
         })
       }
+      await refreshStatus(requestGeneration)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save Claude API key")
+      if (generation.current === requestGeneration) {
+        setError(error instanceof Error ? error.message : "Could not save the credential.")
+      }
     } finally {
-      setIsSubmitting(false)
+      finishRequest()
     }
   }
 
-  // Submit for custom model mode (all three fields)
-  const submitCustomModel = async () => {
-    const trimmedModel = model.trim()
-    const trimmedToken = token.trim()
-    const trimmedBaseUrl = baseUrl.trim()
-
-    if (!trimmedModel || !trimmedToken || !trimmedBaseUrl) return
-
+  const retryStatus = async () => {
+    if (busy.current || !saved) return
+    busy.current = true
     setIsSubmitting(true)
-
     try {
-      const status = await setCredential.mutateAsync({
-        id: "claude.custom-api-token",
-        secret: trimmedToken,
-        metadata: { model: trimmedModel, baseUrl: trimmedBaseUrl },
-      })
-      setToken("")
-      await utils.credentials.status.invalidate({ id: "claude.custom-api-token" })
-      setApiKeyOnboardingCompleted(true)
-      if (status.persistence === "session") {
-        toast.warning("Custom Claude credential is available for this session only", {
-          description: status.warning,
-        })
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save custom credential")
+      await refreshStatus(generation.current)
     } finally {
-      setIsSubmitting(false)
+      finishRequest()
     }
   }
 
-  const handleApiKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value
-    setApiKey(value)
-
-    // Auto-submit if valid API key is pasted
-    if (isValidApiKey(value)) {
-      setTimeout(() => submitApiKey(value), 100)
-    }
-  }
-
-  const handleApiKeyKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && apiKey.trim()) {
-      submitApiKey(apiKey)
-    }
-  }
+  const feedback = (
+    <>
+      {saved && !refreshNeeded && (
+        <p role="status" className="text-sm">
+          Credential saved.
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="text-sm text-red-700 dark:text-red-400 break-words">
+          {error}
+        </p>
+      )}
+      {refreshNeeded && (
+        <Button type="button" disabled={isSubmitting} onClick={() => void retryStatus()}>
+          Retry status
+        </Button>
+      )}
+    </>
+  )
 
   const canSubmitCustomModel = Boolean(model.trim() && token.trim() && baseUrl.trim())
 
@@ -130,6 +165,7 @@ export function ApiKeyOnboardingPage() {
 
         {/* Back button - fixed in top left corner below traffic lights */}
         <button
+          aria-label="Back to connection methods"
           onClick={handleBack}
           className="fixed top-12 left-4 flex items-center justify-center h-8 w-8 rounded-full hover:bg-foreground/5 transition-colors"
         >
@@ -167,13 +203,22 @@ export function ApiKeyOnboardingPage() {
           <div className="space-y-4">
             <div className="relative">
               <Input
+                ref={secretInput}
+                readOnly={isSubmitting || refreshNeeded}
                 value={apiKey}
-                onChange={handleApiKeyChange}
-                onKeyDown={handleApiKeyKeyDown}
+                onChange={(event) => setApiKey(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault()
+                    void submit()
+                  }
+                }}
+                type="password"
+                autoComplete="new-password"
+                aria-label="Anthropic API key"
                 placeholder="sk-ant-..."
                 className="font-mono text-center pr-10"
                 autoFocus
-                disabled={isSubmitting}
               />
               {isSubmitting && (
                 <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -184,6 +229,14 @@ export function ApiKeyOnboardingPage() {
             <p className="text-xs text-muted-foreground text-center">
               Your API key starts with sk-ant-
             </p>
+            {feedback}
+            <Button
+              className="w-full"
+              disabled={!isValidApiKey(apiKey) || isSubmitting || refreshNeeded}
+              onClick={() => void submit()}
+            >
+              {isSubmitting ? "Saving..." : "Continue"}
+            </Button>
           </div>
         </div>
       </div>
@@ -201,6 +254,7 @@ export function ApiKeyOnboardingPage() {
 
       {/* Back button - fixed in top left corner below traffic lights */}
       <button
+        aria-label="Back to connection methods"
         onClick={handleBack}
         className="fixed top-12 left-4 flex items-center justify-center h-8 w-8 rounded-full hover:bg-foreground/5 transition-colors"
       >
@@ -228,8 +282,12 @@ export function ApiKeyOnboardingPage() {
         <div className="space-y-4">
           {/* Model Name */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium">Model name</Label>
+            <Label htmlFor="onboarding-model" className="text-sm font-medium">
+              Model name
+            </Label>
             <Input
+              id="onboarding-model"
+              readOnly={isSubmitting || refreshNeeded}
               value={model}
               onChange={(e) => setModel(e.target.value)}
               placeholder="claude-sonnet-5"
@@ -240,9 +298,14 @@ export function ApiKeyOnboardingPage() {
 
           {/* API Token */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium">API token</Label>
+            <Label htmlFor="onboarding-token" className="text-sm font-medium">
+              API token
+            </Label>
             <Input
+              id="onboarding-token"
+              ref={secretInput}
               type="password"
+              readOnly={isSubmitting || refreshNeeded}
               value={token}
               onChange={(e) => setToken(e.target.value)}
               placeholder="sk-ant-..."
@@ -253,8 +316,12 @@ export function ApiKeyOnboardingPage() {
 
           {/* Base URL */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium">Base URL</Label>
+            <Label htmlFor="onboarding-url" className="text-sm font-medium">
+              Base URL
+            </Label>
             <Input
+              id="onboarding-url"
+              readOnly={isSubmitting || refreshNeeded}
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder="https://api.anthropic.com"
@@ -264,13 +331,15 @@ export function ApiKeyOnboardingPage() {
           </div>
         </div>
 
+        {feedback}
         {/* Continue Button */}
         <button
-          onClick={submitCustomModel}
-          disabled={!canSubmitCustomModel || isSubmitting}
+          onClick={() => void submit()}
+          disabled={!canSubmitCustomModel || isSubmitting || refreshNeeded}
           className={cn(
             "w-full h-8 px-3 bg-primary text-primary-foreground rounded-lg text-sm font-medium transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.97] shadow-[0_0_0_0.5px_rgb(23,23,23),inset_0_0_0_1px_rgba(255,255,255,0.14)] dark:shadow-[0_0_0_0.5px_rgb(23,23,23),inset_0_0_0_1px_rgba(255,255,255,0.14)] flex items-center justify-center",
-            (!canSubmitCustomModel || isSubmitting) && "opacity-50 cursor-not-allowed",
+            (!canSubmitCustomModel || isSubmitting || refreshNeeded) &&
+              "opacity-50 cursor-not-allowed",
           )}
         >
           {isSubmitting ? <IconSpinner className="h-4 w-4" /> : "Continue"}

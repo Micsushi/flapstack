@@ -48,10 +48,17 @@ export class AutomationUiService {
   ) {}
 
   listHistory(automationId: string, limit = 50): AutomationHistoryItem[] {
+    return this.listHistoryPage(automationId, { limit }).items
+  }
+
+  listHistoryPage(automationId: string, input: { limit?: number; cursor?: string } = {}) {
+    const scope = ["history", automationId, false] as const
+    const cursor = decodePageCursor(input.cursor, scope)
+    const limit = clampLimit(input.limit ?? 50)
     return this.withDatabase((database) => {
       const rows = database
         .prepare(
-          `SELECT e.id execution_id, e.occurrence_id, o.automation_id, e.attempt, e.state,
+          `SELECT COALESCE(e.created_at, 0) page_created_at, e.id execution_id, e.occurrence_id, o.automation_id, e.attempt, e.state,
                   t.type trigger_type, e.run_id, r.chat_id run_chat_id,
                   COALESCE(c.task_id, a.task_id) task_id,
                   COALESCE(c.project_id, task.project_id, a.project_id) project_id,
@@ -66,11 +73,24 @@ export class AutomationUiService {
            LEFT JOIN chats c ON c.id = r.chat_id
            LEFT JOIN tasks task ON task.id = COALESCE(c.task_id, a.task_id)
            WHERE o.automation_id = ?
-           ORDER BY COALESCE(e.started_at, o.scheduled_for) DESC, e.attempt DESC
+           ${cursor ? "AND (COALESCE(e.created_at, 0) < ? OR (COALESCE(e.created_at, 0) = ? AND e.id < ?))" : ""}
+           ORDER BY COALESCE(e.created_at, 0) DESC, e.id DESC
            LIMIT ?`,
         )
-        .all(automationId, clampLimit(limit)) as Row[]
-      return rows.map(historyItem)
+        .all(
+          automationId,
+          ...(cursor ? [cursor.createdAt, cursor.createdAt, cursor.id] : []),
+          limit + 1,
+        ) as Row[]
+      const items = rows.slice(0, limit)
+      const last = items.at(-1)
+      return {
+        items: items.map(historyItem),
+        nextCursor:
+          rows.length > limit && last
+            ? encodePageCursor(scope, Number(last.page_created_at), String(last.execution_id))
+            : null,
+      }
     })
   }
 
@@ -79,8 +99,12 @@ export class AutomationUiService {
       automationId?: string
       unreadOnly?: boolean
       limit?: number
+      cursor?: string
     } = {},
-  ): { items: AutomationInboxItem[]; unreadCount: number } {
+  ): { items: AutomationInboxItem[]; unreadCount: number; nextCursor: string | null } {
+    const scope = ["inbox", input.automationId ?? null, Boolean(input.unreadOnly)] as const
+    const cursor = decodePageCursor(input.cursor, scope)
+    const limit = clampLimit(input.limit ?? 100)
     return this.withDatabase((database) => {
       const filters: string[] = []
       const values: unknown[] = []
@@ -89,6 +113,12 @@ export class AutomationUiService {
         values.push(input.automationId)
       }
       if (input.unreadOnly) filters.push("i.unread = 1")
+      if (cursor) {
+        filters.push(
+          "(COALESCE(i.created_at, 0) < ? OR (COALESCE(i.created_at, 0) = ? AND i.id < ?))",
+        )
+        values.push(cursor.createdAt, cursor.createdAt, cursor.id)
+      }
       const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
       const rows = database
         .prepare(
@@ -104,14 +134,25 @@ export class AutomationUiService {
            LEFT JOIN chats c ON c.id = r.chat_id
            LEFT JOIN tasks task ON task.id = COALESCE(c.task_id, a.task_id)
            ${where}
-           ORDER BY i.created_at DESC, i.id
+           ORDER BY COALESCE(i.created_at, 0) DESC, i.id DESC
            LIMIT ?`,
         )
-        .all(...values, clampLimit(input.limit ?? 100)) as Row[]
+        .all(...values, limit + 1) as Row[]
       const count = database
-        .prepare("SELECT COUNT(*) count FROM automation_inbox_items WHERE unread = 1")
-        .get() as { count: number }
-      return { items: rows.map(inboxItem), unreadCount: Number(count.count) }
+        .prepare(
+          `SELECT COUNT(*) count FROM automation_inbox_items WHERE unread = 1 ${input.automationId ? "AND automation_id = ?" : ""}`,
+        )
+        .get(...(input.automationId ? [input.automationId] : [])) as { count: number }
+      const items = rows.slice(0, limit)
+      const last = items.at(-1)
+      return {
+        items: items.map(inboxItem),
+        unreadCount: Number(count.count),
+        nextCursor:
+          rows.length > limit && last
+            ? encodePageCursor(scope, Number(last.created_at), String(last.id))
+            : null,
+      }
     })
   }
 
@@ -245,5 +286,33 @@ function objectOrNull(value: unknown): Record<string, unknown> | null {
       : null
   } catch {
     return null
+  }
+}
+
+// Cursor values survive read marking and state changes; offsets and started_at do not.
+type PageScope = readonly ["history" | "inbox", string | null, boolean]
+function encodePageCursor(scope: PageScope, createdAt: number, id: string): string {
+  return Buffer.from(JSON.stringify({ version: 1, scope, createdAt, id })).toString("base64url")
+}
+function decodePageCursor(
+  cursor: string | undefined,
+  scope: PageScope,
+): { createdAt: number; id: string } | null {
+  if (cursor === undefined) return null
+  try {
+    if (cursor.length > 1024 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw new Error()
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"))
+    if (
+      value?.version !== 1 ||
+      JSON.stringify(value.scope) !== JSON.stringify(scope) ||
+      !Number.isSafeInteger(value.createdAt) ||
+      typeof value.id !== "string" ||
+      !value.id.length ||
+      value.id.length > 200
+    )
+      throw new Error()
+    return { createdAt: value.createdAt, id: value.id }
+  } catch {
+    throw new Error("Invalid pagination cursor for this view. Refresh to start again.")
   }
 }

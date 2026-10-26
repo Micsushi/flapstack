@@ -65,7 +65,21 @@ export function SavedWorkspacesView({
   const [layout, setLayout] = useState<SavedWorkspaceLayout | null>(null)
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [saveProblem, setSaveProblem] = useState<string | null>(null)
+  const [recovering, setRecovering] = useState(false)
+  const [copiedRevision, setCopiedRevision] = useState<number | null>(null)
+  const recoveryInFlight = useRef(false)
+  const recoveryPanel = useRef<HTMLElement | null>(null)
+  const savedName = useRef("")
+  const statusElement = useRef<HTMLDivElement | null>(null)
+  const focusRecoveryStatus = useRef(false)
   const [status, setStatus] = useState<string>("")
+  useEffect(() => {
+    if (focusRecoveryStatus.current) {
+      focusRecoveryStatus.current = false
+      statusElement.current?.focus()
+    }
+  }, [status])
   const [addPaneGroupId, setAddPaneGroupId] = useState<string | null>(null)
   const [showArchived, setShowArchived] = useState(false)
   const [renameValue, setRenameValue] = useState("")
@@ -133,6 +147,8 @@ export function SavedWorkspacesView({
     saveQueued.current = false
     setLayout(null)
     setDirty(false)
+    setSaveProblem(null)
+    setCopiedRevision(null)
     setStatus("")
     setLifecycleAction(null)
     setSelectedWorkspaceId(
@@ -142,7 +158,14 @@ export function SavedWorkspacesView({
 
   useEffect(() => {
     const workspaces = list.data ?? []
-    if (!projectId || list.isLoading || !list.data) return
+    if (
+      !projectId ||
+      list.isLoading ||
+      !list.data ||
+      dirty ||
+      (saveInFlight.current && currentWorkspaceId.current !== null)
+    )
+      return
     if (initialWorkspaceId) {
       setSelectedWorkspaceId(
         workspaces.some((workspace) => workspace.id === initialWorkspaceId)
@@ -164,35 +187,67 @@ export function SavedWorkspacesView({
       setSelectedWorkspaceId(next)
       writeSavedWorkspaceSelection(projectId, next)
     }
-  }, [initialWorkspaceId, list.data, list.isLoading, projectId, selectedWorkspaceId])
+  }, [initialWorkspaceId, list.data, list.isLoading, projectId, selectedWorkspaceId, dirty])
 
   useEffect(() => {
     const record = selected.data
-    if (!record || loadedWorkspaceId.current === record.id) return
+    if (!record || record.id !== selectedWorkspaceId || !selectedWorkspaceIsMember) return
+    if (loadedWorkspaceId.current === record.id) {
+      if (saveInFlight.current || record.version <= (latestVersion.current ?? 0)) return
+      if (dirty) {
+        setSaveProblem("This workspace changed in another window. Your local layout is kept.")
+        return
+      }
+      latestVersion.current = record.version
+      latestLayout.current = record.layout ? enforceWorkspaceChatCap(record.layout) : null
+      setLayout(latestLayout.current)
+      const previousName = savedName.current
+      setRenameValue((value) => (value === previousName ? record.name : value))
+      savedName.current = record.name
+      return
+    }
     loadedWorkspaceId.current = record.id
+    savedName.current = record.name
     const pendingLayout = readPendingWorkspaceLayout(record.id)
-    const canRestorePending = pendingLayout?.expectedVersion === record.version
-    const restoredLayout = canRestorePending
+    const canRestorePending = Boolean(pendingLayout)
+    const pendingConflict = pendingLayout && pendingLayout.expectedVersion !== record.version
+    const restoredLayout = pendingLayout
       ? pendingLayout.layout
       : record.layout
         ? enforceWorkspaceChatCap(record.layout)
         : null
     currentWorkspaceId.current = record.id
     latestLayout.current = restoredLayout
-    latestVersion.current = record.version
+    latestVersion.current = pendingLayout?.expectedVersion ?? record.version
     layoutRevision.current = canRestorePending ? 1 : 0
     saveQueued.current = false
     setLayout(restoredLayout)
     setRenameValue(record.name)
     setDirty(canRestorePending)
+    setSaveProblem(
+      pendingConflict
+        ? "The saved workspace changed while this draft was closed. Your local layout is kept."
+        : pendingLayout && record.archivedAt !== null
+          ? "This workspace is archived. Your local layout is kept."
+          : null,
+    )
     setStatus(
       canRestorePending
-        ? "Recovered unsaved workspace changes. Saving…"
+        ? pendingConflict || record.archivedAt != null
+          ? "Recovered unsaved workspace changes. Review recovery options before saving."
+          : "Recovered unsaved workspace changes. Saving…"
         : record.layoutIssue
           ? "Workspace layout needs repair."
           : "Workspace restored.",
     )
-  }, [selected.data])
+  }, [
+    selected.data,
+    selectedWorkspaceId,
+    selectedWorkspaceIsMember,
+    dirty,
+    initialWorkspaceId,
+    projectId,
+  ])
 
   const selectWorkspace = (workspaceId: string) => {
     if (dirty || saveInFlight.current) {
@@ -209,6 +264,8 @@ export function SavedWorkspacesView({
     setSelectedWorkspaceId(workspaceId)
     setLayout(null)
     setDirty(false)
+    setSaveProblem(null)
+    setCopiedRevision(null)
     if (projectId) writeSavedWorkspaceSelection(projectId, workspaceId)
   }
 
@@ -223,6 +280,8 @@ export function SavedWorkspacesView({
     setSelectedWorkspaceId(workspaceId)
     setLayout(null)
     setDirty(false)
+    setSaveProblem(null)
+    setCopiedRevision(null)
   }
 
   const toggleArchivedWorkspaces = () => {
@@ -250,7 +309,8 @@ export function SavedWorkspacesView({
     event.preventDefault()
     const workspace = selected.data
     const nextName = renameValue.trim()
-    if (!workspace || !nextName || nextName === workspace.name) return
+    if (!workspace || !nextName || nextName === workspace.name || dirty || saving || recovering)
+      return
     setStatus("Renaming workspace…")
     try {
       const result = await renameMutation.mutateAsync({
@@ -344,6 +404,7 @@ export function SavedWorkspacesView({
   }
 
   const saveCurrent = useCallback(async () => {
+    if (recoveryInFlight.current || selected.data?.archivedAt != null) return
     if (saveInFlight.current) {
       saveQueued.current = true
       return
@@ -356,6 +417,7 @@ export function SavedWorkspacesView({
     const generationToSave = workspaceGeneration.current
     saveInFlight.current = true
     setSaving(true)
+    setSaveProblem(null)
     setStatus("Saving workspace…")
     try {
       const result = await saveMutation.mutateAsync({
@@ -377,6 +439,8 @@ export function SavedWorkspacesView({
         writePendingWorkspaceLayout(workspaceId, null)
         setLayout(persistedLayout)
         setDirty(false)
+        setSaveProblem(null)
+        setCopiedRevision(null)
         setStatus("Workspace saved.")
       } else {
         saveQueued.current = true
@@ -394,7 +458,9 @@ export function SavedWorkspacesView({
         currentWorkspaceId.current === workspaceId
       ) {
         saveQueued.current = false
-        setStatus(error instanceof Error ? error.message : "Workspace save failed.")
+        const message = error instanceof Error ? error.message : "Workspace save failed."
+        setSaveProblem(message)
+        setStatus(message)
       }
     } finally {
       saveInFlight.current = false
@@ -404,24 +470,135 @@ export function SavedWorkspacesView({
         queueMicrotask(() => void saveCurrentRef.current())
       }
     }
-  }, [saveMutation, utils.savedWorkspaces.get, utils.savedWorkspaces.list])
+  }, [
+    saveMutation,
+    utils.savedWorkspaces.get,
+    utils.savedWorkspaces.list,
+    selected.data?.archivedAt,
+  ])
   saveCurrentRef.current = saveCurrent
 
   useEffect(() => {
-    if (!dirty) return
+    if (!dirty || saveProblem || recovering) return
     const timer = window.setTimeout(() => void saveCurrent(), AUTO_SAVE_DELAY_MS)
     return () => window.clearTimeout(timer)
-  }, [dirty, layout, saveCurrent])
+  }, [dirty, layout, saveCurrent, saveProblem, recovering])
 
   useEffect(() => {
-    if (!dirty) return
+    if (!dirty || copiedRevision === layoutRevision.current) return
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault()
       event.returnValue = ""
+      setStatus(
+        "Resolve the unsaved workspace layout before closing. Retry saving, save a copy, or discard and reload.",
+      )
+      recoveryPanel.current?.focus()
     }
     window.addEventListener("beforeunload", handleBeforeUnload)
     return () => window.removeEventListener("beforeunload", handleBeforeUnload)
-  }, [dirty])
+  }, [dirty, copiedRevision, layout])
+
+  const reloadSavedLayout = async () => {
+    const workspaceId = currentWorkspaceId.current
+    if (!workspaceId || saveInFlight.current || recoveryInFlight.current) return
+    if (
+      !window.confirm("Discard this window's unsaved layout and load the latest saved workspace?")
+    )
+      return
+    const generation = workspaceGeneration.current
+    const revision = layoutRevision.current
+    recoveryInFlight.current = true
+    setRecovering(true)
+    setSaveProblem(
+      (previous) => previous ?? "Your local layout is kept. Choose how to save or reload it.",
+    )
+    try {
+      const record = await utils.savedWorkspaces.get.fetch({ workspaceId }, { staleTime: 0 })
+      if (generation !== workspaceGeneration.current || workspaceId !== currentWorkspaceId.current)
+        return
+      if (layoutRevision.current !== revision) {
+        setStatus(
+          "More edits arrived while reloading. They are kept; review them before discarding.",
+        )
+        return
+      }
+      if (record.id !== workspaceId || !record.layout || record.layoutIssue)
+        throw new Error("The latest workspace layout is unavailable. Your local changes are kept.")
+      const restored = enforceWorkspaceChatCap(record.layout)
+      latestVersion.current = record.version
+      latestLayout.current = restored
+      loadedWorkspaceId.current = record.id
+      writePendingWorkspaceLayout(workspaceId, null)
+      const previousName = savedName.current
+      setRenameValue((value) => (value === previousName ? record.name : value))
+      savedName.current = record.name
+      focusRecoveryStatus.current = Boolean(recoveryPanel.current?.contains(document.activeElement))
+      setLayout(restored)
+      setDirty(false)
+      setSaveProblem(null)
+      setCopiedRevision(null)
+      setStatus(
+        "Local layout changes discarded. Latest saved layout loaded; this window can close.",
+      )
+    } catch (error) {
+      if (generation === workspaceGeneration.current && workspaceId === currentWorkspaceId.current)
+        setStatus(
+          error instanceof Error ? error.message : "Reload failed. Your local changes are kept.",
+        )
+    } finally {
+      recoveryInFlight.current = false
+      setRecovering(false)
+    }
+  }
+
+  const saveDraftCopy = async () => {
+    const workspace = selected.data
+    const draft = latestLayout.current
+    if (
+      !workspace ||
+      workspace.id !== currentWorkspaceId.current ||
+      !selectedWorkspaceIsMember ||
+      workspace.owner.kind !== "manual" ||
+      !draft ||
+      !dirty ||
+      saveInFlight.current ||
+      recoveryInFlight.current ||
+      copiedRevision === layoutRevision.current
+    )
+      return
+    const generation = workspaceGeneration.current
+    const revision = layoutRevision.current
+    recoveryInFlight.current = true
+    setRecovering(true)
+    setSaveProblem(
+      (previous) => previous ?? "Your local layout is kept. Choose how to save or reload it.",
+    )
+    try {
+      const result = await createMutation.mutateAsync({
+        name: `${workspace.name.slice(0, 240)} recovered copy`,
+        scope: workspace.scope,
+        layout: draft,
+      })
+      await utils.savedWorkspaces.list.invalidate().catch(() => undefined)
+      if (generation !== workspaceGeneration.current || workspace.id !== currentWorkspaceId.current)
+        return
+      focusRecoveryStatus.current = Boolean(recoveryPanel.current?.contains(document.activeElement))
+      setCopiedRevision(revision)
+      setStatus(
+        layoutRevision.current === revision
+          ? `Draft saved as "${result.workspace.name}". You can close this window. The original draft is still open here until you discard and reload.`
+          : `An earlier draft was saved as "${result.workspace.name}". Newer local edits are still unsaved.`,
+      )
+    } catch (error) {
+      if (generation === workspaceGeneration.current && workspace.id === currentWorkspaceId.current)
+        setStatus(
+          error instanceof Error ? error.message : "Copy failed. Your local changes are kept.",
+        )
+    } finally {
+      recoveryInFlight.current = false
+      setRecovering(false)
+    }
+  }
 
   const createWorkspace = async (event: FormEvent) => {
     event.preventDefault()
@@ -450,6 +627,8 @@ export function SavedWorkspacesView({
       setSelectedWorkspaceId(result.workspace.id)
       setLayout(result.workspace.layout)
       setDirty(false)
+      setSaveProblem(null)
+      setCopiedRevision(null)
       setStatus("Workspace created and saved.")
       writeSavedWorkspaceSelection(projectId, result.workspace.id)
       await utils.savedWorkspaces.list.invalidate()
@@ -587,6 +766,8 @@ export function SavedWorkspacesView({
       setLayout(result.workspace.layout)
       setRenameValue(result.workspace.name)
       setDirty(false)
+      setSaveProblem(null)
+      setCopiedRevision(null)
       writeSavedWorkspaceSelection(projectId, result.workspace.id)
       setStatus(
         invalidations.some((invalidation) => invalidation.status === "rejected")
@@ -807,6 +988,47 @@ export function SavedWorkspacesView({
           </>
         )}
       </WorkspaceHeader>
+      {dirty && (
+        <section
+          ref={recoveryPanel}
+          tabIndex={-1}
+          className="space-y-2 rounded-md border border-border p-3"
+          aria-label="Unsaved workspace recovery"
+        >
+          <p role={saveProblem ? "alert" : "status"} className="text-sm">
+            {saveProblem || "This window has unsaved layout changes."}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              disabled={saving || recovering || selectedWorkspaceArchived}
+              onClick={() => void saveCurrent()}
+            >
+              Retry save
+            </Button>
+            {selected.data?.owner.kind === "manual" && (
+              <Button
+                variant="outline"
+                disabled={saving || recovering || copiedRevision === layoutRevision.current}
+                onClick={() => void saveDraftCopy()}
+              >
+                Save a copy
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              disabled={saving || recovering}
+              onClick={() => void reloadSavedLayout()}
+            >
+              Discard changes and reload
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Reload discards this window's layout edits only after the latest saved layout is
+            available.
+          </p>
+        </section>
+      )}
       {!popoutPaneId && selected.data && (
         <details className="beta-disclosure rounded-md border border-border p-2">
           <summary className="cursor-pointer text-sm">Workspace options</summary>
@@ -828,6 +1050,9 @@ export function SavedWorkspacesView({
                 type="submit"
                 variant="outline"
                 disabled={
+                  dirty ||
+                  saving ||
+                  recovering ||
                   renameMutation.isPending ||
                   !renameValue.trim() ||
                   renameValue.trim() === selected.data.name
@@ -902,7 +1127,13 @@ export function SavedWorkspacesView({
           onConfirm={() => void confirmLifecycleAction()}
         />
       )}
-      <div className="min-h-5 text-xs text-muted-foreground" role="status" aria-live="polite">
+      <div
+        ref={statusElement}
+        tabIndex={-1}
+        className="min-h-5 text-xs text-muted-foreground"
+        role="status"
+        aria-live="polite"
+      >
         {status || (!selected.data && !initialChatId ? "Open a chat to create a workspace." : "")}
       </div>
       <div className="min-h-0 flex-1">
@@ -957,8 +1188,8 @@ export function SavedWorkspacesView({
                 layout={displayedLayout}
                 onLayoutChange={(next, action) => {
                   if (!workspaceReadOnly) changeLayout(next, action)
-                  else if (!selectedWorkspaceArchived && action.type === "activate-pane")
-                    dispatchLayout(action)
+                  else if (!selectedWorkspaceArchived && action.type === "activate-pane" && layout)
+                    setLayout(reduceWorkspaceLayout(layout, action))
                 }}
                 onRequestAddPane={workspaceReadOnly ? undefined : setAddPaneGroupId}
                 onPopOutPane={popoutPaneId ? undefined : (pane) => void popOutPane(pane)}

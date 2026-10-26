@@ -1,10 +1,18 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react"
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  type Dispatch,
+  type SetStateAction,
+} from "react"
 import { useListKeyboardNav } from "./use-list-keyboard-nav"
 import { useAtomValue, useSetAtom } from "jotai"
 import { trpc } from "../../../lib/trpc"
 import { Button, buttonVariants } from "../../ui/button"
 import { Input } from "../../ui/input"
-import { Plus, Trash2, FolderOpen } from "lucide-react"
+import { FolderOpen, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { AIPenIcon, ExternalLinkIcon, FolderFilledIcon, ImageIcon } from "../../ui/icons"
 import { invalidateProjectIcon, useProjectIcon } from "../../../lib/hooks/use-project-icon"
 import { ProjectIcon } from "../../ui/project-icon"
@@ -37,20 +45,53 @@ import {
   type NewChatAgentProfileSelectionState,
 } from "../../../features/agent-profiles/new-chat-agent-profile-selector"
 
-// --- Detail Panel ---
-function ProjectDetail({ projectId }: { projectId: string }) {
-  // Get config for selected project
-  const { data: configData, refetch: refetchConfig } = trpc.worktreeConfig.get.useQuery(
-    { projectId },
-    { enabled: !!projectId },
-  )
+type ConfigDraft = {
+  commands: string[]
+  unixCommands: string[]
+  windowsCommands: string[]
+  saveTarget: "cursor" | "flapstack"
+}
+type ProjectDraft = {
+  name: string
+  savedName: string | null
+  config: ConfigDraft
+  savedConfig: string | null
+  nameSaving: boolean
+  configSaving: boolean
+  nameError: string | null
+  configError: string | null
+}
+const emptyDraft: ProjectDraft = {
+  name: "",
+  savedName: null,
+  config: { commands: [""], unixCommands: [], windowsCommands: [], saveTarget: "flapstack" },
+  savedConfig: null,
+  nameSaving: false,
+  configSaving: false,
+  nameError: null,
+  configError: null,
+}
 
-  // Save mutation (auto-save, no toast on success - only on error)
-  const saveMutation = trpc.worktreeConfig.save.useMutation({
-    onError: (err) => {
-      toast.error(`Failed to save: ${err.message}`)
-    },
-  })
+// --- Detail Panel ---
+function ProjectDetail({
+  projectId,
+  draft,
+  setDraft,
+}: {
+  projectId: string
+  draft: ProjectDraft
+  setDraft: Dispatch<SetStateAction<ProjectDraft>>
+}) {
+  // Get config for selected project
+  const {
+    data: configData,
+    isLoading: isLoadingConfig,
+    isFetching: isFetchingConfig,
+    error: configError,
+    refetch: refetchConfig,
+  } = trpc.worktreeConfig.get.useQuery({ projectId }, { enabled: !!projectId })
+
+  const saveMutation = trpc.worktreeConfig.save.useMutation()
 
   // For "Fill with AI" - create chat and close settings
   const setSettingsDialogOpen = useSetAtom(agentsSettingsDialogOpenAtom)
@@ -73,24 +114,26 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   })
 
   // Get project info
-  const { data: project, refetch: refetchProject } = trpc.projects.get.useQuery(
-    { id: projectId },
-    { enabled: !!projectId },
-  )
+  const {
+    data: project,
+    isLoading: isLoadingProject,
+    isFetching: isFetchingProject,
+    error: projectError,
+    refetch: refetchProject,
+  } = trpc.projects.get.useQuery({ id: projectId }, { enabled: !!projectId })
+  const projectUnavailable = isLoadingProject || Boolean(projectError) || !project
+  const configUnavailable =
+    isLoadingConfig || isFetchingConfig || Boolean(configError) || !configData
+  const detailReadRefreshing = isFetchingProject || isFetchingConfig
+  const retryDetailReads = async () => {
+    await Promise.all([refetchProject(), refetchConfig()])
+  }
 
   // Cached project icon
   const { src: iconSrc } = useProjectIcon(project)
 
   // Rename mutation
-  const renameMutation = trpc.projects.rename.useMutation({
-    onSuccess: () => {
-      refetchProject()
-      toast.success("Project renamed")
-    },
-    onError: (err) => {
-      toast.error(`Failed to rename: ${err.message}`)
-    },
-  })
+  const renameMutation = trpc.projects.rename.useMutation()
 
   // Delete project mutation
   const deleteMutation = trpc.projects.delete.useMutation({
@@ -132,44 +175,79 @@ function ProjectDetail({ projectId }: { projectId: string }) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
 
   // Project name editing
-  const [projectName, setProjectName] = useState("")
-  const savedNameRef = useRef("")
+  const projectName = draft.name
+  const setProjectName = (name: string) => setDraft((current) => ({ ...current, name }))
+  const nameRequestRef = useRef(false)
 
   useEffect(() => {
-    if (project?.name) {
-      setProjectName(project.name)
-      savedNameRef.current = project.name
-    }
-  }, [project?.name])
+    if (!project?.name) return
+    setDraft((current) =>
+      !current.nameSaving && (current.savedName === null || current.name === current.savedName)
+        ? { ...current, name: project.name, savedName: project.name }
+        : current,
+    )
+  }, [project?.name, setDraft])
 
   const handleNameBlur = useCallback(async () => {
+    if (projectUnavailable || draft.nameSaving || nameRequestRef.current) return
     const trimmed = projectName.trim()
-    if (!trimmed || trimmed === savedNameRef.current) {
-      setProjectName(savedNameRef.current)
+    if (!trimmed) {
+      setDraft((current) => ({ ...current, nameError: "Enter a project name." }))
       return
     }
-    renameMutation.mutate({ id: projectId, name: trimmed })
-    savedNameRef.current = trimmed
-  }, [projectName, projectId, renameMutation])
+    if (trimmed === draft.savedName) {
+      setDraft((current) => ({ ...current, nameError: null }))
+      return
+    }
+    nameRequestRef.current = true
+    setDraft((current) => ({ ...current, nameSaving: true, nameError: null }))
+    try {
+      const renamed = await renameMutation.mutateAsync({ id: projectId, name: trimmed })
+      if (!renamed) throw new Error("Project no longer exists.")
+      await utils.projects.get.cancel({ id: projectId })
+      utils.projects.get.setData({ id: projectId }, renamed)
+      setDraft((current) => ({ ...current, name: trimmed, savedName: trimmed, nameSaving: false }))
+      void utils.projects.list.invalidate()
+      toast.success("Project renamed")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error"
+      setDraft((current) => ({ ...current, nameSaving: false, nameError: message }))
+      toast.error(`Failed to rename: ${message}`)
+    } finally {
+      nameRequestRef.current = false
+    }
+  }, [
+    projectName,
+    projectId,
+    projectUnavailable,
+    draft.nameSaving,
+    draft.savedName,
+    renameMutation,
+    setDraft,
+    utils,
+  ])
 
   // Local state
-  const [saveTarget, setSaveTarget] = useState<"cursor" | "flapstack">("flapstack")
-  const [commands, setCommands] = useState<string[]>([""])
-  const [unixCommands, setUnixCommands] = useState<string[]>([])
-  const [windowsCommands, setWindowsCommands] = useState<string[]>([])
+  const { saveTarget, commands, unixCommands, windowsCommands } = draft.config
+  const setSaveTarget = (saveTarget: ConfigDraft["saveTarget"]) =>
+    setDraft((current) => ({ ...current, config: { ...current.config, saveTarget } }))
+  const setCommands = (commands: string[]) =>
+    setDraft((current) => ({ ...current, config: { ...current.config, commands } }))
+  const setUnixCommands = (unixCommands: string[]) =>
+    setDraft((current) => ({ ...current, config: { ...current.config, unixCommands } }))
+  const setWindowsCommands = (windowsCommands: string[]) =>
+    setDraft((current) => ({ ...current, config: { ...current.config, windowsCommands } }))
   const [showPlatformSpecific, setShowPlatformSpecific] = useState(false)
   const [fillProfileSelection, setFillProfileSelection] =
     useState<NewChatAgentProfileSelectionState>(null)
 
-  // Ref to track last saved state for dirty checking
-  const savedConfigRef = useRef<string>("")
-  const configReadyRef = useRef(false)
+  const configRequestRef = useRef(false)
+  const configDisabled = configUnavailable || draft.savedConfig === null || draft.configSaving
 
   // Sync from server data
   useEffect(() => {
     if (configData) {
       const newSaveTarget = configData.source === "cursor" ? "cursor" : "flapstack"
-      setSaveTarget(newSaveTarget)
 
       let newCommands: string[] = [""]
       let newUnix: string[] = []
@@ -202,26 +280,29 @@ function ProjectDetail({ projectId }: { projectId: string }) {
         }
       }
 
-      setCommands(newCommands)
-      setUnixCommands(newUnix)
-      setWindowsCommands(newWin)
-
-      // Snapshot the initial state so doSave won't fire on first render
-      savedConfigRef.current = JSON.stringify({
+      const config: ConfigDraft = {
         commands: newCommands,
         unixCommands: newUnix,
         windowsCommands: newWin,
         saveTarget: newSaveTarget,
-      })
-      configReadyRef.current = true
+      }
+      setDraft((current) =>
+        !current.configSaving &&
+        (current.savedConfig === null || JSON.stringify(current.config) === current.savedConfig)
+          ? { ...current, config, savedConfig: JSON.stringify(config) }
+          : current,
+      )
     }
-  }, [configData])
+  }, [configData, setDraft])
 
-  const doSave = useCallback(() => {
-    if (!projectId || !configReadyRef.current) return
+  const doSave = useCallback(async () => {
+    if (!projectId || configDisabled || configRequestRef.current) return
 
     const currentState = JSON.stringify({ commands, unixCommands, windowsCommands, saveTarget })
-    if (currentState === savedConfigRef.current) return
+    if (currentState === draft.savedConfig) {
+      setDraft((current) => ({ ...current, configError: null }))
+      return
+    }
 
     const config: Record<string, string[]> = {}
     const filteredCommands = commands.filter((c) => c.trim())
@@ -232,9 +313,35 @@ function ProjectDetail({ projectId }: { projectId: string }) {
     if (filteredUnix.length > 0) config["setup-worktree-unix"] = filteredUnix
     if (filteredWin.length > 0) config["setup-worktree-windows"] = filteredWin
 
-    saveMutation.mutate({ projectId, config, target: saveTarget })
-    savedConfigRef.current = currentState
-  }, [projectId, commands, unixCommands, windowsCommands, saveTarget, saveMutation])
+    configRequestRef.current = true
+    setDraft((current) => ({ ...current, configSaving: true, configError: null }))
+    try {
+      const result = await saveMutation.mutateAsync({ projectId, config, target: saveTarget })
+      if (!result.success) throw new Error(result.error || "Could not save worktree config.")
+      await utils.worktreeConfig.get.cancel({ projectId })
+      utils.worktreeConfig.get.setData({ projectId }, (current) =>
+        current ? { ...current, config, source: saveTarget, path: result.path } : current,
+      )
+      setDraft((current) => ({ ...current, savedConfig: currentState, configSaving: false }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error"
+      setDraft((current) => ({ ...current, configSaving: false, configError: message }))
+      toast.error(`Failed to save: ${message}`)
+    } finally {
+      configRequestRef.current = false
+    }
+  }, [
+    projectId,
+    commands,
+    unixCommands,
+    windowsCommands,
+    saveTarget,
+    saveMutation,
+    configDisabled,
+    draft.savedConfig,
+    setDraft,
+    utils,
+  ])
 
   const updateCommand = (
     index: number,
@@ -262,11 +369,11 @@ function ProjectDetail({ projectId }: { projectId: string }) {
 
   // Save after state updates from remove or saveTarget change
   useEffect(() => {
-    if (pendingSaveRef.current) {
+    if (pendingSaveRef.current && !configDisabled) {
       pendingSaveRef.current = false
       doSave()
     }
-  }, [commands, unixCommands, windowsCommands, saveTarget, doSave])
+  }, [commands, unixCommands, windowsCommands, saveTarget, doSave, configDisabled])
 
   const addCommand = (list: string[], setter: (v: string[]) => void) => {
     setter([...list, ""])
@@ -296,6 +403,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             value={cmd}
             onChange={(e) => updateCommand(i, e.target.value, list, setter)}
             onBlur={doSave}
+            disabled={configDisabled}
             placeholder={placeholder}
             className="flex-1 font-mono text-sm"
           />
@@ -304,6 +412,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               type="button"
               className="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive transition-colors"
               onClick={() => removeCommand(i, list, setter, allowEmpty)}
+              disabled={configDisabled}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
@@ -314,6 +423,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
         type="button"
         className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
         onClick={() => addCommand(list, setter)}
+        disabled={configDisabled}
       >
         <Plus className="h-3.5 w-3.5" />
         Add command
@@ -323,30 +433,66 @@ function ProjectDetail({ projectId }: { projectId: string }) {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-2xl mx-auto p-6 space-y-6">
+      <div className="max-w-2xl mx-auto p-4 xl:p-6 space-y-6">
+        {(projectError || configError) && (
+          <div className="flex items-start justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-sm text-destructive" role="alert">
+              Project settings unavailable:{" "}
+              {projectError?.message ?? configError?.message ?? "Unknown error"}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={detailReadRefreshing}
+              onClick={() => void retryDetailReads()}
+            >
+              <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry reads
+            </Button>
+          </div>
+        )}
         {/* ── General ── */}
         <div>
           <h4 className="text-sm font-medium text-foreground mb-2">General</h4>
           <div className="bg-background rounded-lg border border-border overflow-hidden">
             {/* Name */}
-            <div className="flex items-center justify-between p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4">
               <div className="flex-1">
                 <span className="text-sm font-medium text-foreground">Name</span>
                 <p className="text-sm text-muted-foreground">Display name for this project</p>
               </div>
-              <div className="flex-shrink-0 w-80">
+              <div className="w-full min-w-0 xl:w-80">
                 <Input
                   value={projectName}
                   onChange={(e) => setProjectName(e.target.value)}
                   onBlur={handleNameBlur}
+                  disabled={projectUnavailable || draft.nameSaving}
                   className="w-full"
                   placeholder="Project name"
+                  aria-label="Project name"
                 />
+                {draft.nameError && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <p role="alert" className="min-w-0 break-words text-sm text-destructive">
+                      Name not saved: {draft.nameError}
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={handleNameBlur}
+                      disabled={projectUnavailable || draft.nameSaving}
+                    >
+                      Retry name
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Icon */}
-            <div className="flex items-center justify-between p-4 border-t border-border">
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-t border-border">
               <div className="flex-1">
                 <span className="text-sm font-medium text-foreground">Icon</span>
                 <p className="text-sm text-muted-foreground">Project avatar in sidebar</p>
@@ -356,6 +502,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                   type="button"
                   className="relative h-10 w-10 rounded-lg border border-border overflow-hidden flex items-center justify-center cursor-pointer bg-muted group/icon"
                   onClick={() => uploadIconMutation.mutate({ id: projectId })}
+                  disabled={projectUnavailable || uploadIconMutation.isPending}
                   title="Click to change icon"
                 >
                   {iconSrc ? (
@@ -373,6 +520,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                     size="sm"
                     className="text-muted-foreground hover:text-foreground"
                     onClick={() => removeIconMutation.mutate({ id: projectId })}
+                    disabled={projectUnavailable || removeIconMutation.isPending}
                   >
                     Reset
                   </Button>
@@ -381,7 +529,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             </div>
 
             {/* Path */}
-            <div className="flex items-center justify-between p-4 border-t border-border">
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-t border-border">
               <div className="flex-1 min-w-0 mr-4">
                 <span className="text-sm font-medium text-foreground">Path</span>
                 <p className="text-sm text-muted-foreground truncate">{project?.path || "-"}</p>
@@ -404,7 +552,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
 
             {/* Repository */}
             {project?.gitOwner && project?.gitRepo && (
-              <div className="flex items-center justify-between p-4 border-t border-border">
+              <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-t border-border">
                 <div className="flex-1">
                   <span className="text-sm font-medium text-foreground">Repository</span>
                   <p className="text-sm text-muted-foreground">
@@ -436,7 +584,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
         <div>
           <h4 className="text-sm font-medium text-foreground mb-2">Config</h4>
           <div className="bg-background rounded-lg border border-border overflow-hidden">
-            <div className="flex items-center justify-between p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4">
               <div className="flex-1">
                 <span className="text-sm font-medium text-foreground">Config file</span>
                 <p className="text-sm text-muted-foreground">Where worktree setup is stored</p>
@@ -447,8 +595,9 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                   setSaveTarget(v as "cursor" | "flapstack")
                   pendingSaveRef.current = true
                 }}
+                disabled={configDisabled}
               >
-                <SelectTrigger className="w-auto px-3">
+                <SelectTrigger className="max-w-full px-3" aria-label="Config file">
                   <span className="text-sm font-mono">
                     {saveTarget === "cursor"
                       ? ".cursor/worktrees.json"
@@ -461,14 +610,43 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                 </SelectContent>
               </Select>
             </div>
+            {(draft.configError ||
+              draft.configSaving ||
+              (draft.savedConfig !== null &&
+                JSON.stringify(draft.config) !== draft.savedConfig)) && (
+              <div className="flex flex-wrap items-center gap-2 border-t border-border p-4">
+                <p
+                  role={draft.configError ? "alert" : "status"}
+                  className={cn(
+                    "min-w-0 break-words text-sm",
+                    draft.configError ? "text-destructive" : "text-muted-foreground",
+                  )}
+                >
+                  {draft.configError
+                    ? `Config not saved: ${draft.configError}`
+                    : draft.configSaving
+                      ? "Saving config..."
+                      : "Config changes not saved yet."}
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={configDisabled}
+                  onClick={doSave}
+                >
+                  {draft.configError ? "Retry config" : "Save config"}
+                </Button>
+              </div>
+            )}
           </div>
         </div>
 
         {/* ── Worktree ── */}
         <div>
-          <div className="flex items-start justify-between gap-3 mb-2">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
             <h4 className="text-sm font-medium text-foreground">Worktree</h4>
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2 xl:justify-end">
               <NewChatAgentProfileSelector
                 scope="project"
                 projectId={projectId}
@@ -597,7 +775,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
         <div>
           <h4 className="text-sm font-medium text-foreground mb-2">Danger Zone</h4>
           <div className="bg-background rounded-lg border border-border overflow-hidden">
-            <div className="flex items-center justify-between p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4">
               <div className="flex-1">
                 <span className="text-sm font-medium text-foreground">Remove Project</span>
                 <p className="text-sm text-muted-foreground">
@@ -610,6 +788,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
                     variant="outline"
                     size="sm"
                     className="gap-1.5 hover:text-destructive hover:border-destructive/30 hover:bg-destructive/10"
+                    disabled={projectUnavailable || deleteMutation.isPending}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                     Remove
@@ -648,6 +827,19 @@ export function AgentsProjectsTab() {
   const selectedProject = useAtomValue(selectedProjectAtom)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
+  // Keep failed drafts and in-flight acknowledgements attached to their original project.
+  const [drafts, setDrafts] = useState<Record<string, ProjectDraft>>({})
+  const setDraft = useCallback<Dispatch<SetStateAction<ProjectDraft>>>(
+    (update) => {
+      if (!selectedProjectId) return
+      setDrafts((current) => {
+        const previous = current[selectedProjectId] ?? emptyDraft
+        const next = typeof update === "function" ? update(previous) : update
+        return next === previous ? current : { ...current, [selectedProjectId]: next }
+      })
+    },
+    [selectedProjectId],
+  )
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Focus search on "/" hotkey
@@ -664,7 +856,7 @@ export function AgentsProjectsTab() {
     return () => document.removeEventListener("keydown", handler)
   }, [])
 
-  const { data: projects, isLoading } = trpc.projects.list.useQuery()
+  const { data: projects, isLoading, isFetching, error, refetch } = trpc.projects.list.useQuery()
 
   const openFolderMutation = trpc.projects.openFolder.useMutation({
     onSuccess: (project) => {
@@ -710,9 +902,10 @@ export function AgentsProjectsTab() {
   }, [selectedProject?.id])
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden xl:flex-row">
       {/* Left sidebar - project list */}
       <ResizableSidebar
+        className="shrink-0 max-xl:!h-40 max-xl:!w-full max-xl:[&_.cursor-col-resize]:hidden"
         isOpen={true}
         onClose={() => {}}
         widthAtom={settingsProjectsSidebarWidthAtom}
@@ -733,6 +926,7 @@ export function AgentsProjectsTab() {
             <input
               ref={searchInputRef}
               placeholder="Search projects..."
+              aria-label="Search projects"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={listKeyDown}
@@ -746,6 +940,23 @@ export function AgentsProjectsTab() {
               <Plus className="h-4 w-4" />
             </button>
           </div>
+          {error && (
+            <div className="mx-2 mt-2 flex items-start justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-2">
+              <p className="text-xs text-destructive" role="alert">
+                Projects unavailable: {error.message}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                disabled={isFetching}
+                onClick={() => void refetch()}
+              >
+                <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+              </Button>
+            </div>
+          )}
 
           {/* Project list */}
           <div
@@ -757,6 +968,14 @@ export function AgentsProjectsTab() {
             {isLoading ? (
               <div className="flex items-center justify-center h-full">
                 <FolderFilledIcon className="h-5 w-5 text-muted-foreground animate-pulse" />
+              </div>
+            ) : error && !projects ? (
+              <div className="flex flex-col items-center justify-center h-full text-center px-4">
+                <FolderFilledIcon className="h-8 w-8 text-border mb-3" />
+                <p className="text-sm text-muted-foreground mb-1">Project list unavailable</p>
+                <p className="text-xs text-muted-foreground">
+                  Retry discovery to determine which projects are registered.
+                </p>
               </div>
             ) : !projects || projects.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-4">
@@ -803,9 +1022,29 @@ export function AgentsProjectsTab() {
       </ResizableSidebar>
 
       {/* Right content - detail panel */}
-      <div className="flex-1 min-w-0 h-full overflow-hidden">
+      <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
         {selectedProjectId ? (
-          <ProjectDetail projectId={selectedProjectId} />
+          <ProjectDetail
+            key={selectedProjectId}
+            projectId={selectedProjectId}
+            draft={drafts[selectedProjectId] ?? emptyDraft}
+            setDraft={setDraft}
+          />
+        ) : error && !projects ? (
+          <div className="flex flex-col items-center justify-center h-full text-center px-4">
+            <FolderFilledIcon className="h-12 w-12 text-border mb-4" />
+            <p className="text-sm text-muted-foreground">Project list unavailable</p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              disabled={isFetching}
+              onClick={() => void refetch()}
+            >
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+              Retry discovery
+            </Button>
+          </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center px-4">
             <FolderFilledIcon className="h-12 w-12 text-border mb-4" />

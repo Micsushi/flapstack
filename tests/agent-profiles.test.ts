@@ -2125,7 +2125,7 @@ describe("starter evaluation", () => {
 })
 
 describe("Agent Profile renderer contracts", () => {
-  it("keeps capability and personality separate and exposes task/studio actions", () => {
+  it("keeps profile controls separate and historical task actions read-only", () => {
     const studio = readFileSync(
       resolve(
         process.cwd(),
@@ -2159,7 +2159,8 @@ describe("Agent Profile renderer contracts", () => {
     )
     expect(start).toContain("launchBlocked")
     expect(start).toContain("Agent Profile launch limitations")
-    expect(sidebar).toContain('source={{ kind: "task", taskId: lifecycleTarget.id }}')
+    expect(sidebar).toContain("Historical tasks are read-only. Use Work board for current tasks.")
+    expect(sidebar).not.toContain('source={{ kind: "task", taskId: lifecycleTarget.id }}')
   })
 })
 

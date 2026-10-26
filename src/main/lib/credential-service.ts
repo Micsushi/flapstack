@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util"
 import { createHash, randomUUID } from "node:crypto"
 import { execFileSync } from "node:child_process"
 import {
@@ -496,6 +497,54 @@ export class CredentialService {
       warning: inspected.warning ?? "Secure credential persistence is unavailable.",
     })
     return { persistence: "session" }
+  }
+
+  // Backend-only snapshots. Never return these through IPC or put them in renderer history.
+  snapshotOpaque(ids: string[]) {
+    let store: CredentialStoreFile
+    try {
+      store = this.readStoreStrict()
+    } catch {
+      throw new Error("MCP credential store could not be read safely.")
+    }
+    return Object.fromEntries(
+      ids.map((id) => {
+        if (!/^mcp\.[a-f0-9]{64}$/.test(id)) throw new Error("Invalid opaque credential identifier")
+        return [
+          id,
+          structuredClone({
+            stored: store.credentials[id] ?? null,
+            session: this.sessionCredentials.get(id) ?? null,
+          }),
+        ]
+      }),
+    )
+  }
+
+  restoreOpaque(
+    target: ReturnType<CredentialService["snapshotOpaque"]>,
+    expected: ReturnType<CredentialService["snapshotOpaque"]>,
+  ): void {
+    const ids = Object.keys(target)
+    if (
+      !isDeepStrictEqual(Object.keys(expected).sort(), [...ids].sort()) ||
+      !isDeepStrictEqual(this.snapshotOpaque(ids), expected)
+    ) {
+      throw new Error("MCP credentials changed. Refresh before retrying undo or redo.")
+    }
+    if (isDeepStrictEqual(target, expected)) return
+    const store = this.readStoreStrict()
+    for (const id of ids) {
+      const value = target[id]!
+      if (value.stored) store.credentials[id] = structuredClone(value.stored)
+      else delete store.credentials[id]
+    }
+    this.writeStoreAtomic(store)
+    for (const id of ids) {
+      const value = target[id]!
+      if (value.session) this.sessionCredentials.set(id, structuredClone(value.session))
+      else this.sessionCredentials.delete(id)
+    }
   }
 
   resolveOpaque(id: string): string | null {

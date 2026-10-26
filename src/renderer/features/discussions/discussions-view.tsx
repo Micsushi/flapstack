@@ -33,7 +33,8 @@ function DiscussionsContent({
   scope: DiscussionScope
   onOpenRecords?: () => void
 }) {
-  const store = useDiscussions(scope)
+  const [showHidden, setShowHidden] = useState(false)
+  const store = useDiscussions(scope, showHidden)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState("")
   const [showCapture, setShowCapture] = useState(false)
@@ -45,7 +46,7 @@ function DiscussionsContent({
   })
   const topics = store.topics.filter(
     (topic) =>
-      !topic.archived &&
+      (showHidden || !topic.archived) &&
       `${topic.title} ${topic.summary}`.toLowerCase().includes(filter.toLowerCase()),
   )
   const selectedQuery = trpc.discussions.read.useQuery(
@@ -54,16 +55,21 @@ function DiscussionsContent({
   )
   const selectedCandidate =
     selectedQuery.data ?? store.topics.find((topic) => topic.id === selectedId)
-  const selected = selectedCandidate?.archived ? undefined : selectedCandidate
+  const selected = selectedCandidate?.archived && !showHidden ? undefined : selectedCandidate
   const capture = async () => {
-    const mixed = draft.kind === "note" ? await store.captureMixed(draft.body, draft.title) : null
+    const mixed =
+      draft.kind === "note"
+        ? await store.captureMixed(draft.body, draft.title.trim() || undefined)
+        : null
     const topic =
       draft.kind === "note"
         ? mixed?.topics.find((item) => !item.archived)
         : await store.create(draft.title, draft.body, draft.kind)
     if (mixed)
       setCaptureNotice(
-        `${mixed.state === "grouped" ? "Thoughts grouped into topics." : "Original saved, awaiting grouping."} ${mixed.warning ?? ""} ${mixed.dedupStatus === "unavailable" ? "Project-record matching unavailable." : "Existing project records checked."}`,
+        mixed.state === "grouped"
+          ? `Thoughts grouped into topics. ${mixed.warning ?? "Existing project records checked."}`
+          : "Grouping did not finish. Your text is saved as one topic. No background retry is scheduled.",
       )
     if (topic) {
       setDraft((current) =>
@@ -122,10 +128,14 @@ function DiscussionsContent({
           }}
         >
           <label className="block text-sm space-y-1">
-            <span>Topic name</span>
+            <span>
+              {draft.kind === "note"
+                ? "Capture name (optional; grouped topics get their own names)"
+                : "Topic name"}
+            </span>
             <input
               className="discussion-field"
-              required
+              required={draft.kind !== "note"}
               maxLength={200}
               value={draft.title}
               onChange={(event) => setDraft({ ...draft, title: event.target.value })}
@@ -161,7 +171,7 @@ function DiscussionsContent({
               type="submit"
               disabled={
                 store.busy ||
-                !draft.title.trim() ||
+                (draft.kind !== "note" && !draft.title.trim()) ||
                 !draft.body.trim() ||
                 (draft.kind === "note" && draft.body.length > 6000)
               }
@@ -190,11 +200,19 @@ function DiscussionsContent({
             <input
               id="topic-filter"
               className="discussion-field text-sm"
-              placeholder="Find topics"
+              placeholder="Find loaded topics"
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
             />
           </div>
+          <label className="flex items-center gap-2 px-3 pb-3 text-sm">
+            <input
+              type="checkbox"
+              checked={showHidden}
+              onChange={(event) => setShowHidden(event.target.checked)}
+            />
+            Include hidden topics
+          </label>
           {store.loading ? (
             <p className="p-4 text-sm" role="status">
               Loading topics…
@@ -215,7 +233,10 @@ function DiscussionsContent({
                     aria-current={selectedId === topic.id ? "page" : undefined}
                     onClick={() => setSelectedId(topic.id)}
                   >
-                    <span className="block font-medium discussion-copy">{topic.title}</span>
+                    <span className="block font-medium discussion-copy">
+                      {topic.title}
+                      {topic.archived ? " · Hidden" : ""}
+                    </span>
                     <span className="mt-1 block text-sm text-muted-foreground discussion-copy">
                       {topic.summary || "No summary yet"}
                     </span>
@@ -287,8 +308,8 @@ export function TopicDetail({
   backLabel?: string
   onOpenTopic?: (id: string) => void
 }) {
-  const [editingSummary, setEditingSummary] = useState(false)
-  const [summary, setSummary, summaryError] = useDiscussionDraft(
+  const [editingSummary, setEditingSummary] = useState<DiscussionTopic | null>(null)
+  const [summary, setSummary, summaryError, clearSummary] = useDiscussionDraft(
     discussionDraftKey(scope, `summary:${topic.id}`),
     topic.summary,
   )
@@ -312,10 +333,22 @@ export function TopicDetail({
       <Button variant="ghost" onClick={onBack}>
         {backLabel}
       </Button>
+      {topic.archived && (
+        <div className="space-y-2 rounded-md border p-3">
+          <p>This topic is hidden. Its saved text is still available.</p>
+          <Button
+            variant="outline"
+            disabled={store.busy}
+            onClick={() => void store.change(topic, { type: "archive", archived: false })}
+          >
+            Restore topic
+          </Button>
+        </div>
+      )}
       {topic.captureBatch && (
         <p role="status" className="text-sm text-muted-foreground">
           {topic.captureBatch.state === "unsorted"
-            ? "Original capture saved, awaiting grouping."
+            ? "Grouping did not finish. Your text is saved as one topic."
             : "Grouped capture."}{" "}
           {topic.captureBatch.warning}
         </p>
@@ -361,12 +394,27 @@ export function TopicDetail({
           topic={topic}
           scope={scope}
           refresh={store.refresh}
+          run={store.run}
           disabled={store.busy}
         />
         {!editingSummary ? (
           <>
             <p className="text-sm discussion-copy">{topic.summary || "No summary yet."}</p>
-            <Button variant="outline" onClick={() => setEditingSummary(true)}>
+            <Button
+              variant="outline"
+              disabled={store.busy}
+              onClick={() => {
+                try {
+                  if (
+                    localStorage.getItem(discussionDraftKey(scope, `summary:${topic.id}`)) === null
+                  )
+                    setSummary(topic.summary)
+                } catch {
+                  /* Retain the in-memory draft when storage is unavailable. */
+                }
+                setEditingSummary(topic)
+              }}
+            >
               Edit summary
             </Button>
           </>
@@ -375,11 +423,20 @@ export function TopicDetail({
             className="space-y-2"
             onSubmit={(event) => {
               event.preventDefault()
-              void store.change(topic, { type: "summary", summary }).then((result) => {
-                if (result) setEditingSummary(false)
+              void store.change(editingSummary, { type: "summary", summary }).then((result) => {
+                if (result) {
+                  clearSummary(summary, result.summary)
+                  setEditingSummary(null)
+                }
               })
             }}
           >
+            {summary !== topic.summary && (
+              <p className="text-xs text-muted-foreground">
+                Your summary draft differs from the saved summary. Review it before saving. Saved
+                summary: {topic.summary || "Empty"}
+              </p>
+            )}
             <label className="sr-only" htmlFor="summary">
               Current summary
             </label>
@@ -389,11 +446,20 @@ export function TopicDetail({
               rows={3}
               maxLength={2000}
               value={summary}
+              disabled={store.busy}
               onChange={(event) => setSummary(event.target.value)}
             />
             <div className="flex gap-2">
               <Button disabled={store.busy}>Save summary</Button>
-              <Button type="button" variant="ghost" onClick={() => setEditingSummary(false)}>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={store.busy}
+                onClick={() => {
+                  clearSummary(summary, topic.summary)
+                  setEditingSummary(null)
+                }}
+              >
                 Cancel
               </Button>
             </div>

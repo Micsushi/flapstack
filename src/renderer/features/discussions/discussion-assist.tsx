@@ -11,6 +11,7 @@ export function DiscussionAssist({
   question,
   onSaved,
   refresh,
+  run,
   disabled,
 }: {
   topic: DiscussionTopic
@@ -19,6 +20,7 @@ export function DiscussionAssist({
   question?: string
   onSaved?: () => void
   refresh: () => Promise<unknown>
+  run: <T>(action: () => Promise<T>) => Promise<T | undefined>
   disabled?: boolean
 }) {
   const [busy, setBusy] = useState(false)
@@ -27,37 +29,40 @@ export function DiscussionAssist({
     setBusy(true)
     setMessage(null)
     try {
-      const result = await trpcClient.discussions.assist.mutate({
-        scope,
-        id: topic.id,
-        expectedRevision: topic.revision,
-        annotationId,
-        question,
-      })
-      let revision = result.topic.revision
-      const restore = async (targetRevision: number) => {
-        const next = await trpcClient.discussions.restore.mutate({
+      const result = await run(async () => {
+        const result = await trpcClient.discussions.assist.mutate({
           scope,
           id: topic.id,
-          expectedRevision: revision,
-          targetRevision,
+          expectedRevision: topic.revision,
+          annotationId,
+          question,
         })
-        revision = next.revision
-        await refresh()
-      }
-      recordAppAction({
-        label: annotationId ? "Ask about annotation" : "Refresh topic summary",
-        undo: () => restore(topic.revision),
-        redo: () => restore(result.topic.revision),
+        let revision = result.topic.revision
+        const restore = async (targetRevision: number) => {
+          const next = await trpcClient.discussions.restore.mutate({
+            scope,
+            id: topic.id,
+            expectedRevision: revision,
+            targetRevision,
+          })
+          revision = next.revision
+          await refresh()
+        }
+        recordAppAction({
+          label: annotationId ? "Ask about annotation" : "Refresh topic summary",
+          undo: () => restore(topic.revision),
+          redo: () => restore(result.topic.revision),
+        })
+        return result
       })
-      await refresh()
+      if (!result) return
       onSaved?.()
       setMessage(`Reply from ${result.model} via Ollama. Discussion only; no worker launched.`)
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Reply unavailable. Your draft is retained.",
       )
-      await refresh()
+      await refresh().catch(() => {})
     } finally {
       setBusy(false)
     }

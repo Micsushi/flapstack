@@ -4,7 +4,7 @@ import { trpc } from "../../../lib/trpc"
 import { Button } from "../../ui/button"
 import { Input } from "../../ui/input"
 import { Label } from "../../ui/label"
-import { Plus, Trash2, ChevronDown } from "lucide-react"
+import { ChevronDown, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { AIPenIcon } from "../../ui/icons"
 import { Select, SelectContent, SelectItem, SelectTrigger } from "../../ui/select"
 import { toast } from "sonner"
@@ -20,11 +20,23 @@ export function AgentsWorktreesTab() {
   const isNarrowScreen = useIsNarrowScreen()
 
   // Get projects list
-  const { data: projects } = trpc.projects.list.useQuery()
+  const {
+    data: projects,
+    isLoading: isLoadingProjects,
+    isFetching: isFetchingProjects,
+    error: projectsError,
+    refetch: refetchProjects,
+  } = trpc.projects.list.useQuery()
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
 
   // Get config for selected project
-  const { data: configData, refetch: refetchConfig } = trpc.worktreeConfig.get.useQuery(
+  const {
+    data: configData,
+    isLoading: isLoadingConfig,
+    isFetching: isFetchingConfig,
+    error: configError,
+    refetch: refetchConfig,
+  } = trpc.worktreeConfig.get.useQuery(
     { projectId: selectedProjectId! },
     { enabled: !!selectedProjectId },
   )
@@ -181,7 +193,11 @@ export function AgentsWorktreesTab() {
               <p className="text-xs text-muted-foreground">Choose which project to configure</p>
             </div>
             <div className="flex-shrink-0 w-64">
-              <Select value={selectedProjectId ?? ""} onValueChange={setSelectedProjectId}>
+              <Select
+                value={selectedProjectId ?? ""}
+                onValueChange={setSelectedProjectId}
+                disabled={isLoadingProjects || isFetchingProjects || Boolean(projectsError)}
+              >
                 <SelectTrigger className="w-full">
                   <span className="text-sm truncate">{selectedProject?.name ?? "Select..."}</span>
                 </SelectTrigger>
@@ -196,6 +212,23 @@ export function AgentsWorktreesTab() {
             </div>
           </div>
         </div>
+        {projectsError && (
+          <div className="flex items-start justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-xs text-destructive" role="alert">
+              Worktree projects unavailable: {projectsError.message}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={isFetchingProjects}
+              onClick={() => void refetchProjects()}
+            >
+              <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+            </Button>
+          </div>
+        )}
       </div>
 
       {selectedProjectId && (
@@ -208,6 +241,23 @@ export function AgentsWorktreesTab() {
                 <p className="text-xs text-muted-foreground mt-1">Using: {configData.path}</p>
               )}
             </div>
+            {configError && (
+              <div className="flex items-start justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+                <p className="text-xs text-destructive" role="alert">
+                  Worktree configuration unavailable: {configError.message}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  disabled={isFetchingConfig}
+                  onClick={() => void refetchConfig()}
+                >
+                  <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+                </Button>
+              </div>
+            )}
 
             <div className="bg-background rounded-lg border border-border overflow-hidden">
               <div className="p-4 flex items-center justify-between gap-6">
@@ -461,7 +511,16 @@ export function AgentsWorktreesTab() {
               </div>
 
               <div className="bg-muted p-3 flex justify-end gap-2 border-t">
-                <Button size="sm" onClick={handleSave} disabled={saveMutation.isPending}>
+                <Button
+                  size="sm"
+                  onClick={handleSave}
+                  disabled={
+                    saveMutation.isPending ||
+                    isLoadingConfig ||
+                    isFetchingConfig ||
+                    Boolean(configError)
+                  }
+                >
                   {saveMutation.isPending ? "Saving..." : "Save"}
                 </Button>
               </div>

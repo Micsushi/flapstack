@@ -914,9 +914,20 @@ export function ProjectVaultView() {
             </div>
             <div className="border-b p-2">
               {backupsQuery.error ? (
-                <p className="p-2 text-xs text-red-600" role="alert">
-                  Version history unavailable: {backupsQuery.error.message}
-                </p>
+                <div className="flex items-start justify-between gap-2 p-2">
+                  <p className="text-xs text-red-600" role="alert">
+                    Version history unavailable: {backupsQuery.error.message}
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0"
+                    disabled={backupsQuery.isFetching}
+                    onClick={() => void backupsQuery.refetch()}
+                  >
+                    <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+                  </Button>
+                </div>
               ) : (backupsQuery.data ?? []).length === 0 ? (
                 <p className="p-2 text-xs text-muted-foreground">No earlier versions yet.</p>
               ) : (
@@ -944,9 +955,19 @@ export function ProjectVaultView() {
               {backupQuery.isFetching ? (
                 <LoadingState label="Loading backup…" />
               ) : backupQuery.error ? (
-                <p className="text-xs text-red-600" role="alert">
-                  Backup preview unavailable: {backupQuery.error.message}
-                </p>
+                <div className="space-y-3">
+                  <p className="text-xs text-red-600" role="alert">
+                    Backup preview unavailable: {backupQuery.error.message}
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={backupQuery.isFetching}
+                    onClick={() => void backupQuery.refetch()}
+                  >
+                    <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry preview
+                  </Button>
+                </div>
               ) : backupQuery.data ? (
                 <ChatMarkdownRenderer content={backupQuery.data.content} size="sm" />
               ) : (

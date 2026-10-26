@@ -383,7 +383,12 @@ export class AgentProfileService {
     )
   }
 
-  archive(inputValue: unknown, restore = false): AgentProfileDto {
+  archive(inputValue: unknown, restore = false, previousArchivedAt?: number): AgentProfileDto {
+    if (
+      previousArchivedAt !== undefined &&
+      (!Number.isSafeInteger(previousArchivedAt) || previousArchivedAt < 0)
+    )
+      throw new Error("Invalid archive history timestamp.")
     const input = agentProfileArchiveInputSchema.parse(inputValue)
     const profile = this.requireProfile(input.profileId)
     if (String(profile.source) === "built-in") throw builtInReadOnly()
@@ -391,7 +396,7 @@ export class AgentProfileService {
     const now = epoch()
     this.sqlite
       .prepare("UPDATE agent_profiles SET archived_at = ?, updated_at = ? WHERE id = ?")
-      .run(restore ? null : now, now, input.profileId)
+      .run(restore ? null : (previousArchivedAt ?? now), now, input.profileId)
     this.audit(input.profileId, restore ? "restored" : "archived", {
       version: input.expectedVersion,
     })

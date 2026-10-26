@@ -11,16 +11,71 @@ import {
   insertVoiceHistoryIntoTarget,
 } from "../../../lib/voice-history-insert"
 
+function VoiceQueryStatus({
+  label,
+  isLoading,
+  isError,
+  isFetching,
+  onRetry,
+}: {
+  label: string
+  isLoading: boolean
+  isError: boolean
+  isFetching: boolean
+  onRetry: () => void
+}) {
+  if (isLoading && !isError) {
+    return (
+      <p className="text-sm text-muted-foreground" role="status">
+        Loading {label}…
+      </p>
+    )
+  }
+  if (!isError) return null
+  return (
+    <div className="flex items-center gap-2 text-sm text-destructive" role="alert">
+      <span>Could not load {label}. Existing values remain visible until it succeeds.</span>
+      <button
+        type="button"
+        className="font-medium underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={isFetching}
+        onClick={onRetry}
+      >
+        {isFetching ? "Retrying…" : "Retry"}
+      </button>
+    </div>
+  )
+}
+
 export function AgentsVoiceTab() {
   const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom)
   const setDesktopView = useSetAtom(desktopViewAtom)
   const setActiveSettingsTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
   const utils = trpc.useUtils()
-  const { data: settings } = trpc.speech.getSettings.useQuery()
-  const { data: adapters } = trpc.speech.listAdapters.useQuery()
-  const { data: voices } = trpc.speech.listVoices.useQuery()
-  const { data: sttModels } = trpc.speech.listSttModels.useQuery()
-  const { data: openAIKeyStatus } = trpc.voice.hasOpenAIKey.useQuery()
+  const {
+    data: settings,
+    isLoading: settingsLoading,
+    isError: settingsError,
+    isFetching: settingsFetching,
+    refetch: refetchSettings,
+  } = trpc.speech.getSettings.useQuery(undefined, {
+    placeholderData: (previous) => previous,
+  })
+  const {
+    data: adapters,
+    isLoading: adaptersLoading,
+    isError: adaptersError,
+    isFetching: adaptersFetching,
+    refetch: refetchAdapters,
+  } = trpc.speech.listAdapters.useQuery(undefined, {
+    placeholderData: (previous) => previous,
+  })
+  const voicesQuery = trpc.speech.listVoices.useQuery()
+  const sttModelsQuery = trpc.speech.listSttModels.useQuery()
+  const openAIKeyQuery = trpc.voice.hasOpenAIKey.useQuery()
+  const voices = voicesQuery.data
+  const sttModels = sttModelsQuery.data
+  const openAIKeyStatus = openAIKeyQuery.data
   const updateSettings = trpc.speech.updateSettings.useMutation({
     onError: (error) =>
       toast.error("Could not update Voice settings", { description: error.message }),
@@ -35,7 +90,16 @@ export function AgentsVoiceTab() {
   const stopSpeaking = trpc.speech.stopSpeaking.useMutation()
   const [previewText, setPreviewText] = useState("Flapstack voice output is ready.")
   const [historySearch, setHistorySearch] = useState("")
-  const { data: history } = trpc.speech.searchHistory.useQuery({ query: historySearch })
+  const {
+    data: history,
+    isLoading: historyLoading,
+    isError: historyError,
+    isFetching: historyFetching,
+    refetch: refetchHistory,
+  } = trpc.speech.searchHistory.useQuery(
+    { query: historySearch },
+    { placeholderData: (previous) => previous },
+  )
   const deleteHistory = trpc.speech.deleteHistoryEntry.useMutation({
     onSuccess: async (result) => {
       if (!result.deleted) {
@@ -59,7 +123,24 @@ export function AgentsVoiceTab() {
   }, [settings])
 
   if (!settings || !adapters) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading voice settings</div>
+    return (
+      <div className="space-y-2 p-6">
+        <VoiceQueryStatus
+          label="voice settings"
+          isLoading={settingsLoading}
+          isError={settingsError}
+          isFetching={settingsFetching}
+          onRetry={() => void refetchSettings()}
+        />
+        <VoiceQueryStatus
+          label="voice adapters"
+          isLoading={adaptersLoading}
+          isError={adaptersError}
+          isFetching={adaptersFetching}
+          onRetry={() => void refetchAdapters()}
+        />
+      </div>
+    )
   }
 
   const update = (patch: Partial<typeof settings>) => {
@@ -84,6 +165,41 @@ export function AgentsVoiceTab() {
           Dictation and read-aloud use local adapters first when available.
         </p>
       </div>
+      <VoiceQueryStatus
+        label="voice settings"
+        isLoading={settingsLoading}
+        isError={settingsError}
+        isFetching={settingsFetching}
+        onRetry={() => void refetchSettings()}
+      />
+      <VoiceQueryStatus
+        label="voice adapters"
+        isLoading={adaptersLoading}
+        isError={adaptersError}
+        isFetching={adaptersFetching}
+        onRetry={() => void refetchAdapters()}
+      />
+      <VoiceQueryStatus
+        label="voice catalog"
+        isLoading={voicesQuery.isLoading}
+        isError={Boolean(voicesQuery.error)}
+        isFetching={voicesQuery.isFetching}
+        onRetry={() => void voicesQuery.refetch()}
+      />
+      <VoiceQueryStatus
+        label="speech model catalog"
+        isLoading={sttModelsQuery.isLoading}
+        isError={Boolean(sttModelsQuery.error)}
+        isFetching={sttModelsQuery.isFetching}
+        onRetry={() => void sttModelsQuery.refetch()}
+      />
+      <VoiceQueryStatus
+        label="OpenAI key status"
+        isLoading={openAIKeyQuery.isLoading}
+        isError={Boolean(openAIKeyQuery.error)}
+        isFetching={openAIKeyQuery.isFetching}
+        onRetry={() => void openAIKeyQuery.refetch()}
+      />
 
       <section className="space-y-3">
         <h4 className="text-xs font-medium uppercase tracking-normal text-muted-foreground">
@@ -129,9 +245,11 @@ export function AgentsVoiceTab() {
           <div>
             <p className="text-sm text-foreground">OpenAI transcription API key</p>
             <p className="text-xs text-muted-foreground">
-              {openAIKeyStatus?.hasKey
-                ? "A credential is available for OpenAI Whisper. Manage it in API Providers; stored plaintext is never shown here."
-                : "Optional for OpenAI Whisper. Add a write-only credential in API Providers, or use a local speech adapter."}
+              {openAIKeyQuery.error
+                ? "Key status unavailable. Retry the OpenAI key status read above."
+                : openAIKeyStatus?.hasKey
+                  ? "A credential is available for OpenAI Whisper. Manage it in API Providers; stored plaintext is never shown here."
+                  : "Optional for OpenAI Whisper. Add a write-only credential in API Providers, or use a local speech adapter."}
             </p>
           </div>
           <button
@@ -249,8 +367,15 @@ export function AgentsVoiceTab() {
           placeholder="Search dictated or spoken text"
           className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
         />
+        <VoiceQueryStatus
+          label="voice history"
+          isLoading={historyLoading}
+          isError={historyError}
+          isFetching={historyFetching}
+          onRetry={() => void refetchHistory()}
+        />
         <div className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-border p-2">
-          {history?.length ? (
+          {historyLoading && !history ? null : historyError && !history ? null : history?.length ? (
             history.map((entry) => (
               <div
                 key={entry.id}
@@ -394,6 +519,7 @@ export function AgentsVoiceTab() {
         <select
           data-dev-voice-control="voice"
           value={voices?.resolvedVoiceId || ""}
+          disabled={voicesQuery.isLoading || Boolean(voicesQuery.error)}
           onChange={(event) => {
             const voiceId = event.target.value || null
             update({
@@ -486,7 +612,13 @@ function WhisperModelStatus({
   model?: { label: string; sizeBytes: number }
 }) {
   const utils = trpc.useUtils()
-  const { data: status } = trpc.speech.getSttModelStatus.useQuery(undefined, {
+  const {
+    data: status,
+    isLoading: statusLoading,
+    isFetching: statusFetching,
+    error: statusError,
+    refetch: refetchStatus,
+  } = trpc.speech.getSttModelStatus.useQuery(undefined, {
     refetchInterval: (query) => (query.state.data?.status === "downloading" ? 500 : false),
   })
   const download = trpc.speech.downloadSttModel.useMutation({
@@ -512,7 +644,27 @@ function WhisperModelStatus({
 
   return (
     <div className="space-y-2 rounded-md border border-border bg-muted/30 p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
+      {statusLoading ? (
+        <p className="text-xs text-muted-foreground" role="status">
+          Loading speech model status…
+        </p>
+      ) : statusError ? (
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs text-destructive" role="alert">
+            Speech model status unavailable: {statusError.message}
+          </p>
+          <button
+            type="button"
+            className="text-xs font-medium underline underline-offset-2 disabled:opacity-50"
+            disabled={statusFetching}
+            onClick={() => void refetchStatus()}
+          >
+            {statusFetching ? "Retrying…" : "Retry"}
+          </button>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">{label}</p>
+      )}
       {status?.status === "downloading" && (
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
           <div
@@ -521,7 +673,7 @@ function WhisperModelStatus({
           />
         </div>
       )}
-      {binaryReady && status?.status !== "present" && (
+      {binaryReady && !statusError && status?.status !== "present" && (
         <button
           type="button"
           disabled={isDownloading}

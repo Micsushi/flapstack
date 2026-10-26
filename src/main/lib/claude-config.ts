@@ -16,7 +16,7 @@ import { writeJsonRecoveryAtomic } from "./portability/io"
  * This prevents race conditions when multiple concurrent operations
  * (e.g., token refreshes for different MCP servers) try to update the config.
  */
-const configMutex = new Mutex()
+export const claudeConfigMutex = new Mutex()
 
 export const CLAUDE_CONFIG_PATH = path.join(os.homedir(), ".claude.json")
 export const CLAUDE_DIR_CONFIG_PATH = path.join(os.homedir(), ".claude", ".claude.json")
@@ -94,7 +94,7 @@ export async function writeClaudeConfig(config: ClaudeConfig): Promise<void> {
 export async function updateClaudeConfigAtomic(
   updater: (config: ClaudeConfig) => ClaudeConfig | Promise<ClaudeConfig>,
 ): Promise<ClaudeConfig> {
-  return configMutex.runExclusive(async () => {
+  return claudeConfigMutex.runExclusive(async () => {
     const config = await readClaudeConfig()
     const updatedConfig = await updater(config)
     await writeClaudeConfig(updatedConfig)

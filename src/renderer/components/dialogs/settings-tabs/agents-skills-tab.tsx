@@ -4,7 +4,7 @@ import { useAtomValue } from "jotai"
 import { selectedProjectAtom, settingsSkillsSidebarWidthAtom } from "../../../features/agents/atoms"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
-import { Plus, Trash2 } from "lucide-react"
+import { Plus, RefreshCw, Trash2 } from "lucide-react"
 import { SkillIcon, MarkdownIcon, CodeIcon } from "../../ui/icons"
 import { Input } from "../../ui/input"
 import { Label } from "../../ui/label"
@@ -242,6 +242,7 @@ function CreateItemForm({
   isSaving,
   hasProject,
   projectName,
+  canSaveItems,
 }: {
   onCreated: (data: {
     name: string
@@ -254,6 +255,7 @@ function CreateItemForm({
   isSaving: boolean
   hasProject: boolean
   projectName?: string
+  canSaveItems: boolean
 }) {
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
@@ -261,7 +263,7 @@ function CreateItemForm({
   const [source, setSource] = useState<"user" | "project">("user")
   const [kind, setKind] = useState<"skill" | "command">("skill")
 
-  const canSave = name.trim().length > 0
+  const canSave = name.trim().length > 0 && canSaveItems
 
   return (
     <div className="h-full overflow-y-auto">
@@ -350,6 +352,11 @@ function CreateItemForm({
               kind === "skill" ? "Skill instructions (markdown)..." : "Command prompt (markdown)..."
             }
           />
+          {!canSaveItems && (
+            <p className="text-[11px] text-destructive">
+              Refresh the skills and commands list before creating an item.
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -424,6 +431,8 @@ export function AgentsSkillsTab() {
   const {
     data: skills = [],
     isLoading: isLoadingSkills,
+    isFetching: isFetchingSkills,
+    error: skillsError,
     refetch: refetchSkills,
   } = trpc.skills.list.useQuery(selectedProject?.path ? { cwd: selectedProject.path } : undefined)
 
@@ -431,12 +440,15 @@ export function AgentsSkillsTab() {
   const {
     data: commands = [],
     isLoading: isLoadingCommands,
+    isFetching: isFetchingCommands,
+    error: commandsError,
     refetch: refetchCommands,
   } = trpc.commands.list.useQuery(
     selectedProject?.path ? { projectPath: selectedProject.path } : undefined,
   )
 
   const isLoading = isLoadingSkills || isLoadingCommands
+  const canModifyItems = !isLoading && !skillsError && !commandsError
 
   const refetchAll = useCallback(async () => {
     await Promise.all([refetchSkills(), refetchCommands()])
@@ -520,6 +532,10 @@ export function AgentsSkillsTab() {
       source: "user" | "project"
       kind: "skill" | "command"
     }) => {
+      if (!canModifyItems) {
+        toast.error("Refresh skills and commands before creating an item")
+        return
+      }
       try {
         if (data.kind === "skill") {
           const result = await createSkillMutation.mutateAsync({
@@ -551,11 +567,15 @@ export function AgentsSkillsTab() {
         toast.error("Failed to create", { description: message })
       }
     },
-    [createSkillMutation, createCommandMutation, selectedProject?.path, refetchAll],
+    [canModifyItems, createSkillMutation, createCommandMutation, selectedProject?.path, refetchAll],
   )
 
   const handleSave = useCallback(
     async (item: UnifiedItem, data: { description: string; content: string }) => {
+      if (!canModifyItems) {
+        toast.error("Refresh skills and commands before saving an item")
+        return
+      }
       try {
         if (item.kind === "skill") {
           await updateSkillMutation.mutateAsync({
@@ -584,11 +604,15 @@ export function AgentsSkillsTab() {
         toast.error("Failed to save", { description: message })
       }
     },
-    [updateSkillMutation, updateCommandMutation, selectedProject?.path, refetchAll],
+    [canModifyItems, updateSkillMutation, updateCommandMutation, selectedProject?.path, refetchAll],
   )
 
   const handleDelete = useCallback(async () => {
     if (!deletingItem) return
+    if (!canModifyItems) {
+      toast.error("Refresh skills and commands before deleting an item")
+      return
+    }
     try {
       if (deletingItem.kind === "skill") {
         await deleteSkillMutation.mutateAsync({
@@ -611,7 +635,14 @@ export function AgentsSkillsTab() {
       const message = error instanceof Error ? error.message : "Failed to delete"
       toast.error("Failed to delete", { description: message })
     }
-  }, [deletingItem, deleteSkillMutation, deleteCommandMutation, selectedProject?.path, refetchAll])
+  }, [
+    canModifyItems,
+    deletingItem,
+    deleteSkillMutation,
+    deleteCommandMutation,
+    selectedProject?.path,
+    refetchAll,
+  ])
 
   const isSaving = updateSkillMutation.isPending || updateCommandMutation.isPending
   const isCreating = createSkillMutation.isPending || createCommandMutation.isPending
@@ -648,6 +679,7 @@ export function AgentsSkillsTab() {
               className="h-7 w-full rounded-lg text-sm bg-muted border border-input px-3 placeholder:text-muted-foreground/40 outline-none"
             />
             <button
+              disabled={!canModifyItems}
               onClick={() => {
                 setShowAddForm(true)
                 setSelectedItemId(null)
@@ -658,6 +690,23 @@ export function AgentsSkillsTab() {
               <Plus className="h-4 w-4" />
             </button>
           </div>
+          {(skillsError || commandsError) && (
+            <div className="flex items-center justify-between gap-3 border-b border-red-500/30 bg-red-500/5 px-3 py-2">
+              <p className="text-xs text-destructive" role="alert">
+                Skills and commands unavailable:{" "}
+                {skillsError?.message ?? commandsError?.message ?? "Unknown error"}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                disabled={isFetchingSkills || isFetchingCommands}
+                onClick={() => void refetchAll()}
+              >
+                <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry lists
+              </Button>
+            </div>
+          )}
           {/* Item list */}
           <div
             ref={listRef}
@@ -669,7 +718,7 @@ export function AgentsSkillsTab() {
               <div className="flex items-center justify-center h-full">
                 <p className="text-xs text-muted-foreground">Loading...</p>
               </div>
-            ) : totalCount === 0 ? (
+            ) : (skillsError || commandsError) && totalCount === 0 ? null : totalCount === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-4">
                 <SkillIcon className="h-8 w-8 text-border mb-3" />
                 <p className="text-sm text-muted-foreground mb-1">No skills or commands</p>
@@ -760,6 +809,7 @@ export function AgentsSkillsTab() {
             isSaving={isCreating}
             hasProject={!!selectedProject?.path}
             projectName={selectedProject?.name}
+            canSaveItems={canModifyItems}
           />
         ) : selectedItem ? (
           <ItemDetail
@@ -773,19 +823,42 @@ export function AgentsSkillsTab() {
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center px-4">
             <SkillIcon className="h-12 w-12 text-border mb-4" />
-            <p className="text-sm text-muted-foreground">
-              {totalCount > 0 ? "Select an item to view details" : "No skills or commands found"}
-            </p>
-            {totalCount === 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-3"
-                onClick={() => setShowAddForm(true)}
-              >
-                <Plus className="h-3.5 w-3.5 mr-1.5" />
-                Create your first skill or command
-              </Button>
+            {skillsError || commandsError ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  Skills and commands could not be loaded.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  disabled={isFetchingSkills || isFetchingCommands}
+                  onClick={() => void refetchAll()}
+                >
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                  Retry lists
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  {totalCount > 0
+                    ? "Select an item to view details"
+                    : "No skills or commands found"}
+                </p>
+                {totalCount === 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    disabled={!canModifyItems}
+                    onClick={() => setShowAddForm(true)}
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1.5" />
+                    Create your first skill or command
+                  </Button>
+                )}
+              </>
             )}
           </div>
         )}

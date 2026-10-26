@@ -1,12 +1,14 @@
 "use client"
 
-import { useState } from "react"
+import { useId, useRef, useState } from "react"
 import { useAtom } from "jotai"
 import { ChevronLeft } from "lucide-react"
 
 import { IconSpinner, GitHubIcon } from "../../components/ui/icons"
 import { Logo } from "../../components/ui/logo"
 import { Input } from "../../components/ui/input"
+import { Button } from "../../components/ui/button"
+import { Label } from "../../components/ui/label"
 import { trpc } from "../../lib/trpc"
 import { selectedProjectAtom } from "../agents/atoms"
 
@@ -18,6 +20,12 @@ export function SelectRepoPage({ embedded = false }: SelectRepoPageProps) {
   const [, setSelectedProject] = useAtom(selectedProjectAtom)
   const [showClonePage, setShowClonePage] = useState(false)
   const [githubUrl, setGithubUrl] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const busy = useRef(false)
+  const folderButton = useRef<HTMLButtonElement>(null)
+  const cloneButton = useRef<HTMLButtonElement>(null)
+  const cloneInput = useRef<HTMLInputElement>(null)
+  const inputId = useId()
 
   // Get tRPC utils for cache management
   const utils = trpc.useUtils()
@@ -82,18 +90,45 @@ export function SelectRepoPage({ embedded = false }: SelectRepoPageProps) {
   })
 
   const handleOpenFolder = async () => {
-    await openFolder.mutateAsync()
+    if (busy.current) return
+    busy.current = true
+    setError(null)
+    try {
+      await openFolder.mutateAsync()
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not open the repository.")
+    } finally {
+      busy.current = false
+      requestAnimationFrame(() => {
+        if (document.activeElement === document.body) folderButton.current?.focus()
+      })
+    }
   }
 
   const handleCloneFromGitHub = async () => {
-    if (!githubUrl.trim()) return
-    await cloneFromGitHub.mutateAsync({ repoUrl: githubUrl.trim() })
+    if (!githubUrl.trim() || busy.current) return
+    busy.current = true
+    setError(null)
+    try {
+      await cloneFromGitHub.mutateAsync({ repoUrl: githubUrl.trim() })
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not clone the repository.")
+    } finally {
+      busy.current = false
+      requestAnimationFrame(() => {
+        if (document.activeElement === document.body) {
+          ;(cloneInput.current ?? cloneButton.current)?.focus()
+        }
+      })
+    }
   }
 
   const handleBack = () => {
-    if (cloneFromGitHub.isPending) return
+    if (busy.current) return
     setShowClonePage(false)
     setGithubUrl("")
+    setError(null)
+    requestAnimationFrame(() => cloneButton.current?.focus())
   }
 
   // Clone from GitHub page
@@ -112,6 +147,7 @@ export function SelectRepoPage({ embedded = false }: SelectRepoPageProps) {
 
         {/* Back button */}
         <button
+          aria-label="Back to repository selection"
           onClick={handleBack}
           disabled={cloneFromGitHub.isPending}
           className={`${embedded ? "absolute top-4" : "fixed top-12"} left-4 flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-foreground/5 disabled:opacity-50`}
@@ -132,25 +168,29 @@ export function SelectRepoPage({ embedded = false }: SelectRepoPageProps) {
             </div>
             <div className="space-y-1">
               <h1 className="text-base font-semibold tracking-tight">Clone from GitHub</h1>
-              <p className="text-sm text-muted-foreground">Enter a repository URL or owner/repo</p>
             </div>
           </div>
 
           {/* Input */}
-          <div className="space-y-4">
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void handleCloneFromGitHub()
+            }}
+          >
+            <Label htmlFor={inputId}>Repository URL or owner/repo</Label>
             <div className="relative">
               <Input
+                id={inputId}
+                ref={cloneInput}
                 value={githubUrl}
                 onChange={(e) => setGithubUrl(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && githubUrl.trim()) {
-                    handleCloneFromGitHub()
-                  }
-                }}
                 placeholder="owner/repo"
                 className="text-center pr-10"
                 autoFocus
-                disabled={cloneFromGitHub.isPending}
+                readOnly={cloneFromGitHub.isPending}
+                aria-describedby={error ? `${inputId}-error` : undefined}
               />
               {cloneFromGitHub.isPending && (
                 <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -161,7 +201,23 @@ export function SelectRepoPage({ embedded = false }: SelectRepoPageProps) {
             <p className="text-xs text-muted-foreground text-center">
               Example: facebook/react or https://github.com/facebook/react
             </p>
-          </div>
+            {error && (
+              <p
+                id={`${inputId}-error`}
+                role="alert"
+                className="text-sm text-red-700 dark:text-red-400 break-words"
+              >
+                {error}
+              </p>
+            )}
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={!githubUrl.trim() || cloneFromGitHub.isPending}
+            >
+              {cloneFromGitHub.isPending ? "Cloning..." : "Clone"}
+            </Button>
+          </form>
         </div>
       </div>
     )
@@ -198,7 +254,13 @@ export function SelectRepoPage({ embedded = false }: SelectRepoPageProps) {
 
         {/* Content */}
         <div className="space-y-3">
+          {error && (
+            <p role="alert" className="text-sm text-red-700 dark:text-red-400 break-words">
+              {error}
+            </p>
+          )}
           <button
+            ref={folderButton}
             onClick={handleOpenFolder}
             disabled={openFolder.isPending}
             className="w-full h-8 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.97] shadow-[0_0_0_0.5px_rgb(23,23,23),inset_0_0_0_1px_rgba(255,255,255,0.14)] dark:shadow-[0_0_0_0.5px_rgb(23,23,23),inset_0_0_0_1px_rgba(255,255,255,0.14)] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
@@ -206,8 +268,13 @@ export function SelectRepoPage({ embedded = false }: SelectRepoPageProps) {
             {openFolder.isPending ? <IconSpinner className="h-4 w-4" /> : "Select folder"}
           </button>
           <button
-            onClick={() => setShowClonePage(true)}
-            disabled={cloneFromGitHub.isPending}
+            ref={cloneButton}
+            onClick={() => {
+              if (busy.current) return
+              setError(null)
+              setShowClonePage(true)
+            }}
+            disabled={openFolder.isPending || cloneFromGitHub.isPending}
             className="w-full h-8 px-4 bg-muted text-foreground rounded-lg text-sm font-medium transition-[background-color,transform] duration-150 hover:bg-muted/80 active:scale-[0.97] shadow-[0_0_0_0.5px_rgb(23,23,23),inset_0_0_0_1px_rgba(255,255,255,0.06)] dark:shadow-[0_0_0_0.5px_rgb(23,23,23),inset_0_0_0_1px_rgba(255,255,255,0.06)] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
           >
             {cloneFromGitHub.isPending ? <IconSpinner className="h-4 w-4" /> : "Clone from GitHub"}

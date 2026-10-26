@@ -175,7 +175,7 @@ const agents: Array<{
   { id: "codex", name: "OpenAI Codex" },
   { id: "openrouter", name: "OpenRouter", hasModels: true },
   { id: "nanogpt", name: "NanoGPT", hasModels: true },
-  { id: "local", name: "Local · Ollama", hasModels: true },
+  { id: "local", name: "Local Â· Ollama", hasModels: true },
 ]
 
 interface NewChatFormProps {
@@ -235,8 +235,8 @@ export function NewChatForm({
     if (isLoadingProjects) return selectedProject
     // After loading, validate against DB
     if (!projectsList) return null
-    const exists = projectsList.some((p) => p.id === selectedProject.id)
-    return exists ? selectedProject : null
+    const current = projectsList.find((p) => p.id === selectedProject.id)
+    return current ? { ...selectedProject, name: current.name } : null
   }, [selectedProject, projectsList, isLoadingProjects])
 
   const selectedProjectColor = useMemo(() => {

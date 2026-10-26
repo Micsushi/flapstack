@@ -4,7 +4,7 @@ import { useAtomValue } from "jotai"
 import { selectedProjectAtom, settingsAgentsSidebarWidthAtom } from "../../../features/agents/atoms"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
-import { Plus } from "lucide-react"
+import { Plus, RefreshCw } from "lucide-react"
 import { CustomAgentIconFilled } from "../../ui/icons"
 import { Input } from "../../ui/input"
 import { Label } from "../../ui/label"
@@ -333,6 +333,8 @@ export function AgentsCustomAgentsTab() {
   const {
     data: agents = [],
     isLoading,
+    isFetching,
+    error,
     refetch,
   } = trpc.agents.list.useQuery(selectedProject?.path ? { cwd: selectedProject.path } : undefined)
 
@@ -472,6 +474,23 @@ export function AgentsCustomAgentsTab() {
               <Plus className="h-4 w-4" />
             </button>
           </div>
+          {error && (
+            <div className="mx-2 mt-2 flex items-start justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-2">
+              <p className="text-xs text-destructive" role="alert">
+                Custom agent discovery unavailable: {error.message}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                disabled={isFetching}
+                onClick={() => void refetch()}
+              >
+                <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+              </Button>
+            </div>
+          )}
           {/* Agent list */}
           <div
             ref={listRef}
@@ -482,6 +501,14 @@ export function AgentsCustomAgentsTab() {
             {isLoading ? (
               <div className="flex items-center justify-center h-full">
                 <p className="text-xs text-muted-foreground">Loading...</p>
+              </div>
+            ) : error && agents.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-center px-4">
+                <CustomAgentIconFilled className="h-8 w-8 text-border mb-3" />
+                <p className="text-sm text-muted-foreground mb-1">Agent list unavailable</p>
+                <p className="text-xs text-muted-foreground">
+                  Retry discovery to determine which custom agents are available.
+                </p>
               </div>
             ) : agents.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-4">
@@ -605,6 +632,21 @@ export function AgentsCustomAgentsTab() {
             onSave={(data) => handleSave(selectedAgent, data)}
             isSaving={updateMutation.isPending}
           />
+        ) : error && agents.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-center px-4">
+            <CustomAgentIconFilled className="h-12 w-12 text-border mb-4" />
+            <p className="text-sm text-muted-foreground">Custom agent list unavailable</p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              disabled={isFetching}
+              onClick={() => void refetch()}
+            >
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+              Retry discovery
+            </Button>
+          </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center px-4">
             <CustomAgentIconFilled className="h-12 w-12 text-border mb-4" />

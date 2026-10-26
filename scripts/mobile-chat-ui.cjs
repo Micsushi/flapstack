@@ -30,6 +30,7 @@ if (!process.versions.electron) {
         String.raw`
 socket = {readyState:1, send:()=>{}};
 sessionCredential = {session:{sessionId:'preview',deviceId:'preview',scopeVersion:1}};
+lastMessageAt = Date.now();
 setOnline(true);
 applyEnvelope({kind:'snapshot',freshUntil:Date.now()+300000,items:[
  {kind:'project',id:'example',name:'Example project',version:1},

@@ -1,5 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { MoreHorizontal, Plus } from "lucide-react"
+import { MoreHorizontal, Plus, RefreshCw } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import {
@@ -41,7 +41,7 @@ function AccountRow({
     email: string | null
     connectedAt: string | null
   }
-  isActive: boolean
+  isActive: boolean | null
   onSetActive: () => void
   onRename: () => void
   onRemove: () => void
@@ -65,12 +65,15 @@ function AccountRow({
       </div>
 
       <div className="flex items-center gap-2">
-        {!isActive && (
+        {isActive === null ? (
+          <Badge variant="outline" className="text-xs">
+            Status unavailable
+          </Badge>
+        ) : !isActive ? (
           <Button size="sm" variant="ghost" onClick={onSetActive} disabled={isLoading}>
             Switch
           </Button>
-        )}
-        {isActive && (
+        ) : (
           <Badge variant="secondary" className="text-xs">
             Active
           </Badge>
@@ -105,20 +108,39 @@ function AnthropicAccountsSection() {
   const {
     data: accounts,
     isLoading: isAccountsLoading,
+    isFetching: isAccountsFetching,
+    isError: isAccountsError,
+    error: accountsError,
     refetch: refetchList,
   } = trpc.anthropicAccounts.list.useQuery(undefined, {
     refetchOnMount: true,
     staleTime: 0,
   })
-  const { data: activeAccount, refetch: refetchActive } = trpc.anthropicAccounts.getActive.useQuery(
-    undefined,
-    {
-      refetchOnMount: true,
-      staleTime: 0,
-    },
-  )
-  const { data: claudeCodeIntegration } = trpc.claudeCode.getIntegration.useQuery()
+  const {
+    data: activeAccount,
+    isLoading: isActiveAccountLoading,
+    isFetching: isActiveAccountFetching,
+    error: activeAccountError,
+    refetch: refetchActive,
+  } = trpc.anthropicAccounts.getActive.useQuery(undefined, {
+    refetchOnMount: true,
+    staleTime: 0,
+  })
+  const {
+    data: claudeCodeIntegration,
+    isLoading: isClaudeCodeLoading,
+    isFetching: isClaudeCodeFetching,
+    error: claudeCodeIntegrationError,
+    refetch: refetchClaudeCodeIntegration,
+  } = trpc.claudeCode.getIntegration.useQuery()
   const trpcUtils = trpc.useUtils()
+
+  const accountReadError = accountsError ?? activeAccountError ?? claudeCodeIntegrationError
+  const isRefreshingAccountReads =
+    isAccountsFetching || isActiveAccountFetching || isClaudeCodeFetching
+  const retryAccountReads = async () => {
+    await Promise.all([refetchList(), refetchActive(), refetchClaudeCodeIntegration()])
+  }
 
   // Auto-migrate legacy account if needed
   const migrateLegacy = trpc.anthropicAccounts.migrateLegacy.useMutation({
@@ -199,7 +221,13 @@ function AnthropicAccountsSection() {
     setActiveMutation.isPending || renameMutation.isPending || removeMutation.isPending
 
   // Don't show section if no accounts
-  if (!isAccountsLoading && (!accounts || accounts.length === 0)) {
+  if (
+    !isAccountsLoading &&
+    !isAccountsError &&
+    !activeAccountError &&
+    !claudeCodeIntegrationError &&
+    (!accounts || accounts.length === 0)
+  ) {
     return null
   }
 
@@ -208,18 +236,63 @@ function AnthropicAccountsSection() {
       <div className="bg-background rounded-lg border border-border overflow-hidden divide-y divide-border">
         {isAccountsLoading ? (
           <div className="p-4 text-center text-sm text-muted-foreground">Loading accounts...</div>
+        ) : isAccountsError ? (
+          <div className="flex items-center justify-between gap-3 p-4">
+            <p className="text-xs text-destructive" role="alert">
+              Anthropic accounts unavailable: {accountsError?.message ?? "Unknown error"}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isRefreshingAccountReads}
+              onClick={() => void retryAccountReads()}
+            >
+              <RefreshCw
+                className={
+                  isRefreshingAccountReads ? "mr-2 h-3.5 w-3.5 animate-spin" : "mr-2 h-3.5 w-3.5"
+                }
+                aria-hidden="true"
+              />{" "}
+              Retry account reads
+            </Button>
+          </div>
         ) : (
-          accounts?.map((account) => (
-            <AccountRow
-              key={account.id}
-              account={account}
-              isActive={activeAccount?.id === account.id}
-              onSetActive={() => setActiveMutation.mutate({ accountId: account.id })}
-              onRename={() => handleRename(account.id, account.displayName)}
-              onRemove={() => handleRemove(account.id, account.displayName)}
-              isLoading={isLoading}
-            />
-          ))
+          <>
+            {accountReadError && (
+              <div className="flex items-center justify-between gap-3 border-b border-red-500/30 bg-red-500/5 p-4">
+                <p className="text-xs text-destructive" role="alert">
+                  Anthropic account status unavailable: {accountReadError.message}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isRefreshingAccountReads}
+                  onClick={() => void retryAccountReads()}
+                >
+                  <RefreshCw
+                    className={
+                      isRefreshingAccountReads
+                        ? "mr-2 h-3.5 w-3.5 animate-spin"
+                        : "mr-2 h-3.5 w-3.5"
+                    }
+                    aria-hidden="true"
+                  />{" "}
+                  Retry status
+                </Button>
+              </div>
+            )}
+            {accounts?.map((account) => (
+              <AccountRow
+                key={account.id}
+                account={account}
+                isActive={activeAccountError ? null : activeAccount?.id === account.id}
+                onSetActive={() => setActiveMutation.mutate({ accountId: account.id })}
+                onRename={() => handleRename(account.id, account.displayName)}
+                onRemove={() => handleRemove(account.id, account.displayName)}
+                isLoading={isLoading || isActiveAccountLoading}
+              />
+            ))}
+          </>
         )}
       </div>
 
@@ -243,14 +316,26 @@ export function AgentsModelsTab() {
   const setCodexLoginModalMethod = useSetAtom(codexLoginModalMethodAtom)
   const setActiveSettingsTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
   const isNarrowScreen = useIsNarrowScreen()
-  const { data: claudeCodeIntegration, isLoading: isClaudeCodeLoading } =
-    trpc.claudeCode.getIntegration.useQuery()
+  const {
+    data: claudeCodeIntegration,
+    isLoading: isClaudeCodeLoading,
+    error: claudeCodeIntegrationError,
+  } = trpc.claudeCode.getIntegration.useQuery()
   const isClaudeCodeConnected = claudeCodeIntegration?.isConnected
-  const { data: codexIntegration, isLoading: isCodexLoading } = trpc.codex.getIntegration.useQuery()
+  const {
+    data: codexIntegration,
+    isLoading: isCodexLoading,
+    isFetching: isCodexFetching,
+    error: codexIntegrationError,
+    refetch: refetchCodexIntegration,
+  } = trpc.codex.getIntegration.useQuery()
 
-  const { data: codexCredentialStatus } = trpc.credentials.status.useQuery({
-    id: "codex.api-key",
-  })
+  const {
+    data: codexCredentialStatus,
+    isLoading: isCodexCredentialLoading,
+    error: codexCredentialError,
+    refetch: refetchCodexCredential,
+  } = trpc.credentials.status.useQuery({ id: "codex.api-key" })
   const codexLogoutMutation = trpc.codex.logout.useMutation()
   const trpcUtils = trpc.useUtils()
 
@@ -282,11 +367,17 @@ export function AgentsModelsTab() {
   }
 
   const hasAppCodexApiKey = codexCredentialStatus?.configured === true
+  const codexCredentialStatusUnavailable = isCodexCredentialLoading || Boolean(codexCredentialError)
   const isCodexSubscriptionConnected = codexIntegration?.state === "connected_chatgpt"
   const isCodexSubscriptionActive = isCodexSubscriptionConnected && !hasAppCodexApiKey
   const [hiddenModels, setHiddenModels] = useAtom(hiddenModelsAtom)
   const [enabledCursorModels, setEnabledCursorModels] = useAtom(enabledCursorModelsAtom)
-  const { data: cursorModelData } = trpc.cursor.listModels.useQuery()
+  const {
+    data: cursorModelData,
+    isFetching: isCursorModelsFetching,
+    error: cursorModelsError,
+    refetch: refetchCursorModels,
+  } = trpc.cursor.listModels.useQuery()
 
   const toggleModelVisibility = useCallback(
     (modelId: string, provider: "claude" | "codex" | "cursor") => {
@@ -375,6 +466,21 @@ export function AgentsModelsTab() {
           </div>
 
           {/* Model list */}
+          {cursorModelsError && (
+            <div className="flex items-center justify-between gap-3 border-b border-red-500/30 bg-red-500/5 px-4 py-2">
+              <p className="text-xs text-destructive" role="alert">
+                Cursor model catalog unavailable: {cursorModelsError.message}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isCursorModelsFetching}
+                onClick={() => void refetchCursorModels()}
+              >
+                <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry models
+              </Button>
+            </div>
+          )}
           <div className="divide-y divide-border">
             {filteredModels.map((m) => {
               const isEnabled =
@@ -395,6 +501,7 @@ export function AgentsModelsTab() {
                   </div>
                   <Switch
                     checked={isEnabled}
+                    disabled={m.provider === "cursor" && isCursorModelsFetching}
                     onCheckedChange={() => toggleModelVisibility(m.id, m.provider)}
                   />
                 </div>
@@ -423,10 +530,10 @@ export function AgentsModelsTab() {
             size="sm"
             variant="outline"
             onClick={handleClaudeCodeSetup}
-            disabled={isClaudeCodeLoading}
+            disabled={isClaudeCodeLoading || Boolean(claudeCodeIntegrationError)}
           >
             <Plus className="h-3 w-3 mr-1" />
-            {isClaudeCodeConnected ? "Add" : "Connect"}
+            {claudeCodeIntegrationError ? "Unavailable" : isClaudeCodeConnected ? "Add" : "Connect"}
           </Button>
         </div>
 
@@ -442,6 +549,36 @@ export function AgentsModelsTab() {
         </div>
 
         <div className="bg-background rounded-lg border border-border overflow-hidden divide-y divide-border">
+          {codexIntegrationError && (
+            <div className="flex items-center justify-between gap-3 border-b border-red-500/30 bg-red-500/5 p-4">
+              <p className="text-xs text-destructive" role="alert">
+                Codex account status unavailable: {codexIntegrationError.message}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isCodexFetching}
+                onClick={() => void refetchCodexIntegration()}
+              >
+                <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry status
+              </Button>
+            </div>
+          )}
+          {codexCredentialError && (
+            <div className="flex items-center justify-between gap-3 border-b border-red-500/30 bg-red-500/5 p-4">
+              <p className="text-xs text-destructive" role="alert">
+                Codex API key status unavailable: {codexCredentialError.message}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isCodexCredentialLoading}
+                onClick={() => void refetchCodexCredential()}
+              >
+                <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry credentials
+              </Button>
+            </div>
+          )}
           {showCodexLoading ? (
             <div className="p-4 text-center text-sm text-muted-foreground">Loading account...</div>
           ) : (
@@ -483,7 +620,11 @@ export function AgentsModelsTab() {
                 <div>
                   <div className="text-sm font-medium">Codex API key</div>
                   <div className="text-xs text-muted-foreground">
-                    {hasAppCodexApiKey ? "Configured in Flapstack" : "Not configured"}
+                    {codexCredentialStatusUnavailable
+                      ? "Status unavailable"
+                      : hasAppCodexApiKey
+                        ? "Configured in Flapstack"
+                        : "Not configured"}
                   </div>
                 </div>
 
@@ -497,6 +638,7 @@ export function AgentsModelsTab() {
                     size="sm"
                     variant="ghost"
                     onClick={() => setActiveSettingsTab("api-providers")}
+                    disabled={codexCredentialStatusUnavailable}
                   >
                     Manage
                   </Button>

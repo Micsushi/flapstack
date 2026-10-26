@@ -11,7 +11,7 @@ import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import { NativeSelect } from "../../components/ui/native-select"
 import "./automations-styles.css"
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react"
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
 import { useAtomValue, useSetAtom } from "jotai"
 import { ArrowLeft, ExternalLink, Play, Save, ShieldCheck, Trash2, XCircle } from "lucide-react"
 import {
@@ -26,17 +26,8 @@ import {
 } from "../../../shared/permission-capabilities"
 import type { AutomationControlRecord } from "../../../main/lib/automation/control-service"
 import { trpc, trpcClient } from "../../lib/trpc"
-import { chatSourceModeAtom } from "../../lib/atoms"
-import {
-  automationDetailIdAtom,
-  desktopViewAtom,
-  openAgentChatIdsAtom,
-  selectedAgentChatIdAtom,
-  selectedChatIsRemoteAtom,
-  selectedChatScopeAtom,
-} from "../agents/atoms"
-import { detailsSidebarOpenAtom, detailsSidebarTabAtom } from "../details-sidebar/atoms"
-import { automationEvidenceRunIdAtom } from "./state"
+import { automationDetailIdAtom, desktopViewAtom } from "../agents/atoms"
+import { useAutomationEvidenceNavigation } from "./use-automation-evidence-navigation"
 import { useBetaFeatures } from "../settings/use-beta-features"
 import {
   AUTOMATION_A11Y,
@@ -73,6 +64,11 @@ type PendingAction =
   | "kill"
 
 export function AutomationsDetailView() {
+  const automationId = useAtomValue(automationDetailIdAtom)
+  return <AutomationDetailEditor key={automationId ?? ""} />
+}
+
+function AutomationDetailEditor() {
   const betaFeatures = useBetaFeatures()
   const automationId = useAtomValue(automationDetailIdAtom)
   const setAutomationId = useSetAtom(automationDetailIdAtom)
@@ -81,21 +77,31 @@ export function AutomationsDetailView() {
   const [draft, setDraft] = useState<AutomationDraft>(createDefaultAutomationDraft)
   const [uiState, dispatch] = useReducer(automationUiReducer, initialAutomationUiState)
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
+  const [pendingVersion, setPendingVersion] = useState<number | null>(null)
+  const [pendingDraft, setPendingDraft] = useState<string | null>(null)
   const [pendingOccurrenceId, setPendingOccurrenceId] = useState<string | null>(null)
   const [dryRun, setDryRun] = useState<Record<string, unknown> | null>(null)
   const utils = trpc.useUtils()
+  const active = useRef(true)
+  const previewRequest = useRef(0)
+  useEffect(() => {
+    active.current = true
+    return () => {
+      active.current = false
+      previewRequest.current += 1
+    }
+  }, [])
 
   const recordQuery = trpc.automations.get.useQuery(
     { automationId: automationId ?? "" },
     { enabled: !isCreate && Boolean(automationId), refetchInterval: 5_000 },
   )
-  const historyQuery = trpc.automations.history.useQuery(
-    { automationId: automationId ?? "", limit: 100 },
-    { enabled: !isCreate && Boolean(automationId), refetchInterval: 5_000 },
-  )
   const projects = trpc.projects.list.useQuery()
   const tasks = trpc.tasks.list.useQuery({ includeArchived: false })
   const chats = trpc.chats.list.useQuery({})
+  const referenceQueryError = [projects.error, tasks.error, chats.error].find(Boolean)
+  const referenceQueriesLoading = projects.isLoading || tasks.isLoading || chats.isLoading
+  const referenceQueriesFetching = projects.isFetching || tasks.isFetching || chats.isFetching
 
   const createMutation = trpc.automations.createDraft.useMutation()
   const updateMutation = trpc.automations.update.useMutation()
@@ -108,8 +114,29 @@ export function AutomationsDetailView() {
   const killMutation = trpc.automations.kill.useMutation()
 
   const record = recordQuery.data
+  const currentRecord = useRef(record)
+  currentRecord.current = record
+  const archived = record?.archivedAt != null || record?.state === "archived"
+  const loadedRecord = useRef<AutomationControlRecord | null>(null)
+  const currentDraft = useRef(draft)
+  currentDraft.current = draft
   useEffect(() => {
-    if (record) setDraft(record.draft)
+    if (!record) return
+    const previous = loadedRecord.current
+    const edited =
+      previous?.id === record.id &&
+      JSON.stringify(currentDraft.current) !== JSON.stringify(previous.draft)
+    if (!edited || JSON.stringify(currentDraft.current) === JSON.stringify(record.draft)) {
+      setDraft(record.draft)
+    } else if (previous.version !== record.version) {
+      dispatch({ type: "cancel-preview" })
+      dispatch({
+        type: "error",
+        message:
+          "The saved automation changed. Your draft is preserved. Review changes again to compare it with the latest saved version.",
+      })
+    }
+    loadedRecord.current = record
   }, [record])
 
   const parsed = useMemo(() => automationDraftSchema.safeParse(draft), [draft])
@@ -117,7 +144,10 @@ export function AutomationsDetailView() {
     ? null
     : (parsed.error.issues[0]?.message ?? "Automation draft is invalid.")
 
-  const back = useCallback(() => setDesktopView("automations"), [setDesktopView])
+  const back = useCallback(() => {
+    previewRequest.current += 1
+    setDesktopView("automations")
+  }, [setDesktopView])
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !uiState.pendingMutation) back()
@@ -135,12 +165,25 @@ export function AutomationsDetailView() {
     preview: AutomationMutationPreview,
     occurrenceId?: string,
   ) => {
+    if (archived && action !== "kill") return
+    previewRequest.current += 1
     setPendingAction(action)
+    setPendingVersion(record?.version ?? null)
+    setPendingDraft(action === "create" || action === "update" ? JSON.stringify(draft) : null)
     setPendingOccurrenceId(occurrenceId ?? null)
     dispatch({ type: "preview", preview })
   }
 
   async function requestSave() {
+    const request = ++previewRequest.current
+    if (
+      archived ||
+      uiState.status === "saving" ||
+      recordQuery.error ||
+      referenceQueriesLoading ||
+      referenceQueryError
+    )
+      return
     if (!parsed.success) {
       dispatch({ type: "error", message: validationMessage ?? "Automation draft is invalid." })
       return
@@ -150,14 +193,28 @@ export function AutomationsDetailView() {
       return
     }
     if (!record) return
+    const submittedDraft = JSON.stringify(draft)
     try {
       const impact = await trpcClient.automations.classifyImpact.query({
         automationId: record.id,
         draft: parsed.data,
       })
+      if (!active.current || previewRequest.current !== request) return
+      if (
+        JSON.stringify(currentDraft.current) !== submittedDraft ||
+        currentRecord.current?.version !== record.version
+      ) {
+        dispatch({
+          type: "error",
+          message: "The draft or saved automation changed. Review changes again.",
+        })
+        return
+      }
       requestPreview("update", previewUpdate(record, parsed.data, impact))
     } catch (error) {
-      dispatch({ type: "error", message: formatAutomationError(error) })
+      if (active.current && previewRequest.current === request) {
+        dispatch({ type: "error", message: formatAutomationError(error) })
+      }
     }
   }
 
@@ -170,27 +227,77 @@ export function AutomationsDetailView() {
     ])
   }
 
+  async function retryRecord() {
+    await recordQuery.refetch()
+    requestAnimationFrame(() => {
+      if (active.current && document.activeElement === document.body) {
+        document
+          .querySelector<HTMLInputElement>(`[aria-label="${AUTOMATION_A11Y.editor}"] input`)
+          ?.focus()
+      }
+    })
+  }
+
+  async function retryReferenceQueries() {
+    await Promise.all([projects.refetch(), tasks.refetch(), chats.refetch()])
+  }
+
   async function confirmMutation() {
     if (!pendingAction) return
+    if (archived && pendingAction !== "kill") {
+      dispatch({ type: "cancel-preview" })
+      dispatch({
+        type: "error",
+        message: "This automation was archived. Its saved configuration is read-only.",
+      })
+      return
+    }
+    if (
+      pendingAction !== "create" &&
+      pendingAction !== "kill" &&
+      record?.version !== pendingVersion
+    ) {
+      dispatch({ type: "cancel-preview" })
+      dispatch({
+        type: "error",
+        message:
+          "The saved automation changed after this preview. Review the action again before confirming.",
+      })
+      return
+    }
+    if (pendingDraft !== null && JSON.stringify(draft) !== pendingDraft) {
+      dispatch({ type: "cancel-preview" })
+      dispatch({
+        type: "error",
+        message:
+          "Your draft changed after this preview. Review the changes again before confirming.",
+      })
+      return
+    }
     const validatedDraft = parsed.success ? parsed.data : null
     if ((pendingAction === "create" || pendingAction === "update") && !validatedDraft) {
       dispatch({ type: "error", message: validationMessage ?? "Automation draft is invalid." })
       return
     }
+    const submittedDraft = currentDraft.current
     dispatch({ type: "submit" })
     try {
       let message = "Automation updated."
       if (pendingAction === "create") {
         const result = await createMutation.mutateAsync({ draft: validatedDraft! })
         message = "Disabled local draft created. Review is still required."
-        setAutomationId(result.record.id)
+        if (active.current) setAutomationId(result.record.id)
       } else if (!record) return
       else if (pendingAction === "update") {
-        await updateMutation.mutateAsync({
+        const result = await updateMutation.mutateAsync({
           automationId: record.id,
           expectedVersion: record.version,
           draft: validatedDraft!,
         })
+        if (active.current) {
+          loadedRecord.current = result.record
+          if (currentDraft.current === submittedDraft) setDraft(result.record.draft)
+        }
         message = "Exact changes saved. Approval state refreshed."
       } else if (
         pendingAction === "approve" ||
@@ -239,13 +346,16 @@ export function AutomationsDetailView() {
         message = "Occurrence killed and retry disabled."
       }
       await refresh()
+      if (!active.current) return
       dispatch({ type: "success", message })
       if (pendingAction === "archive") back()
     } catch (error) {
-      dispatch({ type: "error", message: formatAutomationError(error) })
+      if (active.current) dispatch({ type: "error", message: formatAutomationError(error) })
     } finally {
-      setPendingAction(null)
-      setPendingOccurrenceId(null)
+      if (active.current) {
+        setPendingAction(null)
+        setPendingOccurrenceId(null)
+      }
     }
   }
 
@@ -264,9 +374,17 @@ export function AutomationsDetailView() {
     }
   }
 
-  if (!isCreate && recordQuery.isLoading) return <Centered message="Loading local automation…" />
-  if (!isCreate && (recordQuery.error || !record))
-    return <Centered message={recordQuery.error?.message ?? "Automation not found."} alert />
+  if (!isCreate && !record && recordQuery.isLoading)
+    return <Centered message="Loading local automation…" />
+  if (!isCreate && !record)
+    return (
+      <Centered
+        message={recordQuery.error?.message ?? "Automation not found."}
+        alert
+        retry={() => void retryRecord()}
+        retrying={recordQuery.isFetching}
+      />
+    )
 
   return (
     <WorkspacePage className="overflow-y-auto" aria-label={AUTOMATION_A11Y.editor}>
@@ -290,7 +408,7 @@ export function AutomationsDetailView() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {!isCreate && (
+            {!isCreate && !archived && (
               <LifecycleActions
                 record={record!}
                 requestPreview={requestPreview}
@@ -302,7 +420,14 @@ export function AutomationsDetailView() {
               size="workspace"
               type="button"
               onClick={() => void requestSave()}
-              disabled={uiState.status === "saving" || !parsed.success}
+              disabled={
+                archived ||
+                uiState.status === "saving" ||
+                !parsed.success ||
+                referenceQueriesLoading ||
+                Boolean(referenceQueryError) ||
+                Boolean(recordQuery.error)
+              }
               className="gap-2"
             >
               <Save className="h-4 w-4" />
@@ -327,28 +452,75 @@ export function AutomationsDetailView() {
           )}
         </div>
 
+        {!isCreate && recordQuery.error && (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-500/30 p-3 text-sm"
+          >
+            <p>Could not refresh this automation. Your draft is kept.</p>
+            <Button
+              variant="outline"
+              disabled={recordQuery.isFetching}
+              onClick={() => void retryRecord()}
+            >
+              {recordQuery.isFetching ? "Retrying..." : "Retry automation"}
+            </Button>
+          </div>
+        )}
+        {referenceQueriesLoading && (
+          <p role="status" className="text-sm text-muted-foreground">
+            Loading projects, tasks, and chats…
+          </p>
+        )}
+        {referenceQueryError && (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm"
+          >
+            <div>
+              <p className="font-medium text-red-700 dark:text-red-300">
+                Automation references are unavailable.
+              </p>
+              <p className="mt-1 text-xs text-red-700/80 dark:text-red-300/80">
+                Refresh the project, task, and chat lists before saving this automation.
+                {referenceQueryError instanceof Error ? ` ${referenceQueryError.message}` : ""}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="workspace"
+              type="button"
+              onClick={() => void retryReferenceQueries()}
+              disabled={referenceQueriesFetching}
+            >
+              {referenceQueriesFetching ? "Retrying…" : "Retry references"}
+            </Button>
+          </div>
+        )}
+
         {!isCreate && <HonestState record={record!} />}
 
         <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <AutomationEditor
-            draft={draft}
-            setDraft={setDraft}
-            projects={projects.data ?? []}
-            tasks={tasks.data ?? []}
-            chats={chats.data ?? []}
-          />
+          {archived ? (
+            <section className="rounded-lg border p-4 text-sm" aria-label="Archived automation">
+              <p role="status">
+                This automation is archived. Its configuration and execution history remain
+                available for inspection.
+              </p>
+            </section>
+          ) : (
+            <AutomationEditor
+              draft={draft}
+              setDraft={setDraft}
+              projects={projects.data ?? []}
+              tasks={tasks.data ?? []}
+              chats={chats.data ?? []}
+            />
+          )}
           <aside className="space-y-4">
-            <ExactConfiguration draft={draft} />
+            <ExactConfiguration draft={archived ? record!.draft : draft} />
             {dryRun && <ResolvedDryRun value={dryRun} />}
-            {!isCreate && (
-              <History
-                items={historyQuery.data ?? []}
-                record={record!}
-                requestPreview={requestPreview}
-                projects={projects.data ?? []}
-                tasks={tasks.data ?? []}
-              />
-            )}
+            {!isCreate && <History record={record!} requestPreview={requestPreview} />}
           </aside>
         </div>
       </WorkspaceContent>
@@ -1003,39 +1175,55 @@ function ResolvedDryRun({ value }: { value: Record<string, unknown> }) {
 }
 
 function History({
-  items,
   record,
   requestPreview,
-  projects,
-  tasks,
 }: {
-  items: Array<{
-    executionId: string
-    occurrenceId: string
-    state: string
-    runId: string | null
-    chatId: string | null
-    taskId: string | null
-    projectId: string | null
-    attempt: number
-    startedAt: number | null
-    completedAt: number | null
-    stopReason: string | null
-  }>
   record: AutomationControlRecord
   requestPreview: (
     action: PendingAction,
     preview: AutomationMutationPreview,
     occurrenceId?: string,
   ) => void
-  projects: Array<{ id: string; name: string }>
-  tasks: Array<{ id: string; name: string; projectId: string }>
 }) {
-  const navigate = useAutomationEvidenceNavigation(projects, tasks)
+  const historyQuery = trpc.automations.history.useInfiniteQuery(
+    { automationId: record.id, limit: 100 },
+    { refetchInterval: 5_000, getNextPageParam: (page) => page.nextCursor ?? undefined },
+  )
+  const items = useMemo(
+    () => [
+      ...new Map(
+        historyQuery.data?.pages
+          .flatMap((page) => page.items)
+          .map((item) => [item.executionId, item]) ?? [],
+      ).values(),
+    ],
+    [historyQuery.data],
+  )
+  const [failure, setFailure] = useState<{ executionId: string; message: string } | null>(null)
+  const clearFailure = useCallback(() => setFailure(null), [])
+  const { beginNavigation, cancelNavigation, navigate } =
+    useAutomationEvidenceNavigation(clearFailure)
+  useEffect(() => cancelNavigation(), [record.id, cancelNavigation])
+
+  const openEvidence = async (item: (typeof items)[number]) => {
+    const isCurrent = beginNavigation()
+    setFailure(null)
+    try {
+      await navigate(item, isCurrent)
+    } catch (error) {
+      if (isCurrent()) {
+        setFailure({ executionId: item.executionId, message: formatAutomationError(error) })
+      }
+    }
+  }
   return (
     <section className="rounded-lg border bg-card p-4" aria-label={AUTOMATION_A11Y.history}>
       <h2 className="text-sm font-semibold">Execution history</h2>
-      {items.length === 0 ? (
+      {historyQuery.isLoading && !historyQuery.data ? (
+        <p role="status" className="mt-3 text-sm text-muted-foreground">
+          Loading execution history…
+        </p>
+      ) : !historyQuery.data ? null : items.length === 0 ? (
         <p className="mt-3 text-xs text-muted-foreground">No execution attempts recorded.</p>
       ) : (
         <ol className="mt-3 space-y-2">
@@ -1050,17 +1238,19 @@ function History({
                 </span>
               </div>
               {item.stopReason && <p className="mt-1 text-red-600">{item.stopReason}</p>}
-              <div className="mt-2 flex gap-2">
-                {(item.chatId || item.taskId || item.projectId) && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {item.chatId && (
                   <Button
                     variant="outline"
                     size="workspace"
                     type="button"
-                    onClick={() => navigate(item)}
+                    onClick={() => void openEvidence(item)}
                     className="gap-1 rounded py-1"
                   >
                     <ExternalLink className="h-3 w-3" />
-                    Open evidence
+                    {failure?.executionId === item.executionId
+                      ? "Retry opening evidence"
+                      : "Open evidence"}
                   </Button>
                 )}
                 {item.state === "running" && (
@@ -1068,7 +1258,8 @@ function History({
                     variant="outline"
                     size="workspace"
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      cancelNavigation()
                       requestPreview(
                         "kill",
                         previewLifecycle({
@@ -1078,68 +1269,61 @@ function History({
                         }),
                         item.occurrenceId,
                       )
-                    }
+                    }}
                     className="rounded border-red-500/30 py-1 text-red-600"
                   >
                     Kill
                   </Button>
                 )}
               </div>
+              {!item.chatId && (
+                <p className="mt-2 text-muted-foreground">
+                  No chat evidence is available for this attempt.
+                </p>
+              )}
+              {failure?.executionId === item.executionId && (
+                <p role="alert" className="mt-2 text-red-700 dark:text-red-300">
+                  {failure.message}
+                </p>
+              )}
             </li>
           ))}
         </ol>
       )}
+
+      {(historyQuery.data || historyQuery.error) && (
+        <Button
+          variant="outline"
+          size="workspace"
+          className="mt-3"
+          disabled={historyQuery.isFetching}
+          onClick={() =>
+            void (historyQuery.isFetchNextPageError ||
+            (!historyQuery.error && historyQuery.hasNextPage)
+              ? historyQuery.fetchNextPage()
+              : historyQuery.refetch())
+          }
+        >
+          {historyQuery.isFetchingNextPage
+            ? "Loading more…"
+            : historyQuery.error
+              ? "Retry history"
+              : historyQuery.hasNextPage
+                ? "Load more history"
+                : "Refresh history"}
+        </Button>
+      )}
+      {historyQuery.error && (
+        <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">
+          {historyQuery.isFetchNextPageError
+            ? "More history could not be loaded. Loaded attempts remain available."
+            : historyQuery.data
+              ? "History refresh failed. Showing the last available attempts."
+              : "Execution history is unavailable."}
+        </p>
+      )}
     </section>
   )
-}
-
-function useAutomationEvidenceNavigation(
-  projects: Array<{ id: string; name: string }>,
-  tasks: Array<{ id: string; name: string; projectId: string }>,
-) {
-  const setChatId = useSetAtom(selectedAgentChatIdAtom)
-  const setOpenChatIds = useSetAtom(openAgentChatIdsAtom)
-  const setRemote = useSetAtom(selectedChatIsRemoteAtom)
-  const setScope = useSetAtom(selectedChatScopeAtom)
-  const setSource = useSetAtom(chatSourceModeAtom)
-  const setView = useSetAtom(desktopViewAtom)
-  const setDetailsOpen = useSetAtom(detailsSidebarOpenAtom)
-  const setDetailsTab = useSetAtom(detailsSidebarTabAtom)
-  const setRunId = useSetAtom(automationEvidenceRunIdAtom)
-  return (evidence: {
-    chatId: string | null
-    taskId: string | null
-    projectId: string | null
-    runId: string | null
-  }) => {
-    if (evidence.taskId) {
-      const task = tasks.find((item) => item.id === evidence.taskId)
-      const projectId = evidence.projectId ?? task?.projectId ?? null
-      const project = projects.find((item) => item.id === projectId)
-      setScope({
-        type: "task",
-        id: evidence.taskId,
-        name: task?.name ?? "Task",
-        projectId: projectId ?? "",
-        projectName: project?.name ?? null,
-      })
-    } else if (evidence.projectId) {
-      const project = projects.find((item) => item.id === evidence.projectId)
-      setScope({ type: "project", id: evidence.projectId, name: project?.name ?? "Project" })
-    }
-    if (evidence.chatId) {
-      setChatId(evidence.chatId)
-      setOpenChatIds((current) =>
-        current.includes(evidence.chatId!) ? current : [...current, evidence.chatId!],
-      )
-      setRemote(false)
-      setSource("local")
-      setDetailsOpen(true)
-      setDetailsTab("details")
-      setRunId(evidence.runId)
-    }
-    setView(null)
-  }
 }
 
 function MutationDialog({
@@ -1313,12 +1497,27 @@ function SelectField({
     </label>
   )
 }
-function Centered({ message, alert }: { message: string; alert?: boolean }) {
+function Centered({
+  message,
+  alert,
+  retry,
+  retrying,
+}: {
+  message: string
+  alert?: boolean
+  retry?: () => void
+  retrying?: boolean
+}) {
   return (
-    <div className="flex h-full items-center justify-center p-6">
+    <div className="flex h-full flex-col items-center justify-center gap-3 p-6">
       <p role={alert ? "alert" : undefined} className="text-sm text-muted-foreground">
         {message}
       </p>
+      {retry && (
+        <Button variant="outline" disabled={retrying} onClick={retry}>
+          {retrying ? "Retrying..." : "Retry"}
+        </Button>
+      )}
     </div>
   )
 }

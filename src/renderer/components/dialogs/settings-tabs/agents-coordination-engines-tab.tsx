@@ -1,4 +1,5 @@
 import { useMemo } from "react"
+import { RefreshCw } from "lucide-react"
 import type {
   CoordinationEngine,
   CoordinationEngineOptionPreview,
@@ -6,6 +7,7 @@ import type {
 } from "../../../../shared/coordination-engine"
 import { trpc } from "../../../lib/trpc"
 import { CoordinationEngineAvailability } from "../../../features/agents/ui/coordination-engine-launch-preview"
+import { Button } from "../../ui/button"
 
 export function AgentsCoordinationEnginesTab() {
   const defaults = trpc.coordinationEngines.listDefaults.useQuery({
@@ -23,6 +25,10 @@ export function AgentsCoordinationEnginesTab() {
     [capabilities.data, selected],
   )
   const blocked = options.find((option) => option.engine === selected && !option.supported)
+  const isRefreshing = defaults.isFetching || capabilities.isFetching
+  const refetchAll = async () => {
+    await Promise.all([defaults.refetch(), capabilities.refetch()])
+  }
 
   return (
     <div className="space-y-6 p-6">
@@ -46,7 +52,13 @@ export function AgentsCoordinationEnginesTab() {
           id="coordination-engine-default-select"
           className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
           value={selected}
-          disabled={defaults.isLoading || capabilities.isLoading || write.isPending}
+          disabled={
+            defaults.isLoading ||
+            capabilities.isLoading ||
+            Boolean(defaults.error) ||
+            Boolean(capabilities.error) ||
+            write.isPending
+          }
           aria-describedby="coordination-engine-default-help coordination-engine-default-status"
           onChange={(event) => {
             const engine = event.target.value as CoordinationEngine
@@ -70,6 +82,24 @@ export function AgentsCoordinationEnginesTab() {
           Per-launch override wins over project override, then this global default. Without any
           saved choice, Workflow is used.
         </p>
+        {(defaults.error || capabilities.error) && (
+          <div className="flex items-start justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-2">
+            <p className="text-xs text-destructive" role="alert">
+              Coordination engine settings unavailable:{" "}
+              {defaults.error?.message ?? capabilities.error?.message ?? "Unknown error"}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={isRefreshing}
+              onClick={() => void refetchAll()}
+            >
+              <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+            </Button>
+          </div>
+        )}
         <p
           id="coordination-engine-default-status"
           className={blocked ? "text-xs text-destructive" : "text-xs text-muted-foreground"}

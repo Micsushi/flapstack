@@ -5,7 +5,7 @@ import { settingsPluginsSidebarWidthAtom } from "../../../features/agents/atoms"
 import { agentsSettingsDialogActiveTabAtom, type SettingsTab } from "../../../lib/atoms"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
-import { Terminal, ChevronRight, Loader2 } from "lucide-react"
+import { Terminal, ChevronRight, Loader2, RefreshCw } from "lucide-react"
 import {
   PluginFilledIcon,
   SkillIconFilled,
@@ -343,18 +343,22 @@ export function AgentsPluginsTab() {
   const {
     data: plugins = [],
     isLoading,
+    isFetching: isPluginsFetching,
+    error: pluginsError,
     refetch,
   } = trpc.plugins.list.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
   })
 
   // MCP server statuses for showing auth state in plugin detail
-  const { data: allMcpConfig, refetch: refetchMcp } = trpc.claude.getAllMcpConfig.useQuery(
-    undefined,
-    {
-      staleTime: 10 * 60 * 1000,
-    },
-  )
+  const {
+    data: allMcpConfig,
+    isFetching: isMcpFetching,
+    error: mcpConfigError,
+    refetch: refetchMcp,
+  } = trpc.claude.getAllMcpConfig.useQuery(undefined, {
+    staleTime: 10 * 60 * 1000,
+  })
   const mcpServerStatuses = useMemo(() => {
     const map: Record<string, McpServerStatus> = {}
     if (!allMcpConfig?.groups) return map
@@ -529,6 +533,22 @@ export function AgentsPluginsTab() {
               className="h-7 w-full rounded-lg text-sm bg-muted border border-input px-3 placeholder:text-muted-foreground/40 outline-none"
             />
           </div>
+          {pluginsError && (
+            <div className="flex items-center justify-between gap-3 border-b border-red-500/30 bg-red-500/5 px-3 py-2">
+              <p className="text-xs text-destructive" role="alert">
+                Plugin discovery unavailable: {pluginsError.message}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                disabled={isPluginsFetching}
+                onClick={() => void refetch()}
+              >
+                <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry plugins
+              </Button>
+            </div>
+          )}
           {/* Plugin list */}
           <div
             ref={listRef}
@@ -540,7 +560,7 @@ export function AgentsPluginsTab() {
               <div className="flex items-center justify-center h-full">
                 <p className="text-xs text-muted-foreground">Loading...</p>
               </div>
-            ) : plugins.length === 0 ? (
+            ) : pluginsError && plugins.length === 0 ? null : plugins.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-4">
                 <PluginFilledIcon className="h-8 w-8 text-border mb-3" />
                 <p className="text-sm text-muted-foreground mb-1">No plugins</p>
@@ -599,6 +619,21 @@ export function AgentsPluginsTab() {
 
       {/* Right content - detail panel */}
       <div className="flex-1 min-w-0 h-full overflow-hidden">
+        {mcpConfigError && (
+          <div className="flex items-center justify-between gap-3 border-b border-red-500/30 bg-red-500/5 px-4 py-2">
+            <p className="text-xs text-destructive" role="alert">
+              MCP status unavailable: {mcpConfigError.message}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isMcpFetching}
+              onClick={() => void refetchMcp()}
+            >
+              <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry MCP status
+            </Button>
+          </div>
+        )}
         {selectedPlugin ? (
           <PluginDetail
             plugin={selectedPlugin}

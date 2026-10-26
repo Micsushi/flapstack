@@ -17,7 +17,7 @@ import {
 } from "../../components/ui/alert-dialog"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../components/ui/tabs"
 import { toast } from "sonner"
-import { useEffect, useState, useCallback, useRef, useMemo, memo } from "react"
+import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo, memo } from "react"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { trpc } from "../../lib/trpc"
 import { preferredEditorAtom } from "../../lib/atoms"
@@ -47,6 +47,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/too
 // Memoized file item component with context menu to prevent re-renders
 const ChangesFileItemWithContext = memo(function ChangesFileItemWithContext({
   file,
+  readOnly,
   category,
   isSelected,
   isChecked,
@@ -74,6 +75,7 @@ const ChangesFileItemWithContext = memo(function ChangesFileItemWithContext({
   onCopySelectedRelativePaths,
 }: {
   file: ChangedFile
+  readOnly: boolean
   category: ChangeCategory
   isSelected: boolean
   isChecked: boolean
@@ -129,6 +131,8 @@ const ChangesFileItemWithContext = memo(function ChangesFileItemWithContext({
         >
           <Checkbox
             checked={isChecked}
+            disabled={readOnly}
+            aria-label={`Include ${file.path} in commit`}
             onCheckedChange={onCheckboxChange}
             onClick={(e) => e.stopPropagation()}
             className="size-4 shrink-0 border-muted-foreground/50"
@@ -170,13 +174,18 @@ const ChangesFileItemWithContext = memo(function ChangesFileItemWithContext({
             {/* Multi-select context menu */}
             <ContextMenuItem
               onClick={onDiscardSelected}
+              disabled={readOnly}
               className="data-[highlighted]:bg-red-500/15 data-[highlighted]:text-red-400"
             >
               Discard {highlightedCount} Selected Changes...
             </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem onClick={onIncludeSelected}>Include Selected Files</ContextMenuItem>
-            <ContextMenuItem onClick={onExcludeSelected}>Exclude Selected Files</ContextMenuItem>
+            <ContextMenuItem onClick={onIncludeSelected} disabled={readOnly}>
+              Include Selected Files
+            </ContextMenuItem>
+            <ContextMenuItem onClick={onExcludeSelected} disabled={readOnly}>
+              Exclude Selected Files
+            </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={onCopySelectedPaths}>Copy Paths</ContextMenuItem>
             <ContextMenuItem onClick={onCopySelectedRelativePaths}>
@@ -203,6 +212,7 @@ const ChangesFileItemWithContext = memo(function ChangesFileItemWithContext({
             <ContextMenuSeparator />
             <ContextMenuItem
               onClick={onDiscard}
+              disabled={readOnly}
               className="data-[highlighted]:bg-red-500/15 data-[highlighted]:text-red-400"
             >
               {isUntracked ? "Delete File..." : "Discard Changes..."}
@@ -216,6 +226,7 @@ const ChangesFileItemWithContext = memo(function ChangesFileItemWithContext({
 
 interface ChangesViewProps {
   worktreePath: string
+  readOnly?: boolean
   /** Controlled active tab (optional) */
   activeTab?: "changes" | "history"
   selectedFilePath?: string | null
@@ -247,6 +258,7 @@ interface ChangesViewProps {
 
 export function ChangesView({
   worktreePath,
+  readOnly = false,
   activeTab: controlledActiveTab,
   selectedFilePath,
   onFileSelect: onFileSelectProp,
@@ -326,54 +338,43 @@ export function ChangesView({
   const diffSidebarAtom = useMemo(() => diffSidebarOpenAtomFamily(chatId || ""), [chatId])
   const setDiffSidebarOpen = useSetAtom(diffSidebarAtom)
 
-  // Discard changes - single file
-  const discardChangesMutation = trpc.changes.discardChanges.useMutation({
-    onSuccess: () => {
-      toast.success("Changes discarded")
-      refetch()
-      onDiscardSuccess?.()
-    },
-    onError: (error) => {
-      toast.error(`Failed to discard changes: ${error.message}`)
-    },
-  })
-  const deleteUntrackedMutation = trpc.changes.deleteUntracked.useMutation({
-    onSuccess: () => {
-      toast.success("File deleted")
-      refetch()
-      onDiscardSuccess?.()
-    },
-    onError: (error) => {
-      toast.error(`Failed to delete file: ${error.message}`)
-    },
-  })
-
-  // Discard changes - multiple files (batch)
-  const discardMultipleChangesMutation = trpc.changes.discardMultipleChanges.useMutation({
-    onSuccess: () => {
-      toast.success("Changes discarded")
-      refetch()
-      onDiscardSuccess?.()
-    },
-    onError: (error) => {
-      toast.error(`Failed to discard changes: ${error.message}`)
-    },
-  })
-  const deleteMultipleUntrackedMutation = trpc.changes.deleteMultipleUntracked.useMutation({
-    onSuccess: () => {
-      toast.success("Files deleted")
-      refetch()
-      onDiscardSuccess?.()
-    },
-    onError: (error) => {
-      toast.error(`Failed to delete files: ${error.message}`)
-    },
-  })
+  const discardChangesMutation = trpc.changes.discardChanges.useMutation()
+  const deleteUntrackedMutation = trpc.changes.deleteUntracked.useMutation()
+  const discardMultipleChangesMutation = trpc.changes.discardMultipleChanges.useMutation()
+  const deleteMultipleUntrackedMutation = trpc.changes.deleteMultipleUntracked.useMutation()
+  const [discardBusy, setDiscardBusy] = useState(false)
+  const discardPending = useRef(false)
+  const [discardError, setDiscardError] = useState<string | null>(null)
+  const actionScope = useMemo(() => ({}), [worktreePath, chatId])
+  const currentScope = useRef<object | null>(actionScope)
+  currentScope.current = actionScope
+  const discardScope = useRef<object | null>(null)
+  useEffect(() => {
+    currentScope.current = actionScope
+    setDiscardFile(null)
+    setDiscardFiles(null)
+    setDiscardError(null)
+    setDiscardBusy(false)
+    discardPending.current = false
+    return () => {
+      if (currentScope.current === actionScope) currentScope.current = null
+    }
+  }, [actionScope])
 
   // Discard confirmation dialog state - single file
   const [discardFile, setDiscardFile] = useState<ChangedFile | null>(null)
   // Discard confirmation dialog state - multiple files
   const [discardFiles, setDiscardFiles] = useState<ChangedFile[] | null>(null)
+  const discardCancelRef = useRef<HTMLButtonElement>(null)
+  const discardConfirmRef = useRef<HTMLButtonElement>(null)
+  const multiDiscardCancelRef = useRef<HTMLButtonElement>(null)
+  const multiDiscardConfirmRef = useRef<HTMLButtonElement>(null)
+  useLayoutEffect(() => {
+    if (!readOnly) return
+    if (document.activeElement === discardConfirmRef.current) discardCancelRef.current?.focus()
+    if (document.activeElement === multiDiscardConfirmRef.current)
+      multiDiscardCancelRef.current?.focus()
+  }, [readOnly])
 
   const { selectFile, getSelectedFile } = useChangesStore()
 
@@ -765,13 +766,16 @@ export function ChangesView({
 
   // Handler for discarding highlighted files (multi-file discard via Shift+Click)
   const handleDiscardSelected = useCallback(() => {
+    if (readOnly) return
     const filesToDiscard = filteredFiles
       .filter((f) => highlightedFiles.has(f.file.path))
       .map((f) => f.file)
     if (filesToDiscard.length > 0) {
+      discardScope.current = actionScope
+      setDiscardError(null)
       setDiscardFiles(filesToDiscard)
     }
-  }, [filteredFiles, highlightedFiles])
+  }, [filteredFiles, highlightedFiles, readOnly, actionScope])
 
   if (!worktreePath) {
     return (
@@ -797,58 +801,72 @@ export function ChangesView({
     )
   }
 
-  // Handle single file discard confirmation
-  const handleConfirmDiscard = () => {
-    if (!discardFile || !worktreePath) return
-
-    const isUntracked = discardFile.status === "untracked" || discardFile.status === "added"
-    if (isUntracked) {
-      deleteUntrackedMutation.mutate({ worktreePath, filePath: discardFile.path })
-    } else {
-      discardChangesMutation.mutate({ worktreePath, filePath: discardFile.path })
+  const discard = async (files: ChangedFile[], multiple: boolean) => {
+    if (readOnly || discardPending.current || discardScope.current !== actionScope) return
+    discardPending.current = true
+    setDiscardBusy(true)
+    setDiscardError(null)
+    const tracked = files.filter((file) => file.status !== "untracked" && file.status !== "added")
+    const untracked = files.filter((file) => !tracked.includes(file))
+    const groups = [tracked, untracked].filter((group) => group.length > 0)
+    const results = await Promise.allSettled(
+      groups.map(async (group) => {
+        const remove = group === untracked
+        if (multiple) {
+          const mutation = remove ? deleteMultipleUntrackedMutation : discardMultipleChangesMutation
+          await mutation.mutateAsync({ worktreePath, filePaths: group.map((file) => file.path) })
+        } else {
+          const mutation = remove ? deleteUntrackedMutation : discardChangesMutation
+          await mutation.mutateAsync({ worktreePath, filePath: group[0]!.path })
+        }
+      }),
+    )
+    const failures = results.filter((result) => result.status === "rejected")
+    if (currentScope.current !== actionScope) {
+      if (failures.length) toast.error(`Could not discard changes in ${worktreePath}`)
+      return
     }
-    setDiscardFile(null)
+    // A failed batch can have made partial progress; refresh without forgetting failed selections.
+    void refetch()
+    const completed = new Set(
+      groups.flatMap((group, index) =>
+        results[index]?.status === "fulfilled" ? group.map((file) => file.path) : [],
+      ),
+    )
+    setSelectedForCommit((prev) => new Set([...prev].filter((path) => !completed.has(path))))
+    setHighlightedFiles((prev) => new Set([...prev].filter((path) => !completed.has(path))))
+    if (completed.size > 0) onDiscardSuccess?.()
+    if (failures.length) {
+      const message = failures
+        .map((result) =>
+          result.reason instanceof Error ? result.reason.message : "The request failed",
+        )
+        .join("; ")
+      setDiscardError(
+        `Could not discard all changes. Review the remaining files before retrying. ${message}`,
+      )
+      toast.error(`Failed to discard changes: ${message}`)
+      if (multiple) setDiscardFiles(files.filter((file) => !completed.has(file.path)))
+    } else {
+      toast.success("Changes discarded")
+      setDiscardFile(null)
+      setDiscardFiles(null)
+    }
+    discardPending.current = false
+    setDiscardBusy(false)
   }
 
-  // Handle multi-file discard confirmation
+  const handleConfirmDiscard = () => {
+    if (discardFile) void discard([discardFile], false)
+  }
   const handleConfirmMultiDiscard = () => {
-    if (!discardFiles || discardFiles.length === 0 || !worktreePath) return
+    if (discardFiles?.length) void discard(discardFiles, true)
+  }
 
-    // Split files by type - untracked/added need deletion, others need checkout
-    const untrackedFiles = discardFiles.filter(
-      (f) => f.status === "untracked" || f.status === "added",
-    )
-    const trackedFiles = discardFiles.filter(
-      (f) => f.status !== "untracked" && f.status !== "added",
-    )
-
-    // Discard tracked files (git checkout)
-    if (trackedFiles.length > 0) {
-      discardMultipleChangesMutation.mutate({
-        worktreePath,
-        filePaths: trackedFiles.map((f) => f.path),
-      })
-    }
-
-    // Delete untracked files
-    if (untrackedFiles.length > 0) {
-      deleteMultipleUntrackedMutation.mutate({
-        worktreePath,
-        filePaths: untrackedFiles.map((f) => f.path),
-      })
-    }
-
-    // Clear commit selection and highlighting for discarded files
-    setSelectedForCommit((prev) => {
-      const next = new Set(prev)
-      for (const file of discardFiles) {
-        next.delete(file.path)
-      }
-      return next
-    })
-    setHighlightedFiles(new Set())
-
-    setDiscardFiles(null)
+  const restoreDiscardFocus = (event: Event) => {
+    event.preventDefault()
+    if (currentScope.current === actionScope && document.activeElement === document.body)
+      fileListRef.current?.focus()
   }
 
   // Context menu handlers
@@ -887,6 +905,11 @@ export function ChangesView({
   return (
     <>
       <div className="flex flex-col h-full">
+        {readOnly && (
+          <p role="status" className="px-2 py-1.5 text-xs text-muted-foreground">
+            Read-only. Restore this workspace to change files or commit.
+          </p>
+        )}
         <Tabs
           value={activeTab}
           onValueChange={(v) => {
@@ -929,6 +952,8 @@ export function ChangesView({
             <div className="flex items-center gap-2 px-2 py-1.5 border-b border-border/50">
               <Checkbox
                 checked={someSelected ? "indeterminate" : allSelected}
+                disabled={readOnly}
+                aria-label="Include all files in commit"
                 onCheckedChange={handleSelectAllChange}
                 className="size-4 border-muted-foreground/50"
               />
@@ -957,6 +982,7 @@ export function ChangesView({
                   <ChangesFileItemWithContext
                     key={file.path}
                     file={file}
+                    readOnly={readOnly}
                     category={category}
                     isSelected={selectedFile?.path === file.path}
                     isChecked={selectedForCommit.has(file.path)}
@@ -979,7 +1005,13 @@ export function ChangesView({
                     onOpenInEditor={() => handleOpenInPreferredEditor(file.path)}
                     editorLabel={editorMeta.label}
                     onToggleViewed={() => toggleFileViewed(file.path)}
-                    onDiscard={() => setDiscardFile(file)}
+                    onDiscard={() => {
+                      if (!readOnly) {
+                        discardScope.current = actionScope
+                        setDiscardError(null)
+                        setDiscardFile(file)
+                      }
+                    }}
                     onDiscardSelected={handleDiscardSelected}
                     onIncludeSelected={handleIncludeSelected}
                     onExcludeSelected={handleExcludeSelected}
@@ -993,6 +1025,7 @@ export function ChangesView({
             {/* Commit input */}
             <CommitInput
               worktreePath={worktreePath}
+              readOnly={readOnly}
               hasStagedChanges={selectedCount > 0}
               onRefresh={handleRefresh}
               onCommitSuccess={handleCommitSuccess}
@@ -1021,8 +1054,11 @@ export function ChangesView({
       </div>
 
       {/* Discard confirmation dialog - single file */}
-      <AlertDialog open={!!discardFile} onOpenChange={(open) => !open && setDiscardFile(null)}>
-        <AlertDialogContent className="w-[340px]">
+      <AlertDialog
+        open={!!discardFile && discardScope.current === actionScope}
+        onOpenChange={(open) => !open && !discardBusy && setDiscardFile(null)}
+      >
+        <AlertDialogContent className="w-[340px]" onCloseAutoFocus={restoreDiscardFocus}>
           <AlertDialogHeader>
             <AlertDialogTitle>
               {discardFile?.status === "untracked" || discardFile?.status === "added"
@@ -1035,11 +1071,30 @@ export function ChangesView({
               ? "This will permanently delete this file. This action cannot be undone."
               : "This will revert all changes to this file. This action cannot be undone."}
           </AlertDialogDescription>
+          {discardError && (
+            <p role="alert" className="px-5 pb-4 text-sm text-foreground break-words">
+              {discardError}
+            </p>
+          )}
           <AlertDialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDiscardFile(null)}>
+            <Button
+              ref={discardCancelRef}
+              variant="outline"
+              size="sm"
+              disabled={discardBusy}
+              onClick={() => setDiscardFile(null)}
+            >
               Cancel
             </Button>
-            <Button variant="destructive" size="sm" onClick={handleConfirmDiscard}>
+            <Button
+              ref={discardConfirmRef}
+              variant="destructive"
+              size="sm"
+              onClick={handleConfirmDiscard}
+              disabled={readOnly}
+              aria-disabled={discardBusy}
+              aria-busy={discardBusy}
+            >
               {discardFile?.status === "untracked" || discardFile?.status === "added"
                 ? "Delete"
                 : "Discard"}
@@ -1049,8 +1104,11 @@ export function ChangesView({
       </AlertDialog>
 
       {/* Discard confirmation dialog - multiple files */}
-      <AlertDialog open={!!discardFiles} onOpenChange={(open) => !open && setDiscardFiles(null)}>
-        <AlertDialogContent className="w-[400px]">
+      <AlertDialog
+        open={!!discardFiles && discardScope.current === actionScope}
+        onOpenChange={(open) => !open && !discardBusy && setDiscardFiles(null)}
+      >
+        <AlertDialogContent className="w-[400px]" onCloseAutoFocus={restoreDiscardFocus}>
           <AlertDialogHeader>
             <AlertDialogTitle>Discard {discardFiles?.length} Selected Changes?</AlertDialogTitle>
           </AlertDialogHeader>
@@ -1066,11 +1124,30 @@ export function ChangesView({
               </ul>
             </div>
           </AlertDialogDescription>
+          {discardError && (
+            <p role="alert" className="px-5 pb-4 text-sm text-foreground break-words">
+              {discardError}
+            </p>
+          )}
           <AlertDialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDiscardFiles(null)}>
+            <Button
+              ref={multiDiscardCancelRef}
+              variant="outline"
+              size="sm"
+              disabled={discardBusy}
+              onClick={() => setDiscardFiles(null)}
+            >
               Cancel
             </Button>
-            <Button variant="destructive" size="sm" onClick={handleConfirmMultiDiscard}>
+            <Button
+              ref={multiDiscardConfirmRef}
+              variant="destructive"
+              size="sm"
+              onClick={handleConfirmMultiDiscard}
+              disabled={readOnly}
+              aria-disabled={discardBusy}
+              aria-busy={discardBusy}
+            >
               Discard
             </Button>
           </AlertDialogFooter>

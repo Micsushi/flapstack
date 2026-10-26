@@ -18,11 +18,21 @@ export function AgentsDebugTab() {
   const isDev = import.meta.env.DEV
 
   // Fetch system info
-  const { data: systemInfo, isLoading: isLoadingSystem } = trpc.debug.getSystemInfo.useQuery()
+  const {
+    data: systemInfo,
+    isLoading: isLoadingSystem,
+    isFetching: isFetchingSystem,
+    error: systemError,
+    refetch: refetchSystem,
+  } = trpc.debug.getSystemInfo.useQuery()
 
   // Offline simulation state
-  const { data: offlineSimulation, refetch: refetchOfflineSimulation } =
-    trpc.debug.getOfflineSimulation.useQuery()
+  const {
+    data: offlineSimulation,
+    isFetching: isFetchingOfflineSimulation,
+    error: offlineSimulationError,
+    refetch: refetchOfflineSimulation,
+  } = trpc.debug.getOfflineSimulation.useQuery()
   const setOfflineSimulationMutation = trpc.debug.setOfflineSimulation.useMutation({
     onSuccess: (data) => {
       refetchOfflineSimulation()
@@ -39,6 +49,8 @@ export function AgentsDebugTab() {
   const {
     data: dbStats,
     isLoading: isLoadingDb,
+    isFetching: isFetchingDb,
+    error: dbError,
     refetch: refetchDb,
   } = trpc.debug.getDbStats.useQuery()
 
@@ -96,6 +108,10 @@ export function AgentsDebugTab() {
   }
 
   const isLoading = isLoadingSystem || isLoadingDb
+  const isRefreshing = isFetchingSystem || isFetchingDb || isFetchingOfflineSimulation
+  const retryDiagnostics = async () => {
+    await Promise.all([refetchSystem(), refetchDb()])
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -107,41 +123,72 @@ export function AgentsDebugTab() {
         </div>
       )}
 
+      {(systemError || dbError) && (
+        <div className="flex items-start justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+          <p className="text-sm text-destructive" role="alert">
+            Debug information unavailable:{" "}
+            {systemError?.message ?? dbError?.message ?? "Unknown error"}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            disabled={isRefreshing}
+            onClick={() => void retryDiagnostics()}
+          >
+            <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry diagnostics
+          </Button>
+        </div>
+      )}
+
       {/* System Info */}
       <div className="space-y-3">
         <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
           System Info
         </h4>
         <div className="rounded-lg border bg-muted/30 divide-y">
-          <InfoRow label="Version" value={systemInfo?.version} isLoading={isLoading} />
+          <InfoRow
+            label="Version"
+            value={systemInfo?.version}
+            isLoading={isLoadingSystem}
+            unavailable={Boolean(systemError)}
+          />
           <InfoRow
             label="Platform"
             value={systemInfo ? `${systemInfo.platform} (${systemInfo.arch})` : undefined}
-            isLoading={isLoading}
+            isLoading={isLoadingSystem}
+            unavailable={Boolean(systemError)}
           />
           <InfoRow
             label="Dev Mode"
             value={systemInfo?.isDev ? "Yes" : "No"}
-            isLoading={isLoading}
+            isLoading={isLoadingSystem}
+            unavailable={Boolean(systemError)}
           />
           <InfoRow
             label="Protocol"
             value={systemInfo?.protocolRegistered ? "Registered" : "Not registered"}
-            isLoading={isLoading}
+            isLoading={isLoadingSystem}
+            unavailable={Boolean(systemError)}
             status={systemInfo?.protocolRegistered ? "success" : "warning"}
           />
           <div className="flex items-center justify-between p-3">
             <span className="text-sm text-muted-foreground">userData</span>
             <div className="flex items-center gap-2">
               <span className="text-sm font-mono truncate max-w-[200px]">
-                {isLoading ? "..." : systemInfo?.userDataPath}
+                {isLoadingSystem
+                  ? "..."
+                  : systemError
+                    ? "Unavailable"
+                    : (systemInfo?.userDataPath ?? "-")}
               </span>
               <Button
                 variant="ghost"
                 size="icon"
                 className="h-6 w-6"
                 onClick={handleCopyPath}
-                disabled={!systemInfo?.userDataPath}
+                disabled={!systemInfo?.userDataPath || Boolean(systemError)}
               >
                 {copiedPath ? (
                   <Check className="h-3 w-3 text-green-500" />
@@ -160,9 +207,24 @@ export function AgentsDebugTab() {
           Database
         </h4>
         <div className="rounded-lg border bg-muted/30 divide-y">
-          <InfoRow label="Projects" value={dbStats?.projects?.toString()} isLoading={isLoading} />
-          <InfoRow label="Chats" value={dbStats?.chats?.toString()} isLoading={isLoading} />
-          <InfoRow label="Sub-chats" value={dbStats?.subChats?.toString()} isLoading={isLoading} />
+          <InfoRow
+            label="Projects"
+            value={dbStats?.projects?.toString()}
+            isLoading={isLoadingDb}
+            unavailable={Boolean(dbError)}
+          />
+          <InfoRow
+            label="Chats"
+            value={dbStats?.chats?.toString()}
+            isLoading={isLoadingDb}
+            unavailable={Boolean(dbError)}
+          />
+          <InfoRow
+            label="Sub-chats"
+            value={dbStats?.subChats?.toString()}
+            isLoading={isLoadingDb}
+            unavailable={Boolean(dbError)}
+          />
         </div>
       </div>
 
@@ -173,6 +235,23 @@ export function AgentsDebugTab() {
             Developer Tools
           </h4>
           <div className="rounded-lg border bg-muted/30 divide-y">
+            {offlineSimulationError && (
+              <div className="flex items-start justify-between gap-2 p-3">
+                <p className="text-xs text-destructive" role="alert">
+                  Offline simulation state unavailable: {offlineSimulationError.message}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  disabled={isFetchingOfflineSimulation}
+                  onClick={() => void refetchOfflineSimulation()}
+                >
+                  <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+                </Button>
+              </div>
+            )}
             <div className="flex items-center justify-between p-3">
               <div className="flex items-center gap-2">
                 <WifiOff className="h-4 w-4 text-muted-foreground" />
@@ -186,7 +265,11 @@ export function AgentsDebugTab() {
               <Switch
                 checked={offlineSimulation?.enabled ?? false}
                 onCheckedChange={(enabled) => setOfflineSimulationMutation.mutate({ enabled })}
-                disabled={setOfflineSimulationMutation.isPending}
+                disabled={
+                  setOfflineSimulationMutation.isPending ||
+                  isFetchingOfflineSimulation ||
+                  Boolean(offlineSimulationError)
+                }
               />
             </div>
             <div className="flex items-center justify-between p-3">
@@ -359,11 +442,13 @@ function InfoRow({
   label,
   value,
   isLoading,
+  unavailable,
   status,
 }: {
   label: string
   value?: string
   isLoading?: boolean
+  unavailable?: boolean
   status?: "success" | "warning" | "error"
 }) {
   return (
@@ -380,7 +465,7 @@ function InfoRow({
                 : ""
         }`}
       >
-        {isLoading ? "..." : (value ?? "-")}
+        {isLoading ? "..." : unavailable ? "Unavailable" : (value ?? "-")}
       </span>
     </div>
   )

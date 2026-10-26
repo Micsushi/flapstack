@@ -3,7 +3,12 @@
 Enable **Settings → Beta features → Planning** to show **Topics** for a selected
 project. Capture a mixed note to group fixes and future ideas, or choose a single
 capture kind. The original note stays available through each group's source link.
-Failed grouping keeps the original as an unsorted topic.
+Failed grouping keeps the original as an unsorted topic. No background retry is
+scheduled. A title is optional when capturing a mixed note.
+
+**Find loaded topics** searches the topics already loaded. **Include hidden
+topics** makes archived topics available to inspect and restore. Hiding a topic
+keeps its saved text; **Restore topic** brings it back to the active list.
 
 Topics keep a short editable summary, questions, choices, written answers and
 annotations. Changing a choice or writing an answer saves a recovery draft;
@@ -11,6 +16,14 @@ annotations. Changing a choice or writing an answer saves a recovery draft;
 Topic status, running agents and accepted project work are separate.
 New captures and submitted answers refresh the summary when the local model is
 available. Recovery drafts do not change the summary.
+
+Editing a summary starts from its current saved text. A recovered draft stays
+separate from that text until explicitly saved or discarded. Saving checks the
+revision from when editing started, so a later edit cannot be silently replaced.
+Consecutive undo actions can restore equivalent earlier content while still
+rejecting conflicting outside changes. If a write succeeds but refreshing the
+list fails, the interface reports the saved result and the refresh failure
+separately.
 
 In a chat header, **Assign role** gives that chat an explicit discussion, lead or
 worker role. Leads and workers can link to related chats in the same project.

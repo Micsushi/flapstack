@@ -1,6 +1,8 @@
+import { invalidateAppActionRedo } from "../../../lib/app-action-history"
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type ReactNode,
@@ -20,8 +22,10 @@ import { trpc, trpcClient } from "../../../lib/trpc"
 import { Button } from "../../ui/button"
 import { Input } from "../../ui/input"
 import { Textarea } from "../../ui/textarea"
+import { RefreshCw } from "lucide-react"
 import { AgentPersonalityLibrary } from "../../../features/agent-profiles/agent-personality-library"
 import { agentProfileFastModeSupported } from "../../../../shared/agent-profile-speed"
+import { useProfileActionHistory } from "../../../features/agent-profiles/use-profile-action-history"
 import { handleListboxKeyDown } from "../../../lib/listbox-keyboard"
 
 const PROFILE_CHANNEL = "flapstack-agent-profiles-v1"
@@ -63,6 +67,7 @@ type Draft = {
 
 export function AgentsProfilesStudioTab() {
   const utils = trpc.useUtils()
+  const recordHistory = useProfileActionHistory()
   const projects = trpc.projects.list.useQuery()
   const [projectId, setProjectId] = useState("")
   const [studioMode, setStudioMode] = useState<"profiles" | "personalities">("profiles")
@@ -82,7 +87,34 @@ export function AgentsProfilesStudioTab() {
     { profileId: selectedId ?? "missing", version: selected?.currentVersion ?? 1 },
     { enabled: Boolean(selectedId && selected) },
   )
-  const [draft, setDraft] = useState<Draft>(() => blankDraft(""))
+  const [draft, replaceDraft] = useState<Draft>(() => blankDraft(""))
+  const editorElement = useRef<HTMLFieldSetElement>(null)
+  const lastAction = useRef<HTMLButtonElement | null>(null)
+  const edited = useRef(false)
+  const editorRevision = useRef(0)
+  const initialProject = useRef(false)
+  const [loadedVersion, setLoadedVersion] = useState<number | null>(null)
+  const setDraft: Dispatch<SetStateAction<Draft>> = (value) => {
+    edited.current = true
+    editorRevision.current++
+    setStatus("")
+    replaceDraft(value)
+    setResolved(null)
+    setLaunchDigest(null)
+    setConversionDigest(null)
+    setImportPreview(null)
+  }
+  const leaveDraft = () => !edited.current || window.confirm("Discard unsaved profile edits?")
+  const resetEditor = () => {
+    editorRevision.current++
+    edited.current = false
+    setLoadedVersion(null)
+    setImportPreview(null)
+    setResolved(null)
+    setLaunchDigest(null)
+    setConversionDigest(null)
+    setStatus("")
+  }
   const [isNew, setIsNew] = useState(true)
   const [status, setStatus] = useState("")
   const [resolved, setResolved] = useState<ResolvedAgentProfileSnapshot | null>(null)
@@ -104,18 +136,66 @@ export function AgentsProfilesStudioTab() {
   const workflowBinding = workflowBindings.data?.find(
     (item) => item.binding.stepId === workflowStepId,
   )
+  const readError =
+    projects.error ??
+    profiles.error ??
+    personalities.error ??
+    diagnostics.error ??
+    details.error ??
+    workflowBindings.error
+  const isRefreshingReads =
+    projects.isFetching ||
+    profiles.isFetching ||
+    personalities.isFetching ||
+    diagnostics.isFetching ||
+    details.isFetching ||
+    workflowBindings.isFetching
+  const profileMutationUnavailable =
+    projects.isLoading ||
+    profiles.isLoading ||
+    Boolean(projects.error) ||
+    Boolean(profiles.error) ||
+    (Boolean(selectedId) &&
+      (!selected ||
+        details.isLoading ||
+        Boolean(details.error) ||
+        details.data?.profile.id !== selectedId ||
+        details.data?.version.version !== selected?.currentVersion ||
+        loadedVersion === null))
+  const retryReads = async () => {
+    const retries: Array<Promise<unknown>> = [
+      projects.refetch(),
+      profiles.refetch(),
+      personalities.refetch(),
+      diagnostics.refetch(),
+    ]
+    if (selectedId && selected) retries.push(details.refetch())
+    if (workflowRunId.trim()) retries.push(workflowBindings.refetch())
+    await Promise.all(retries)
+  }
 
   useEffect(() => {
-    if (!projectId && projects.data?.[0]?.id) {
+    if (!initialProject.current && projects.data) {
+      initialProject.current = true
+      if (!projects.data[0]) return
       const firstProjectId = projects.data[0].id
       setProjectId(firstProjectId)
-      if (isNew) setDraft((current) => ({ ...current, projectId: firstProjectId }))
+      if (isNew && !edited.current)
+        replaceDraft((current) => ({ ...current, projectId: firstProjectId }))
     }
   }, [isNew, projectId, projects.data])
 
   useEffect(() => {
-    if (!details.data) return
-    setDraft({
+    if (
+      !selectedId ||
+      details.data?.profile.id !== selectedId ||
+      details.data.version.version !== selected?.currentVersion ||
+      edited.current
+    )
+      return
+    editorRevision.current++
+    setLoadedVersion(details.data.version.version)
+    replaceDraft({
       name: details.data.profile.name,
       description: details.data.profile.description,
       category: details.data.profile.category,
@@ -130,7 +210,7 @@ export function AgentsProfilesStudioTab() {
     setResolved(null)
     setLaunchDigest(null)
     setConversionDigest(null)
-  }, [details.data, projectId])
+  }, [details.data, projectId, selectedId, selected?.currentVersion, loadedVersion])
 
   useEffect(() => {
     const channel = new BroadcastChannel(PROFILE_CHANNEL)
@@ -153,6 +233,8 @@ export function AgentsProfilesStudioTab() {
 
   const create = trpc.agentProfiles.create.useMutation({
     onSuccess: async (result) => {
+      invalidateAppActionRedo()
+      edited.current = false
       setStatus(`Created ${result.profile.name} v${result.profile.currentVersion}.`)
       await refresh(result.profile)
     },
@@ -160,6 +242,8 @@ export function AgentsProfilesStudioTab() {
   })
   const update = trpc.agentProfiles.update.useMutation({
     onSuccess: async (result) => {
+      recordHistory("profiles", result, "Edit Agent Profile")
+      edited.current = false
       setStatus(`Saved ${result.profile.name} v${result.profile.currentVersion}.`)
       await refresh(result.profile)
     },
@@ -167,6 +251,7 @@ export function AgentsProfilesStudioTab() {
   })
   const convertInline = trpc.agentPersonalities.confirmInlineConversion.useMutation({
     onSuccess: async (result) => {
+      invalidateAppActionRedo()
       setConversionDigest(null)
       setStatus(
         `Converted inline presentation to ${result.personality.metadata.name} and Agent Profile v${result.profile.profile.currentVersion}.`,
@@ -178,6 +263,8 @@ export function AgentsProfilesStudioTab() {
   })
   const duplicate = trpc.agentProfiles.duplicate.useMutation({
     onSuccess: async (result) => {
+      invalidateAppActionRedo()
+      edited.current = false
       setStatus(`Duplicated as ${result.profile.name}.`)
       await refresh(result.profile)
     },
@@ -185,6 +272,7 @@ export function AgentsProfilesStudioTab() {
   })
   const archive = trpc.agentProfiles.archive.useMutation({
     onSuccess: async (profile) => {
+      recordHistory("profiles", profile, "Archive Agent Profile")
       setStatus(`Archived ${profile.name}. Historical snapshots are unchanged.`)
       await refresh(profile)
     },
@@ -192,6 +280,7 @@ export function AgentsProfilesStudioTab() {
   })
   const restore = trpc.agentProfiles.restore.useMutation({
     onSuccess: async (profile) => {
+      recordHistory("profiles", profile, "Restore Agent Profile")
       setStatus(`Restored ${profile.name}.`)
       await refresh(profile)
     },
@@ -213,6 +302,8 @@ export function AgentsProfilesStudioTab() {
   })
   const confirmImport = trpc.agentProfiles.importConfirm.useMutation({
     onSuccess: async (created) => {
+      invalidateAppActionRedo()
+      edited.current = false
       setStatus(`Imported ${created.length} untrusted profile(s) with authority disabled.`)
       setImportPreview(null)
       await refresh(created[0])
@@ -259,7 +350,26 @@ export function AgentsProfilesStudioTab() {
     update.isPending ||
     duplicate.isPending ||
     archive.isPending ||
-    restore.isPending
+    restore.isPending ||
+    convertInline.isPending ||
+    exportProfiles.isPending ||
+    previewImport.isPending ||
+    confirmImport.isPending ||
+    evaluate.isPending ||
+    launch.isPending ||
+    bindWorkflow.isPending ||
+    importWorkflow.isPending ||
+    confirmWorkflow.isPending
+
+  useEffect(() => {
+    if (busy) return
+    const action = lastAction.current
+    if (action && document.activeElement === document.body) {
+      if (action.isConnected && !action.matches(":disabled")) action.focus()
+      else editorElement.current?.querySelector<HTMLElement>("main input:not(:disabled)")?.focus()
+    }
+    lastAction.current = null
+  }, [busy])
 
   const policy = useMemo(
     () => ({
@@ -275,6 +385,10 @@ export function AgentsProfilesStudioTab() {
   )
 
   const save = () => {
+    if (busy || profileMutationUnavailable) {
+      setStatus("Profile data is unavailable. Retry the reads before saving.")
+      return
+    }
     const scope =
       draft.scopeType === "project"
         ? ({ type: "project", projectId: draft.projectId } as const)
@@ -289,10 +403,10 @@ export function AgentsProfilesStudioTab() {
       })
       return
     }
-    if (!selected) return
+    if (!selected || loadedVersion === null) return
     update.mutate({
       profileId: selected.id,
-      expectedVersion: selected.currentVersion,
+      expectedVersion: loadedVersion,
       identity: {
         name: draft.name,
         description: draft.description,
@@ -304,12 +418,14 @@ export function AgentsProfilesStudioTab() {
 
   const previewResolved = async () => {
     if (!selected) return
+    const revision = editorRevision.current
     try {
       const value = await trpcClient.agentProfiles.resolvedPreview.query({
         profile: { profileId: selected.id, version: selected.currentVersion },
         overrides: null,
         policy,
       })
+      if (revision !== editorRevision.current) return
       setResolved(value)
       setStatus(
         value.conflicts.length
@@ -317,12 +433,14 @@ export function AgentsProfilesStudioTab() {
           : "Preview resolved without conflicts.",
       )
     } catch (error) {
+      if (revision !== editorRevision.current) return
       setStatus(error instanceof Error ? error.message : String(error))
     }
   }
 
   const previewStandalone = async () => {
     if (!selected || !projectId) return
+    const revision = editorRevision.current
     try {
       const value = await trpcClient.agentProfiles.standalonePreview.query({
         source: { kind: "studio", projectId },
@@ -331,6 +449,7 @@ export function AgentsProfilesStudioTab() {
         overrides: null,
         orchestrationTaskId: null,
       })
+      if (revision !== editorRevision.current) return
       setResolved(value)
       const blocking = value.conflicts.filter((conflict) =>
         AGENT_PROFILE_LAUNCH_BLOCKING_CONFLICT_CODES.some((code) => code === conflict.code),
@@ -342,6 +461,7 @@ export function AgentsProfilesStudioTab() {
           : "Standalone launch preview ready. Confirm to create exactly one chat and run.",
       )
     } catch (error) {
+      if (revision !== editorRevision.current) return
       setStatus(error instanceof Error ? error.message : String(error))
     }
   }
@@ -353,8 +473,15 @@ export function AgentsProfilesStudioTab() {
   }
 
   return (
-    <div
-      className="grid h-full min-h-0 grid-cols-1 grid-rows-[minmax(12rem,0.65fr)_minmax(0,1.35fr)] lg:grid-cols-[minmax(240px,0.75fr)_minmax(460px,1.5fr)] lg:grid-rows-1"
+    <fieldset
+      ref={editorElement}
+      onClickCapture={(event) => {
+        if (event.target instanceof Element) lastAction.current = event.target.closest("button")
+      }}
+      disabled={busy}
+      aria-busy={busy}
+      aria-label="Agent Profile Studio"
+      className="min-w-0 grid h-full min-h-0 grid-cols-1 grid-rows-[minmax(12rem,0.65fr)_minmax(0,1.35fr)] lg:grid-cols-[minmax(240px,0.75fr)_minmax(460px,1.5fr)] lg:grid-rows-1"
       data-settings-id="agent-profile-studio"
     >
       <aside
@@ -370,8 +497,10 @@ export function AgentsProfilesStudioTab() {
             <Button
               variant="outline"
               onClick={() => {
+                if (!leaveDraft()) return
+                resetEditor()
                 setSelectedId(null)
-                setDraft(blankDraft(projectId))
+                replaceDraft(blankDraft(projectId))
                 setIsNew(true)
                 setResolved(null)
                 setLaunchDigest(null)
@@ -386,7 +515,16 @@ export function AgentsProfilesStudioTab() {
           <select
             className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
             value={projectId}
-            onChange={(event) => setProjectId(event.target.value)}
+            onChange={(event) => {
+              if (!leaveDraft()) return
+              resetEditor()
+              setSelectedId(null)
+              setIsNew(true)
+              setProjectId(event.target.value)
+              replaceDraft(blankDraft(event.target.value))
+              setImportPreview(null)
+            }}
+            disabled={projects.isLoading || projects.isFetching || Boolean(projects.error)}
           >
             <option value="">No project selected</option>
             {projects.data?.map((project) => (
@@ -410,31 +548,82 @@ export function AgentsProfilesStudioTab() {
           aria-orientation="vertical"
           onKeyDown={handleListboxKeyDown}
         >
-          {profiles.data?.map((profile, index) => (
-            <button
-              key={profile.id}
-              type="button"
-              role="option"
-              aria-selected={selectedId === profile.id}
-              tabIndex={selectedId === profile.id || (!selectedId && index === 0) ? 0 : -1}
-              onClick={() => setSelectedId(profile.id)}
-              className={`w-full rounded-md border px-3 py-2 text-left text-sm ${
-                selectedId === profile.id
-                  ? "border-primary bg-primary/5"
-                  : "border-transparent hover:bg-foreground/5"
-              }`}
+          {profiles.error && !profiles.data ? (
+            <p
+              className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive"
+              role="alert"
             >
-              <span className="block font-medium">{profile.name}</span>
-              <span className="block text-xs text-muted-foreground">
-                {profile.category} · v{profile.currentVersion} · {profile.source}
-                {profile.archivedAt ? " · archived" : ""}
-              </span>
-            </button>
-          ))}
+              Agent profiles unavailable. Retry the reads above.
+            </p>
+          ) : (
+            profiles.data?.map((profile, index) => (
+              <button
+                key={profile.id}
+                type="button"
+                role="option"
+                aria-selected={selectedId === profile.id}
+                tabIndex={selectedId === profile.id || (!selectedId && index === 0) ? 0 : -1}
+                onClick={() => {
+                  if (profile.id !== selectedId && leaveDraft()) {
+                    resetEditor()
+                    setSelectedId(profile.id)
+                  }
+                }}
+                className={`w-full rounded-md border px-3 py-2 text-left text-sm ${
+                  selectedId === profile.id
+                    ? "border-primary bg-primary/5"
+                    : "border-transparent hover:bg-foreground/5"
+                }`}
+              >
+                <span className="block font-medium">{profile.name}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {profile.category} · v{profile.currentVersion} · {profile.source}
+                  {profile.archivedAt ? " · archived" : ""}
+                </span>
+              </button>
+            ))
+          )}
         </div>
       </aside>
 
       <main className="min-h-0 overflow-y-auto p-6" aria-label="Agent Profile editor">
+        {readError && (
+          <div className="mb-5 flex items-start justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+            <p className="text-sm text-destructive" role="alert">
+              Profile Studio data unavailable: {readError.message}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={isRefreshingReads}
+              onClick={() => void retryReads()}
+            >
+              <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry reads
+            </Button>
+          </div>
+        )}
+        {selectedId &&
+          (!selected || (loadedVersion !== null && loadedVersion !== selected.currentVersion)) && (
+            <p role="status" className="mb-3 text-sm">
+              Your draft is kept. The saved profile changed or is hidden by the current filter.
+              Reload the saved version or restore the filter before saving.
+            </p>
+          )}
+        {!isNew && selected && details.data && (
+          <Button
+            variant="outline"
+            className="mb-3"
+            onClick={() => {
+              if (!leaveDraft()) return
+              resetEditor()
+              void retryReads()
+            }}
+          >
+            Reload saved version
+          </Button>
+        )}
         <header className="mb-5">
           <h3 className="text-base font-semibold">{isNew ? "New Agent Profile" : draft.name}</h3>
           <p className="text-sm text-muted-foreground">
@@ -446,7 +635,12 @@ export function AgentsProfilesStudioTab() {
           </p>
         </header>
 
-        <div className="space-y-5">
+        <fieldset
+          className="min-w-0 space-y-5"
+          disabled={
+            Boolean(selectedId) && (details.isLoading || details.data?.profile.id !== selectedId)
+          }
+        >
           <section
             className="grid gap-3 rounded-lg border border-border p-4 sm:grid-cols-2"
             aria-labelledby="profile-identity-heading"
@@ -577,6 +771,7 @@ export function AgentsProfilesStudioTab() {
                   type="button"
                   variant="outline"
                   onClick={async () => {
+                    const revision = editorRevision.current
                     try {
                       const preview =
                         await trpcClient.agentPersonalities.previewInlineConversion.query({
@@ -585,11 +780,13 @@ export function AgentsProfilesStudioTab() {
                             version: selected.currentVersion,
                           },
                         })
+                      if (revision !== editorRevision.current) return
                       setConversionDigest(preview.digest)
                       setStatus(
                         `Previewed ${preview.name}. Confirm to create one immutable Personality and Agent Profile v${selected.currentVersion + 1}.`,
                       )
                     } catch (error) {
+                      if (revision !== editorRevision.current) return
                       setStatus(error instanceof Error ? error.message : String(error))
                     }
                   }}
@@ -876,6 +1073,7 @@ export function AgentsProfilesStudioTab() {
                   disabled={!importPreview}
                   onClick={() =>
                     importPreview &&
+                    leaveDraft() &&
                     confirmImport.mutate({
                       previewId: importPreview.previewId,
                       expectedDigest: importPreview.digest,
@@ -941,20 +1139,21 @@ export function AgentsProfilesStudioTab() {
 
           <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-background/95 py-3 backdrop-blur">
             <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
-              {status || "Ready."}
+              {busy ? "Working… Your draft is kept." : status || "Ready."}
             </p>
             <div className="flex gap-2">
               {!isNew && selected && (
                 <Button
                   variant="outline"
-                  disabled={busy}
-                  onClick={() =>
+                  disabled={busy || profileMutationUnavailable}
+                  onClick={() => {
+                    if (!leaveDraft()) return
                     duplicate.mutate({
                       profile: { profileId: selected.id, version: selected.currentVersion },
                       name: `${selected.name} copy`,
                       scope: { type: "user", projectId: null },
                     })
-                  }
+                  }}
                 >
                   Duplicate
                 </Button>
@@ -962,7 +1161,7 @@ export function AgentsProfilesStudioTab() {
               {!isNew && selected && selected.source !== "built-in" && (
                 <Button
                   variant="outline"
-                  disabled={busy}
+                  disabled={busy || profileMutationUnavailable}
                   onClick={() =>
                     (selected.archivedAt ? restore : archive).mutate({
                       profileId: selected.id,
@@ -973,14 +1172,23 @@ export function AgentsProfilesStudioTab() {
                   {selected.archivedAt ? "Restore" : "Archive"}
                 </Button>
               )}
-              <Button disabled={busy || (!isNew && selected?.source === "built-in")} onClick={save}>
+              <Button
+                disabled={
+                  busy ||
+                  profileMutationUnavailable ||
+                  Boolean(selected?.archivedAt) ||
+                  (!isNew &&
+                    (selected?.source === "built-in" || loadedVersion !== selected?.currentVersion))
+                }
+                onClick={save}
+              >
                 {isNew ? "Create profile" : "Save new version"}
               </Button>
             </div>
           </div>
-        </div>
+        </fieldset>
       </main>
-    </div>
+    </fieldset>
   )
 }
 

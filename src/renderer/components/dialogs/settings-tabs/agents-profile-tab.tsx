@@ -4,6 +4,8 @@ import { Label } from "../../ui/label"
 import { IconSpinner } from "../../../icons"
 import { toast } from "sonner"
 import { useIsNarrowScreen } from "./use-is-narrow-screen"
+import { Button } from "../../ui/button"
+import { RefreshCw } from "lucide-react"
 
 interface DesktopUser {
   id: string
@@ -17,22 +19,32 @@ export function AgentsProfileTab() {
   const [user, setUser] = useState<DesktopUser | null>(null)
   const [fullName, setFullName] = useState("")
   const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const isNarrowScreen = useIsNarrowScreen()
   const savedNameRef = useRef("")
 
-  // Fetch real user data from desktop API
-  useEffect(() => {
-    async function fetchUser() {
+  const fetchUser = useCallback(async () => {
+    setIsLoading(true)
+    setLoadError(null)
+    try {
       if (window.desktopApi?.getUser) {
         const userData = await window.desktopApi.getUser()
         setUser(userData)
         setFullName(userData?.name || "")
         savedNameRef.current = userData?.name || ""
+      } else {
+        throw new Error("Account profile is unavailable on this device.")
       }
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Failed to load account profile")
+    } finally {
       setIsLoading(false)
     }
-    fetchUser()
   }, [])
+
+  useEffect(() => {
+    void fetchUser()
+  }, [fetchUser])
 
   const handleBlurSave = useCallback(async () => {
     const trimmed = fullName.trim()
@@ -56,6 +68,22 @@ export function AgentsProfileTab() {
     return (
       <div className="flex items-center justify-center h-full">
         <IconSpinner className="h-6 w-6" />
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="space-y-3 text-center">
+          <p role="alert" className="text-sm text-destructive">
+            Account profile unavailable: {loadError}
+          </p>
+          <Button variant="outline" onClick={() => void fetchUser()}>
+            <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
+            Retry profile
+          </Button>
+        </div>
       </div>
     )
   }

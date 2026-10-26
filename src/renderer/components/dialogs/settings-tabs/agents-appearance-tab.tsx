@@ -364,7 +364,7 @@ export function AgentsAppearanceTab() {
           </div>
 
           <Select value={selectedThemeId ?? "system"} onValueChange={handleThemeChange}>
-            <SelectTrigger className="w-auto px-2">
+            <SelectTrigger aria-label="Interface theme" className="w-auto px-2">
               <div className="flex items-center gap-2 min-w-0 -ml-[3px]">
                 {isSystemMode ? (
                   <>
@@ -478,7 +478,7 @@ export function AgentsAppearanceTab() {
                 </div>
 
                 <Select value={systemLightThemeId} onValueChange={handleSystemLightThemeChange}>
-                  <SelectTrigger className="w-auto px-2">
+                  <SelectTrigger aria-label="Light theme" className="w-auto px-2">
                     <div className="flex items-center gap-2 min-w-0 -ml-[3px]">
                       <ThemePreviewBox theme={systemLightTheme || null} />
                       <span className="text-xs truncate">{systemLightTheme?.name || "Select"}</span>
@@ -507,7 +507,7 @@ export function AgentsAppearanceTab() {
                 </div>
 
                 <Select value={systemDarkThemeId} onValueChange={handleSystemDarkThemeChange}>
-                  <SelectTrigger className="w-auto px-2">
+                  <SelectTrigger aria-label="Dark theme" className="w-auto px-2">
                     <div className="flex items-center gap-2 min-w-0 -ml-[3px]">
                       <ThemePreviewBox theme={systemDarkTheme || null} />
                       <span className="text-xs truncate">{systemDarkTheme?.name || "Select"}</span>
@@ -539,7 +539,11 @@ export function AgentsAppearanceTab() {
               Show project icon in the sidebar workspace list
             </span>
           </div>
-          <Switch checked={showWorkspaceIcon} onCheckedChange={setShowWorkspaceIcon} />
+          <Switch
+            aria-label="Workspace icon"
+            checked={showWorkspaceIcon}
+            onCheckedChange={setShowWorkspaceIcon}
+          />
         </div>
         <div className="flex items-center justify-between p-4 border-t border-border">
           <div className="flex flex-col space-y-1">
@@ -548,7 +552,11 @@ export function AgentsAppearanceTab() {
               Show the full to-do list instead of compact view
             </span>
           </div>
-          <Switch checked={alwaysExpandTodoList} onCheckedChange={setAlwaysExpandTodoList} />
+          <Switch
+            aria-label="Always expand to-do list"
+            checked={alwaysExpandTodoList}
+            onCheckedChange={setAlwaysExpandTodoList}
+          />
         </div>
       </div>
     </div>

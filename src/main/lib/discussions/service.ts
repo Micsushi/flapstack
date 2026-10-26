@@ -400,12 +400,13 @@ export class DiscussionService {
     const scope = this.scope(input.scope)
     const rows = this.db
       .prepare(
-        "SELECT id, body, updated_at FROM discussion_topics WHERE project_id = ? AND chat_id IS ? AND host_id = ? AND (? IS NULL OR updated_at < ? OR (updated_at = ? AND id > ?)) ORDER BY updated_at DESC, id LIMIT ?",
+        "SELECT id, body, updated_at FROM discussion_topics WHERE project_id = ? AND chat_id IS ? AND host_id = ? AND (? OR COALESCE(json_extract(body, '$.archived'), 0) = 0) AND (? IS NULL OR updated_at < ? OR (updated_at = ? AND id > ?)) ORDER BY updated_at DESC, id LIMIT ?",
       )
       .iterate(
         scope.projectId,
         scope.chatId,
         scope.hostId,
+        Number(input.includeArchived),
         input.cursor?.updatedAt ?? null,
         input.cursor?.updatedAt ?? null,
         input.cursor?.updatedAt ?? null,
@@ -510,6 +511,16 @@ export class DiscussionService {
     })()
   }
 
+  private matchesSavedRevision(topic: DiscussionTopic, revision: number): boolean {
+    const row = this.db
+      .prepare("SELECT body FROM discussion_revisions WHERE topic_id = ? AND revision = ?")
+      .get(topic.id, revision) as Row | undefined
+    if (!row) return false
+    // Undo creates a new revision even when it restores the exact earlier content.
+    const content = (value: DiscussionTopic) => ({ ...value, revision: 0, updatedAt: 0 })
+    return JSON.stringify(content(topic)) === JSON.stringify(content(JSON.parse(row.body)))
+  }
+
   update(
     raw: z.input<typeof updateDiscussionSchema>,
     imageSnapshot?: DiscussionImageSnapshot,
@@ -517,8 +528,15 @@ export class DiscussionService {
     const input = updateDiscussionSchema.parse(raw)
     return this.db.transaction(() => {
       const topic = this.read(input.scope, input.id)
-      if (topic.revision !== input.expectedRevision)
+      if (
+        topic.revision !== input.expectedRevision &&
+        !(
+          input.change.type === "archive" &&
+          this.matchesSavedRevision(topic, input.expectedRevision)
+        )
+      )
         throw new DiscussionError("CONFLICT", "Discussion changed; refresh before saving")
+      const previousRevision = topic.revision
       const change = input.change
       const now = Date.now()
       switch (change.type) {
@@ -624,7 +642,7 @@ export class DiscussionService {
       }
       topic.revision++
       topic.updatedAt = now
-      return this.save(topic, input.expectedRevision)
+      return this.save(topic, previousRevision)
     })()
   }
 
@@ -632,7 +650,10 @@ export class DiscussionService {
     const input = restoreDiscussionSchema.parse(raw)
     return this.db.transaction(() => {
       const current = this.read(input.scope, input.id)
-      if (current.revision !== input.expectedRevision)
+      if (
+        current.revision !== input.expectedRevision &&
+        !this.matchesSavedRevision(current, input.expectedRevision)
+      )
         throw new DiscussionError("CONFLICT", "Discussion changed; undo would overwrite newer work")
       const row = this.db
         .prepare("SELECT body FROM discussion_revisions WHERE topic_id = ? AND revision = ?")

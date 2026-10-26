@@ -48,10 +48,16 @@ export const automationsRouter = router({
     .query(({ input }) => service().read(user, input.automationId)),
 
   history: publicProcedure
-    .input(z.object({ automationId, limit: z.number().int().min(1).max(200).default(50) }))
+    .input(
+      z.object({
+        automationId,
+        limit: z.number().int().min(1).max(200).default(50),
+        cursor: z.string().max(1024).optional(),
+      }),
+    )
     .query(({ input }) => {
       service().read(user, input.automationId)
-      return ui().listHistory(input.automationId, input.limit)
+      return ui().listHistoryPage(input.automationId, input)
     }),
 
   inbox: publicProcedure
@@ -61,6 +67,7 @@ export const automationsRouter = router({
           automationId: automationId.optional(),
           unreadOnly: z.boolean().default(false),
           limit: z.number().int().min(1).max(200).default(100),
+          cursor: z.string().max(1024).optional(),
         })
         .default({}),
     )

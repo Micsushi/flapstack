@@ -7,6 +7,12 @@ terminology comes from
 change whether implementation is complete unless explicitly labeled
 `release-blocking`.
 
+This is historical stage acceptance, not a beta-readiness decision for the
+current checkout. The 2026-10-26 portfolio review has found and repaired later
+workflow defects, with recovery edge cases still under verification. Current verification scope and limits are documented in
+[`hidden-runtime-verification.md`](hidden-runtime-verification.md).
+Passing historical stage gates does not certify those subsequent changes.
+
 ## High-level status
 
 | Stage   | Tier 1 code | `T2-core` accepted | Capability certified | Release certified | Current meaning                                                                                                             |

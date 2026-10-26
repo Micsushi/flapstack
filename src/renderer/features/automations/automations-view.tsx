@@ -40,10 +40,11 @@ export function AutomationsView() {
   const searchRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState("")
   const [stateFilter, setStateFilter] = useState<StateFilter>("all")
+  const [includeArchived, setIncludeArchived] = useState(false)
 
-  const automations = trpc.automations.list.useQuery(
-    { includeArchived: false, limit: 100 },
-    { refetchInterval: 5_000 },
+  const automations = trpc.automations.list.useInfiniteQuery(
+    { includeArchived, limit: 100 },
+    { refetchInterval: 5_000, getNextPageParam: (page) => page.nextCursor ?? undefined },
   )
   const inbox = trpc.automations.inbox.useQuery(
     { unreadOnly: true, limit: 1 },
@@ -51,8 +52,17 @@ export function AutomationsView() {
   )
 
   const filtered = useMemo(
-    () => filterAutomationRecords(automations.data?.items ?? [], { query, state: stateFilter }),
-    [automations.data?.items, query, stateFilter],
+    () =>
+      filterAutomationRecords(
+        [
+          ...new Map(
+            automations.data?.pages.flatMap((page) => page.items).map((item) => [item.id, item]) ??
+              [],
+          ).values(),
+        ],
+        { query, state: stateFilter },
+      ),
+    [automations.data?.pages, query, stateFilter],
   )
 
   const openDetail = useCallback(
@@ -156,6 +166,14 @@ export function AutomationsView() {
               <option value="error">Denied or revoked</option>
             </NativeSelect>
           </div>
+          <label className="mt-3 flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={includeArchived}
+              onChange={(event) => setIncludeArchived(event.target.checked)}
+            />
+            Include archived automations
+          </label>
         </section>
 
         <div className="sr-only" aria-live="polite">
@@ -167,7 +185,7 @@ export function AutomationsView() {
           <p className="py-12 text-center text-sm text-muted-foreground">
             Loading local automations…
           </p>
-        ) : automations.error ? (
+        ) : automations.error && !automations.data ? (
           <ErrorState
             message={automations.error.message}
             retry={() => void automations.refetch()}
@@ -175,7 +193,11 @@ export function AutomationsView() {
         ) : filtered.length === 0 ? (
           <div className="py-10 text-center">
             <p className="text-sm font-medium">
-              {query || stateFilter !== "all" ? "No matching automations" : "No automations yet"}
+              {automations.hasNextPage
+                ? "No matches in loaded automations"
+                : query || stateFilter !== "all"
+                  ? "No matching automations"
+                  : "No automations yet"}
             </p>
             <Button
               variant="outline"
@@ -201,6 +223,31 @@ export function AutomationsView() {
               </li>
             ))}
           </ul>
+        )}
+        {automations.error && automations.data && (
+          <ErrorState
+            message={automations.error.message}
+            retry={() =>
+              void (automations.isFetchNextPageError
+                ? automations.fetchNextPage()
+                : automations.refetch())
+            }
+          />
+        )}
+        {automations.hasNextPage && (
+          <div className="mt-5 space-y-2">
+            <p className="text-sm text-muted-foreground">
+              Search and filters cover loaded automations. Load more to include older records.
+            </p>
+            <Button
+              variant="outline"
+              size="workspace"
+              disabled={automations.isFetching}
+              onClick={() => void automations.fetchNextPage()}
+            >
+              {automations.isFetchingNextPage ? "Loading more…" : "Load more automations"}
+            </Button>
+          </div>
         )}
       </WorkspaceContent>
     </WorkspacePage>

@@ -54,6 +54,7 @@ export function useVoiceRecording(options: VoiceRecordingOptions = {}): UseVoice
   onPcmChunkRef.current = options.onPcmChunk
 
   const queuePcm = useCallback((incoming: Float32Array, flush = false) => {
+    const generation = startGenerationRef.current
     const combined = new Float32Array(pcmPendingRef.current.length + incoming.length)
     combined.set(pcmPendingRef.current)
     combined.set(incoming, pcmPendingRef.current.length)
@@ -64,9 +65,13 @@ export function useVoiceRecording(options: VoiceRecordingOptions = {}): UseVoice
       const chunk = combined.slice(offset, end)
       offset = end
       pcmQueueRef.current = pcmQueueRef.current
-        .then(() => onPcmChunkRef.current?.(chunk))
+        .then(() => {
+          if (generation === startGenerationRef.current) return onPcmChunkRef.current?.(chunk)
+        })
         .catch((error) => {
-          pcmErrorRef.current = error instanceof Error ? error : new Error(String(error))
+          if (generation === startGenerationRef.current) {
+            pcmErrorRef.current = error instanceof Error ? error : new Error(String(error))
+          }
         })
     }
     pcmPendingRef.current = combined.slice(offset)
@@ -146,6 +151,7 @@ export function useVoiceRecording(options: VoiceRecordingOptions = {}): UseVoice
     }
 
     const generation = ++startGenerationRef.current
+    pcmQueueRef.current = Promise.resolve()
     isStartingRef.current = true
     const startPromise = (async () => {
       try {
@@ -171,6 +177,7 @@ export function useVoiceRecording(options: VoiceRecordingOptions = {}): UseVoice
         // Set up audio analysis for visualization
         try {
           const audioContext = new AudioContext()
+          audioContextRef.current = audioContext
           const analyser = audioContext.createAnalyser()
           analyser.fftSize = 256
           analyser.smoothingTimeConstant = 0.5
@@ -182,6 +189,7 @@ export function useVoiceRecording(options: VoiceRecordingOptions = {}): UseVoice
           if (onPcmChunkRef.current) {
             const processor = audioContext.createScriptProcessor(4096, 1, 1)
             processor.onaudioprocess = (event) => {
+              if (generation !== startGenerationRef.current || streamRef.current !== stream) return
               const input = event.inputBuffer.getChannelData(0)
               const chunk = resampleMono(input, audioContext.sampleRate, 16_000)
               if (!chunk.length || !onPcmChunkRef.current) return
@@ -192,7 +200,6 @@ export function useVoiceRecording(options: VoiceRecordingOptions = {}): UseVoice
             processorRef.current = processor
           }
 
-          audioContextRef.current = audioContext
           analyserRef.current = analyser
 
           // Start audio level monitoring (~20fps instead of 60fps to reduce React re-renders)
@@ -280,8 +287,10 @@ export function useVoiceRecording(options: VoiceRecordingOptions = {}): UseVoice
   const stopRecording = useCallback(async (): Promise<Blob> => {
     // A hotkey or pointer release can arrive while microphone permission is
     // still pending. Wait for that exact start before looking for the recorder.
+    const generation = startGenerationRef.current
     const pendingStart = startPromiseRef.current
     if (pendingStart) await pendingStart
+    if (generation !== startGenerationRef.current) throw new Error("Recording was cancelled")
 
     queuePcm(new Float32Array(), true)
     return new Promise((resolve, reject) => {
@@ -298,22 +307,37 @@ export function useVoiceRecording(options: VoiceRecordingOptions = {}): UseVoice
       const mimeType = mediaRecorder.mimeType || "audio/webm"
 
       mediaRecorder.onstop = async () => {
+        if (
+          generation !== startGenerationRef.current ||
+          mediaRecorderRef.current !== mediaRecorder
+        ) {
+          reject(new Error("Recording was cancelled"))
+          return
+        }
         const blob = new Blob(chunksRef.current, { type: mimeType })
 
         cleanup()
         setIsRecording(false)
         try {
-          resolve(
-            options.normalizeRecording === false ? blob : await normalizeRecordingForWhisper(blob),
-          )
+          const normalized =
+            options.normalizeRecording === false ? blob : await normalizeRecordingForWhisper(blob)
+          if (generation !== startGenerationRef.current) throw new Error("Recording was cancelled")
+          resolve(normalized)
         } catch (error) {
           const normalized = error instanceof Error ? error : new Error(String(error))
-          setError(normalized)
+          if (generation === startGenerationRef.current) setError(normalized)
           reject(normalized)
         }
       }
 
       mediaRecorder.onerror = () => {
+        if (
+          generation !== startGenerationRef.current ||
+          mediaRecorderRef.current !== mediaRecorder
+        ) {
+          reject(new Error("Recording was cancelled"))
+          return
+        }
         const error = new Error("Recording error")
         setError(error)
         cleanup()

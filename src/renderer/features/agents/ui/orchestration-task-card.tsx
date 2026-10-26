@@ -2,8 +2,8 @@ import { WorktreeDeclarationsPanel } from "./worktree-declarations-panel"
 import { OrchestrationSharedWorktreeAdvisory } from "./orchestration-shared-worktree-advisory"
 ;("use client")
 
-import { useMemo, useState } from "react"
-import { useSetAtom } from "jotai"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useSetAtom, useStore } from "jotai"
 import {
   CirclePause,
   CirclePlay,
@@ -41,7 +41,12 @@ import { Input } from "../../../components/ui/input"
 import { Textarea } from "../../../components/ui/textarea"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
-import { desktopViewAtom } from "../atoms"
+import {
+  desktopViewAtom,
+  selectedAgentChatIdAtom,
+  selectedProjectAtom,
+  showNewChatFormAtom,
+} from "../atoms"
 import { openOperationWorkspace } from "../../saved-workspaces/operation-navigation"
 import { useBetaFeatures } from "../../settings/use-beta-features"
 import { CoordinationEngineLaunchPreviewPanel } from "./coordination-engine-launch-preview"
@@ -1025,7 +1030,26 @@ export function OrchestrationTaskCard({
   onNavigate: (chatId: string) => void
 }) {
   const betaFeatures = useBetaFeatures()
+  const store = useStore()
   const setDesktopView = useSetAtom(desktopViewAtom)
+  const setSelectedProject = useSetAtom(selectedProjectAtom)
+  const setShowNewChatForm = useSetAtom(showNewChatFormAtom)
+  const workspaceRequest = useRef(0)
+  useEffect(() => {
+    const invalidateNavigation = () => {
+      workspaceRequest.current += 1
+    }
+    const subscriptions = [
+      store.sub(selectedProjectAtom, invalidateNavigation),
+      store.sub(selectedAgentChatIdAtom, invalidateNavigation),
+      store.sub(desktopViewAtom, invalidateNavigation),
+      store.sub(showNewChatFormAtom, invalidateNavigation),
+    ]
+    return () => {
+      invalidateNavigation()
+      subscriptions.forEach((unsubscribe) => unsubscribe())
+    }
+  }, [store, projectId, taskId, currentChatId])
   const utils = trpc.useUtils()
   const taskQueryId = taskId ?? ""
   const overviewQuery = trpc.spawnedAgents.getTaskOverview.useQuery(
@@ -1076,17 +1100,83 @@ export function OrchestrationTaskCard({
     () => (editorMode?.kind === "replace" ? editorMode.agent : null),
     [editorMode],
   )
-  const openWorkspace = async (operationTaskId: string) => {
+  const openWorkspace = async (operationTaskId: string, request = ++workspaceRequest.current) => {
+    const isCurrent = () => request === workspaceRequest.current
+    if (!isCurrent()) return
     try {
-      const opened = await openOperationWorkspace({
-        projectId,
+      const [operation, task] = await Promise.all([
+        utils.savedWorkspaces.getOperationForTask.fetch(
+          { taskId: operationTaskId },
+          { staleTime: 0 },
+        ),
+        utils.tasks.get.fetch({ id: operationTaskId }, { staleTime: 0 }),
+      ])
+      if (!isCurrent()) return
+      if (!operation) throw new Error("Operation workspace metadata is not available yet.")
+      if (!task || task.id !== operationTaskId || task.archivedAt !== null) {
+        throw new Error("This operation's task is no longer available or is archived.")
+      }
+      if (operation.taskId !== operationTaskId) {
+        throw new Error("Operation workspace metadata no longer matches this task. Try again.")
+      }
+      const [project, workspace, activeWorkspaces] = await Promise.all([
+        utils.projects.get.fetch({ id: task.projectId }, { staleTime: 0 }),
+        utils.savedWorkspaces.get.fetch({ workspaceId: operation.workspaceId }, { staleTime: 0 }),
+        // Refresh the destination view's exact query so cached membership cannot select another row.
+        utils.savedWorkspaces.list.fetch(
+          { projectId: task.projectId, archive: "active" },
+          { staleTime: 0 },
+        ),
+      ])
+      if (!isCurrent()) return
+      if (!project || project.id !== task.projectId) {
+        throw new Error("This operation workspace's project is no longer available.")
+      }
+      if (!workspace) throw new Error("This operation workspace is no longer available.")
+      if (workspace.archivedAt !== null) {
+        throw new Error(
+          "This operation workspace is archived. Restore it in Workspaces before opening it here.",
+        )
+      }
+      if (!activeWorkspaces.some((entry) => entry.id === workspace.id)) {
+        throw new Error(
+          "This workspace is no longer available in its project. Refresh and try again.",
+        )
+      }
+      if (
+        workspace.id !== operation.workspaceId ||
+        workspace.scope.type !== "task" ||
+        workspace.scope.taskId !== operationTaskId ||
+        workspace.owner.kind !== "orchestration" ||
+        workspace.owner.orchestrationId !== operation.orchestrationId
+      ) {
+        throw new Error(
+          "This workspace no longer belongs to this operation. Refresh and try again.",
+        )
+      }
+      await openOperationWorkspace({
+        projectId: project.id,
         taskId: operationTaskId,
-        fetchWorkspace: (input) => utils.savedWorkspaces.getOperationForTask.fetch(input),
-        showSavedWorkspaces: () => setDesktopView("saved-workspaces"),
+        fetchWorkspace: async () => operation,
+        isCurrent,
+        showSavedWorkspaces: () => {
+          setSelectedProject({
+            id: project.id,
+            name: project.name,
+            path: project.path,
+            gitRemoteUrl: project.gitRemoteUrl,
+            gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+            gitOwner: project.gitOwner,
+            gitRepo: project.gitRepo,
+          })
+          setShowNewChatForm(false)
+          setDesktopView("saved-workspaces")
+        },
       })
-      if (!opened) toast.error("Operation workspace metadata is not available yet.")
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Operation workspace could not open.")
+      if (isCurrent()) {
+        toast.error(error instanceof Error ? error.message : "Operation workspace could not open.")
+      }
     }
   }
   const submit = (
@@ -1097,6 +1187,7 @@ export function OrchestrationTaskCard({
     coordinationEngine: CoordinationEngine | undefined,
   ) => {
     if (editorMode?.kind === "create-orchestration") {
+      const request = ++workspaceRequest.current
       create.mutate(
         {
           projectId,
@@ -1109,6 +1200,7 @@ export function OrchestrationTaskCard({
         },
         {
           onSuccess: async (result) => {
+            if (request !== workspaceRequest.current) return
             setEditorMode(null)
             await Promise.all([
               utils.tasks.list.invalidate(),
@@ -1117,7 +1209,7 @@ export function OrchestrationTaskCard({
               utils.spawnedAgents.previewLineage.invalidate(),
               utils.savedWorkspaces.list.invalidate(),
             ])
-            await openWorkspace(result.orchestration.taskId)
+            await openWorkspace(result.orchestration.taskId, request)
           },
         },
       )

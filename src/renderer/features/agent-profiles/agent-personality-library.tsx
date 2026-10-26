@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react"
+import { invalidateAppActionRedo } from "../../lib/app-action-history"
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
 import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import { Textarea } from "../../components/ui/textarea"
 import type { AgentPersonalityMetadata } from "../../../shared/agent-personalities"
 import { trpc, trpcClient } from "../../lib/trpc"
+import { useProfileActionHistory } from "./use-profile-action-history"
 import { handleListboxKeyDown } from "../../lib/listbox-keyboard"
 
 type Draft = {
@@ -20,6 +22,7 @@ type Draft = {
 
 export function AgentPersonalityLibrary(props: { projectId: string; onBack: () => void }) {
   const utils = trpc.useUtils()
+  const recordHistory = useProfileActionHistory()
   const list = trpc.agentPersonalities.list.useQuery({
     projectId: props.projectId || undefined,
   })
@@ -36,9 +39,42 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
     },
     { enabled: Boolean(selected) },
   )
-  const [draft, setDraft] = useState<Draft>(() => blankDraft(Boolean(props.projectId)))
+  const [draft, replaceDraft] = useState<Draft>(() => blankDraft(Boolean(props.projectId)))
+  const editorElement = useRef<HTMLFieldSetElement>(null)
+  const lastAction = useRef<HTMLButtonElement | null>(null)
+  const edited = useRef(false)
+  const [loadedVersion, setLoadedVersion] = useState<number | null>(null)
+  const setDraft: Dispatch<SetStateAction<Draft>> = (value) => {
+    edited.current = true
+    setStatus("")
+    replaceDraft(value)
+    setPreview(null)
+  }
+  const leaveDraft = () => !edited.current || window.confirm("Discard unsaved personality edits?")
+  const resetEditor = () => {
+    edited.current = false
+    setLoadedVersion(null)
+    setStatus("")
+    setPreview(null)
+  }
+  const readError = list.error ?? details.error
+  const unavailable =
+    list.isLoading ||
+    Boolean(list.error) ||
+    (Boolean(selectedId) &&
+      (!selected ||
+        details.isLoading ||
+        Boolean(details.error) ||
+        details.data?.metadata.id !== selectedId ||
+        details.data?.metadata.version !== selected?.currentVersion ||
+        loadedVersion === null))
+  const retryReads = async () => {
+    await list.refetch()
+    if (selected) await details.refetch()
+  }
   const [status, setStatus] = useState("")
   const [bundle, setBundle] = useState("")
+  const [exporting, setExporting] = useState(false)
   const [preview, setPreview] = useState<{
     digest: string
     name: string
@@ -48,8 +84,15 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
   const [baseResolution, setBaseResolution] = useState<"preserve-validated" | "remove" | null>(null)
 
   useEffect(() => {
-    if (!details.data) return
-    setDraft({
+    if (
+      !selectedId ||
+      details.data?.metadata.id !== selectedId ||
+      details.data.metadata.version !== selected?.currentVersion ||
+      edited.current
+    )
+      return
+    setLoadedVersion(details.data.metadata.version)
+    replaceDraft({
       name: details.data.metadata.name,
       scopeType: details.data.metadata.scope.type,
       tone: details.data.metadata.traits.tone,
@@ -60,7 +103,7 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
       color: details.data.metadata.traits.color ?? "",
       body: details.data.body,
     })
-  }, [details.data])
+  }, [details.data, selectedId, selected?.currentVersion, loadedVersion])
 
   useEffect(
     () =>
@@ -81,7 +124,7 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
   const content = () => ({
     name: draft.name,
     scope,
-    base: details.data?.metadata.base ?? null,
+    base: selected && details.data?.metadata.id === selectedId ? details.data.metadata.base : null,
     traits: {
       tone: draft.tone,
       verbosity: draft.verbosity,
@@ -98,6 +141,8 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
 
   const create = trpc.agentPersonalities.create.useMutation({
     onSuccess: async (result) => {
+      invalidateAppActionRedo()
+      edited.current = false
       setSelectedId(result.metadata.id)
       setStatus(`Created ${result.metadata.name} v1.`)
       await list.refetch()
@@ -106,20 +151,24 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
   })
   const update = trpc.agentPersonalities.update.useMutation({
     onSuccess: async (result) => {
+      recordHistory("personalities", result, "Edit Personality")
+      edited.current = false
       setStatus(`Saved immutable personality v${result.metadata.version}.`)
       await Promise.all([list.refetch(), details.refetch()])
     },
     onError: (error) => setStatus(error.message),
   })
   const archive = trpc.agentPersonalities.archive.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      recordHistory("personalities", result, "Archive Personality")
       setStatus("Archived for future launches. Historical content is unchanged.")
       await list.refetch()
     },
     onError: (error) => setStatus(error.message),
   })
   const restore = trpc.agentPersonalities.restore.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      recordHistory("personalities", result, "Restore Personality")
       setStatus("Restored personality.")
       await list.refetch()
     },
@@ -140,6 +189,8 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
   })
   const confirmImport = trpc.agentPersonalities.confirmImport.useMutation({
     onSuccess: async (result) => {
+      invalidateAppActionRedo()
+      edited.current = false
       setSelectedId(result.metadata.id)
       setPreview(null)
       setStatus(`Imported ${result.metadata.name} without capabilities or authority.`)
@@ -148,20 +199,58 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
     onError: (error) => setStatus(error.message),
   })
 
+  const busy =
+    exporting ||
+    create.isPending ||
+    update.isPending ||
+    archive.isPending ||
+    restore.isPending ||
+    previewImport.isPending ||
+    confirmImport.isPending
+  useEffect(() => {
+    if (busy) return
+    const action = lastAction.current
+    if (action && document.activeElement === document.body) {
+      if (action.isConnected && !action.matches(":disabled")) action.focus()
+      else editorElement.current?.querySelector<HTMLElement>("main input:not(:disabled)")?.focus()
+    }
+    lastAction.current = null
+  }, [busy])
+
   const newPersonality = () => {
+    if (!leaveDraft()) return
+    resetEditor()
     setSelectedId(null)
-    setDraft(blankDraft(Boolean(props.projectId)))
+    replaceDraft(blankDraft(Boolean(props.projectId)))
     setStatus("")
   }
 
   return (
-    <div
-      className="grid h-full min-h-0 grid-cols-1 grid-rows-[minmax(12rem,0.65fr)_minmax(0,1.35fr)] lg:grid-cols-[minmax(240px,0.75fr)_minmax(460px,1.5fr)] lg:grid-rows-1"
+    <fieldset
+      ref={editorElement}
+      onClickCapture={(event) => {
+        if (event.target instanceof Element) lastAction.current = event.target.closest("button")
+      }}
+      disabled={busy}
+      aria-busy={busy}
+      aria-label="Agent Personality Library"
+      className="min-w-0 grid h-full min-h-0 grid-cols-1 grid-rows-[minmax(12rem,0.65fr)_minmax(0,1.35fr)] lg:grid-cols-[minmax(240px,0.75fr)_minmax(460px,1.5fr)] lg:grid-rows-1"
       data-settings-id="agent-personality-library"
     >
       <aside className="min-h-0 overflow-y-auto border-b border-border p-4 lg:border-b-0 lg:border-r">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <Button variant="ghost" onClick={props.onBack}>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              if (
+                (!edited.current && !bundle.trim()) ||
+                window.confirm(
+                  "Leave the library and discard unsaved edits and import/export text?",
+                )
+              )
+                props.onBack()
+            }}
+          >
             Profiles
           </Button>
           <Button variant="outline" onClick={newPersonality}>
@@ -172,6 +261,11 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
         <p className="mb-3 text-xs leading-5 text-muted-foreground">
           Versioned Markdown presentation only. No tools, permissions, skills, memory, or Runtime.
         </p>
+        {!list.isLoading && !list.error && list.data?.length === 0 && (
+          <p role="status" className="text-sm">
+            No personalities yet. Create one or preview an import.
+          </p>
+        )}
         <div
           className="space-y-1"
           role="listbox"
@@ -186,7 +280,12 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
               role="option"
               aria-selected={selectedId === item.personalityId}
               tabIndex={selectedId === item.personalityId || (!selectedId && index === 0) ? 0 : -1}
-              onClick={() => setSelectedId(item.personalityId)}
+              onClick={() => {
+                if (item.personalityId !== selectedId && leaveDraft()) {
+                  resetEditor()
+                  setSelectedId(item.personalityId)
+                }
+              }}
               className={`w-full rounded-md border px-3 py-2 text-left text-sm ${
                 selectedId === item.personalityId
                   ? "border-primary bg-primary/5"
@@ -204,6 +303,40 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
       </aside>
 
       <main className="min-h-0 overflow-y-auto p-6">
+        {readError && (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <p role="alert" className="text-sm text-destructive">
+              Personality data unavailable: {readError.message}
+            </p>
+            <Button
+              variant="outline"
+              disabled={list.isFetching || details.isFetching}
+              onClick={() => void retryReads()}
+            >
+              Retry reads
+            </Button>
+          </div>
+        )}
+        {selectedId &&
+          (!selected || (loadedVersion !== null && loadedVersion !== selected.currentVersion)) && (
+            <p role="status" className="mb-3 text-sm">
+              Your draft is kept. The saved personality changed. Reload the saved version before
+              saving.
+            </p>
+          )}
+        {selected && details.data && (
+          <Button
+            variant="outline"
+            className="mb-3"
+            onClick={() => {
+              if (!leaveDraft()) return
+              resetEditor()
+              void retryReads()
+            }}
+          >
+            Reload saved version
+          </Button>
+        )}
         <header className="mb-5">
           <h3 className="text-base font-semibold">
             {selected ? `${selected.name} v${selected.currentVersion}` : "New Personality"}
@@ -218,7 +351,12 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
           )}
         </header>
 
-        <div className="space-y-5">
+        <fieldset
+          className="min-w-0 space-y-5"
+          disabled={
+            Boolean(selectedId) && (details.isLoading || details.data?.metadata.id !== selectedId)
+          }
+        >
           <section className="grid gap-3 rounded-lg border border-border p-4 sm:grid-cols-2">
             <Field label="Name">
               <Input
@@ -297,6 +435,7 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
             </div>
             <Textarea
               className="min-h-36 font-mono text-xs"
+              aria-label="Personality export or import bundle"
               value={bundle}
               onChange={(event) => {
                 setBundle(event.target.value)
@@ -310,6 +449,7 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
                 disabled={!selected}
                 onClick={async () => {
                   if (!selected) return
+                  setExporting(true)
                   try {
                     const result = await trpcClient.agentPersonalities.exportMarkdown.query({
                       ref: {
@@ -322,6 +462,8 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
                     setStatus("Exact immutable personality version exported.")
                   } catch (error) {
                     setStatus(error instanceof Error ? error.message : String(error))
+                  } finally {
+                    setExporting(false)
                   }
                 }}
               >
@@ -329,7 +471,7 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
               </Button>
               <Button
                 variant="outline"
-                disabled={!bundle.trim()}
+                disabled={!bundle.trim() || unavailable}
                 onClick={() =>
                   previewImport.mutate({
                     source: bundle,
@@ -342,6 +484,7 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
               </Button>
               <Button
                 disabled={
+                  unavailable ||
                   !preview ||
                   (preview.unresolvedBase !== null &&
                     (baseResolution === null ||
@@ -350,6 +493,7 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
                 }
                 onClick={() =>
                   preview &&
+                  leaveDraft() &&
                   confirmImport.mutate({
                     source: bundle,
                     sourceLabel: "Profile Studio paste",
@@ -394,12 +538,13 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
 
           <footer className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-background/95 py-3 backdrop-blur">
             <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
-              {status || "Ready."}
+              {busy ? "Working… Your draft is kept." : status || "Ready."}
             </p>
             <div className="flex gap-2">
               {selected && details.data && (
                 <Button
                   variant="outline"
+                  disabled={unavailable || loadedVersion !== selected.currentVersion}
                   onClick={() => create.mutate({ ...content(), name: `${draft.name} copy` })}
                 >
                   Duplicate
@@ -408,6 +553,7 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
               {selected && (
                 <Button
                   variant="outline"
+                  disabled={unavailable}
                   onClick={() =>
                     (selected.archivedAt ? restore : archive).mutate({
                       personalityId: selected.personalityId,
@@ -421,19 +567,23 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
               )}
               <Button
                 disabled={
-                  create.isPending ||
-                  update.isPending ||
+                  busy ||
+                  unavailable ||
+                  Boolean(selected?.archivedAt) ||
+                  (Boolean(selected) && loadedVersion !== selected?.currentVersion) ||
                   (draft.scopeType === "project" && !props.projectId)
                 }
                 onClick={() => {
-                  if (!selected) {
+                  if (busy || unavailable) return
+                  if (!selectedId) {
                     create.mutate(content())
                     return
                   }
+                  if (!selected || loadedVersion === null) return
                   update.mutate({
                     ...content(),
                     personalityId: selected.personalityId,
-                    expectedVersion: selected.currentVersion,
+                    expectedVersion: loadedVersion,
                   })
                 }}
               >
@@ -441,9 +591,9 @@ export function AgentPersonalityLibrary(props: { projectId: string; onBack: () =
               </Button>
             </div>
           </footer>
-        </div>
+        </fieldset>
       </main>
-    </div>
+    </fieldset>
   )
 }
 

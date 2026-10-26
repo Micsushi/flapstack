@@ -265,6 +265,72 @@ it("recovers a received send after reconnect without sending the message again",
   expect(input.value).toBe("")
 })
 
+it("keeps the viewed chat and both drafts while reconciling a pending send after reconnect", () => {
+  const app = companion()
+  const chatA = { kind: "chat", id: "chat-a", name: "Chat A", version: 1 }
+  const chatB = { kind: "chat", id: "chat-b", name: "Chat B", version: 1 }
+  app.api.connected(true)
+  app.snapshot([chatA, chatB])
+  app.button("Chat A")!.click()
+  app.api.receive({
+    kind: "conversation",
+    conversation: {
+      chatId: "chat-a",
+      subChatId: "sub-a",
+      conversations: [{ id: "sub-a" }],
+      messages: [],
+      status: "idle",
+      pageBefore: null,
+      before: null,
+    },
+  })
+  const input = app.window.document.getElementById("message") as HTMLTextAreaElement
+  input.value = "A pending message"
+  input.dispatchEvent(new app.window.Event("input"))
+  app.window.document
+    .getElementById("compose")!
+    .dispatchEvent(new app.window.Event("submit", { cancelable: true }))
+  const pending = app.api.pendingCommand()
+  expect(pending).toBeTruthy()
+
+  app.button("Chats")!.click()
+  app.button("Chat B")!.click()
+  app.api.receive({
+    kind: "conversation",
+    conversation: {
+      chatId: "chat-b",
+      subChatId: "sub-b",
+      conversations: [{ id: "sub-b" }],
+      messages: [],
+      status: "idle",
+      pageBefore: null,
+      before: null,
+    },
+  })
+  input.value = "B local draft"
+  input.dispatchEvent(new app.window.Event("input"))
+
+  const sentBeforeReconnect = app.send.mock.calls.length
+  app.api.connected(false)
+  app.api.connected(true)
+  app.snapshot([chatA, chatB])
+
+  expect(input.value).toBe("B local draft")
+  expect(app.window.document.getElementById("chat-title")!.textContent).toBe("Chat B")
+  expect(app.window.sessionStorage.getItem("flapstack-mobile-drafts")).toContain(
+    "A pending message",
+  )
+  expect(app.api.pendingCommand()).toEqual(pending)
+  const sent = app.send.mock.calls.map((call) => JSON.parse(call[0]))
+  expect(sent.filter((value) => value.kind === "command")).toHaveLength(1)
+  expect(
+    sent
+      .slice(sentBeforeReconnect)
+      .some((value) => value.kind === "conversation.read" && value.chatId === "chat-a"),
+  ).toBe(true)
+  expect(app.window.sessionStorage.getItem("flapstack-mobile-drafts")).toContain("B local draft")
+})
+
 it("refreshes a half-open phone connection after returning without replaying a send", () => {
   const app = companion()
   app.api.connected(true)

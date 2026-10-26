@@ -33,7 +33,7 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu"
 import { ViewerErrorBoundary } from "@/components/ui/error-boundary"
-import { trpc } from "@/lib/trpc"
+import { trpc, trpcClient } from "@/lib/trpc"
 import { isAbsolutePath, toRootedFileTarget } from "@/lib/file-target"
 import type { WorkspaceEditScope } from "../../../../shared/workspace-edits"
 import { useWorkspaceDraft } from "../hooks/use-workspace-draft"
@@ -58,6 +58,7 @@ import { defaultEditorOptions, getMonacoTheme, registerMonacoTheme } from "./mon
 import { useVSCodeTheme } from "@/lib/themes"
 import { ImageViewer } from "./image-viewer"
 import { MarkdownViewer } from "./markdown-viewer"
+import { DraftRecovery, RecoverySaveAs } from "./draft-recovery"
 
 interface FileViewerSidebarProps {
   filePath: string
@@ -507,6 +508,12 @@ function CodeViewer({
   const [hasSelection, setHasSelection] = useState(false)
   const restoringInput = useRef(false)
   const [reviewDisk, setReviewDisk] = useState(false)
+  const [savedCopy, setSavedCopy] = useState<{
+    draftId: string
+    content: string
+    relativePath: string
+  } | null>(null)
+  const [copyError, setCopyError] = useState<string | null>(null)
   const editingEnabled = useBetaFeatures().workspaceEditing
   const fileTarget = useMemo(
     () => toRootedFileTarget(projectPath, filePath),
@@ -515,15 +522,46 @@ function CodeViewer({
   const binding = useWorkspaceDraft(
     editingEnabled && workspaceScope && fileTarget ? { ...workspaceScope, ...fileTarget } : null,
   )
+  const activeSession = useRef(binding.session)
+  activeSession.current = binding.session
   const editable = !!binding.session && binding.state.phase === "ready"
   useFileChangeRefresh(editingEnabled && workspaceScope ? fileTarget : null, () =>
     binding.session?.refreshDisk(),
   )
   const close = useCallback(async () => {
-    if (binding.session && binding.state.phase === "ready" && !(await binding.session.flush()))
-      return
-    onClose()
-  }, [binding.session, binding.state.phase, onClose])
+    if (binding.session && binding.state.phase === "ready" && !(await binding.session.flush())) {
+      const current = binding.session.getSnapshot()
+      if (
+        !savedCopy ||
+        !workspaceScope ||
+        savedCopy.draftId !== current.draft?.id ||
+        savedCopy.content !== current.content
+      )
+        return
+      try {
+        const copy = await trpcClient.workspaceEditing.read.query({
+          ...workspaceScope,
+          relativePath: savedCopy.relativePath,
+        })
+        if (
+          copy.content !== savedCopy.content ||
+          binding.session.getSnapshot().content !== savedCopy.content
+        )
+          throw new Error("The saved copy or local text changed. Save another copy before closing.")
+        if (!(await binding.session.releaseLeasePreservingText())) return
+        if (binding.session.getSnapshot().content !== savedCopy.content)
+          throw new Error("Local text changed while closing. Save another copy before closing.")
+      } catch (error) {
+        setCopyError(
+          error instanceof Error
+            ? error.message
+            : "The saved copy could not be verified. Your local text is preserved.",
+        )
+        return
+      }
+    }
+    if (activeSession.current === binding.session) onClose()
+  }, [binding.session, binding.state.phase, workspaceScope, savedCopy, onClose])
   useEffect(() => {
     setReviewDisk(false)
   }, [filePath, projectPath, workspaceScope?.chatId])
@@ -751,6 +789,28 @@ function CodeViewer({
           onClose={close}
         />
         <ErrorDisplay error={getErrorMessage(error)} />
+        {binding.state.error && binding.session && (
+          <div className="px-3 pb-3 space-y-2">
+            <p role="alert" className="text-sm break-words text-destructive">
+              {binding.state.error}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={binding.state.busy}
+              onClick={() => void binding.session?.open()}
+            >
+              Retry editor
+            </Button>
+          </div>
+        )}
+        {editingEnabled && workspaceScope && fileTarget && (
+          <DraftRecovery
+            key={`${workspaceScope.projectId}:${workspaceScope.chatId}:${fileTarget.relativePath}`}
+            scope={workspaceScope}
+            relativePath={fileTarget.relativePath}
+          />
+        )}
       </div>
     )
   }
@@ -1027,7 +1087,44 @@ function CodeViewer({
               {binding.state.error}
             </p>
           )}
+          {binding.state.error && binding.state.phase === "ready" && binding.session && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7"
+              disabled={binding.state.busy}
+              onClick={() => void binding.session?.reopen()}
+              title="Request an editing lease again while keeping your local text"
+            >
+              Reacquire editor
+            </Button>
+          )}
         </div>
+      )}
+      {binding.state.error && binding.state.draft && workspaceScope && (
+        <details className="max-h-[50%] shrink-0 overflow-auto border-b p-3 text-sm">
+          <summary className="cursor-pointer">Save local text as a separate file</summary>
+          <div className="pt-3">
+            <RecoverySaveAs
+              key={binding.state.draft.id}
+              scope={workspaceScope}
+              draft={{ ...binding.state.draft, content: binding.state.content }}
+              onSavedCopy={(content, relativePath) => {
+                setSavedCopy(
+                  content === null
+                    ? null
+                    : { draftId: binding.state.draft!.id, content, relativePath },
+                )
+                setCopyError(null)
+              }}
+            />
+            {copyError && (
+              <p role="alert" className="mt-2 break-words text-destructive">
+                {copyError}
+              </p>
+            )}
+          </div>
+        </details>
       )}
       {reviewDisk && binding.session && (
         <section aria-label="Saved file" className="shrink-0 border-b border-border/50 px-3 py-2">

@@ -1,12 +1,13 @@
 import { Button } from "../../../../components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../../components/ui/tooltip"
-import { useState } from "react"
+import { useLayoutEffect, useRef, useState } from "react"
 import { cn } from "../../../../lib/utils"
 import { IconSpinner } from "../../../../components/ui/icons"
 import { useCommitActions } from "./use-commit-actions"
 
 interface CommitInputProps {
   worktreePath: string
+  readOnly?: boolean
   hasStagedChanges: boolean
   onRefresh: () => void
   /** Called after a successful commit to reset UI state */
@@ -21,6 +22,7 @@ interface CommitInputProps {
 
 export function CommitInput({
   worktreePath,
+  readOnly = false,
   hasStagedChanges,
   onRefresh,
   onCommitSuccess,
@@ -31,8 +33,14 @@ export function CommitInput({
 }: CommitInputProps) {
   const [summary, setSummary] = useState("")
   const [description, setDescription] = useState("")
+  const summaryRef = useRef<HTMLInputElement>(null)
+  const commitButtonRef = useRef<HTMLButtonElement>(null)
+  useLayoutEffect(() => {
+    if (readOnly && document.activeElement === commitButtonRef.current) summaryRef.current?.focus()
+  }, [readOnly])
   const { commit, isPending, isGenerating } = useCommitActions({
     worktreePath,
+    readOnly,
     chatId,
     onRefresh,
     onCommitSuccess: () => {
@@ -54,7 +62,7 @@ export function CommitInput({
   }
 
   // Can commit if files are selected (will auto-generate message if needed)
-  const canCommit = hasStagedChanges
+  const canCommit = !readOnly && hasStagedChanges
 
   const handleCommit = async () => {
     if (!canCommit) return
@@ -75,6 +83,7 @@ export function CommitInput({
   }
 
   const getTooltip = () => {
+    if (readOnly) return "Restore this workspace to commit"
     if (!hasStagedChanges) return "No staged changes"
     if (!summary.trim()) return "AI will generate commit message"
     return "Commit staged changes"
@@ -84,9 +93,11 @@ export function CommitInput({
     <div className="flex flex-col gap-2 p-2 border-t border-border/50 bg-background">
       {/* Summary input - single line */}
       <input
+        ref={summaryRef}
         type="text"
         placeholder="Commit message"
         value={summary}
+        readOnly={readOnly}
         onChange={(e) => setSummary(e.target.value)}
         className={cn(
           "w-full px-2 py-1.5 text-xs rounded-md",
@@ -106,6 +117,7 @@ export function CommitInput({
       <textarea
         placeholder="Description"
         value={description}
+        readOnly={readOnly}
         onChange={(e) => setDescription(e.target.value)}
         className={cn(
           "w-full px-2 py-1.5 text-xs rounded-md resize-none",
@@ -126,6 +138,7 @@ export function CommitInput({
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
+            ref={commitButtonRef}
             variant="default"
             size="sm"
             className="w-full h-7 text-xs overflow-hidden"

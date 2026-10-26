@@ -106,6 +106,22 @@ const newChatPermissionModeSchema = z.enum([
 const chatTagColorSchema = z.enum(CHAT_TAG_COLORS)
 const chatTagIconSchema = z.enum(CHAT_TAG_ICONS)
 
+async function stopChatTerminals(chat: { id: string; branch: string | null }): Promise<void> {
+  // Local-mode terminals are shared across chats on the same project path.
+  if (!chat.branch) return
+  try {
+    const result = await terminalManager.killByWorkspaceId(chat.id)
+    if (result.failed > 0) throw new Error(`${result.failed} terminal stop(s) remain unconfirmed`)
+  } catch (cause) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message:
+        "Terminal cleanup did not complete. The chat remains available; retry the operation.",
+      cause,
+    })
+  }
+}
+
 function normalizedTagName(name: string) {
   const clean = name.trim().replace(/\s+/g, " ")
   if (!clean) throw new Error("Tag name is required")
@@ -1329,7 +1345,8 @@ export const chatsRouter = router({
       // Get chat to check for worktree (before archiving)
       const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
 
-      // Archive immediately (optimistic)
+      if (chat) await stopChatTerminals(chat)
+
       const result = db
         .update(chats)
         .set({ archivedAt: new Date() })
@@ -1339,25 +1356,6 @@ export const chatsRouter = router({
 
       // Track workspace archived
       trackWorkspaceArchived(input.id)
-
-      // Kill terminal processes only for worktree-mode workspaces.
-      // Local-mode terminals are shared across workspaces on the same project path,
-      // so they should not be killed when a single workspace is archived.
-      const isLocalMode = !chat?.branch
-      if (!isLocalMode) {
-        terminalManager
-          .killByWorkspaceId(input.id)
-          .then((killResult) => {
-            if (killResult.killed > 0) {
-              console.log(
-                `[chats.archive] Killed ${killResult.killed} terminal session(s) for workspace ${input.id}`,
-              )
-            }
-          })
-          .catch((error) => {
-            console.error(`[chats.archive] Error killing processes:`, error)
-          })
-      }
 
       // Invalidate git cache for this worktree
       if (chat?.worktreePath) {
@@ -1386,45 +1384,33 @@ export const chatsRouter = router({
    */
   archiveBatch: publicProcedure
     .input(z.object({ chatIds: z.array(z.string()) }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       const db = getDatabase()
       if (input.chatIds.length === 0) return []
 
-      // Identify worktree-mode workspaces before archiving (for terminal cleanup)
-      const worktreeChats = db
+      const selectedChats = db
         .select({ id: chats.id, branch: chats.branch })
         .from(chats)
         .where(inArray(chats.id, input.chatIds))
         .all()
-        .filter((c) => c.branch != null)
 
-      // Archive immediately (optimistic)
-      const result = db
+      const stops = await Promise.allSettled(selectedChats.map(stopChatTerminals))
+      const failedIds = selectedChats
+        .filter((_, index) => stops[index]?.status === "rejected")
+        .map((chat) => chat.id)
+      if (failedIds.length > 0) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: `Terminal cleanup failed for ${failedIds.join(", ")}. No chats were archived; retry the operation.`,
+        })
+      }
+
+      return db
         .update(chats)
         .set({ archivedAt: new Date() })
         .where(inArray(chats.id, input.chatIds))
         .returning()
         .all()
-
-      // Kill terminal processes only for worktree-mode workspaces.
-      // Local-mode terminals are shared and should not be killed.
-
-      if (worktreeChats.length > 0) {
-        Promise.all(worktreeChats.map((c) => terminalManager.killByWorkspaceId(c.id)))
-          .then((killResults) => {
-            const totalKilled = killResults.reduce((sum, r) => sum + r.killed, 0)
-            if (totalKilled > 0) {
-              console.log(
-                `[chats.archiveBatch] Killed ${totalKilled} terminal session(s) for ${worktreeChats.length} worktree workspace(s)`,
-              )
-            }
-          })
-          .catch((error) => {
-            console.error(`[chats.archiveBatch] Error killing processes:`, error)
-          })
-      }
-
-      return result
     }),
 
   /**
@@ -1435,6 +1421,8 @@ export const chatsRouter = router({
 
     // Get chat before deletion
     const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
+
+    if (chat) await stopChatTerminals(chat)
 
     // Cleanup worktree if it was created (has branch = was a real worktree, not just project path)
     if (chat?.worktreePath && chat?.branch) {
@@ -1457,14 +1445,6 @@ export const chatsRouter = router({
           })
         }
       }
-    }
-
-    // Kill terminal processes for worktree-mode workspaces.
-    // Local-mode terminals are shared and should not be killed on delete.
-    if (chat?.branch) {
-      terminalManager.killByWorkspaceId(input.id).catch((error) => {
-        console.error(`[chats.delete] Error killing processes:`, error)
-      })
     }
 
     // Track workspace deleted
@@ -1497,57 +1477,57 @@ export const chatsRouter = router({
         : isNotNull(chats.archivedAt)
       const archivedChats = db.select().from(chats).where(archivedCondition).all()
 
-      const deletableChats = []
+      let deletedCount = 0
       const failedChatIds: string[] = []
       for (const chat of archivedChats) {
-        if (chat.worktreePath && chat.branch) {
-          const project = chat.projectId
-            ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
-            : null
-          if (!project) {
-            if (await filesystemEntryExists(chat.worktreePath)) {
-              failedChatIds.push(chat.id)
-              continue
-            }
-          } else {
-            const result = await removeWorktree(project.path, chat.worktreePath)
-            if (!result.success) {
-              console.warn(`[Worktree] Cleanup failed: ${result.error}`)
-              failedChatIds.push(chat.id)
-              continue
+        try {
+          await stopChatTerminals(chat)
+          // Restore can run while native cleanup is pending.
+          const current = db.select().from(chats).where(eq(chats.id, chat.id)).get()
+          if (!current?.archivedAt) continue
+          if (chat.worktreePath && chat.branch) {
+            const project = chat.projectId
+              ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+              : null
+            if (!project) {
+              if (await filesystemEntryExists(chat.worktreePath)) {
+                failedChatIds.push(chat.id)
+                continue
+              }
+            } else {
+              const result = await removeWorktree(project.path, chat.worktreePath)
+              if (!result.success) {
+                console.warn(`[Worktree] Cleanup failed: ${result.error}`)
+                failedChatIds.push(chat.id)
+                continue
+              }
             }
           }
-        }
 
-        deletableChats.push(chat)
+          await deleteVoiceHistoryForChat(chat.id)
+          const deleted = db
+            .delete(chats)
+            .where(and(eq(chats.id, chat.id), isNotNull(chats.archivedAt)))
+            .returning()
+            .get()
+          if (!deleted) continue
+          deletedCount += 1
+          trackWorkspaceDeleted(chat.id)
 
-        if (chat.branch) {
-          terminalManager.killByWorkspaceId(chat.id).catch((error) => {
-            console.error(`[chats.deleteArchived] Error killing processes:`, error)
-          })
-        }
-
-        trackWorkspaceDeleted(chat.id)
-        await deleteVoiceHistoryForChat(chat.id)
-
-        if (chat.worktreePath) {
-          gitCache.invalidateStatus(chat.worktreePath)
-          gitCache.invalidateParsedDiff(chat.worktreePath)
-        }
-      }
-
-      if (deletableChats.length > 0) {
-        db.delete(chats)
-          .where(
-            inArray(
-              chats.id,
-              deletableChats.map((chat) => chat.id),
-            ),
+          if (chat.worktreePath) {
+            gitCache.invalidateStatus(chat.worktreePath)
+            gitCache.invalidateParsedDiff(chat.worktreePath)
+          }
+        } catch (error) {
+          console.warn(
+            `[chats.deleteArchived] Cleanup failed for ${chat.id}; retained for retry:`,
+            error,
           )
-          .run()
+          failedChatIds.push(chat.id)
+        }
       }
 
-      return { deletedCount: deletableChats.length, failedChatIds }
+      return { deletedCount, failedChatIds }
     }),
 
   // ============ Sub-chat procedures ============

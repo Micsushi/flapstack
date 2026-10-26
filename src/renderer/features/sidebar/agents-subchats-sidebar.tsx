@@ -248,6 +248,7 @@ export function AgentsSubChatsSidebar({
 
   // Archive parent chat mutation
   const archiveChatMutation = trpc.chats.archive.useMutation({
+    onError: (error) => toast.error(error.message || "Failed to archive chat. Retry the archive."),
     onSuccess: (_, variables) => {
       // Hide tooltip if visible (element may be removed from DOM before mouseLeave fires)
       if (subChatTooltipTimerRef.current) {

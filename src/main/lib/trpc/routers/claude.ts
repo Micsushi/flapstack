@@ -1,3 +1,5 @@
+import { changeClaudeMcpWithUndo } from "../../claude-mcp-actions"
+import { applyMcpAction } from "../../mcp-action-history"
 import { buildRecordTaskRunContext } from "../../project-records/run-context"
 import { fetchToolsForServer } from "../../claude/mcp-discovery"
 import { observable } from "@trpc/server/observable"
@@ -618,6 +620,9 @@ export async function getAllMcpConfigHandler() {
         Object.entries(servers).map(async ([name, serverConfig]) => {
           const resolvedConfig = hydrateMcpServerSecrets(serverConfig)
           const configObj = sanitizeMcpServerConfig(serverConfig)
+          if (serverConfig.disabled === true) {
+            return { name, status: "disabled", tools: [], needsAuth: false, config: configObj }
+          }
           let status = getServerStatusFromConfig(resolvedConfig)
           const headers = resolvedConfig.headers as Record<string, string> | undefined
 
@@ -816,7 +821,14 @@ export async function getAllMcpConfigHandler() {
     const groupsWithTiming = groupTasks.map((task, i) => ({
       groupName: task.groupName,
       projectPath: task.projectPath,
-      mcpServers: results[i].mcpServers,
+      mcpServers: results[i].mcpServers.map((server) => ({
+        ...server,
+        managedConfig: Boolean(
+          task.projectPath
+            ? config.projects?.[task.projectPath]?.mcpServers?.[server.name]
+            : config.mcpServers?.[server.name],
+        ),
+      })),
       duration: results[i].duration,
     }))
 
@@ -872,6 +884,7 @@ export async function getAllMcpConfigHandler() {
                   needsAuth: false,
                   config: configObj,
                   isApproved,
+                  managedConfig: false,
                 }
               }
 
@@ -920,6 +933,7 @@ export async function getAllMcpConfigHandler() {
                 needsAuth,
                 config: configObj,
                 isApproved,
+                managedConfig: false,
               }
             }),
           )
@@ -3379,7 +3393,10 @@ ${prompt}
       if (input.transport === "http" && !input.url?.trim()) {
         throw new Error("URL is required for HTTP servers")
       }
-      if (input.scope === "project" && !input.projectPath) {
+      if (
+        input.scope === "project" &&
+        (!input.projectPath?.trim() || input.projectPath === GLOBAL_MCP_PATH)
+      ) {
         throw new Error("Project path required for project-scoped servers")
       }
 
@@ -3404,8 +3421,11 @@ ${prompt}
         }
       }
 
-      const projectPath = input.projectPath
-      await updateClaudeConfigAtomic((config) => {
+      const projectPath =
+        input.scope === "project"
+          ? resolveProjectPathFromWorktree(input.projectPath!) || input.projectPath!
+          : undefined
+      const receipt = await changeClaudeMcpWithUndo(projectPath ?? null, [serverName], (config) => {
         if (input.scope === "project" && projectPath) {
           if (config.projects?.[projectPath]?.mcpServers?.[serverName]) {
             throw new Error(`Server "${serverName}" already exists in this project`)
@@ -3425,7 +3445,7 @@ ${prompt}
         )
       })
 
-      return { success: true, name: serverName }
+      return { success: true, name: serverName, ...receipt }
     }),
 
   updateMcpServer: publicProcedure
@@ -3448,54 +3468,65 @@ ${prompt}
       }),
     )
     .mutation(async ({ input }) => {
-      const projectPath = input.scope === "project" ? input.projectPath : undefined
+      if (
+        input.scope === "project" &&
+        (!input.projectPath?.trim() || input.projectPath === GLOBAL_MCP_PATH)
+      ) {
+        throw new Error("Project path required for project-scoped servers")
+      }
+      const projectPath =
+        input.scope === "project"
+          ? resolveProjectPathFromWorktree(input.projectPath!) || input.projectPath!
+          : undefined
       const finalName = input.newName && input.newName !== input.name ? input.newName : input.name
-      await updateClaudeConfigAtomic((config) => {
-        const servers = projectPath ? config.projects?.[projectPath]?.mcpServers : config.mcpServers
-        if (!servers?.[input.name]) {
-          throw new Error(`Server "${input.name}" not found`)
-        }
-        const existing = hydrateMcpServerSecrets(servers[input.name])
-        if (finalName !== input.name) {
-          if (servers[finalName]) throw new Error(`Server "${finalName}" already exists`)
-          clearMcpServerSecrets(servers[input.name])
-          return updateMcpServerConfig(
-            removeMcpServerConfig(config, projectPath ?? null, input.name),
-            projectPath ?? null,
-            finalName,
-            protectMcpServerSecrets(projectPath ?? null, finalName, existing),
-          )
-        }
-        const update: Partial<McpServerConfig> = {}
-        if (input.command !== undefined) update.command = input.command
-        if (input.args !== undefined) update.args = input.args
-        if (input.env !== undefined) update.env = input.env
-        if (input.url !== undefined) update.url = input.url
-        if (input.disabled !== undefined) update.disabled = input.disabled
-        if (input.bearerToken) {
-          update.authType = "bearer"
-          update.headers = { Authorization: `Bearer ${input.bearerToken}` }
-        }
-        if (input.authType) {
-          update.authType = input.authType
-          if (input.authType === "none") {
-            update.headers = undefined
-            update._oauth = undefined
+      const receipt = await changeClaudeMcpWithUndo(
+        projectPath ?? null,
+        [input.name, finalName],
+        (config) => {
+          const servers = projectPath
+            ? config.projects?.[projectPath]?.mcpServers
+            : config.mcpServers
+          if (!servers?.[input.name]) {
+            throw new Error(`Server "${input.name}" not found`)
           }
-        }
-        let merged: McpServerConfig = {
-          ...existing,
-          ...update,
-        }
-        if (input.authType === "none") merged = clearMcpServerSecrets(merged)
-        return updateMcpServerConfig(
-          config,
-          projectPath ?? null,
-          input.name,
-          protectMcpServerSecrets(projectPath ?? null, input.name, merged),
-        )
-      })
-      return { success: true, name: finalName }
+          const existing = hydrateMcpServerSecrets(servers[input.name], false)
+          if (finalName !== input.name) {
+            if (servers[finalName]) throw new Error(`Server "${finalName}" already exists`)
+            clearMcpServerSecrets(servers[input.name])
+            return updateMcpServerConfig(
+              removeMcpServerConfig(config, projectPath ?? null, input.name),
+              projectPath ?? null,
+              finalName,
+              protectMcpServerSecrets(projectPath ?? null, finalName, existing),
+            )
+          }
+          const update: Partial<McpServerConfig> = {}
+          if (input.command !== undefined) update.command = input.command
+          if (input.args !== undefined) update.args = input.args
+          if (input.env !== undefined) update.env = input.env
+          if (input.url !== undefined) update.url = input.url
+          if (input.disabled !== undefined) update.disabled = input.disabled
+          if (input.bearerToken) {
+            update.authType = "bearer"
+            update.headers = { Authorization: `Bearer ${input.bearerToken}` }
+          }
+          if (input.authType) {
+            update.authType = input.authType
+            if (input.authType === "none") {
+              update.headers = undefined
+              update._oauth = undefined
+            }
+          }
+          let merged: McpServerConfig = {
+            ...existing,
+            ...update,
+          }
+          if (input.authType === "none") merged = clearMcpServerSecrets(merged)
+          servers[input.name] = protectMcpServerSecrets(projectPath ?? null, input.name, merged)
+          return config
+        },
+      )
+      return { success: true, name: finalName, ...receipt }
     }),
 
   removeMcpServer: publicProcedure
@@ -3507,16 +3538,29 @@ ${prompt}
       }),
     )
     .mutation(async ({ input }) => {
-      const projectPath = input.scope === "project" ? input.projectPath : undefined
-      await updateClaudeConfigAtomic((config) => {
+      if (
+        input.scope === "project" &&
+        (!input.projectPath?.trim() || input.projectPath === GLOBAL_MCP_PATH)
+      ) {
+        throw new Error("Project path required for project-scoped servers")
+      }
+      const projectPath =
+        input.scope === "project"
+          ? resolveProjectPathFromWorktree(input.projectPath!) || input.projectPath!
+          : undefined
+      const receipt = await changeClaudeMcpWithUndo(projectPath ?? null, [input.name], (config) => {
         const servers = projectPath ? config.projects?.[projectPath]?.mcpServers : config.mcpServers
         if (!servers?.[input.name]) throw new Error(`Server "${input.name}" not found`)
         clearMcpServerSecrets(servers[input.name])
         return removeMcpServerConfig(config, projectPath ?? null, input.name)
       })
 
-      return { success: true }
+      return { success: true, ...receipt }
     }),
+
+  applyMcpAction: publicProcedure
+    .input(z.object({ actionId: z.string().uuid(), direction: z.enum(["undo", "redo"]) }))
+    .mutation(({ input }) => applyMcpAction("claude-code", input.actionId, input.direction)),
 
   setMcpBearerToken: publicProcedure
     .input(
@@ -3528,6 +3572,12 @@ ${prompt}
       }),
     )
     .mutation(async ({ input }) => {
+      if (
+        input.scope === "project" &&
+        (!input.projectPath?.trim() || input.projectPath === GLOBAL_MCP_PATH)
+      ) {
+        throw new Error("Project path required for project-scoped servers")
+      }
       const projectPath = input.scope === "project" ? input.projectPath : undefined
       await updateClaudeConfigAtomic((config) => {
         const servers = projectPath ? config.projects?.[projectPath]?.mcpServers : config.mcpServers

@@ -15,7 +15,6 @@ export function useProjectSelectionGuard(
     // An explicit cross-project chat selection already belongs to the new project.
     if (
       !selectedChatIsRemote &&
-      projectId &&
       localChats?.some((chat) => chat.id === selectedChatId && chat.projectId === projectId)
     )
       return

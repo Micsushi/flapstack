@@ -194,7 +194,12 @@ function getOrStartWindowsPtyConoutWorkerRelease(
 
   const existingRelease = windowsPtyReleases.get(ptyProcess)
   if (existingRelease) return existingRelease
-  const release = releaseWindowsPtyConoutWorkerInternal(agent, connection, worker, options)
+  const release = releaseWindowsPtyConoutWorkerInternal(agent, connection, worker, options).then(
+    (released) => {
+      if (!released) windowsPtyReleases.delete(ptyProcess)
+      return released
+    },
+  )
   windowsPtyReleases.set(ptyProcess, release)
   return release
 }

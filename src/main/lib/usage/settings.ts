@@ -4,7 +4,9 @@
 // here - they live in the OS credential store; this file holds only non-secret
 // config plus a boolean of whether a secret is present.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
+import { randomUUID } from "node:crypto"
+import { isDeepStrictEqual } from "node:util"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
 import { USAGE_PROVIDER_IDS, type UsageProviderId } from "./types"
@@ -120,20 +122,28 @@ export const defaultUsageSettings: UsageSettings = {
   },
 }
 
-export function getUsageSettings(): UsageSettings {
+// Passive daemon reads fail closed with polling disabled. UI reads and every
+// write fail explicitly so unreadable saved settings cannot be replaced by defaults.
+export function getUsageSettings({ strict = false }: { strict?: boolean } = {}): UsageSettings {
   const configPath = getUsageSettingsPath()
   if (!existsSync(configPath)) return normalizeUsageSettings({})
   try {
     const raw = JSON.parse(readFileSync(configPath, "utf8")) as Partial<UsageSettings>
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+      throw new Error("Invalid usage settings document")
     return normalizeUsageSettings(raw)
   } catch (error) {
     console.warn("[Usage] Failed to read usage settings:", error)
-    return defaultUsageSettings
+    if (!strict) return normalizeUsageSettings({})
+    throw new Error(
+      "Usage settings could not be read. Restore usage-settings.json and retry; no changes were saved.",
+      { cause: error },
+    )
   }
 }
 
 export function setUsageSettings(patch: Partial<UsageSettings>): UsageSettings {
-  const current = getUsageSettings()
+  const current = getUsageSettings({ strict: true })
   const next = normalizeUsageSettings({
     ...current,
     ...patch,
@@ -144,8 +154,39 @@ export function setUsageSettings(patch: Partial<UsageSettings>): UsageSettings {
   })
   const configPath = getUsageSettingsPath()
   mkdirSync(dirname(configPath), { recursive: true })
-  writeFileSync(configPath, JSON.stringify(next, null, 2))
+  const temporaryPath = `${configPath}.${randomUUID()}.tmp`
+  try {
+    writeFileSync(temporaryPath, JSON.stringify(next, null, 2), { flag: "wx", mode: 0o600 })
+    renameSync(temporaryPath, configPath)
+  } finally {
+    if (existsSync(temporaryPath)) unlinkSync(temporaryPath)
+  }
   return next
+}
+
+export type UsageProviderPreferences = Omit<UsageProviderSettings, "enabled">
+
+export function setUsageProviderPreferences(
+  providerId: UsageProviderId,
+  patch: { cadenceSecondsOverride?: number | null; thresholds?: Partial<UsageAlertThresholds> },
+  expected?: UsageProviderPreferences,
+): UsageSettings {
+  const settings = getUsageSettings({ strict: true })
+  const { enabled, ...current } = settings.providers[providerId]
+  if (expected && !isDeepStrictEqual(current, expected)) {
+    throw new Error(
+      "These provider settings changed elsewhere. Your draft is retained. Reload saved values before editing again.",
+    )
+  }
+  settings.providers[providerId] = {
+    enabled,
+    cadenceSecondsOverride:
+      patch.cadenceSecondsOverride === undefined
+        ? current.cadenceSecondsOverride
+        : patch.cadenceSecondsOverride,
+    thresholds: { ...current.thresholds, ...patch.thresholds },
+  }
+  return setUsageSettings({ providers: settings.providers })
 }
 
 export function normalizeUsageSettings(raw: Partial<UsageSettings>): UsageSettings {

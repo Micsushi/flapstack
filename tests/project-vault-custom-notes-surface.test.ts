@@ -71,4 +71,13 @@ describe("project vault custom note file-management surface", () => {
     expect(source).toContain("Use external version")
     expect(source).toContain("Keep both versions")
   })
+
+  it("keeps graph and note reads visible and retryable", () => {
+    expect(source).toContain("Custom note list unavailable:")
+    expect(source).toContain("graph.refetch()")
+    expect(source).toContain("Note cannot be opened:")
+    expect(source).toContain("Note refresh unavailable:")
+    expect(source).toContain("note.refetch()")
+    expect(source).toContain('role="status"')
+  })
 })

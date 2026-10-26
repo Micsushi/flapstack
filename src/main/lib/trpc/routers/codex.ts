@@ -1,3 +1,6 @@
+import { spawnCodexProtocolClient } from "../../agent-runtime/codex/protocol-client"
+import { changeCodexMcpWithUndo } from "../../codex-mcp-actions"
+import { applyMcpAction } from "../../mcp-action-history"
 import { buildRecordTaskRunContext } from "../../project-records/run-context"
 import { createACPProvider, type ACPProvider } from "@mcpc-tech/acp-ai-provider"
 import type { RequestPermissionRequest, RequestPermissionResponse } from "@agentclientprotocol/sdk"
@@ -444,6 +447,14 @@ function extractCodexError(error: unknown): { message: string; code?: string } {
 function isCodexAuthError(params: { message?: string | null; code?: string | null }): boolean {
   const searchableText = `${params.code || ""} ${params.message || ""}`.toLowerCase()
   return AUTH_HINTS.some((hint) => searchableText.includes(hint))
+}
+
+function createMcpConfigClient(home: string) {
+  const env: NodeJS.ProcessEnv = { ...process.env, CODEX_HOME: home }
+  // Config preparation has no account-login authority.
+  delete env.OPENAI_API_KEY
+  delete env.CODEX_API_KEY
+  return spawnCodexProtocolClient({ command: resolveBundledCodexCliPath(), cwd: home, env })
 }
 
 type RunCodexCliOptions = {
@@ -1781,25 +1792,21 @@ export const codexRouter = router({
         throw new Error("Codex MCP currently supports global scope only.")
       }
 
-      const args = ["mcp", "add", input.name.trim()]
-      if (input.transport === "http") {
-        const url = input.url?.trim()
-        if (!url) {
-          throw new Error("URL is required for HTTP servers.")
-        }
-        args.push("--url", url)
-      } else {
-        const command = input.command?.trim()
-        if (!command) {
-          throw new Error("Command is required for stdio servers.")
-        }
-
-        args.push("--", command, ...(input.args || []))
+      const server =
+        input.transport === "http"
+          ? { url: input.url?.trim() }
+          : { command: input.command?.trim(), args: input.args || [] }
+      if (input.transport === "http" ? !server.url : !server.command) {
+        throw new Error("A URL or command is required for this server.")
       }
-
-      await runCodexCliChecked(args)
+      const receipt = await changeCodexMcpWithUndo(
+        join(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"), "config.toml"),
+        input.name.trim(),
+        server,
+        createMcpConfigClient,
+      )
       clearCodexMcpCache()
-      return { success: true }
+      return { success: true, ...receipt }
     }),
 
   removeMcpServer: publicProcedure
@@ -1814,9 +1821,22 @@ export const codexRouter = router({
         throw new Error("Codex MCP currently supports global scope only.")
       }
 
-      await runCodexCliChecked(["mcp", "remove", input.name.trim()])
+      const receipt = await changeCodexMcpWithUndo(
+        join(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"), "config.toml"),
+        input.name.trim(),
+        null,
+        createMcpConfigClient,
+      )
       clearCodexMcpCache()
-      return { success: true }
+      return { success: true, ...receipt }
+    }),
+
+  applyMcpAction: publicProcedure
+    .input(z.object({ actionId: z.string().uuid(), direction: z.enum(["undo", "redo"]) }))
+    .mutation(async ({ input }) => {
+      const result = await applyMcpAction("codex", input.actionId, input.direction)
+      clearCodexMcpCache()
+      return result
     }),
 
   startMcpOAuth: publicProcedure

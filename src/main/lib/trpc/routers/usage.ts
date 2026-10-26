@@ -13,7 +13,11 @@ import { microsToUsd } from "../../usage/source-tags"
 import { UsageEngine } from "../../usage/engine"
 import { runManualRefresh } from "../../usage/catch-up"
 import { getUsageProviders } from "../../usage/registry"
-import { getUsageSettings, setUsageSettings } from "../../usage/settings"
+import {
+  getUsageSettings,
+  setUsageSettings,
+  setUsageProviderPreferences,
+} from "../../usage/settings"
 import {
   getUsageCredentialNamespace,
   getUsageSecret,
@@ -117,7 +121,7 @@ export const usageRouter = router({
   })),
 
   // ---- Settings ----
-  getSettings: publicProcedure.query(() => getUsageSettings()),
+  getSettings: publicProcedure.query(() => getUsageSettings({ strict: true })),
 
   setSettings: publicProcedure
     .input(
@@ -135,7 +139,7 @@ export const usageRouter = router({
   setProviderEnabled: publicProcedure
     .input(z.object({ providerId: providerIdSchema, enabled: z.boolean() }))
     .mutation(({ input }) => {
-      const settings = getUsageSettings()
+      const settings = getUsageSettings({ strict: true })
       settings.providers[input.providerId].enabled = input.enabled
       return setUsageSettings({ providers: settings.providers })
     }),
@@ -146,22 +150,15 @@ export const usageRouter = router({
         providerId: providerIdSchema,
         cadenceSecondsOverride: z.number().min(30).nullable().optional(),
         thresholds: thresholdSchema.optional(),
+        expected: z
+          .object({
+            cadenceSecondsOverride: z.number().min(30).nullable(),
+            thresholds: thresholdSchema.required(),
+          })
+          .optional(),
       }),
     )
-    .mutation(({ input }) => {
-      const settings = getUsageSettings()
-      const current = settings.providers[input.providerId]
-      settings.providers[input.providerId] = {
-        ...current,
-        ...(input.cadenceSecondsOverride !== undefined
-          ? { cadenceSecondsOverride: input.cadenceSecondsOverride }
-          : {}),
-        thresholds: input.thresholds
-          ? { ...current.thresholds, ...input.thresholds }
-          : current.thresholds,
-      }
-      return setUsageSettings({ providers: settings.providers })
-    }),
+    .mutation(({ input }) => setUsageProviderPreferences(input.providerId, input, input.expected)),
 
   setOrganizationScope: publicProcedure
     .input(

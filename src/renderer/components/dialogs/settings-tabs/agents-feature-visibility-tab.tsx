@@ -1,5 +1,5 @@
 import { useSetAtom } from "jotai"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import {
   FEATURE_VISIBILITY_REGISTRY,
@@ -16,24 +16,21 @@ export function AgentsFeatureVisibilityTab() {
   const applyChanges = trpc.featureVisibility.applyChanges.useMutation()
   const utils = trpc.useUtils()
   const rerunGuide = useSetAtom(featureVisibilityGuideRerunAtom)
-  const [draft, setDraft] = useState<Record<string, boolean> | null>(null)
-  const [preset, setPreset] = useState<FeatureVisibilityPreset>("standard")
+  const [draft, setDraft] = useState<NonNullable<typeof query.data> | null>(null)
+  const saving = useRef(false)
+  const visibility = draft?.visibility ?? query.data?.visibility
+  const preset = draft?.preset ?? query.data?.preset ?? "standard"
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!query.data) return
-    setDraft({ ...query.data.visibility })
-    setPreset(query.data.preset ?? "standard")
-  }, [query.data])
-
   const changes = useMemo(() => {
-    if (!query.data || !draft) return []
+    if (!query.data || !visibility) return []
     return FEATURE_VISIBILITY_REGISTRY.flatMap((feature) => {
       const before = query.data.visibility[feature.id] ?? true
-      const after = draft[feature.id] ?? true
+      const after = visibility[feature.id] ?? true
       return before === after ? [] : [{ id: feature.id, before, after }]
     })
-  }, [draft, query.data])
+  }, [visibility, query.data])
+  const hasChanges = changes.length > 0 || preset !== (query.data?.preset ?? "standard")
 
   const selectPreset = (nextPreset: FeatureVisibilityPreset) => {
     if (!query.data) return
@@ -41,46 +38,60 @@ export function AgentsFeatureVisibilityTab() {
       preserveUnknown: true,
       existingUser: query.data.status === "upgrade-preserved",
     })
-    setPreset(nextPreset)
-    setDraft(preview.result)
+    setDraft({ ...(draft ?? query.data), preset: nextPreset, visibility: preview.result })
     setError(null)
   }
 
   const save = async () => {
-    if (!query.data || !draft) return
+    if (!query.data || !draft || saving.current) return
+    saving.current = true
+    const submitted = draft
     setError(null)
     try {
       const applied = await applyChanges.mutateAsync({
         profileKind: "existing",
-        expectedRevision: query.data.revision,
-        preset,
-        visibility: draft,
+        expectedRevision: submitted.revision,
+        preset: submitted.preset ?? "standard",
+        visibility: submitted.visibility,
       })
-      utils.featureVisibility.get.setData({ profileKind: "existing" }, applied)
+      await utils.featureVisibility.get.cancel({ profileKind: "existing" }, { revert: false })
+      utils.featureVisibility.get.setData({ profileKind: "existing" }, (current) =>
+        current && current.revision > applied.revision ? current : applied,
+      )
+      setDraft((current) =>
+        current === submitted ? null : current ? { ...current, revision: applied.revision } : null,
+      )
+      void utils.featureVisibility.get.invalidate({ profileKind: "existing" })
       toast.success("Feature visibility updated")
     } catch (saveError) {
       const message =
         saveError instanceof Error ? saveError.message : "Feature visibility could not be saved."
       setError(message)
       await query.refetch()
+    } finally {
+      saving.current = false
     }
   }
 
-  if (query.isLoading || !draft) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading feature visibility…</div>
-  }
-
-  if (query.isError || !query.data) {
+  if (query.isError && !query.data) {
     return (
       <div className="p-6">
         <h1 className="text-lg font-semibold">Feature Visibility</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
+        <p role="alert" className="mt-2 text-sm text-muted-foreground">
           Preferences could not be read. Every feature remains visible and the original file was
           left untouched.
         </p>
         <Button className="mt-4" variant="outline" onClick={() => void query.refetch()}>
           Retry
         </Button>
+      </div>
+    )
+  }
+
+  if (!query.data || !visibility) {
+    return (
+      <div role="status" className="p-6 text-sm text-muted-foreground">
+        Loading feature visibility…
       </div>
     )
   }
@@ -95,6 +106,20 @@ export function AgentsFeatureVisibilityTab() {
         </p>
       </header>
 
+      {(query.isError || (draft && draft.revision !== query.data.revision)) && (
+        <div role="alert" className="space-y-2 text-sm">
+          <p>
+            {query.isError
+              ? "Could not refresh preferences. Your draft is kept."
+              : "Saved preferences changed. Your draft is kept; cancel it to load the latest choices before editing again."}
+          </p>
+          {query.isError && (
+            <Button variant="outline" onClick={() => void query.refetch()}>
+              Retry refresh
+            </Button>
+          )}
+        </div>
+      )}
       <section data-settings-id="feature-visibility-presets">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -169,9 +194,12 @@ export function AgentsFeatureVisibilityTab() {
             </div>
             <Switch
               aria-label={`Show ${feature.label}`}
-              checked={draft[feature.id] ?? true}
+              checked={visibility[feature.id] ?? true}
               onCheckedChange={(visible) => {
-                setDraft((current) => (current ? { ...current, [feature.id]: visible } : current))
+                setDraft((current) => {
+                  const base = current ?? query.data
+                  return { ...base, visibility: { ...base.visibility, [feature.id]: visible } }
+                })
                 setError(null)
               }}
             />
@@ -188,23 +216,24 @@ export function AgentsFeatureVisibilityTab() {
       <footer className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-border bg-background py-4">
         <p className="text-xs text-muted-foreground">
           {changes.length === 0
-            ? "No visibility changes."
+            ? hasChanges
+              ? "Preset change ready to apply."
+              : "No visibility changes."
             : `${changes.length} visibility change${changes.length === 1 ? "" : "s"} ready to apply.`}
         </p>
         <div className="flex gap-2">
           <Button
             variant="ghost"
-            disabled={changes.length === 0}
+            disabled={!draft || applyChanges.isPending}
             onClick={() => {
-              setDraft({ ...query.data.visibility })
-              setPreset(query.data.preset ?? "standard")
+              setDraft(null)
               setError(null)
             }}
           >
             Cancel draft
           </Button>
           <Button
-            disabled={changes.length === 0 || applyChanges.isPending}
+            disabled={!hasChanges || !draft || applyChanges.isPending}
             onClick={() => void save()}
           >
             {applyChanges.isPending ? "Applying…" : "Apply changes"}

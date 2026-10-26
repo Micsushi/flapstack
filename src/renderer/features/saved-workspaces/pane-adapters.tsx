@@ -168,7 +168,7 @@ function ReadyPane({
         )
       ) : null
     case "diff":
-      return <ChangesPanel worktreePath={pane.binding.worktreePath} />
+      return <ChangesPanel worktreePath={pane.binding.worktreePath} readOnly={readOnly} />
     case "browser":
       return <WorkspaceBrowserPane url={pane.binding.url} />
     case "agent-roster":

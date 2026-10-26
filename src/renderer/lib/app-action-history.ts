@@ -18,6 +18,7 @@ let past: AppAction[] = []
 let future: AppAction[] = []
 let pendingRecords: AppAction[] = []
 let busy = false
+let invalidatePendingRedo = false
 let snapshot = makeSnapshot()
 
 function makeSnapshot(): AppActionHistorySnapshot {
@@ -45,7 +46,19 @@ export function recordAppAction(action: AppAction) {
   emit()
 }
 
+export function invalidateAppActionRedo() {
+  if (busy) invalidatePendingRedo = true
+  else {
+    future = []
+    emit()
+  }
+}
+
 function flushPendingRecords() {
+  if (invalidatePendingRedo) {
+    future = []
+    invalidatePendingRedo = false
+  }
   if (pendingRecords.length === 0) return
   past = [...past, ...pendingRecords].slice(-HISTORY_LIMIT)
   pendingRecords = []
@@ -99,6 +112,7 @@ export function clearAppActionHistory() {
   past = []
   future = []
   pendingRecords = []
+  invalidatePendingRedo = false
   busy = false
   emit()
 }

@@ -21,8 +21,9 @@ vi.mock("../src/renderer/lib/trpc", () => ({
   trpc: new Proxy(
     {},
     {
-      get: (_, provider) =>
-        new Proxy(
+      get: (_, provider) => {
+        if (provider === "useUtils") return () => ({})
+        return new Proxy(
           {},
           {
             get: () => ({
@@ -59,7 +60,8 @@ vi.mock("../src/renderer/lib/trpc", () => ({
               }),
             }),
           },
-        ),
+        )
+      },
     },
   ),
 }))

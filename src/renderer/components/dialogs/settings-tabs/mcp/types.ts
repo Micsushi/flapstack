@@ -4,6 +4,7 @@ export interface McpToolInfo {
 }
 
 export interface McpServer {
+  managedConfig?: boolean
   name: string
   status: string
   tools: (McpToolInfo | string)[]

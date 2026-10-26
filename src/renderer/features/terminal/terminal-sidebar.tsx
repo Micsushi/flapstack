@@ -21,9 +21,8 @@ import {
   activeTerminalForScopeAtomFamily,
   terminalCwdAtom,
 } from "./atoms"
-import { trpc } from "@/lib/trpc"
 import type { TerminalInstance } from "./types"
-import { isSharedTerminalScope } from "./utils"
+import { useTerminalClose, useTerminalDiscovery } from "./use-terminal-actions"
 
 // Animation constants - keep in sync with ResizableSidebar animationDuration
 const SIDEBAR_ANIMATION_DURATION_SECONDS = 0 // Disabled for performance
@@ -120,16 +119,13 @@ export function TerminalSidebar({
   )
 
   // tRPC mutation for killing terminal sessions
-  const killMutation = trpc.terminal.kill.useMutation()
-  const trpcUtils = trpc.useUtils()
+  const closeTerminals = useTerminalClose(scopeKey)
 
   // Refs to avoid callback recreation
   const scopeKeyRef = useRef(scopeKey)
   scopeKeyRef.current = scopeKey
   const terminalsRef = useRef(terminals)
   terminalsRef.current = terminals
-  const activeTerminalIdRef = useRef(activeTerminalId)
-  activeTerminalIdRef.current = activeTerminalId
 
   // Create a new terminal - stable callback
   const createTerminal = useCallback(() => {
@@ -164,29 +160,11 @@ export function TerminalSidebar({
   // Close a terminal - stable callback
   const closeTerminal = useCallback(
     (id: string) => {
-      const currentTerminals = terminalsRef.current
-      const currentActiveId = activeTerminalIdRef.current
-
-      const terminal = currentTerminals.find((t) => t.id === id)
-      if (!terminal) return
-
-      // Kill the session on the backend
-      killMutation.mutate({ paneId: terminal.paneId })
-
-      // Remove from state
-      const newTerminals = currentTerminals.filter((t) => t.id !== id)
-      setTerminals(newTerminals)
-
-      // If we closed the active terminal, switch to another
-      if (currentActiveId === id) {
-        const newActive = newTerminals[newTerminals.length - 1]?.id || null
-        setActiveTerminalId(newActive)
-      }
+      void closeTerminals([id])
     },
-    [setTerminals, setActiveTerminalId, killMutation],
+    [closeTerminals],
   )
 
-  // Rename a terminal - stable callback
   const renameTerminal = useCallback(
     (id: string, name: string) => {
       setTerminals((current) => current.map((t) => (t.id === id ? { ...t, name } : t)))
@@ -197,50 +175,23 @@ export function TerminalSidebar({
   // Close other terminals - stable callback
   const closeOtherTerminals = useCallback(
     (id: string) => {
-      const currentTerminals = terminalsRef.current
-
-      // Kill all terminals except the one with the given id
-      currentTerminals.forEach((terminal) => {
-        if (terminal.id !== id) {
-          killMutation.mutate({ paneId: terminal.paneId })
-        }
-      })
-
-      // Keep only the terminal with the given id
-      const remainingTerminal = currentTerminals.find((t) => t.id === id)
-      setTerminals(remainingTerminal ? [remainingTerminal] : [])
-
-      // Set the remaining terminal as active
+      const current = terminalsRef.current
+      if (!current.some((terminal) => terminal.id === id)) return
       setActiveTerminalId(id)
+      void closeTerminals(
+        current.filter((terminal) => terminal.id !== id).map((terminal) => terminal.id),
+      )
     },
-    [setTerminals, setActiveTerminalId, killMutation],
+    [closeTerminals, setActiveTerminalId],
   )
 
-  // Close terminals to the right - stable callback
   const closeTerminalsToRight = useCallback(
     (id: string) => {
-      const currentTerminals = terminalsRef.current
-
-      const index = currentTerminals.findIndex((t) => t.id === id)
-      if (index === -1) return
-
-      // Kill terminals to the right
-      const terminalsToClose = currentTerminals.slice(index + 1)
-      terminalsToClose.forEach((terminal) => {
-        killMutation.mutate({ paneId: terminal.paneId })
-      })
-
-      // Keep only terminals up to and including the one with the given id
-      const remainingTerminals = currentTerminals.slice(0, index + 1)
-      setTerminals(remainingTerminals)
-
-      // If active terminal was closed, switch to the last remaining one
-      const currentActiveId = activeTerminalIdRef.current
-      if (currentActiveId && !remainingTerminals.find((t) => t.id === currentActiveId)) {
-        setActiveTerminalId(remainingTerminals[remainingTerminals.length - 1]?.id || null)
-      }
+      const current = terminalsRef.current
+      const index = current.findIndex((terminal) => terminal.id === id)
+      if (index >= 0) void closeTerminals(current.slice(index + 1).map((terminal) => terminal.id))
     },
-    [setTerminals, setActiveTerminalId, killMutation],
+    [closeTerminals],
   )
 
   // Close sidebar callback - stable
@@ -268,44 +219,7 @@ export function TerminalSidebar({
     }
   }, [isOpen])
 
-  // Auto-create first terminal or discover shared terminals when sidebar opens
-  useEffect(() => {
-    if (!isOpen || terminals.length > 0) return
-
-    if (isSharedTerminalScope(scopeKey)) {
-      // Shared scope (local mode): check backend for existing sessions
-      trpcUtils.terminal.listSessionsByScopeKey
-        .fetch({ scopeKey })
-        .then((sessions) => {
-          if (sessions.length > 0) {
-            // Reconstruct TerminalInstance records from existing backend sessions
-            const instances = sessions.map((s, i) => ({
-              id: s.paneId.split(":term:")[1] || generateTerminalId(),
-              paneId: s.paneId,
-              name: `Terminal ${i + 1}`,
-              createdAt: s.lastActive,
-            }))
-            setTerminals(instances)
-            setActiveTerminalId(instances[0]?.id || null)
-          } else {
-            createTerminal()
-          }
-        })
-        .catch(() => {
-          createTerminal()
-        })
-    } else {
-      createTerminal()
-    }
-  }, [
-    isOpen,
-    terminals.length,
-    scopeKey,
-    createTerminal,
-    trpcUtils,
-    setTerminals,
-    setActiveTerminalId,
-  ])
+  const discovery = useTerminalDiscovery(scopeKey, isOpen, terminals.length, createTerminal)
 
   // Note: Cmd+J keyboard shortcut is handled in active-chat.tsx
   // to ensure it works regardless of terminal display mode or focus state.
@@ -370,7 +284,9 @@ export function TerminalSidebar({
           className="flex-1 min-h-0 min-w-0 overflow-hidden"
           style={{ backgroundColor: terminalBg }}
         >
-          {activeTerminal && canRenderTerminal ? (
+          {discovery.error ? (
+            <TerminalDiscoveryError {...discovery} />
+          ) : activeTerminal && canRenderTerminal ? (
             <motion.div
               key={activeTerminal.paneId}
               className="h-full"
@@ -469,7 +385,9 @@ export function TerminalSidebar({
           className="flex-1 min-h-0 min-w-0 overflow-hidden"
           style={{ backgroundColor: terminalBg }}
         >
-          {activeTerminal && canRenderTerminal ? (
+          {discovery.error ? (
+            <TerminalDiscoveryError {...discovery} />
+          ) : activeTerminal && canRenderTerminal ? (
             <motion.div
               key={activeTerminal.paneId}
               className="h-full"
@@ -526,7 +444,6 @@ export function TerminalBottomPanelContent({
   const [terminals, setTerminals] = useAtom(terminalsAtom)
   const [activeTerminalId, setActiveTerminalId] = useAtom(activeTerminalAtom)
   const terminalCwds = useAtomValue(terminalCwdAtom)
-  const trpcUtils = trpc.useUtils()
 
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === "dark"
@@ -548,14 +465,12 @@ export function TerminalBottomPanelContent({
     [terminals, activeTerminalId],
   )
 
-  const killMutation = trpc.terminal.kill.useMutation()
+  const closeTerminals = useTerminalClose(scopeKey)
 
   const scopeKeyRef = useRef(scopeKey)
   scopeKeyRef.current = scopeKey
   const terminalsRef = useRef(terminals)
   terminalsRef.current = terminals
-  const activeTerminalIdRef = useRef(activeTerminalId)
-  activeTerminalIdRef.current = activeTerminalId
 
   const createTerminal = useCallback(() => {
     const currentScopeKey = scopeKeyRef.current
@@ -577,19 +492,9 @@ export function TerminalBottomPanelContent({
 
   const closeTerminal = useCallback(
     (id: string) => {
-      const currentTerminals = terminalsRef.current
-      const currentActiveId = activeTerminalIdRef.current
-      const terminal = currentTerminals.find((t) => t.id === id)
-      if (!terminal) return
-      killMutation.mutate({ paneId: terminal.paneId })
-      const newTerminals = currentTerminals.filter((t) => t.id !== id)
-      setTerminals(newTerminals)
-      if (currentActiveId === id) {
-        const newActive = newTerminals[newTerminals.length - 1]?.id || null
-        setActiveTerminalId(newActive)
-      }
+      void closeTerminals([id])
     },
-    [setTerminals, setActiveTerminalId, killMutation],
+    [closeTerminals],
   )
 
   const renameTerminal = useCallback(
@@ -601,66 +506,26 @@ export function TerminalBottomPanelContent({
 
   const closeOtherTerminals = useCallback(
     (id: string) => {
-      const currentTerminals = terminalsRef.current
-      currentTerminals.forEach((terminal) => {
-        if (terminal.id !== id) {
-          killMutation.mutate({ paneId: terminal.paneId })
-        }
-      })
-      const remainingTerminal = currentTerminals.find((t) => t.id === id)
-      setTerminals(remainingTerminal ? [remainingTerminal] : [])
+      const current = terminalsRef.current
+      if (!current.some((terminal) => terminal.id === id)) return
       setActiveTerminalId(id)
+      void closeTerminals(
+        current.filter((terminal) => terminal.id !== id).map((terminal) => terminal.id),
+      )
     },
-    [setTerminals, setActiveTerminalId, killMutation],
+    [closeTerminals, setActiveTerminalId],
   )
 
   const closeTerminalsToRight = useCallback(
     (id: string) => {
-      const currentTerminals = terminalsRef.current
-      const index = currentTerminals.findIndex((t) => t.id === id)
-      if (index === -1) return
-      const terminalsToClose = currentTerminals.slice(index + 1)
-      terminalsToClose.forEach((terminal) => {
-        killMutation.mutate({ paneId: terminal.paneId })
-      })
-      const remainingTerminals = currentTerminals.slice(0, index + 1)
-      setTerminals(remainingTerminals)
-      const currentActiveId = activeTerminalIdRef.current
-      if (currentActiveId && !remainingTerminals.find((t) => t.id === currentActiveId)) {
-        setActiveTerminalId(remainingTerminals[remainingTerminals.length - 1]?.id || null)
-      }
+      const current = terminalsRef.current
+      const index = current.findIndex((terminal) => terminal.id === id)
+      if (index >= 0) void closeTerminals(current.slice(index + 1).map((terminal) => terminal.id))
     },
-    [setTerminals, setActiveTerminalId, killMutation],
+    [closeTerminals],
   )
 
-  // Auto-create first terminal or discover shared terminals
-  useEffect(() => {
-    if (terminals.length > 0) return
-
-    if (isSharedTerminalScope(scopeKey)) {
-      trpcUtils.terminal.listSessionsByScopeKey
-        .fetch({ scopeKey })
-        .then((sessions) => {
-          if (sessions.length > 0) {
-            const instances = sessions.map((s, i) => ({
-              id: s.paneId.split(":term:")[1] || generateTerminalId(),
-              paneId: s.paneId,
-              name: `Terminal ${i + 1}`,
-              createdAt: s.lastActive,
-            }))
-            setTerminals(instances)
-            setActiveTerminalId(instances[0]?.id || null)
-          } else {
-            createTerminal()
-          }
-        })
-        .catch(() => {
-          createTerminal()
-        })
-    } else {
-      createTerminal()
-    }
-  }, [terminals.length, scopeKey, createTerminal, trpcUtils, setTerminals, setActiveTerminalId])
+  const discovery = useTerminalDiscovery(scopeKey, true, terminals.length, createTerminal)
 
   return (
     <div className="flex flex-col h-full min-w-0 overflow-hidden">
@@ -713,7 +578,9 @@ export function TerminalBottomPanelContent({
         className="flex-1 min-h-0 min-w-0 overflow-hidden"
         style={{ backgroundColor: terminalBg }}
       >
-        {activeTerminal ? (
+        {discovery.error ? (
+          <TerminalDiscoveryError {...discovery} />
+        ) : activeTerminal ? (
           <motion.div
             key={activeTerminal.paneId}
             className="h-full"
@@ -737,6 +604,20 @@ export function TerminalBottomPanelContent({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function TerminalDiscoveryError({ error, retry }: { error: string | null; retry: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-sm"
+    >
+      <p className="break-words text-muted-foreground">Could not load terminals: {error}</p>
+      <Button variant="outline" size="sm" onClick={retry}>
+        Retry
+      </Button>
     </div>
   )
 }

@@ -416,6 +416,13 @@ function AppContent() {
     { retry: 1 },
   )
   const codexIntegration = trpc.codex.getIntegration.useQuery(undefined, { retry: 1 })
+  const customClaudeBaseUrl = customClaudeCredential.data?.metadata?.baseUrl
+  const customClaudeConnected =
+    customClaudeCredential.data?.configured === true &&
+    (billingMethod !== "api-key" ||
+      !customClaudeBaseUrl ||
+      customClaudeBaseUrl === "https://api.anthropic.com" ||
+      customClaudeBaseUrl === "https://api.anthropic.com/")
 
   // Migration: If user already completed Anthropic onboarding but has no billing method set,
   // automatically set it to "claude-subscription" (legacy users before billing method was added)
@@ -450,8 +457,8 @@ function AppContent() {
 
   useEffect(() => {
     if (!customClaudeCredential.data) return
-    setApiKeyOnboardingCompleted(customClaudeCredential.data.configured)
-  }, [customClaudeCredential.data, setApiKeyOnboardingCompleted])
+    setApiKeyOnboardingCompleted(customClaudeConnected)
+  }, [customClaudeCredential.data, customClaudeConnected, setApiKeyOnboardingCompleted])
 
   useEffect(() => {
     const state = codexIntegration.data?.state
@@ -468,7 +475,6 @@ function AppContent() {
   }
 
   const claudeSubscriptionConnected = claudeIntegration.data?.isConnected === true
-  const customClaudeConnected = customClaudeCredential.data?.configured === true
   const codexState = codexIntegration.data?.state
   const codexMethodConnected =
     billingMethod === "codex-subscription"
@@ -506,7 +512,7 @@ function AppContent() {
   if (
     (billingMethod === "api-key" || billingMethod === "custom-model") &&
     !customClaudeConnected &&
-    !(customClaudeCredential.isError && apiKeyOnboardingCompleted)
+    !(customClaudeCredential.isError && !customClaudeCredential.data && apiKeyOnboardingCompleted)
   ) {
     return <ApiKeyOnboardingPage />
   }

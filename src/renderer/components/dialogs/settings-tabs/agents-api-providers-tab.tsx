@@ -7,9 +7,11 @@
  * configured.
  */
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useAtom, useSetAtom } from "jotai"
 import { toast } from "sonner"
+import type { inferRouterOutputs } from "@trpc/server"
+import type { AppRouter } from "../../../../main/lib/trpc/routers"
 import {
   enabledOpencodeModelsAtom,
   lastSelectedAgentIdAtom,
@@ -25,18 +27,98 @@ import { Label } from "../../ui/label"
 import { CredentialManagement } from "./credential-management"
 import { compareSettingsProviders } from "../../../features/settings/settings-visibility"
 
-function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) {
+function ProviderQueryStatus({
+  label,
+  isLoading,
+  isError,
+  isFetching,
+  onRetry,
+}: {
+  label: string
+  isLoading: boolean
+  isError: boolean
+  isFetching: boolean
+  onRetry: () => void
+}) {
+  if (isLoading && !isError) {
+    return (
+      <p className="text-xs text-muted-foreground" role="status">
+        Loading {label}…
+      </p>
+    )
+  }
+  if (!isError) return null
+  return (
+    <div className="flex items-center gap-2 text-xs text-destructive" role="alert">
+      <span>Could not load {label}. Existing values remain visible until it succeeds.</span>
+      <button
+        type="button"
+        className="font-medium underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={isFetching}
+        onClick={onRetry}
+      >
+        {isFetching ? "Retrying…" : "Retry"}
+      </button>
+    </div>
+  )
+}
+
+type Provider = inferRouterOutputs<AppRouter>["opencode"]["listProviders"][number]
+
+function ProviderCard({
+  providerId,
+  provider,
+}: {
+  providerId: "openrouter" | "nanogpt"
+  provider: Provider
+}) {
   const setLastSelectedAgentId = useSetAtom(lastSelectedAgentIdAtom)
   const [selectedModels, setSelectedModels] = useAtom(lastSelectedOpencodeModelsAtom)
   const [enabledModels, setEnabledModels] = useAtom(enabledOpencodeModelsAtom)
   const trpcUtils = trpc.useUtils()
-  const { data: providers } = trpc.opencode.listProviders.useQuery()
-  const provider = providers?.find((p) => p.id === providerId)
   const [apiKey, setApiKey] = useState("")
-  const [baseUrl, setBaseUrl] = useState("")
+  const [baseUrl, setBaseUrl] = useState(provider.baseUrl)
+  const previousBaseUrl = useRef(provider.baseUrl)
+  const writeBusy = useRef(false)
+  const draftRevision = useRef(0)
+  const submittedRevision = useRef(0)
+  const [writeError, setWriteError] = useState<string | null>(null)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+
+  const focusKeyIfLost = () =>
+    requestAnimationFrame(() => {
+      if (document.activeElement === document.body)
+        document.getElementById(`${providerId}-key`)?.focus()
+    })
+
+  const refreshStatus = async () => {
+    setRefreshing(true)
+    try {
+      await Promise.all([
+        trpcUtils.opencode.listProviders.invalidate(undefined, undefined, { throwOnError: true }),
+        trpcUtils.opencode.getKeyStatus.invalidate(undefined, undefined, { throwOnError: true }),
+      ])
+      setRefreshError(null)
+    } catch {
+      setRefreshError("Credential change saved, but provider status could not be refreshed.")
+    } finally {
+      setRefreshing(false)
+      focusKeyIfLost()
+    }
+  }
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [modelSearch, setModelSearch] = useState("")
-  const { data: modelCatalog } = trpc.opencode.listModels.useQuery({ provider: providerId })
+  const {
+    data: modelCatalog,
+    isLoading: modelCatalogLoading,
+    isError: modelCatalogError,
+    isFetching: modelCatalogFetching,
+    refetch: refetchModelCatalog,
+  } = trpc.opencode.listModels.useQuery(
+    { provider: providerId },
+    { placeholderData: (previous) => previous },
+  )
   const catalogStats = {
     priced: modelCatalog?.models.filter((model) => model.pricing).length ?? 0,
     tools: modelCatalog?.models.filter((model) => model.supportsTools).length ?? 0,
@@ -51,10 +133,8 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
   })
 
   const setKey = trpc.opencode.setKey.useMutation({
-    onSuccess: (status) => {
-      setApiKey("")
-      trpcUtils.opencode.listProviders.invalidate()
-      trpcUtils.opencode.getKeyStatus.invalidate()
+    onSuccess: async (status) => {
+      if (draftRevision.current === submittedRevision.current) setApiKey("")
       if (status.sessionOnly) {
         toast.warning(`${provider?.label ?? providerId} key is available for this session only`, {
           description: status.warning,
@@ -66,23 +146,27 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
       if (pending?.provider === providerId) {
         appStore.set(pendingAuthRetryMessageAtom, { ...pending, readyToRetry: true })
       }
+      await refreshStatus()
     },
     onError: (error) => {
-      toast.error(`${provider?.label ?? providerId} key was not saved`, {
-        description: error.message,
-      })
+      setWriteError(error.message)
+    },
+    onSettled: () => {
+      writeBusy.current = false
+      focusKeyIfLost()
     },
   })
   const clearKey = trpc.opencode.clearKey.useMutation({
-    onSuccess: () => {
-      trpcUtils.opencode.listProviders.invalidate()
-      trpcUtils.opencode.getKeyStatus.invalidate()
+    onSuccess: async () => {
       toast.success(`${provider?.label ?? providerId} key removed`)
+      await refreshStatus()
     },
     onError: (error) => {
-      toast.error(`${provider?.label ?? providerId} key was not removed`, {
-        description: error.message,
-      })
+      setWriteError(error.message)
+    },
+    onSettled: () => {
+      writeBusy.current = false
+      focusKeyIfLost()
     },
   })
   const refreshModels = trpc.opencode.refreshModels.useMutation({
@@ -90,7 +174,9 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
   })
 
   useEffect(() => {
-    if (provider?.baseUrl) setBaseUrl(provider.baseUrl)
+    const previous = previousBaseUrl.current
+    setBaseUrl((current) => (current === previous ? provider.baseUrl : current))
+    previousBaseUrl.current = provider.baseUrl
   }, [provider?.baseUrl])
 
   useEffect(() => {
@@ -102,15 +188,17 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
     }, 0)
   }, [providerId])
 
-  if (!provider) return null
-
   const saveKey = () => {
+    if (writeBusy.current || refreshing || refreshError || !apiKey.trim()) return
     if (
       provider.configured &&
       !window.confirm(`Replace the ${provider.label} API key? The prior value cannot be recovered.`)
     ) {
       return
     }
+    writeBusy.current = true
+    submittedRevision.current = draftRevision.current
+    setWriteError(null)
     setKey.mutate({
       provider: providerId,
       apiKey: apiKey.trim(),
@@ -119,9 +207,12 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
   }
 
   const removeKey = () => {
+    if (writeBusy.current || refreshing || refreshError) return
     if (!window.confirm(`Remove the ${provider.label} API key? Provider runs will stop working.`)) {
       return
     }
+    writeBusy.current = true
+    setWriteError(null)
     clearKey.mutate({ provider: providerId })
   }
 
@@ -183,7 +274,22 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
         <p className="mb-3 text-xs text-destructive">{provider.warning}</p>
       )}
 
-      <div className="flex items-end gap-2">
+      {writeError && (
+        <p role="alert" className="mb-2 text-sm text-red-700 dark:text-red-400 break-words">
+          {writeError}
+        </p>
+      )}
+      {refreshError && (
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <p role="alert" className="text-sm text-red-700 dark:text-red-400">
+            {refreshError}
+          </p>
+          <Button disabled={refreshing} onClick={() => void refreshStatus()}>
+            Retry status
+          </Button>
+        </div>
+      )}
+      <div className="flex flex-wrap items-end gap-2">
         <div className="flex-1">
           <Label htmlFor={`${providerId}-key`} className="text-xs">
             API key
@@ -197,15 +303,31 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
                 ? "Enter a replacement; stored values are never shown"
                 : "Enter API key"
             }
-            onChange={(e) => setApiKey(e.target.value)}
+            onChange={(e) => {
+              draftRevision.current += 1
+              setApiKey(e.target.value)
+            }}
             autoComplete="new-password"
           />
         </div>
-        <Button disabled={!apiKey.trim() || setKey.isPending} onClick={saveKey}>
+        <Button
+          disabled={
+            !apiKey.trim() ||
+            setKey.isPending ||
+            clearKey.isPending ||
+            refreshing ||
+            Boolean(refreshError)
+          }
+          onClick={saveKey}
+        >
           {provider.configured ? "Replace" : "Save"}
         </Button>
         {provider.configured && provider.source !== "environment" && (
-          <Button variant="outline" disabled={clearKey.isPending} onClick={removeKey}>
+          <Button
+            variant="outline"
+            disabled={setKey.isPending || clearKey.isPending || refreshing || Boolean(refreshError)}
+            onClick={removeKey}
+          >
             Remove
           </Button>
         )}
@@ -218,14 +340,18 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
           <Input
             id={`${providerId}-base-url`}
             value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
+            onChange={(e) => {
+              draftRevision.current += 1
+              setBaseUrl(e.target.value)
+            }}
             placeholder="https://nano-gpt.com/api/v1"
           />
         </div>
       )}
       <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
         <span>
-          Models: {modelCatalog?.models.length ?? 0} ({modelCatalog?.source ?? "loading"})
+          Models: {modelCatalog?.models.length ?? 0} (
+          {modelCatalog?.source ?? (modelCatalogLoading ? "loading" : "unavailable")})
         </span>
         <div className="flex gap-2">
           <Button
@@ -249,6 +375,13 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
           </Button>
         </div>
       </div>
+      <ProviderQueryStatus
+        label={`${provider.label} model catalog`}
+        isLoading={modelCatalogLoading}
+        isError={modelCatalogError}
+        isFetching={modelCatalogFetching}
+        onRetry={() => void refetchModelCatalog()}
+      />
       {showModelPicker && (
         <div className="mt-3 rounded-md border border-border p-3">
           <Input
@@ -258,7 +391,9 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
             autoFocus
           />
           <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
-            {(refreshModels.isPending || modelCatalog?.source === "seed") && (
+            {(refreshModels.isPending ||
+              modelCatalogLoading ||
+              modelCatalog?.source === "seed") && (
               <p className="px-2 py-3 text-xs text-muted-foreground">
                 Loading current models from {provider.label}…
               </p>
@@ -307,7 +442,9 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
                 </button>
               )
             })}
-            {!refreshModels.isPending &&
+            {!modelCatalogError &&
+              !modelCatalogLoading &&
+              !refreshModels.isPending &&
               modelCatalog?.source !== "seed" &&
               filteredModels.length === 0 && (
                 <p className="px-2 py-3 text-xs text-muted-foreground">
@@ -336,14 +473,29 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
         Use for new chats
       </Button>
       <p className="mt-2 text-xs text-muted-foreground">
-        Secret fields stay blank after save. Flapstack never returns stored plaintext to Settings.
+        Saved secrets are never returned to Settings. Newer unsaved edits are preserved.
       </p>
     </div>
   )
 }
 
 export function AgentsApiProvidersTab() {
-  const { data: runtime } = trpc.opencode.runtimeStatus.useQuery()
+  const {
+    data: providers,
+    isLoading: providersLoading,
+    isError: providersError,
+    isFetching: providersFetching,
+    refetch: refetchProviders,
+  } = trpc.opencode.listProviders.useQuery(undefined, {
+    placeholderData: (previous) => previous,
+  })
+  const {
+    data: runtime,
+    isLoading: runtimeLoading,
+    isError: runtimeError,
+    isFetching: runtimeFetching,
+    refetch: refetchRuntime,
+  } = trpc.opencode.runtimeStatus.useQuery()
 
   return (
     <div className="space-y-4">
@@ -355,6 +507,21 @@ export function AgentsApiProvidersTab() {
       </div>
 
       <CredentialManagement />
+
+      <ProviderQueryStatus
+        label="provider details"
+        isLoading={providersLoading}
+        isError={providersError}
+        isFetching={providersFetching}
+        onRetry={() => void refetchProviders()}
+      />
+      <ProviderQueryStatus
+        label="provider runtime"
+        isLoading={runtimeLoading}
+        isError={runtimeError}
+        isFetching={runtimeFetching}
+        onRetry={() => void refetchRuntime()}
+      />
 
       {runtime && (
         <div
@@ -380,9 +547,12 @@ export function AgentsApiProvidersTab() {
 
       {[...(["openrouter", "nanogpt"] as const)]
         .sort(compareSettingsProviders)
-        .map((providerId) => (
-          <ProviderCard key={providerId} providerId={providerId} />
-        ))}
+        .map((providerId) => {
+          const provider = providers?.find((candidate) => candidate.id === providerId)
+          return provider ? (
+            <ProviderCard key={providerId} providerId={providerId} provider={provider} />
+          ) : null
+        })}
     </div>
   )
 }

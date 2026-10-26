@@ -212,6 +212,7 @@ export function Terminal({
     console.log("[Terminal:useEffect] Container rect:", container.getBoundingClientRect())
 
     let isUnmounted = false
+    setNeedsReconnect(false)
 
     // Create xterm instance
     console.log("[Terminal:useEffect] Creating terminal instance...", {
@@ -294,6 +295,7 @@ export function Terminal({
           onError: (error) => {
             if (isUnmounted) return
             isExitedRef.current = true
+            setNeedsReconnect(true)
             xterm.writeln(`\r\n[Reconnect failed: ${error.message}]`)
           },
         },
@@ -343,10 +345,14 @@ export function Terminal({
       },
       {
         onSuccess: (result) => {
+          if (isUnmounted) return
           attachReplay(result)
           xterm.focus()
         },
         onError: (err) => {
+          if (isUnmounted) return
+          isExitedRef.current = true
+          setNeedsReconnect(true)
           xterm.write(`\x1b[31m[Failed to start terminal: ${err.message}]\x1b[0m\r\n`)
         },
       },
@@ -517,7 +523,7 @@ export function Terminal({
           className="beta-surface absolute right-3 top-3 z-10 flex items-center gap-2 rounded border bg-background px-2 py-1 text-sm"
           role="status"
         >
-          Connection closed
+          Terminal unavailable
           <Button
             size="sm"
             variant="outline"

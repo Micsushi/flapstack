@@ -15,8 +15,30 @@ Migration 0066 adds the draft API foundation: `openDraft`, `updateDraft` and
 from the file-write journal. Opening or updating a draft never writes the file.
 Reopening an existing file preserves unsaved text and reports a changed disk
 digest as a conflict. A mounted owner may persist its buffer after the file is
-removed, but missing-file reopen/export, draft discard and
-missing-file recovery controls are not implemented yet.
+removed. If reopening the file fails, the text viewer offers saved-draft
+recovery for that exact workspace and relative path. It displays the stored text
+read-only and supports copying it, with manual selection when clipboard access
+fails. Failed lookups can be retried without changing the file or draft.
+Recovery also offers **Save As new file** with an explicit relative destination
+in an existing worktree folder. It calls the scoped `workspaceEditing.saveAs`
+authority; existing destinations are never overwritten and the original draft
+is not removed. A successful creation joins shared undo/redo without changing
+the draft. Draft discard remains unavailable.
+
+Before dispatch, recovery stores the exact Save As UUID, path and text in the
+desktop profile's local storage, keyed by project, chat, root, draft and request.
+An uncertain reply locks the destination and retries those same bytes and UUID,
+including after navigation or restart in the same profile. Reopened recovery
+lists pending requests for explicit review; a new submission never adopts another
+window's request. Concurrent windows retain separate request records. Only a
+definite pre-write rejection or recorded failure clears the request. A post-write
+error returns the recorded applied outcome when available; an ambiguous conflict
+keeps the request. Expired and unresolved requests can be set aside with **Save a
+separate copy**, which retains their exact bytes and IDs. Unreadable records stay
+intact without blocking a separate copy. Storage failures block dispatch.
+Clearing the desktop profile's local storage removes this retry metadata, not
+the database-backed source draft. Clipboard/manual copy remains available when
+current permissions deny file creation.
 
 `listDrafts` exposes a bounded metadata-only recovery list; `readDraft` retrieves
 one stored buffer. These read-only APIs work after source-file deletion or edit
@@ -69,6 +91,11 @@ pending text before requesting a conflict-checked file write. Acknowledgements
 never replace newer typing. Interrupted requests retry the same revision and
 operation UUID. A failed buffer update prevents the pane's Close action; an
 unacknowledged buffer also requests the browser's unload confirmation.
+Known autosave-policy and stale-revision rejections have a distinct backend
+result. A retry can acknowledge an already-recorded autosave after the policy
+changes to ask-before-edits, without writing again. If no write occurred, it
+clears the rejected request and persists newer text only when the stored buffer
+has not diverged. Unknown failures keep their retry identity.
 
 Autosave is off when an editor opens. Where the main process permits automatic
 edits, opting in arms a 750ms quiet-period debounce only after subsequent typing.
@@ -102,9 +129,32 @@ The journal retains the reviewed version for undo. Child-process interruption
 tests cover this path both before journal completion and after commit, including
 later external edits; reopening never replays the replacement.
 
-The surface does not yet offer reload/rebase, Save As, draft discard, missing-file export or
-ownership reacquisition after another window takes a lease. Shared file undo/redo
+**Reacquire editor** requests a fresh lease after an editor error. It preserves
+local typing, keeps uncertain update/save revisions and UUIDs, and changes only
+their lease token. The backend still rejects a competing live window. If another
+writer changed the stored buffer incompatibly, recovery preserves both versions
+and leaves local text available to copy instead of overwriting either buffer.
+Recovery checks the expected lease and stored text under the root lock before
+replacing any lease, including another pane's lease in the same window.
+Reacquisition disables autosave and resumes pending persistence only after these
+checks. Failed initial opens also offer Retry editor in the missing-file view.
+
+An errored editor offers **Save local text as a separate file**. After that
+explicit copy succeeds, Close verifies the copy still contains the current local
+text before allowing a failed-persistence pane to close. Later typing, undoing
+the copy, or changed/unreadable copied bytes blocks that exit. The retained
+in-memory session and unload protection are not discarded by copying.
+Closing after a verified copy releases the editable lease without dropping the
+retained buffer. If that lease is still saving, release waits until the operation
+finishes; another editor cannot acquire it mid-write.
+
+The surface does not yet offer reload/rebase, general Save As for a healthy
+editor, or draft discard. Save As recovery is available when reopening a source
+file fails or an active editor reports an error. Shared file undo/redo
 uses the audited reversal API and refreshes disk evidence; it never discards a draft.
+Repeated Save As acknowledgements add one history entry per window. The backend
+rejects a second reversal of an already reversed operation, including after its
+redo, so another window's stale undo cannot remove the restored file.
 
 Renderer verification covers delayed/lost acknowledgements, coalesced typing,
 shared pane lifetimes, unload protection, retry-safe undo/redo and Monaco's stale

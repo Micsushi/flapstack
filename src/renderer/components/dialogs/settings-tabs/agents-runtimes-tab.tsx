@@ -7,13 +7,82 @@ import {
   runtimePreferenceLabel,
 } from "../../../features/agents/runtime-settings"
 
+function RuntimeQueryStatus({
+  label,
+  isLoading,
+  isError,
+  isFetching,
+  onRetry,
+}: {
+  label: string
+  isLoading: boolean
+  isError: boolean
+  isFetching: boolean
+  onRetry: () => void
+}) {
+  if (isLoading && !isError) {
+    return (
+      <p className="text-sm text-muted-foreground" role="status">
+        Loading {label}…
+      </p>
+    )
+  }
+  if (!isError) return null
+  return (
+    <div className="flex items-center gap-2 text-sm text-destructive" role="alert">
+      <span>Runtime {label} could not load. Existing values remain visible until it succeeds.</span>
+      <button
+        type="button"
+        className="font-medium underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={isFetching}
+        onClick={onRetry}
+      >
+        {isFetching ? "Retrying…" : "Retry"}
+      </button>
+    </div>
+  )
+}
+
 export function AgentsRuntimesTab() {
   const utils = trpc.useUtils()
-  const { data: projects = [] } = trpc.projects.list.useQuery()
-  const { data: defaults = [], isLoading, error } = trpc.agentRuntimeDefaults.list.useQuery()
-  const { data: releases = [] } = trpc.agentRuntimeDefaults.capabilities.useQuery()
+  const {
+    data: projectsData,
+    isLoading: projectsLoading,
+    isError: projectsError,
+    isFetching: projectsFetching,
+    refetch: refetchProjects,
+  } = trpc.projects.list.useQuery()
+  const projects = projectsData ?? []
+  const {
+    data: defaultsData,
+    isLoading: defaultsLoading,
+    isError: defaultsError,
+    isFetching: defaultsFetching,
+    refetch: refetchDefaults,
+  } = trpc.agentRuntimeDefaults.list.useQuery(undefined, {
+    placeholderData: (previous) => previous,
+  })
+  const {
+    data: releasesData,
+    isLoading: releasesLoading,
+    isError: releasesError,
+    isFetching: releasesFetching,
+    refetch: refetchReleases,
+  } = trpc.agentRuntimeDefaults.capabilities.useQuery(undefined, {
+    placeholderData: (previous) => previous,
+  })
   const [projectId, setProjectId] = useState<string>("")
   const [announcement, setAnnouncement] = useState("")
+  const defaults = defaultsData ?? []
+  const releases = releasesData ?? []
+  const settingsUnavailable =
+    !defaultsData ||
+    defaultsLoading ||
+    defaultsError ||
+    !releasesData ||
+    releasesLoading ||
+    releasesError ||
+    (Boolean(projectId) && (projectsLoading || projectsError))
   const scope: RuntimeDefaultScope = projectId
     ? { type: "project", id: projectId }
     : { type: "global", id: null }
@@ -71,15 +140,28 @@ export function AgentsRuntimesTab() {
         </select>
       </label>
 
-      {isLoading ? (
-        <p role="status" className="text-sm text-muted-foreground">
-          Loading Runtime defaults…
-        </p>
-      ) : error ? (
-        <p role="alert" className="text-sm text-destructive">
-          Runtime defaults could not load: {error.message}
-        </p>
-      ) : (
+      <RuntimeQueryStatus
+        label="project scope"
+        isLoading={projectsLoading}
+        isError={projectsError}
+        isFetching={projectsFetching}
+        onRetry={() => void refetchProjects()}
+      />
+      <RuntimeQueryStatus
+        label="defaults"
+        isLoading={defaultsLoading}
+        isError={defaultsError}
+        isFetching={defaultsFetching}
+        onRetry={() => void refetchDefaults()}
+      />
+      <RuntimeQueryStatus
+        label="capabilities"
+        isLoading={releasesLoading}
+        isError={releasesError}
+        isFetching={releasesFetching}
+        onRetry={() => void refetchReleases()}
+      />
+      {defaultsData ? (
         <div className="overflow-x-auto rounded-lg border">
           <table className="w-full text-sm">
             <caption className="sr-only">Runtime defaults by agent harness</caption>
@@ -111,7 +193,7 @@ export function AgentsRuntimesTab() {
                       <select
                         aria-label={`${row.label} Runtime`}
                         value={row.selected}
-                        disabled={write.isPending || remove.isPending}
+                        disabled={settingsUnavailable || write.isPending || remove.isPending}
                         onChange={(event) => {
                           const preference = event.target.value as typeof row.selected
                           write.mutate({
@@ -156,6 +238,7 @@ export function AgentsRuntimesTab() {
                           type="button"
                           variant="ghost"
                           size="sm"
+                          disabled={settingsUnavailable || remove.isPending}
                           onClick={() =>
                             remove.mutate({
                               scope,
@@ -174,18 +257,20 @@ export function AgentsRuntimesTab() {
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
 
       <div data-settings-id="runtime-diagnostics" tabIndex={-1} className="rounded-lg border p-4">
         <h2 className="font-medium">Launch diagnostics</h2>
-        <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-          {releases.map((release) => (
-            <li key={release.runtime}>
-              {runtimePreferenceLabel(release.runtime)}:{" "}
-              {release.enabledForNewLaunches ? "available" : release.reason}
-            </li>
-          ))}
-        </ul>
+        {releasesData ? (
+          <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+            {releases.map((release) => (
+              <li key={release.runtime}>
+                {runtimePreferenceLabel(release.runtime)}:{" "}
+                {release.enabledForNewLaunches ? "available" : release.reason}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
       <p className="sr-only" aria-live="polite">
         {announcement}

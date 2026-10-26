@@ -1,5 +1,10 @@
 import { z } from "zod"
 import {
+  profileActionHistory,
+  profileHistoryPort,
+  reversibleProfileEdit,
+} from "../../agent-profiles/action-history"
+import {
   agentProfileArchiveInputSchema,
   agentProfileCreateInputSchema,
   agentProfileDuplicateInputSchema,
@@ -113,7 +118,14 @@ export const agentProfilesRouter = router({
     const profiles = createAgentProfileService(getDatabase())
     const preview = profiles.previewUpdateCapabilityChange(input)
     const auditId = await capabilityApproval(profiles, preview)
-    return profiles.update(input, auditId)
+    const owner = `profiles:${getDatabasePath()}`
+    const port = profileHistoryPort(getDatabase(), owner, input.profileId)
+    return profileActionHistory.change(
+      owner,
+      port,
+      () => profiles.update(input, auditId),
+      reversibleProfileEdit,
+    )
   }),
   duplicate: publicProcedure.input(agentProfileDuplicateInputSchema).mutation(async ({ input }) => {
     const profiles = createAgentProfileService(getDatabase())
@@ -121,12 +133,34 @@ export const agentProfilesRouter = router({
     const auditId = await capabilityApproval(profiles, preview)
     return profiles.duplicate(input, auditId)
   }),
-  archive: publicProcedure
-    .input(agentProfileArchiveInputSchema)
-    .mutation(({ input }) => createAgentProfileService(getDatabase()).archive(input)),
-  restore: publicProcedure
-    .input(agentProfileArchiveInputSchema)
-    .mutation(({ input }) => createAgentProfileService(getDatabase()).archive(input, true)),
+  archive: publicProcedure.input(agentProfileArchiveInputSchema).mutation(({ input }) => {
+    const owner = `profiles:${getDatabasePath()}`
+    const port = profileHistoryPort(getDatabase(), owner, input.profileId, "archive")
+    return profileActionHistory.change(owner, port, () => port.service.archive(input, false))
+  }),
+  restore: publicProcedure.input(agentProfileArchiveInputSchema).mutation(({ input }) => {
+    const owner = `profiles:${getDatabasePath()}`
+    const port = profileHistoryPort(getDatabase(), owner, input.profileId, "archive")
+    return profileActionHistory.change(owner, port, () => port.service.archive(input, true))
+  }),
+  applyHistory: publicProcedure
+    .input(
+      z
+        .object({
+          actionId: z.string().uuid(),
+          direction: z.enum(["undo", "redo"]),
+          sequence: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+        })
+        .strict(),
+    )
+    .mutation(({ input }) =>
+      profileActionHistory.apply(
+        `profiles:${getDatabasePath()}`,
+        input.actionId,
+        input.direction,
+        input.sequence,
+      ),
+    ),
   export: publicProcedure
     .input(z.object({ profiles: z.array(agentProfileVersionRefSchema).min(1).max(256) }).strict())
     .mutation(({ input }) => createAgentProfileService(getDatabase()).export(input.profiles)),

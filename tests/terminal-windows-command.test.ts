@@ -684,7 +684,7 @@ describe("terminal initial command formatting", () => {
     }
   })
 
-  it("releases a no-exit winpty session before forced workspace cleanup returns", async () => {
+  it("retains a no-exit winpty session until a stop retry confirms exit", async () => {
     vi.useFakeTimers()
     try {
       const manager = new TerminalManager({ platform: "win32" })
@@ -696,6 +696,11 @@ describe("terminal initial command formatting", () => {
         onKill: (signal) => events.push(signal ?? "SIGTERM"),
       })
       managerSessions(manager).set(session.paneId, session)
+      let exit: (event: { exitCode: number }) => void = () => undefined
+      vi.spyOn(session.pty, "onExit").mockImplementation((listener) => {
+        exit = listener
+        return { dispose() {} }
+      })
 
       const result = manager.killByWorkspaceId(session.workspaceId).then((value) => {
         events.push("returned")
@@ -704,14 +709,23 @@ describe("terminal initial command formatting", () => {
       await vi.advanceTimersByTimeAsync(2_500)
 
       await expect(result).resolves.toEqual({ killed: 0, failed: 1 })
-      expect(events).toEqual(["SIGTERM", "SIGKILL", "dispose", "returned"])
+      expect(events).toEqual(["SIGTERM", "SIGTERM", "returned"])
+      expect(managerSessions(manager).get(session.paneId)).toBe(session)
+      expect(session.isAlive).toBe(true)
+
+      vi.spyOn(session.pty, "kill").mockImplementation(() => exit({ exitCode: 0 }))
+      await expect(manager.killByWorkspaceId(session.workspaceId)).resolves.toEqual({
+        killed: 1,
+        failed: 0,
+      })
+      expect(events).toEqual(["SIGTERM", "SIGTERM", "returned", "dispose"])
       expect(managerSessions(manager).has(session.paneId)).toBe(false)
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it("releases already-dead and kill-throw winpty sessions before forgetting them", async () => {
+  it("releases dead sessions but retains a rejected stop for a successful retry", async () => {
     const manager = new TerminalManager({ platform: "win32" })
     const released: string[] = []
     const alreadyDead = fakeWindowsSession({
@@ -730,10 +744,25 @@ describe("terminal initial command formatting", () => {
     }).session
     managerSessions(manager).set(alreadyDead.paneId, alreadyDead)
     managerSessions(manager).set(killThrows.paneId, killThrows)
+    let exit: (event: { exitCode: number }) => void = () => undefined
+    vi.spyOn(killThrows.pty, "onExit").mockImplementation((listener) => {
+      exit = listener
+      return { dispose() {} }
+    })
 
     await expect(manager.killByWorkspaceId("edge-workspace")).resolves.toEqual({
       killed: 1,
       failed: 1,
+    })
+    expect(released).toEqual(["already-dead"])
+    expect(managerSessions(manager).get(killThrows.paneId)).toBe(killThrows)
+    expect(killThrows.isAlive).toBe(true)
+    expect(managerSessions(manager).has(alreadyDead.paneId)).toBe(false)
+
+    vi.spyOn(killThrows.pty, "kill").mockImplementation(() => exit({ exitCode: 0 }))
+    await expect(manager.killByWorkspaceId("edge-workspace")).resolves.toEqual({
+      killed: 1,
+      failed: 0,
     })
     expect(released).toEqual(["already-dead", "kill-throws"])
     expect(managerSessions(manager).size).toBe(0)

@@ -123,13 +123,20 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
   } = useVoiceRecording({
     normalizeRecording: voiceSettings?.sttAdapterId !== "local-parakeet",
     onPcmChunk: async (chunk) => {
-      if (streamStartRef.current) await streamStartRef.current
+      const generation = startGenerationRef.current
       const sessionId = sessionIdRef.current
-      if (!sessionId) return
+      if (streamStartRef.current) await streamStartRef.current
+      if (
+        !sessionId ||
+        generation !== startGenerationRef.current ||
+        sessionId !== sessionIdRef.current
+      )
+        return
       const update = await feedStreamingMutation.mutateAsync({
         sessionId,
         pcmBase64: float32ToBase64(chunk),
       })
+      if (generation !== startGenerationRef.current || sessionId !== sessionIdRef.current) return
       applyStreamingTranscript(update.committed, update.tentative)
     },
   })

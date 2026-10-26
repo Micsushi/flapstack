@@ -28,6 +28,12 @@ export function AgentsPluginsHubTab({ initialView }: { initialView: PluginsHubVi
 
   useEffect(() => setActiveView(initialView), [initialView])
 
+  useEffect(() => {
+    document
+      .getElementById(`plugins-hub-tab-${activeView}`)
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }, [activeView])
+
   const selectView = (view: PluginsHubView) => {
     setActiveView(view)
     const settingsTab = hubTabs.find((tab) => tab.id === view)?.settingsTab
@@ -50,12 +56,9 @@ export function AgentsPluginsHubTab({ initialView }: { initialView: PluginsHubVi
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background" data-settings-id="plugins-hub">
-      <header className="shrink-0 border-b border-border/70 px-6 pt-5">
+      <header className="shrink-0 border-b border-border/70 px-4 pt-4 md:px-6 md:pt-5">
         <div>
           <h1 className="text-xl font-semibold tracking-[-0.02em] text-foreground">Plugins</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Manage installed plugins, apps, MCP servers, and skills from one place.
-          </p>
         </div>
 
         <div
@@ -78,7 +81,7 @@ export function AgentsPluginsHubTab({ initialView }: { initialView: PluginsHubVi
                 onClick={() => selectView(tab.id)}
                 onKeyDown={(event) => moveTabFocus(event, index)}
                 className={cn(
-                  "inline-flex h-8 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-medium outline-none transition-colors duration-75",
+                  "inline-flex h-11 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-medium outline-none transition-colors duration-75 md:h-8",
                   "focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                   selected
                     ? "bg-foreground/[0.07] text-foreground"

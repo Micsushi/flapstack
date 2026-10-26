@@ -21,11 +21,66 @@ const BEHAVIOR_LABELS: Record<PermissionChangeBehavior, string> = {
   "current-chat": "Always this chat",
 }
 
+function PermissionQueryStatus({
+  label,
+  isLoading,
+  isError,
+  isFetching,
+  onRetry,
+}: {
+  label: string
+  isLoading: boolean
+  isError: boolean
+  isFetching: boolean
+  onRetry: () => void
+}) {
+  if (isLoading && !isError) {
+    return (
+      <div className="text-xs text-muted-foreground" role="status">
+        Loading {label}…
+      </div>
+    )
+  }
+  if (!isError) return null
+  return (
+    <div className="flex items-center gap-2 text-xs text-destructive" role="alert">
+      <span>Could not load {label}. Existing values are read-only until it succeeds.</span>
+      <button
+        type="button"
+        className="font-medium underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={isFetching}
+        onClick={onRetry}
+      >
+        {isFetching ? "Retrying…" : "Retry"}
+      </button>
+    </div>
+  )
+}
+
 export function AgentsPermissionsTab() {
   const trpcUtils = trpc.useUtils()
   const [chatFilter, setChatFilter] = useState("")
-  const { data: preferences } = trpc.permissions.getPreferences.useQuery()
-  const { data: chats = [], isLoading: chatsLoading } = trpc.permissions.listChatModes.useQuery()
+  const {
+    data: preferences,
+    isLoading: preferencesLoading,
+    isError: preferencesError,
+    isFetching: preferencesFetching,
+    refetch: refetchPreferences,
+  } = trpc.permissions.getPreferences.useQuery(undefined, {
+    placeholderData: (previous) => previous,
+  })
+  const {
+    data: chatData,
+    isLoading: chatsLoading,
+    isError: chatsError,
+    isFetching: chatsFetching,
+    refetch: refetchChats,
+  } = trpc.permissions.listChatModes.useQuery(undefined, {
+    placeholderData: (previous) => previous,
+  })
+  const chats = chatData ?? []
+  const preferencesUnavailable = !preferences || preferencesLoading || preferencesError
+  const chatListUnavailable = !chatData || chatsLoading || chatsError
 
   const setGlobalDefault = trpc.permissions.setGlobalDefault.useMutation({
     onSuccess: () => {
@@ -78,6 +133,14 @@ export function AgentsPermissionsTab() {
         </p>
       </div>
 
+      <PermissionQueryStatus
+        label="permission preferences"
+        isLoading={preferencesLoading}
+        isError={preferencesError}
+        isFetching={preferencesFetching}
+        onRetry={() => void refetchPreferences()}
+      />
+
       <div className="overflow-hidden rounded-lg border border-border bg-background">
         <div
           data-settings-id="permissions-change-behavior"
@@ -97,7 +160,7 @@ export function AgentsPermissionsTab() {
             onValueChange={(value: PermissionChangeBehavior) =>
               setChangeBehavior.mutate({ behavior: value })
             }
-            disabled={setChangeBehavior.isPending}
+            disabled={preferencesUnavailable || setChangeBehavior.isPending}
           >
             <SelectTrigger className="w-[165px] shrink-0 px-2 text-xs">
               {BEHAVIOR_LABELS[behavior]}
@@ -127,7 +190,7 @@ export function AgentsPermissionsTab() {
           <Select
             value={globalDefault}
             onValueChange={(mode: RunPermissionMode) => setGlobalDefault.mutate({ mode })}
-            disabled={setGlobalDefault.isPending}
+            disabled={preferencesUnavailable || setGlobalDefault.isPending}
           >
             <SelectTrigger className="w-[165px] shrink-0 px-2 text-xs">
               {isSelectableRunPermissionMode(globalDefault)
@@ -167,10 +230,18 @@ export function AgentsPermissionsTab() {
           />
         </div>
 
+        <PermissionQueryStatus
+          label="chat permissions"
+          isLoading={chatsLoading}
+          isError={chatsError}
+          isFetching={chatsFetching}
+          onRetry={() => void refetchChats()}
+        />
+
         <div className="max-h-[440px] overflow-y-auto rounded-lg border border-border bg-background">
-          {chatsLoading ? (
+          {chatsLoading && !chatData ? (
             <div className="p-4 text-xs text-muted-foreground">Loading chats…</div>
-          ) : filteredChats.length === 0 ? (
+          ) : chatsError && !chatData ? null : filteredChats.length === 0 ? (
             <div className="p-4 text-xs text-muted-foreground">No matching chats.</div>
           ) : (
             filteredChats.map((chat, index) => (
@@ -205,7 +276,7 @@ export function AgentsPermissionsTab() {
                         : {}),
                     })
                   }
-                  disabled={setChatMode.isPending}
+                  disabled={chatListUnavailable || setChatMode.isPending}
                 >
                   <SelectTrigger className="w-[155px] shrink-0 px-2 text-xs">
                     {isSelectableRunPermissionMode(

@@ -29,3 +29,13 @@ This client currently supports scoped viewing and clarification answers. It does
 not expose arbitrary remote commands, new remote chats, or a full remote coding
 workspace. Fixture and owned TLS tests cover the protocol boundaries; physical
 Mac/Windows pairing, reconnect and revocation still require a two-computer check.
+
+Pairing fields remain fixed while the request is pending. A rejected request
+keeps the link and label so you can correct them; successful pairing clears the
+old host's grant field. Expired links require a fresh offer from the host.
+
+A local answer submission error preserves the answer for correction and retry.
+Once submitted, the current request stays locked while waiting for its host
+receipt. Submission does not mean completion. A failed or unknown receipt must
+be checked on the host; this client does not offer automatic replay or a forced
+retry of an already submitted request. A new request version can be answered.

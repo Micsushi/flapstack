@@ -199,12 +199,6 @@
       "copyright": "Copyright (c) Microsoft Corporation",
       "source": "https://github.com/microsoft/onnxruntime/blob/main/LICENSE"
     },
-    "postcss-selector-parser@6.0.10": {
-      "declaredLicense": "MIT",
-      "template": "MIT",
-      "copyright": "Copyright (c) Ben Briggs (http://beneb.info)",
-      "source": "https://github.com/postcss/postcss-selector-parser/blob/master/LICENSE-MIT"
-    },
     "react-remove-scroll-bar@2.3.8": {
       "declaredLicense": "MIT",
       "template": "MIT",

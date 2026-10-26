@@ -62,10 +62,12 @@ export function acquireWorkspaceDraft(target: Target) {
             id: pendingId,
             operationId,
           })
-          if (!result.ok)
+          if (!result.ok) {
+            if (result.reason === "failed") pendingId = null
             throw new Error(
               `File reversal did not complete (${result.reason}). The draft is preserved.`,
             )
+          }
           operationId = result.operation.id
           pendingId = null
           await sessions.get(key)?.session.refreshDisk()

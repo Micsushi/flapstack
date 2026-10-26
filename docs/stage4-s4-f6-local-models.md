@@ -11,6 +11,10 @@ Claude, OpenRouter, NanoGPT, or another cloud path.
 3. Keep the default `http://127.0.0.1:11434` endpoint or another loopback URL.
 4. Refresh the catalog and select an installed model.
 
+Editing the endpoint invalidates pending refresh results, including when you
+switch away and back to the same URL. A failed refresh is reported as a failure
+even if the query still has older cached data. Retry checks the current endpoint.
+
 Catalog capability declarations are authoritative. A model with chat support
 but no declared tool support remains chat-only. Flapstack does not guess from a
 model name. Read, project-write, shell, git, and network tiers stay independently

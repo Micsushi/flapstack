@@ -76,3 +76,40 @@ ANSI overwrite, Unicode and narrow-layout checks. A windowless Windows Electron
 39.8.10 check also created a real owned fallback PTY, recovered output produced
 before attachment, and verified both owned processes exited. These checks do not
 claim Mac runtime, signed-package or durable app-restart acceptance.
+
+## Failed stop recovery
+
+Closing a terminal waits for its owned processes and native resources to stop.
+A failed stop keeps the session and its captured process identities available for
+retry. Reconnect cannot replace a session whose cleanup is unresolved. Initial
+attachment and reconnect failures expose a retry control; workspace stop uses
+the same acknowledged cleanup path as a single tab.
+
+Electron 43.8.3 with Windows winpty passed native single-tab and workspace
+failure/retry probes and mounted 390px/900px terminal controls. All captured
+fixture processes exited, and a separate sentinel terminal remained alive.
+This does not qualify ConPTY, Mac/Linux behavior or provider-launched shells.
+
+## Chat lifecycle and Linux survivor checks, 2026-10-26
+
+Archive and deletion now wait for acknowledged terminal cleanup before changing
+chat metadata or removing a worktree. A failed batch archive leaves all requested
+archive metadata unchanged. Archived deletion reports each retained failed row;
+the interface keeps those selections available for retry and displays failures.
+Local-mode chats do not stop terminals shared with the project.
+
+Nine isolated Windows scenarios exercised the actual chat router, migrated SQLite
+database, terminal manager and Electron 43.8.3 winpty together. They covered all
+four archive/delete routes, delayed exits, failed stops and retry, partial
+deletion, and preservation of local shared terminals. All 45 fixture-owned
+processes exited during cleanup. Worktree removal was a checked synthetic
+boundary, not deletion of real user worktrees. Provider shutdown, ConPTY and Mac
+remain outside this evidence.
+
+Linux cleanup records process start times and session identities from `/proc`
+before signalling individually verified owned processes. A resistant descendant
+can require bounded TERM-to-KILL escalation. Failed or ambiguous ownership stays
+retryable instead of reporting a successful stop. Thirteen unprivileged native
+WSL/node-pty scenarios passed; all 20 owned processes exited and the independent
+sentinel survived. PID identity checks are not atomic pidfd operations, and a
+fully detached process whose ancestry was lost before capture is not qualified.

@@ -28,6 +28,7 @@ import { APP_META, type ExternalApp } from "../../../../shared/external-apps"
 import { initAnalytics, shutdown as shutdownAnalytics } from "../../../lib/analytics"
 import { toast } from "sonner"
 import { SleepPreventionSetting } from "./sleep-prevention-setting"
+import { Button } from "../../ui/button"
 
 // Editor icon imports
 import cursorIcon from "../../../assets/app-icons/cursor.svg"
@@ -126,7 +127,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../../ui/dropdown-menu"
-import { ChevronDown } from "lucide-react"
+import { ChevronDown, RefreshCw } from "lucide-react"
 import { Switch } from "../../ui/switch"
 import { trpc } from "../../../lib/trpc"
 import { startProductTour } from "../../../features/onboarding/product-tour"
@@ -159,7 +160,13 @@ export function AgentsPreferencesTab() {
   const [codexThreadVisibility, setCodexThreadVisibility] = useAtom(codexThreadVisibilityAtom)
   const [preferredEditor, setPreferredEditor] = useAtom(preferredEditorAtom)
   const isNarrowScreen = useIsNarrowScreen()
-  const { data: availableAppsResult } = trpc.external.listAvailableApps.useQuery()
+  const {
+    data: availableAppsResult,
+    isLoading: isAvailableAppsLoading,
+    isFetching: isAvailableAppsFetching,
+    error: availableAppsError,
+    refetch: refetchAvailableApps,
+  } = trpc.external.listAvailableApps.useQuery()
   const availableAppIds = useMemo(
     () => new Set<ExternalApp>(availableAppsResult?.apps ?? []),
     [availableAppsResult?.apps],
@@ -177,8 +184,12 @@ export function AgentsPreferencesTab() {
   const effectivePreferredEditor = availableAppIds.has(preferredEditor)
     ? preferredEditor
     : detectedApps[0]?.id
-  const { data: runtimeActivityFixtureSettings } =
-    trpc.debug.getRuntimeActivityFixtureSettings.useQuery()
+  const {
+    data: runtimeActivityFixtureSettings,
+    isFetching: isRuntimeActivityFetching,
+    error: runtimeActivityError,
+    refetch: refetchRuntimeActivity,
+  } = trpc.debug.getRuntimeActivityFixtureSettings.useQuery()
   const setRuntimeActivityFixtureSettings =
     trpc.debug.setRuntimeActivityFixtureSettings.useMutation({
       onSuccess: (settings) => {
@@ -206,8 +217,13 @@ export function AgentsPreferencesTab() {
   }, [setAnalyticsOptOut])
 
   // Co-authored-by setting from Claude settings.json
-  const { data: includeCoAuthoredBy, refetch: refetchCoAuthoredBy } =
-    trpc.claudeSettings.getIncludeCoAuthoredBy.useQuery()
+  const {
+    data: includeCoAuthoredBy,
+    isLoading: isCoAuthoredByLoading,
+    isFetching: isCoAuthoredByFetching,
+    error: coAuthoredByError,
+    refetch: refetchCoAuthoredBy,
+  } = trpc.claudeSettings.getIncludeCoAuthoredBy.useQuery()
   const setCoAuthoredByMutation = trpc.claudeSettings.setIncludeCoAuthoredBy.useMutation({
     onSuccess: () => {
       refetchCoAuthoredBy()
@@ -270,6 +286,7 @@ export function AgentsPreferencesTab() {
             </span>
           </div>
           <Switch
+            aria-label="Unsent draft reminders"
             checked={newChatDraftReminderEnabled}
             onCheckedChange={setNewChatDraftReminderEnabled}
           />
@@ -286,6 +303,7 @@ export function AgentsPreferencesTab() {
             </span>
           </div>
           <Switch
+            aria-label="Automatic chat titles"
             checked={chatTitleGenerationEnabled}
             onCheckedChange={setChatTitleGenerationEnabled}
           />
@@ -306,7 +324,7 @@ export function AgentsPreferencesTab() {
             onValueChange={(value: ChatTitleStyle) => setChatTitleStyle(value)}
             disabled={!chatTitleGenerationEnabled}
           >
-            <SelectTrigger className="w-auto min-w-28 px-2">
+            <SelectTrigger aria-label="Chat title detail" className="w-auto min-w-28 px-2">
               <span className="text-xs">
                 {chatTitleStyle === "concise"
                   ? "Concise"
@@ -334,7 +352,11 @@ export function AgentsPreferencesTab() {
               clear.
             </span>
           </div>
-          <Switch checked={chatAutoTaggingEnabled} onCheckedChange={setChatAutoTaggingEnabled} />
+          <Switch
+            aria-label="Automatic chat tags"
+            checked={chatAutoTaggingEnabled}
+            onCheckedChange={setChatAutoTaggingEnabled}
+          />
         </div>
         <div
           className="flex items-center justify-between gap-6 border-t border-border p-4 outline-none"
@@ -376,7 +398,11 @@ export function AgentsPreferencesTab() {
               <span className="text-foreground/70">Disables response streaming.</span>
             </span>
           </div>
-          <Switch checked={reasoningOutputEnabled} onCheckedChange={setReasoningOutputEnabled} />
+          <Switch
+            aria-label="Reasoning output"
+            checked={reasoningOutputEnabled}
+            onCheckedChange={setReasoningOutputEnabled}
+          />
         </div>
         <div
           className="flex items-center justify-between p-4 border-t border-border outline-none"
@@ -393,7 +419,7 @@ export function AgentsPreferencesTab() {
             value={defaultAgentMode}
             onValueChange={(value: AgentMode) => setDefaultAgentMode(value)}
           >
-            <SelectTrigger className="w-auto px-2">
+            <SelectTrigger aria-label="Default chat mode" className="w-auto px-2">
               <span className="text-xs">{CHAT_MODE_META[defaultAgentMode].label}</span>
             </SelectTrigger>
             <SelectContent>
@@ -415,11 +441,42 @@ export function AgentsPreferencesTab() {
             <span className="text-xs text-muted-foreground">
               Add a Claude Co-authored-by trailer to commits made by Claude Code
             </span>
+            {coAuthoredByError && (
+              <div className="flex items-center gap-2 pt-1">
+                <span className="text-xs text-destructive" role="alert">
+                  Attribution setting unavailable: {coAuthoredByError.message}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isCoAuthoredByFetching}
+                  onClick={() => void refetchCoAuthoredBy()}
+                >
+                  <RefreshCw
+                    className={
+                      isCoAuthoredByFetching ? "mr-2 h-3.5 w-3.5 animate-spin" : "mr-2 h-3.5 w-3.5"
+                    }
+                    aria-hidden="true"
+                  />{" "}
+                  Retry
+                </Button>
+              </div>
+            )}
+            {isCoAuthoredByLoading && (
+              <span className="text-xs text-muted-foreground" role="status">
+                Loading attribution setting…
+              </span>
+            )}
           </div>
           <Switch
+            aria-label="Claude commit attribution"
             checked={includeCoAuthoredBy ?? false}
             onCheckedChange={handleCoAuthoredByToggle}
-            disabled={setCoAuthoredByMutation.isPending}
+            disabled={
+              isCoAuthoredByLoading ||
+              Boolean(coAuthoredByError) ||
+              setCoAuthoredByMutation.isPending
+            }
           />
         </div>
         <div
@@ -438,7 +495,10 @@ export function AgentsPreferencesTab() {
             value={codexThreadVisibility}
             onValueChange={(value: CodexThreadVisibility) => setCodexThreadVisibility(value)}
           >
-            <SelectTrigger className="w-auto min-w-36 shrink-0 px-2">
+            <SelectTrigger
+              aria-label="Codex task visibility"
+              className="w-auto min-w-36 shrink-0 px-2"
+            >
               <span className="text-xs">
                 {codexThreadVisibility === "hidden" ? "Hidden while idle" : "Show under project"}
               </span>
@@ -465,6 +525,7 @@ export function AgentsPreferencesTab() {
             </span>
           </div>
           <Switch
+            aria-label="Desktop Notifications"
             checked={desktopNotificationsEnabled}
             onCheckedChange={setDesktopNotificationsEnabled}
           />
@@ -480,7 +541,11 @@ export function AgentsPreferencesTab() {
               Play a sound when agent completes work while you're away
             </span>
           </div>
-          <Switch checked={soundEnabled} onCheckedChange={setSoundEnabled} />
+          <Switch
+            aria-label="Sound Notifications"
+            checked={soundEnabled}
+            onCheckedChange={setSoundEnabled}
+          />
         </div>
         <div
           className="flex items-center justify-between p-4 border-t border-border outline-none"
@@ -494,6 +559,7 @@ export function AgentsPreferencesTab() {
             </span>
           </div>
           <Switch
+            aria-label="Notify When Focused"
             checked={notifyWhenFocused}
             onCheckedChange={setNotifyWhenFocused}
             disabled={!desktopNotificationsEnabled}
@@ -518,7 +584,10 @@ export function AgentsPreferencesTab() {
             value={groupCloseBehavior}
             onValueChange={(value: GroupCloseBehavior) => setGroupCloseBehavior(value)}
           >
-            <SelectTrigger className="w-auto min-w-40 shrink-0 px-2">
+            <SelectTrigger
+              aria-label="When closing a group"
+              className="w-auto min-w-40 shrink-0 px-2"
+            >
               <span className="text-xs">
                 {groupCloseBehavior === "ask"
                   ? "Ask every time"
@@ -545,7 +614,11 @@ export function AgentsPreferencesTab() {
               Allow dragging chats between Global, project, and task sections.
             </span>
           </div>
-          <Switch checked={crossScopeMoveEnabled} onCheckedChange={setCrossScopeMoveEnabled} />
+          <Switch
+            aria-label="Drag chats between sections"
+            checked={crossScopeMoveEnabled}
+            onCheckedChange={setCrossScopeMoveEnabled}
+          />
         </div>
         <div
           className="flex items-center justify-between p-4 border-t border-border outline-none"
@@ -562,7 +635,7 @@ export function AgentsPreferencesTab() {
             value={autoAdvanceTarget}
             onValueChange={(value: AutoAdvanceTarget) => setAutoAdvanceTarget(value)}
           >
-            <SelectTrigger className="w-auto px-2">
+            <SelectTrigger aria-label="Auto-advance" className="w-auto px-2">
               <span className="text-xs">
                 {autoAdvanceTarget === "next"
                   ? "Go to next chat"
@@ -588,6 +661,26 @@ export function AgentsPreferencesTab() {
             <span className="text-xs text-muted-foreground">
               Default app for opening project folders
             </span>
+            {availableAppsError && (
+              <div className="flex items-center gap-2 pt-1">
+                <span className="text-xs text-destructive" role="alert">
+                  Installed app discovery unavailable: {availableAppsError.message}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isAvailableAppsFetching}
+                  onClick={() => void refetchAvailableApps()}
+                >
+                  <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+                </Button>
+              </div>
+            )}
+            {isAvailableAppsLoading && (
+              <span className="text-xs text-muted-foreground" role="status">
+                Checking installed apps…
+              </span>
+            )}
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -745,6 +838,21 @@ export function AgentsPreferencesTab() {
       </div>
 
       {/* Developer testing */}
+      {runtimeActivityError && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/5 p-4">
+          <p className="text-xs text-destructive" role="alert">
+            Runtime activity test controls unavailable: {runtimeActivityError.message}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={isRuntimeActivityFetching}
+            onClick={() => void refetchRuntimeActivity()}
+          >
+            <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+          </Button>
+        </div>
+      )}
       {runtimeActivityFixtureSettings?.available && (
         <div className="bg-background rounded-lg border border-border overflow-hidden">
           <div
@@ -761,6 +869,7 @@ export function AgentsPreferencesTab() {
               </span>
             </div>
             <Switch
+              aria-label="Runtime activity test controls"
               checked={runtimeActivityFixtureSettings?.enabled ?? false}
               onCheckedChange={(enabled) => setRuntimeActivityFixtureSettings.mutate({ enabled })}
               disabled={
@@ -788,6 +897,7 @@ export function AgentsPreferencesTab() {
             </span>
           </div>
           <Switch
+            aria-label="Share Usage Analytics"
             checked={!analyticsOptOut}
             onCheckedChange={(enabled) => handleAnalyticsToggle(!enabled)}
           />

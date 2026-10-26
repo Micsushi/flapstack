@@ -226,9 +226,19 @@ export function ProjectVaultGraphPanel({ projectId }: { projectId: string }) {
           Building graph view…
         </p>
       ) : graph.error ? (
-        <p className="p-6 text-sm text-destructive" role="alert">
-          {graph.error.message}
-        </p>
+        <div className="flex flex-col items-start gap-3 p-6">
+          <p className="text-sm text-destructive" role="alert">
+            {graph.error.message}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={graph.isFetching}
+            onClick={() => void graph.refetch()}
+          >
+            <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" /> Retry
+          </Button>
+        </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
           <div className="min-h-80 min-w-0 flex-1 overflow-auto p-4 lg:min-h-0">
@@ -310,9 +320,20 @@ export function ProjectVaultGraphPanel({ projectId }: { projectId: string }) {
                       </div>
                     )}
                     {previewGraphContext.error && (
-                      <p className="text-[11px] text-destructive" role="alert">
-                        {previewGraphContext.error.message}
-                      </p>
+                      <div className="space-y-2">
+                        <p className="text-[11px] text-destructive" role="alert">
+                          {previewGraphContext.error.message}
+                        </p>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={previewGraphContext.isFetching}
+                          onClick={() => void previewGraphContext.refetch()}
+                        >
+                          <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+                          preview
+                        </Button>
+                      </div>
                     )}
                     {stagedMode && (
                       <Button
@@ -346,8 +367,11 @@ export function ProjectVaultGraphPanel({ projectId }: { projectId: string }) {
                       onChange={(event) => setArtifactToLink(event.target.value)}
                       className="h-8 min-w-0 flex-1 rounded border bg-background px-2 text-xs"
                       aria-label="Visual artifact to link"
+                      disabled={visualHistory.isFetching || Boolean(visualHistory.error)}
                     >
-                      <option value="">Choose artifact…</option>
+                      <option value="">
+                        {visualHistory.isFetching ? "Loading artifacts…" : "Choose artifact…"}
+                      </option>
                       {(visualHistory.data ?? [])
                         .filter(
                           (artifact) =>
@@ -363,7 +387,12 @@ export function ProjectVaultGraphPanel({ projectId }: { projectId: string }) {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={!artifactToLink || linkVisual.isPending}
+                      disabled={
+                        !artifactToLink ||
+                        linkVisual.isPending ||
+                        visualHistory.isFetching ||
+                        Boolean(visualHistory.error)
+                      }
                       onClick={() =>
                         linkVisual.mutate({
                           artifactId: artifactToLink,
@@ -375,6 +404,22 @@ export function ProjectVaultGraphPanel({ projectId }: { projectId: string }) {
                       Link
                     </Button>
                   </div>
+                  {visualHistory.error && (
+                    <div className="mt-2 space-y-2">
+                      <p className="text-[11px] text-destructive" role="alert">
+                        Visual artifacts unavailable: {visualHistory.error.message}
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={visualHistory.isFetching}
+                        onClick={() => void visualHistory.refetch()}
+                      >
+                        <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+                        artifacts
+                      </Button>
+                    </div>
+                  )}
                   <ul className="mt-2 space-y-1 text-[11px]">
                     {(linkedVisuals.data ?? []).map((artifact) => (
                       <li key={artifact.id} className="flex justify-between gap-2 font-mono">
@@ -390,12 +435,28 @@ export function ProjectVaultGraphPanel({ projectId }: { projectId: string }) {
                         </span>
                       </li>
                     ))}
-                    {!linkedVisuals.isFetching && (linkedVisuals.data?.length ?? 0) === 0 && (
+                    {linkedVisuals.error ? (
+                      <li className="font-sans text-destructive" role="alert">
+                        Linked visual artifacts unavailable: {linkedVisuals.error.message}
+                      </li>
+                    ) : !linkedVisuals.isFetching && (linkedVisuals.data?.length ?? 0) === 0 ? (
                       <li className="font-sans text-muted-foreground">
                         No visual artifacts linked.
                       </li>
-                    )}
+                    ) : null}
                   </ul>
+                  {linkedVisuals.error && (
+                    <Button
+                      className="mt-2"
+                      size="sm"
+                      variant="outline"
+                      disabled={linkedVisuals.isFetching}
+                      onClick={() => void linkedVisuals.refetch()}
+                    >
+                      <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry linked
+                      visuals
+                    </Button>
+                  )}
                   {linkVisual.error && (
                     <p className="mt-2 text-[11px] text-destructive" role="alert">
                       {linkVisual.error.message}

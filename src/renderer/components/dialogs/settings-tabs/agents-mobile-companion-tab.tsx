@@ -8,6 +8,7 @@ import {
 } from "../../../../shared/mobile-control"
 import { trpc } from "../../../lib/trpc"
 import { Button } from "../../ui/button"
+import { RefreshCw } from "lucide-react"
 import { RemoteComputerClientSection } from "./remote-computer-client"
 import { mobileConnectionLink } from "../../../../shared/mobile-connection-link"
 
@@ -36,6 +37,9 @@ export function AgentsMobileCompanionTab() {
     },
   )
   const projects = trpc.projects.list.useQuery()
+  const discoveryError = interfaces.error ?? devices.error ?? grants.error ?? projects.error
+  const isRefreshingDiscovery =
+    interfaces.isFetching || devices.isFetching || grants.isFetching || projects.isFetching
   const configure = trpc.mobileBridge.configure.useMutation()
   const createPairingOffer = trpc.mobileBridge.createPairingOffer.useMutation()
   const renameDevice = trpc.mobileBridge.renameDevice.useMutation()
@@ -46,13 +50,27 @@ export function AgentsMobileCompanionTab() {
   const [offer, setOffer] = useState<MobilePairingOffer | null>(null)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const offerGeneration = useRef(0)
+  const [now, setNow] = useState(Date.now)
+  const [qrError, setQrError] = useState(false)
+  const [qrAttempt, setQrAttempt] = useState(0)
+  const configuring = useRef(false)
+  const [isConfiguring, setIsConfiguring] = useState(false)
+  const [configurationNotice, setConfigurationNotice] = useState<string | null>(null)
   const [pairingNotice, setPairingNotice] = useState<string | null>(null)
   const bridge = !status.error && status.data?.state === "running" ? status.data : null
   const bridgeIdentity = bridge
     ? JSON.stringify([bridge.bindAddress, bridge.port, bridge.fingerprint])
     : null
   const [offerIdentity, setOfferIdentity] = useState<string | null>(null)
-  const displayedOffer = bridgeIdentity && offerIdentity === bridgeIdentity ? offer : null
+  const displayedOffer =
+    bridgeIdentity && offerIdentity === bridgeIdentity && offer && offer.expiresAt > now
+      ? offer
+      : null
+  useEffect(() => {
+    if (!offer) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [offer])
   useEffect(() => {
     offerGeneration.current += 1
     setOffer(null)
@@ -65,6 +83,12 @@ export function AgentsMobileCompanionTab() {
   const [grantDeviceId, setGrantDeviceId] = useState("")
   const [resourceKind, setResourceKind] = useState<GrantResourceKind>("project")
   const [resourceId, setResourceId] = useState("")
+  const authorityReadUnavailable =
+    devices.isLoading ||
+    Boolean(devices.error) ||
+    grants.isLoading ||
+    Boolean(grants.error) ||
+    (resourceKind === "project" && (projects.isLoading || Boolean(projects.error)))
 
   const activeDevices = useMemo(
     () => (devices.data ?? []).filter((device) => device.revokedAt === undefined),
@@ -87,17 +111,22 @@ export function AgentsMobileCompanionTab() {
       return
     }
     let live = true
+    setQrError(false)
     void QRCode.toDataURL(mobileConnectionLink(displayedOffer), {
       errorCorrectionLevel: "M",
       margin: 2,
       width: 256,
-    }).then((value) => {
-      if (live) setQrDataUrl(value)
     })
+      .then((value) => {
+        if (live) setQrDataUrl(value)
+      })
+      .catch(() => {
+        if (live) setQrError(true)
+      })
     return () => {
       live = false
     }
-  }, [displayedOffer])
+  }, [displayedOffer, qrAttempt])
 
   const refresh = async () => {
     await Promise.all([
@@ -105,12 +134,17 @@ export function AgentsMobileCompanionTab() {
       utils.mobileBridge.listInterfaces.invalidate(),
       utils.mobileBridge.listDevices.invalidate(),
       utils.mobileBridge.listGrants.invalidate(),
+      utils.projects.list.invalidate(),
     ])
   }
 
   const setEnabled = async (enabled: boolean) => {
+    if (configuring.current) return
+    configuring.current = true
+    setIsConfiguring(true)
+    setConfigurationNotice(null)
     try {
-      await configure.mutateAsync({
+      const result = await configure.mutateAsync({
         enabled,
         ...(enabled ? { bindAddress } : {}),
       })
@@ -118,12 +152,25 @@ export function AgentsMobileCompanionTab() {
         setOffer(null)
         setQrDataUrl(null)
       }
-      await refresh()
-      toast.success(
-        enabled ? "Mobile companion bridge enabled" : "Mobile companion bridge disabled",
+      setConfigurationNotice(
+        result.state === "running"
+          ? "Bridge is running."
+          : result.state === "disabled"
+            ? "Bridge is disabled."
+            : `Bridge is ${result.state}. ${result.failure || "Refresh health before retrying."}`,
       )
+      await refresh().catch(() => {
+        setConfigurationNotice(
+          "Bridge setting saved, but health could not be refreshed. Refresh bridge health before changing it again.",
+        )
+      })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Mobile bridge could not be changed.")
+      setConfigurationNotice(
+        error instanceof Error ? error.message : "Mobile bridge could not be changed.",
+      )
+    } finally {
+      configuring.current = false
+      setIsConfiguring(false)
     }
   }
 
@@ -229,6 +276,24 @@ export function AgentsMobileCompanionTab() {
         </p>
       </header>
 
+      {discoveryError && (
+        <div className="flex items-start justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+          <p className="text-sm text-destructive" role="alert">
+            Mobile companion discovery unavailable: {discoveryError.message}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            disabled={isRefreshingDiscovery}
+            onClick={() => void refresh()}
+          >
+            <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry reads
+          </Button>
+        </div>
+      )}
+
       <RemoteComputerClientSection />
       <section className="space-y-3" data-settings-id="mobile-companion-bridge">
         <div>
@@ -244,7 +309,13 @@ export function AgentsMobileCompanionTab() {
             className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={bindAddress}
             onChange={(event) => setBindAddress(event.target.value)}
-            disabled={status.data?.state === "running"}
+            disabled={
+              isConfiguring ||
+              status.data?.state === "running" ||
+              interfaces.isLoading ||
+              interfaces.isFetching ||
+              Boolean(interfaces.error)
+            }
           >
             {(interfaces.data ?? []).map((entry) => (
               <option key={`${entry.name}:${entry.address}`} value={entry.address}>
@@ -255,12 +326,24 @@ export function AgentsMobileCompanionTab() {
         </label>
         <div className="flex flex-wrap items-center gap-2">
           {status.data?.state === "running" ? (
-            <Button variant="outline" onClick={() => void setEnabled(false)}>
+            <Button
+              variant="outline"
+              disabled={isConfiguring}
+              onClick={() => void setEnabled(false)}
+            >
               Disable bridge
             </Button>
           ) : (
             <Button
-              disabled={!bindAddress || Boolean(status.error) || !status.data}
+              disabled={
+                isConfiguring ||
+                !bindAddress ||
+                Boolean(status.error) ||
+                !status.data ||
+                interfaces.isLoading ||
+                interfaces.isFetching ||
+                Boolean(interfaces.error)
+              }
               onClick={() => void setEnabled(true)}
             >
               Enable bridge
@@ -280,6 +363,11 @@ export function AgentsMobileCompanionTab() {
         >
           Refresh bridge health
         </Button>
+        {configurationNotice && (
+          <p role="status" className="text-sm">
+            {configurationNotice}
+          </p>
+        )}
         {status.error && (
           <p role="alert" className="text-sm">
             Bridge health is unknown. Refresh to check the current state.
@@ -302,11 +390,16 @@ export function AgentsMobileCompanionTab() {
           </p>
         </div>
         <Button
-          disabled={!bridgeIdentity || createPairingOffer.isPending}
+          disabled={!bridgeIdentity || isConfiguring || createPairingOffer.isPending}
           onClick={() => void createOffer()}
         >
           Create fresh pairing QR
         </Button>
+        {offer && offer.expiresAt <= now && (
+          <p role="status" className="text-sm">
+            This pairing offer expired. Create a fresh pairing QR.
+          </p>
+        )}
         {pairingNotice && (
           <p role="status" className="text-sm">
             {pairingNotice}
@@ -322,6 +415,13 @@ export function AgentsMobileCompanionTab() {
                 className="rounded-md bg-white p-2"
                 alt="QR code for the current Flapstack mobile pairing offer"
               />
+            ) : qrError ? (
+              <div role="alert" className="space-y-2 text-sm">
+                <p>QR could not be created. Retry it or copy the connection link.</p>
+                <Button variant="outline" onClick={() => setQrAttempt((value) => value + 1)}>
+                  Retry QR
+                </Button>
+              </div>
             ) : (
               <div
                 className="h-64 w-64 animate-pulse rounded-md bg-muted"
@@ -377,7 +477,14 @@ export function AgentsMobileCompanionTab() {
             Renaming changes only the local label. Revocation closes active sessions immediately.
           </p>
         </div>
-        {(devices.data ?? []).length === 0 ? (
+        {devices.error && !devices.data ? (
+          <p
+            role="alert"
+            className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"
+          >
+            Paired devices unavailable. Retry the discovery reads above before granting authority.
+          </p>
+        ) : (devices.data ?? []).length === 0 ? (
           <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
             No devices paired.
           </p>
@@ -434,6 +541,7 @@ export function AgentsMobileCompanionTab() {
             className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             value={grantDeviceId}
             onChange={(event) => setGrantDeviceId(event.target.value)}
+            disabled={authorityReadUnavailable}
           >
             {activeDevices.map((device) => (
               <option key={device.deviceId} value={device.deviceId}>
@@ -449,6 +557,7 @@ export function AgentsMobileCompanionTab() {
               setResourceKind(event.target.value as GrantResourceKind)
               setResourceId("")
             }}
+            disabled={authorityReadUnavailable}
           >
             {resourceKinds.map((kind) => (
               <option key={kind} value={kind}>
@@ -462,6 +571,7 @@ export function AgentsMobileCompanionTab() {
               className="h-9 min-w-0 rounded-md border border-input bg-background px-3 text-sm"
               value={resourceId}
               onChange={(event) => setResourceId(event.target.value)}
+              disabled={authorityReadUnavailable}
             >
               <option value="">Choose a project</option>
               {(projects.data ?? []).map((project) => (
@@ -477,12 +587,21 @@ export function AgentsMobileCompanionTab() {
               placeholder="Exact resource ID"
               value={resourceId}
               onChange={(event) => setResourceId(event.target.value)}
+              disabled={authorityReadUnavailable}
             />
           )}
         </div>
-        <Button disabled={!grantDeviceId || !resourceId.trim()} onClick={() => void grantControl()}>
+        <Button
+          disabled={authorityReadUnavailable || !grantDeviceId || !resourceId.trim()}
+          onClick={() => void grantControl()}
+        >
           Allow chats and controls
         </Button>
+        {grants.error && !grants.data && (
+          <p role="alert" className="text-sm text-destructive">
+            Authority grants unavailable. Retry the discovery reads above before changing access.
+          </p>
+        )}
         {(grants.data ?? []).map((grant) => (
           <div key={grant.grantId} className="rounded-xl border border-border p-4 text-xs">
             <div className="flex flex-wrap items-start justify-between gap-2">

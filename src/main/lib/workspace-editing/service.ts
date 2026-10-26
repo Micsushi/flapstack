@@ -21,6 +21,7 @@ import {
   workspaceEditMaxBytes,
   workspaceEditScopeSchema,
   workspaceEditTargetSchema,
+  openWorkspaceDraftSchema,
   saveWorkspaceEditSchema,
   revertWorkspaceEditSchema,
   saveAsWorkspaceEditSchema,
@@ -50,6 +51,7 @@ const draftOwners = new Map<
     canonicalPath: string
     fileIdentity: string
     saving?: boolean
+    releaseWhenIdle?: boolean
   }
 >()
 const fileIdentity = (path: string) => {
@@ -58,9 +60,22 @@ const fileIdentity = (path: string) => {
 }
 
 export class WorkspaceEditConflictError extends Error {
-  constructor(public readonly diskSha256: string | null) {
+  constructor(
+    public readonly diskSha256: string | null,
+    public readonly notApplied = false,
+  ) {
     super("File changed on disk. Keep the draft and reload or review before saving.")
     this.name = "WorkspaceEditConflictError"
+  }
+}
+
+export class WorkspaceDraftSaveRejectedError extends Error {
+  constructor(
+    message: string,
+    public readonly draft: Draft,
+  ) {
+    super(message)
+    this.name = "WorkspaceDraftSaveRejectedError"
   }
 }
 
@@ -302,12 +317,10 @@ export class WorkspaceEditingService {
     const value = saveWorkspaceDraftSchema.parse(input)
     if (value.intent === "autosave" && value.reviewedDiskSha256)
       throw new Error("Replacing a reviewed disk version requires an explicit Save")
-    this.writable(value, value.intent)
     const root = this.draftRoot(value)
     return withRootLock(root.path, async () => {
       let draft = this.draft(value, value.draftId)
       this.draftLease(draft.id, value.leaseToken, owner)
-      this.writable(value, value.intent)
       const pending = {
         id: value.id,
         revision: value.expectedRevision,
@@ -330,10 +343,23 @@ export class WorkspaceEditingService {
         draft = await this.reconcileDraftSave(draft, value)
         return { operation: this.dto(previous), draft }
       }
+      // A recorded outcome can be acknowledged after autosave permission changes; it writes no file.
+      if (
+        value.intent === "autosave" &&
+        parsePermissionMode(this.scope(value).chat.permissionMode) === "ask-before-edits"
+      )
+        throw new WorkspaceDraftSaveRejectedError(
+          "This chat requires an explicit Save for each edit. Newer text can still be saved as a draft.",
+          draft,
+        )
+      this.writable(value, value.intent)
       draft = await this.reconcileDraftSave(draft, value)
       if (draft.pendingSave) throw new Error("An expired draft save requires explicit recovery")
       if (draft.revision !== value.expectedRevision)
-        throw new Error("Draft revision changed; keep the local buffer")
+        throw new WorkspaceDraftSaveRejectedError(
+          "Draft revision changed; the file was not saved. Your local buffer is preserved.",
+          draft,
+        )
       const lease = this.draftLease(draft.id, value.leaseToken, owner)
       try {
         if (
@@ -377,13 +403,15 @@ export class WorkspaceEditingService {
         throw error
       } finally {
         lease.saving = false
+        if (lease.releaseWhenIdle && draftOwners.get(draft.id) === lease)
+          draftOwners.delete(draft.id)
       }
     })
   }
 
   /** Called only with a main-process window identity, never a renderer-supplied id. */
-  async openDraft(input: z.infer<typeof workspaceEditTargetSchema>, owner: WorkspaceDraftOwner) {
-    const value = workspaceEditTargetSchema.parse(input)
+  async openDraft(input: z.infer<typeof openWorkspaceDraftSchema>, owner: WorkspaceDraftOwner) {
+    const { recovery, ...value } = openWorkspaceDraftSchema.parse(input)
     if (!owner.isAlive(owner.windowId)) throw new Error("An active desktop window is required")
     const root = this.draftRoot(value)
     return withRootLock(root.path, async () => {
@@ -418,6 +446,10 @@ export class WorkspaceEditingService {
             if (lease.saving) throw new Error("A save is in progress; reopen after it finishes")
             if (lease.windowId !== owner.windowId)
               throw new Error("This file is already editable in another window")
+            if (recovery && (id !== recovery.draftId || lease.token !== recovery.leaseToken))
+              throw new Error(
+                "Another editor owns this draft. Close that editor before retrying; your local text is preserved.",
+              )
             replacedLeases.push(id)
           }
         }
@@ -435,6 +467,15 @@ export class WorkspaceEditingService {
           ),
         )
         .get()
+      if (
+        recovery &&
+        (!row ||
+          row.id !== recovery.draftId ||
+          (row.content !== recovery.content && row.content !== recovery.pendingUpdateContent))
+      )
+        throw new Error(
+          "The saved draft changed in another editor. Both versions are preserved; save a separate copy of your local text.",
+        )
       if (!row) {
         this.db.transaction((tx) => {
           const usage = tx
@@ -541,8 +582,10 @@ export class WorkspaceEditingService {
     const value = releaseWorkspaceDraftSchema.parse(input)
     const lease = draftOwners.get(value.draftId)
     // A stale unmount cannot release a newer mount's token. No buffer is deleted.
-    if (lease?.windowId === owner.windowId && lease.token === value.leaseToken && !lease.saving)
-      draftOwners.delete(value.draftId)
+    if (lease?.windowId === owner.windowId && lease.token === value.leaseToken) {
+      if (lease.saving) lease.releaseWhenIdle = true
+      else draftOwners.delete(value.draftId)
+    }
     return { released: !draftOwners.has(value.draftId) }
   }
 
@@ -694,6 +737,18 @@ export class WorkspaceEditingService {
         throw new Error("Edit history belongs to a different registered root")
       if (row.kind === "rename" && !row.previousRelativePath)
         throw new Error("Rename history has no source path")
+      const reversals = this.db
+        .select()
+        .from(schema.workspaceEdits)
+        .where(eq(schema.workspaceEdits.revertsId, row.id))
+        .all()
+      for (let reversal of reversals) {
+        if (reversal.state === "prepared") reversal = await this.recover(reversal, value)
+        if (reversal.state === "applied" || reversal.state === "expired")
+          throw new Error(
+            "This edit has already been reversed. Use the latest undo/redo action instead.",
+          )
+      }
       return this.saveRecord(
         {
           ...value,
@@ -803,10 +858,12 @@ export class WorkspaceEditingService {
       kind === "create",
       exactName,
     )
-    if (before.sha256 !== input.expectedSha256) throw new WorkspaceEditConflictError(before.sha256)
+    if (before.sha256 !== input.expectedSha256)
+      throw new WorkspaceEditConflictError(before.sha256, true)
     if (kind === "rename") {
       const destination = await this.readForSave({ ...input, relativePath: path }, true, exactName)
-      if (destination.sha256 !== null) throw new WorkspaceEditConflictError(destination.sha256)
+      if (destination.sha256 !== null)
+        throw new WorkspaceEditConflictError(destination.sha256, true)
       bytes = Buffer.from(before.content, "utf8")
     }
     if (kind === "remove")
@@ -973,7 +1030,14 @@ export class WorkspaceEditingService {
       // If metadata is unavailable, keep the prepared record for a later retry/restart.
       // The rooted writer already attempted safe rollback; never blindly restore here.
       try {
-        await this.recover(row)
+        const recorded = this.db
+          .select()
+          .from(schema.workspaceEdits)
+          .where(eq(schema.workspaceEdits.id, row.id))
+          .get()
+        if (recorded && recorded.state !== "prepared") return this.dto(recorded)
+        const recovered = await this.recover(recorded ?? row)
+        if (recovered.state === "applied") return this.dto(recovered)
       } catch {
         /* Retain durable recovery bytes. */
       }

@@ -126,6 +126,7 @@ export function DiscussionAnnotationThread({
         question={draft}
         onSaved={() => setDraft((current) => (current === draft ? "" : current))}
         refresh={store.refresh}
+        run={store.run}
         disabled={store.busy}
       />
       {annotation.promotedTopicId ? (
@@ -168,7 +169,7 @@ export function DiscussionAnnotationThread({
             />
           </label>
           <p className="text-xs text-muted-foreground">
-            Adds this finding to a linked topic in this project on {scope.hostId}. No task or run
+            Adds this finding to a linked topic in this chat’s annotation panel. No task or run
             starts.
           </p>
           <div className="flex flex-wrap gap-2">

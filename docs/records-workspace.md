@@ -154,8 +154,16 @@ companion runtime.
 
 Workers started by the Records Board receive their own scoped Records tools.
 Ordinary desktop chats do not inherit the desktop's Records authority. Historical
-SQLite task data is retained; when Records is connected, legacy task mutations
-are refused so two editable task systems cannot diverge.
+SQLite task groups remain available in the sidebar for reading existing chats.
+Their menus and archived entries are read-only; use **Open Work board** for current
+task work. A project’s **New task in Work board** action (also Ctrl/Cmd-click on
+its new-chat button) opens the canonical Board. If Work board & planning is
+disabled, the action opens Beta features settings so it can be enabled. Choose **New task** there, then
+select the Records project and task document in its draft editor. Local project
+and historical task IDs are not assumed to identify Records destinations.
+The Board preserves draft text on failed creation and checks the current document
+revision. Legacy task mutations are refused so two editable task systems cannot
+diverge.
 
 In Plan, use **Add Markdown plan** to register an existing file by its path relative
 to the selected local project, such as `docs/plan.md`. Registration keeps the file

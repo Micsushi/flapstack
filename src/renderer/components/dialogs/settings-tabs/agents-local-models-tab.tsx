@@ -1,6 +1,6 @@
 import { useAtom } from "jotai"
 import { AlertTriangle, Check, HardDrive, RefreshCw, ShieldCheck, X } from "lucide-react"
-import { useMemo, useReducer, useState } from "react"
+import { useEffect, useMemo, useReducer, useRef, useState } from "react"
 import {
   DEFAULT_OLLAMA_BASE_URL,
   type LocalModelCapabilityName,
@@ -51,6 +51,13 @@ export function AgentsLocalModelsTab() {
     createLocalModelUiState,
   )
   const [permissionMode, setPermissionMode] = useState<RunPermissionMode>("read-only")
+  const refreshGeneration = useRef(0)
+  useEffect(
+    () => () => {
+      refreshGeneration.current += 1
+    },
+    [],
+  )
   const [fixtureState, setFixtureState] = useState<LocalModelDevFixtureState>(
     localModelDevFixtureStateForEndpoint(persistedEndpoint) ?? "ready",
   )
@@ -72,18 +79,31 @@ export function AgentsLocalModelsTab() {
   )
 
   const refresh = async () => {
+    const generation = ++refreshGeneration.current
     dispatch({ type: "refresh-started" })
     if (!state.endpointValidation.valid) return
 
-    const result = await catalogQuery.refetch()
-    if (result.data) {
-      dispatch({ type: "refresh-succeeded", catalog: result.data })
-      return
+    try {
+      const result = await catalogQuery.refetch()
+      if (generation !== refreshGeneration.current) return
+      if (result.data && !result.error) {
+        dispatch({ type: "refresh-succeeded", catalog: result.data })
+        return
+      }
+      dispatch({
+        type: "refresh-failed",
+        message: result.error?.message ?? "The local model catalog could not be refreshed.",
+      })
+    } catch (error) {
+      if (generation !== refreshGeneration.current) return
+      dispatch({
+        type: "refresh-failed",
+        message:
+          error instanceof Error
+            ? error.message
+            : "The local model catalog could not be refreshed.",
+      })
     }
-    dispatch({
-      type: "refresh-failed",
-      message: result.error?.message ?? "The local model catalog could not be refreshed.",
-    })
   }
 
   const selectModel = (modelId: string) => {
@@ -93,6 +113,7 @@ export function AgentsLocalModelsTab() {
   }
 
   const applyFixtureState = (nextState: LocalModelDevFixtureState) => {
+    refreshGeneration.current += 1
     const endpoint = LOCAL_MODEL_DEV_FIXTURE_ENDPOINTS[nextState]
     const modelId =
       nextState === "ready" || nextState === "stale" ? LOCAL_MODEL_DEV_FIXTURE_CHAT_MODEL : null
@@ -182,6 +203,7 @@ export function AgentsLocalModelsTab() {
             id="local-model-endpoint-input"
             value={state.endpointDraft}
             onChange={(event) => {
+              refreshGeneration.current += 1
               const value = event.target.value
               dispatch({ type: "endpoint-edited", value })
               setPersistedEndpoint(value)

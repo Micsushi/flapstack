@@ -28,6 +28,21 @@ Open **Settings → Agent Profiles**. Profile Studio supports blank creation, an
 
 Built-in Planner, Implementer, Reviewer, and Verifier profiles are read-only. Duplicate a starter before editing it.
 
+Unsaved edits survive background refreshes and visits to the Personality Library.
+If the saved version changes elsewhere, the editor keeps your draft and blocks a
+stale save. **Reload saved version** explicitly discards that draft and reads the
+current version. Drafts are not retained after closing the editor or app.
+
+Ordinary profile presentation edits, personality edits, and archive/restore use
+the app's shared Undo/Redo history. Undo preserves the record's identity and adds
+a new immutable version when restoring edited content. It does not rewind old
+versions or overwrite newer unsaved typing. Conflicting external changes block
+undo; a failed operation remains available for retry. History lasts for the app
+session and is bounded by count and size. Creation, duplication, import,
+conversion, launch, evaluation and authority-changing profile edits are outside
+this reversal support. Unsupported or oversized edits report that undo is
+unavailable and clear the redo branch.
+
 The local evaluation runner requires the complete unique schema, capability, permission, prompt-injection, determinism, and task-quality fixture set plus Runtime compatibility. A subset or duplicate set is rejected before evidence is written. Passing local fixtures records `tested-local`; it does not claim provider/model support. An untested or failed built-in combination is launch-blocked until its exact version and resolved Runtime/model pass; user-created profiles remain explicitly preview-and-confirm flows.
 
 ## Standalone launch

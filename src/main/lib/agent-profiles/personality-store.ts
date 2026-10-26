@@ -73,6 +73,7 @@ export class AgentPersonalityStoreError extends Error {
 }
 
 export class AgentPersonalityStore {
+  private readonly heldLocks = new Set<string>()
   constructor(
     private readonly options: {
       userRoot: string
@@ -162,6 +163,18 @@ export class AgentPersonalityStore {
       rmSync(directory, { recursive: true, force: true })
       throw error
     }
+  }
+
+  withHistoryLock<T>(personalityId: string, scope: Scope, operation: () => T): T {
+    const located = this.locate(z.string().uuid().parse(personalityId), scope)
+    return this.withLock(located.directory, operation)
+  }
+
+  historyState(personalityId: string, scope: Scope) {
+    const located = this.locate(z.string().uuid().parse(personalityId), scope)
+    const manifest = this.readManifest(located.directory)
+    const document = this.get({ personalityId, version: manifest.currentVersion }, scope)
+    return { manifest, document }
   }
 
   update(inputValue: {
@@ -286,8 +299,11 @@ export class AgentPersonalityStore {
     )
   }
 
-  archive(input: { personalityId: string; expectedVersion: number; scope?: Scope }): Manifest {
-    return this.setArchived(input, Date.now())
+  archive(
+    input: { personalityId: string; expectedVersion: number; scope?: Scope },
+    previousArchivedAt = Date.now(),
+  ): Manifest {
+    return this.setArchived(input, previousArchivedAt)
   }
 
   restore(input: { personalityId: string; expectedVersion: number; scope?: Scope }): Manifest {
@@ -439,6 +455,7 @@ export class AgentPersonalityStore {
 
   private withLock<T>(directory: string, action: () => T): T {
     const path = join(directory, ".write.lock")
+    if (this.heldLocks.has(path)) return action()
     let descriptor: number
     try {
       descriptor = openSync(path, "wx", 0o600)
@@ -448,10 +465,12 @@ export class AgentPersonalityStore {
       }
       throw error
     }
+    this.heldLocks.add(path)
     try {
       writeFileSync(descriptor, `${process.pid}:${process.ppid}`)
       return action()
     } finally {
+      this.heldLocks.delete(path)
       closeSync(descriptor)
       rmSync(path, { force: true })
     }

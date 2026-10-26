@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import type {
   CredentialId,
@@ -59,7 +59,12 @@ function targetId(id: CredentialId): string {
   return `credential-${id.replaceAll(".", "-")}`
 }
 
-function statusLabel(status: CredentialStatus, externallyConfigured: boolean): string {
+function statusLabel(
+  status: CredentialStatus,
+  externallyConfigured: boolean,
+  readUnavailable: boolean,
+): string {
+  if (readUnavailable) return "Status unavailable"
   if (externallyConfigured) return "Configured outside Flapstack"
   if (status.persistence === "session") return "Session only"
   if (status.persistence === "encrypted") return "Encrypted on this device"
@@ -82,6 +87,7 @@ function ManagedCredentialRow({
   onSave,
   onRemove,
   pending,
+  readUnavailable,
 }: {
   definition: ManagedCredentialDefinition
   status: CredentialStatus
@@ -89,25 +95,50 @@ function ManagedCredentialRow({
   onSave: (secret: string, metadata?: CredentialMetadata) => Promise<void>
   onRemove: () => Promise<void>
   pending: boolean
+  readUnavailable: boolean
 }) {
   const [secret, setSecret] = useState("")
-  const [model, setModel] = useState("")
-  const [baseUrl, setBaseUrl] = useState("")
-  const configured = status.configured || externallyConfigured
+  const [model, setModel] = useState(status.metadata?.model ?? "claude-sonnet-5")
+  const [baseUrl, setBaseUrl] = useState(status.metadata?.baseUrl ?? "https://api.anthropic.com")
+  const previousMetadata = useRef({ model, baseUrl })
+  const busy = useRef(false)
+  const draftRevision = useRef(0)
+  const secretInput = useRef<HTMLInputElement>(null)
+  const [writing, setWriting] = useState(false)
+  const [writeError, setWriteError] = useState<string | null>(null)
+  const configured = !readUnavailable && (status.configured || externallyConfigured)
 
   useEffect(() => {
     if (definition.metadata !== "claude-custom") return
-    setModel(status.metadata?.model ?? "claude-sonnet-5")
-    setBaseUrl(status.metadata?.baseUrl ?? "https://api.anthropic.com")
+    const previous = previousMetadata.current
+    const next = {
+      model: status.metadata?.model ?? "claude-sonnet-5",
+      baseUrl: status.metadata?.baseUrl ?? "https://api.anthropic.com",
+    }
+    setModel((current) => (current === previous.model ? next.model : current))
+    setBaseUrl((current) => (current === previous.baseUrl ? next.baseUrl : current))
+    previousMetadata.current = next
   }, [definition.metadata, status.metadata?.baseUrl, status.metadata?.model])
 
+  const finishWrite = () => {
+    busy.current = false
+    setWriting(false)
+    requestAnimationFrame(() => {
+      if (document.activeElement === document.body) secretInput.current?.focus()
+    })
+  }
+
   const save = async () => {
+    if (busy.current || pending || readUnavailable || !secret.trim()) return
     if (
       configured &&
       !window.confirm(`Replace the ${definition.label}? The prior value cannot be recovered.`)
-    ) {
+    )
       return
-    }
+    busy.current = true
+    setWriting(true)
+    setWriteError(null)
+    const submittedRevision = draftRevision.current
     try {
       await onSave(
         secret,
@@ -115,23 +146,27 @@ function ManagedCredentialRow({
           ? { model: model.trim(), baseUrl: baseUrl.trim() }
           : undefined,
       )
-      setSecret("")
+      if (draftRevision.current === submittedRevision) setSecret("")
     } catch (error) {
-      toast.error(`${definition.label} was not saved`, { description: errorMessage(error) })
+      setWriteError(errorMessage(error))
+    } finally {
+      finishWrite()
     }
   }
 
   const remove = async () => {
-    if (
-      !window.confirm(`Remove the ${definition.label}? Runs that require it will stop working.`)
-    ) {
+    if (busy.current || pending || readUnavailable) return
+    if (!window.confirm(`Remove the ${definition.label}? Runs that require it will stop working.`))
       return
-    }
+    busy.current = true
+    setWriting(true)
+    setWriteError(null)
     try {
       await onRemove()
-      setSecret("")
     } catch (error) {
-      toast.error(`${definition.label} was not removed`, { description: errorMessage(error) })
+      setWriteError(errorMessage(error))
+    } finally {
+      finishWrite()
     }
   }
 
@@ -151,7 +186,7 @@ function ManagedCredentialRow({
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-medium">{definition.label}</h3>
             <Badge variant={configured ? "secondary" : "outline"}>
-              {statusLabel(status, externallyConfigured)}
+              {statusLabel(status, externallyConfigured, readUnavailable)}
             </Badge>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">{definition.provider}</p>
@@ -194,7 +229,10 @@ function ManagedCredentialRow({
             <Input
               id={`${targetId(definition.id)}-model`}
               value={model}
-              onChange={(event) => setModel(event.target.value)}
+              onChange={(event) => {
+                draftRevision.current += 1
+                setModel(event.target.value)
+              }}
               placeholder="claude-sonnet-5"
             />
           </div>
@@ -205,23 +243,35 @@ function ManagedCredentialRow({
             <Input
               id={`${targetId(definition.id)}-base-url`}
               value={baseUrl}
-              onChange={(event) => setBaseUrl(event.target.value)}
+              onChange={(event) => {
+                draftRevision.current += 1
+                setBaseUrl(event.target.value)
+              }}
               placeholder="https://api.anthropic.com"
             />
           </div>
         </div>
       )}
 
-      <div className="flex items-end gap-2">
+      {writeError && (
+        <p role="alert" className="text-sm text-red-700 dark:text-red-400 break-words">
+          {writeError}
+        </p>
+      )}
+      <div className="flex flex-wrap items-end gap-2">
         <div className="min-w-0 flex-1">
           <Label htmlFor={`${targetId(definition.id)}-secret`} className="text-xs">
             {configured ? "New secret" : "Secret"}
           </Label>
           <Input
             id={`${targetId(definition.id)}-secret`}
+            ref={secretInput}
             type="password"
             value={secret}
-            onChange={(event) => setSecret(event.target.value)}
+            onChange={(event) => {
+              draftRevision.current += 1
+              setSecret(event.target.value)
+            }}
             placeholder={
               configured
                 ? "Enter a replacement; stored values are never shown"
@@ -230,11 +280,18 @@ function ManagedCredentialRow({
             autoComplete="new-password"
           />
         </div>
-        <Button disabled={!secret.trim() || !metadataReady || pending} onClick={() => void save()}>
+        <Button
+          disabled={!secret.trim() || !metadataReady || pending || writing || readUnavailable}
+          onClick={() => void save()}
+        >
           {configured ? "Replace" : "Save"}
         </Button>
-        {status.configured && (
-          <Button variant="outline" disabled={pending} onClick={() => void remove()}>
+        {status.configured && !readUnavailable && (
+          <Button
+            variant="outline"
+            disabled={pending || writing || readUnavailable}
+            onClick={() => void remove()}
+          >
             Remove
           </Button>
         )}
@@ -286,8 +343,18 @@ function MigrationAcknowledgement({
 
 export function CredentialManagement() {
   const utils = trpc.useUtils()
-  const { data: statuses = [] } = trpc.credentials.listStatuses.useQuery()
-  const { data: voiceKey } = trpc.voice.hasOpenAIKey.useQuery()
+  const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const statusesQuery = trpc.credentials.listStatuses.useQuery()
+  const voiceKeyQuery = trpc.voice.hasOpenAIKey.useQuery()
+  const statuses = statusesQuery.data ?? []
+  const voiceKey = voiceKeyQuery.data
+  const credentialReadError = statusesQuery.error ?? voiceKeyQuery.error
+  const credentialReadsUnavailable =
+    statusesQuery.isLoading ||
+    Boolean(statusesQuery.error) ||
+    voiceKeyQuery.isLoading ||
+    Boolean(voiceKeyQuery.error)
   const setCredential = trpc.credentials.set.useMutation()
   const removeCredential = trpc.credentials.remove.useMutation()
   const removeCodexApiKey = trpc.codex.removeApiKey.useMutation()
@@ -303,12 +370,24 @@ export function CredentialManagement() {
   }, [])
 
   const refresh = async () => {
-    await Promise.all([
-      utils.credentials.listStatuses.invalidate(),
-      utils.codex.getIntegration.invalidate(),
-      utils.voice.hasOpenAIKey.invalidate(),
-      utils.speech.listAdapters.invalidate(),
-    ])
+    setRefreshing(true)
+    try {
+      await Promise.all([
+        utils.credentials.listStatuses.invalidate(undefined, undefined, { throwOnError: true }),
+        utils.codex.getIntegration.invalidate(undefined, undefined, { throwOnError: true }),
+        utils.voice.hasOpenAIKey.invalidate(undefined, undefined, { throwOnError: true }),
+        utils.speech.listAdapters.invalidate(undefined, undefined, { throwOnError: true }),
+      ])
+      setRefreshError(null)
+    } catch {
+      setRefreshError("Credential change saved, but status could not be refreshed.")
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const retryCredentialReads = async () => {
+    await Promise.all([statusesQuery.refetch(), voiceKeyQuery.refetch()])
   }
 
   const discardLegacy = (key: string) => {
@@ -337,12 +416,16 @@ export function CredentialManagement() {
       definition.id === "openai.voice-api-key"
         ? (await setVoiceKey.mutateAsync({ key: secret.trim() })).status
         : await setCredential.mutateAsync({ id: definition.id, secret: secret.trim(), metadata })
-    const nextMigration = clearLegacyCredentialAfterReplacement(
-      localStorage,
-      sessionStorage,
-      definition.id,
-    )
-    if (nextMigration) setMigration(nextMigration)
+    try {
+      const nextMigration = clearLegacyCredentialAfterReplacement(
+        localStorage,
+        sessionStorage,
+        definition.id,
+      )
+      if (nextMigration) setMigration(nextMigration)
+    } catch {
+      toast.warning("Credential saved, but the legacy credential could not be cleared.")
+    }
     await refresh()
     if (result.persistence === "session") {
       toast.warning(`${definition.label} is available for this session only`, {
@@ -376,6 +459,41 @@ export function CredentialManagement() {
           Secret fields are write-only. Reopening Settings never reads or fills a stored value.
         </p>
       </div>
+      {credentialReadError && (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs">
+          <p className="text-destructive" role="alert">
+            Credential status unavailable: {credentialReadError.message}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={statusesQuery.isFetching || voiceKeyQuery.isFetching}
+            onClick={() => void retryCredentialReads()}
+          >
+            Retry status
+          </Button>
+        </div>
+      )}
+      {refreshError && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p role="alert" className="text-sm text-red-700 dark:text-red-400">
+            {refreshError}
+          </p>
+          <Button
+            disabled={refreshing}
+            onClick={async () => {
+              await refresh()
+              requestAnimationFrame(() => {
+                if (document.activeElement === document.body) {
+                  document.getElementById("credential-codex-api-key-secret")?.focus()
+                }
+              })
+            }}
+          >
+            Retry status
+          </Button>
+        </div>
+      )}
       <MigrationAcknowledgement status={migration} onDiscard={discardLegacy} />
       {MANAGED_CREDENTIALS.map((definition) => {
         const status =
@@ -399,7 +517,8 @@ export function CredentialManagement() {
             definition={definition}
             status={status}
             externallyConfigured={externallyConfigured}
-            pending={pending}
+            pending={pending || refreshing}
+            readUnavailable={credentialReadsUnavailable || Boolean(refreshError)}
             onSave={(secret, metadata) => save(definition, secret, metadata)}
             onRemove={() => remove(definition)}
           />

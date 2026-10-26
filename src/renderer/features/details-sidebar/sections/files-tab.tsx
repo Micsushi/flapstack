@@ -319,7 +319,14 @@ const TreeNode = memo(function TreeNode({
 // FilesTab
 // ============================================================================
 
+// Scope pending dialogs and completion callbacks to the workspace that opened them.
 export const FilesTab = memo(
+  forwardRef<FilesTabHandle, FilesTabProps>(function FilesTab(props, ref) {
+    return <FilesTabContent key={props.worktreePath} {...props} ref={ref} />
+  }),
+)
+
+const FilesTabContent = memo(
   forwardRef<FilesTabHandle, FilesTabProps>(function FilesTab(
     { worktreePath, onSelectFile, onExpandedStateChange, currentViewerFilePath, className },
     ref,
@@ -336,6 +343,8 @@ export const FilesTab = memo(
     // focusedPath = keyboard/click cursor (primary highlight)
     const [focusedPath, setFocusedPath] = useState<string | null>(null)
     const treeRef = useRef<HTMLDivElement>(null)
+    const emptyRef = useRef<HTMLDivElement>(null)
+    const retryFocus = useRef(false)
     const setFileSearchOpen = useSetAtom(fileSearchDialogOpenAtom)
 
     // Persisted expanded paths (per worktree, survives reloads)
@@ -386,10 +395,21 @@ export const FilesTab = memo(
     const trpcUtils = trpc.useUtils()
 
     // ---- Data ----
-    const { data: allFiles } = trpc.files.search.useQuery(
+    const {
+      data: allFiles,
+      isLoading,
+      error,
+      refetch,
+    } = trpc.files.search.useQuery(
       { projectPath: worktreePath || "", query: "", limit: 5000, typeFilter: "file" },
       { enabled: !!worktreePath, staleTime: 10000 },
     )
+
+    useEffect(() => {
+      if (error || !retryFocus.current) return
+      retryFocus.current = false
+      if (document.activeElement === document.body) (treeRef.current ?? emptyRef.current)?.focus()
+    }, [error])
 
     const tree = useMemo(() => {
       if (!allFiles) return []
@@ -762,10 +782,30 @@ export const FilesTab = memo(
     return (
       <div className={cn("flex flex-col h-full min-w-0 overflow-hidden", className)}>
         <div className="flex-1 overflow-y-auto pb-2">
-          {tree.length === 0 ? (
-            <div className="px-2 py-4 text-center">
-              <p className="text-xs text-muted-foreground">Loading files...</p>
+          {error && (
+            <div role="alert" className="px-2 py-4 text-center text-xs">
+              <p className="break-words text-muted-foreground">
+                Could not load files: {error.message}
+              </p>
+              <button
+                className="mt-2 underline"
+                onClick={(event) => {
+                  retryFocus.current = document.activeElement === event.currentTarget
+                  void refetch()
+                }}
+              >
+                Retry
+              </button>
             </div>
+          )}
+          {tree.length === 0 ? (
+            !error && (
+              <div ref={emptyRef} tabIndex={-1} role="status" className="px-2 py-4 text-center">
+                <p className="text-xs text-muted-foreground">
+                  {isLoading ? "Loading files..." : "No files in this workspace"}
+                </p>
+              </div>
+            )
           ) : (
             <div
               ref={treeRef}

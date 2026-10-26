@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { cn } from "../../../../lib/utils"
 import { trpc } from "../../../../lib/trpc"
 import type { McpServerFormData, TransportType, AuthType, ScopeType } from "./types"
-import { Eye, EyeOff } from "lucide-react"
+import { Eye, EyeOff, RefreshCw } from "lucide-react"
 
 interface McpServerFormProps {
   initialData?: Partial<McpServerFormData>
@@ -43,7 +43,9 @@ export function McpServerForm({
   const [bearerToken, setBearerToken] = useState(initialData?.bearerToken ?? "")
   const [showToken, setShowToken] = useState(false)
 
-  const { data: projectsList } = trpc.projects.list.useQuery()
+  const projectsQuery = trpc.projects.list.useQuery()
+  const projectsList = projectsQuery.data ?? []
+  const projectReadUnavailable = projectsQuery.isLoading || Boolean(projectsQuery.error)
 
   const parseArgs = useCallback((text: string): string[] => {
     return text
@@ -69,12 +71,23 @@ export function McpServerForm({
 
   const canSubmit = useMemo(() => {
     if (!name.trim()) return false
+    if (scope === "project" && projectReadUnavailable) return false
     if (scope === "project" && !projectPath) return false
     if (transport === "stdio" && !command.trim()) return false
     if (transport === "http" && !url.trim()) return false
     if (authType === "bearer" && !bearerToken.trim()) return false
     return true
-  }, [name, scope, projectPath, transport, command, url, authType, bearerToken])
+  }, [
+    name,
+    scope,
+    projectPath,
+    projectReadUnavailable,
+    transport,
+    command,
+    url,
+    authType,
+    bearerToken,
+  ])
 
   const handleSubmit = () => {
     if (!canSubmit) return
@@ -158,7 +171,11 @@ export function McpServerForm({
       {scope === "project" && (
         <div className="space-y-1.5">
           <Label>Project</Label>
-          <Select value={projectPath} onValueChange={setProjectPath}>
+          <Select
+            value={projectPath}
+            onValueChange={setProjectPath}
+            disabled={projectReadUnavailable}
+          >
             <SelectTrigger>
               <SelectValue placeholder="Select a project..." />
             </SelectTrigger>
@@ -170,6 +187,32 @@ export function McpServerForm({
               ))}
             </SelectContent>
           </Select>
+          {projectsQuery.error && (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-destructive" role="alert">
+                Project list unavailable: {projectsQuery.error.message}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={projectsQuery.isFetching}
+                onClick={() => void projectsQuery.refetch()}
+              >
+                <RefreshCw
+                  className={
+                    projectsQuery.isFetching ? "mr-2 h-3.5 w-3.5 animate-spin" : "mr-2 h-3.5 w-3.5"
+                  }
+                  aria-hidden="true"
+                />{" "}
+                Retry
+              </Button>
+            </div>
+          )}
+          {projectsQuery.isLoading && (
+            <p className="text-xs text-muted-foreground" role="status">
+              Loading projects…
+            </p>
+          )}
         </div>
       )}
 

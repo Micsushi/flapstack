@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react"
+import { useCallback, useLayoutEffect, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useAtomValue } from "jotai"
 import { toast } from "sonner"
@@ -12,6 +12,7 @@ interface CommitActionInput {
 
 interface UseCommitActionsOptions {
   worktreePath?: string | null
+  readOnly?: boolean
   chatId?: string
   onRefresh?: () => void
   onCommitSuccess?: () => void
@@ -20,11 +21,22 @@ interface UseCommitActionsOptions {
 
 export function useCommitActions({
   worktreePath,
+  readOnly = false,
   chatId,
   onRefresh,
   onCommitSuccess,
   onMessageGenerated,
 }: UseCommitActionsOptions) {
+  // A commit may be waiting for its message when the workspace becomes read-only.
+  const writable = useRef(false)
+  const generation = useRef(0)
+  useLayoutEffect(() => {
+    writable.current = !readOnly
+    return () => {
+      writable.current = false
+      generation.current++
+    }
+  }, [readOnly, worktreePath])
   const [isGenerating, setIsGenerating] = useState(false)
   const queryClient = useQueryClient()
   const selectedOllamaModel = useAtomValue(selectedOllamaModelAtom)
@@ -50,6 +62,8 @@ export function useCommitActions({
 
   const commit = useCallback(
     async ({ message, filePaths }: CommitActionInput): Promise<boolean> => {
+      if (!writable.current) return false
+      const startedGeneration = generation.current
       if (!worktreePath) {
         toast.error("Worktree path is required")
         return false
@@ -67,6 +81,7 @@ export function useCommitActions({
             filePaths,
             ollamaModel: selectedOllamaModel,
           })
+          if (!writable.current || generation.current !== startedGeneration) return false
           console.log("[CommitActions] AI generated message:", result.message)
           commitMessage = result.message
           onMessageGenerated?.(result.message)

@@ -217,6 +217,13 @@ export function AgentsProviderExtensionsTab({
   )
   const [draft, setDraft] = useState<Draft>({ ...emptyDraft, kind: draftKind(initialKind) })
   const [preview, setPreview] = useState<ActionPreview | null>(null)
+  const [previewPending, setPreviewPending] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [applyError, setApplyError] = useState<string | null>(null)
+  const previewRequest = useRef(0)
+  const previewStatusRef = useRef<HTMLDivElement>(null)
+  const [mobileDetail, setMobileDetail] = useState(false)
+  const detailRef = useRef<HTMLElement>(null)
   const [recentBackup, setRecentBackup] = useState<RecentBackup | null>(null)
   const [policyScope, setPolicyScope] = useState<"user" | "project" | "task">(
     selectedProject ? "project" : "user",
@@ -228,11 +235,45 @@ export function AgentsProviderExtensionsTab({
   const listRefs = useRef(new Map<string, HTMLButtonElement>())
   const searchRef = useRef<HTMLInputElement>(null)
   const restoreInventoryFocus = useCallback(() => {
+    // Preserve focus if the user moved elsewhere while a refresh was pending.
+    if (
+      document.activeElement !== document.body &&
+      !detailRef.current?.contains(document.activeElement)
+    )
+      return
+    setMobileDetail(false)
     requestAnimationFrame(() => {
-      if (state.selectedId) listRefs.current.get(state.selectedId)?.focus()
-      else searchRef.current?.focus()
+      const selectedButton = state.selectedId ? listRefs.current.get(state.selectedId) : null
+      ;(selectedButton ?? searchRef.current)?.focus()
     })
   }, [state.selectedId])
+
+  useEffect(() => {
+    if ((previewPending || previewError) && document.activeElement === document.body) {
+      previewStatusRef.current?.focus()
+    }
+  }, [previewPending, previewError])
+
+  useEffect(() => {
+    previewRequest.current += 1
+    setPreview(null)
+    setPreviewError(null)
+    setPreviewPending(false)
+    setApplyError(null)
+    return () => {
+      previewRequest.current += 1
+    }
+  }, [
+    state.selectedId,
+    state.flow,
+    state.filters,
+    initialKind,
+    selectedProject?.id,
+    policyScope,
+    taskId,
+    policyOperation,
+    draft,
+  ])
 
   const tasks = trpc.tasks.list.useQuery(
     { projectId: selectedProject?.id, includeArchived: false },
@@ -268,13 +309,18 @@ export function AgentsProviderExtensionsTab({
   const setHookEnabled = trpc.hooksManagement.setEnabled.useMutation()
 
   const refresh = useCallback(async () => {
+    const focused = document.activeElement
     await Promise.all([
       userResolvedState.refetch(),
       ...(selectedProject ? [scopedResolvedState.refetch()] : []),
       capabilities.refetch(),
       hooks.refetch(),
+      ...(selectedProject ? [tasks.refetch()] : []),
     ])
-  }, [capabilities, hooks, scopedResolvedState, selectedProject, userResolvedState])
+    if (focused && !focused.isConnected && document.activeElement === document.body) {
+      requestAnimationFrame(() => searchRef.current?.focus())
+    }
+  }, [capabilities, hooks, scopedResolvedState, selectedProject, tasks, userResolvedState])
 
   useEffect(() => {
     dispatch({ type: "filter", key: "kind", value: initialKind })
@@ -368,11 +414,15 @@ export function AgentsProviderExtensionsTab({
     [items, state.filters],
   )
   const visibleIds = useMemo(() => visibleItems.map((item) => item.id), [visibleItems])
-  const inventoryError = resolvedState.error ?? capabilities.error ?? hooks.error
+  const includesHooks = state.filters.kind === "all" || state.filters.kind === "hook"
+  const inventoryError =
+    resolvedState.error ?? capabilities.error ?? (includesHooks ? hooks.error : null)
   const inventoryStatus = extensionManagerInventoryStatus({
     count: visibleItems.length,
-    loading: resolvedState.isLoading || capabilities.isLoading || hooks.isLoading,
-    fetching: resolvedState.isFetching || capabilities.isFetching || hooks.isFetching,
+    loading:
+      resolvedState.isLoading || capabilities.isLoading || (includesHooks && hooks.isLoading),
+    fetching:
+      resolvedState.isFetching || capabilities.isFetching || (includesHooks && hooks.isFetching),
     hasError: Boolean(inventoryError),
   })
   useEffect(() => {
@@ -410,6 +460,7 @@ export function AgentsProviderExtensionsTab({
     setHookEnabled.isPending
 
   const beginCreate = () => {
+    setMobileDetail(true)
     setPreview(null)
     setDraft({ ...emptyDraft, kind: draftKind(state.filters.kind) })
     dispatch({ type: "begin", flow: "create" })
@@ -471,6 +522,9 @@ export function AgentsProviderExtensionsTab({
   }
 
   const preparePreview = useCallback(async () => {
+    const request = ++previewRequest.current
+    setPreviewPending(true)
+    setPreviewError(null)
     try {
       let next: ActionPreview
       if (state.flow === "create" && draft.kind === "hook") {
@@ -664,10 +718,15 @@ export function AgentsProviderExtensionsTab({
       } else {
         throw new Error("This action has no supported preview contract")
       }
+      if (request !== previewRequest.current) return
       setPreview(next)
       dispatch({ type: "preview-ready" })
     } catch (error) {
+      if (request !== previewRequest.current) return
+      setPreviewError(errorMessage(error))
       toast.error("Preview failed", { description: errorMessage(error) })
+    } finally {
+      if (request === previewRequest.current) setPreviewPending(false)
     }
   }, [
     draft,
@@ -684,14 +743,18 @@ export function AgentsProviderExtensionsTab({
   useEffect(() => {
     if (
       (state.flow === "policy" || state.flow === "delete" || state.flow?.startsWith("hook-")) &&
-      !preview
+      !preview &&
+      !previewPending &&
+      !previewError
     ) {
       void preparePreview()
     }
-  }, [preparePreview, preview, state.flow])
+  }, [preparePreview, preview, previewPending, previewError, state.flow])
 
   const confirmPreview = useCallback(async () => {
-    if (!preview || !state.previewConfirmed) return
+    if (!preview || !state.previewConfirmed || pending) return
+    const request = previewRequest.current
+    setApplyError(null)
     try {
       if (preview.type === "native") {
         const result = await applyNative.mutateAsync({
@@ -769,6 +832,12 @@ export function AgentsProviderExtensionsTab({
         setRecentBackup(null)
       }
       toast.success("Extension change applied", { description: preview.path })
+      if (request !== previewRequest.current) {
+        await refresh().catch((error) => {
+          toast.error("Extension inventory refresh failed", { description: errorMessage(error) })
+        })
+        return
+      }
       setPreview(null)
       dispatch({ type: "cancel" })
       try {
@@ -779,6 +848,7 @@ export function AgentsProviderExtensionsTab({
         restoreInventoryFocus()
       }
     } catch (error) {
+      if (request === previewRequest.current) setApplyError(errorMessage(error))
       toast.error("Extension change failed", { description: errorMessage(error) })
     }
   }, [
@@ -788,6 +858,7 @@ export function AgentsProviderExtensionsTab({
     dryRunHook,
     importHook,
     preview,
+    pending,
     refresh,
     restoreInventoryFocus,
     restoreNative,
@@ -811,16 +882,24 @@ export function AgentsProviderExtensionsTab({
   }
 
   return (
-    <div className="flex h-full min-h-0" data-settings-id="provider-extensions">
-      <aside className="flex w-96 shrink-0 flex-col border-r border-border/70">
+    <div
+      className="flex h-full min-h-0 min-w-0 max-md:[&_button]:min-h-11 max-md:[&_input]:min-h-11"
+      data-settings-id="provider-extensions"
+    >
+      <aside
+        inert={pending}
+        className={cn(
+          "min-h-0 w-full min-w-0 shrink-0 flex-col border-r border-border/70 md:flex md:w-80 xl:w-96",
+          mobileDetail ? "hidden" : "flex",
+        )}
+      >
         <div className="space-y-2 border-b border-border/70 p-3">
           <div className="flex items-center justify-between gap-2">
             {!embedded && (
               <div>
-                <h2 className="text-sm font-semibold">Extension Manager</h2>
-                <p className="text-[10px] text-muted-foreground">
-                  Native truth, policy, and copy support
-                </p>
+                <h2 className="text-sm font-semibold">
+                  {initialKind === "custom-agent" ? "Custom agents" : "Extensions"}
+                </h2>
               </div>
             )}
             {embedded && (
@@ -906,7 +985,7 @@ export function AgentsProviderExtensionsTab({
               Discovering extensions…
             </p>
           ) : inventoryStatus === "error" ? (
-            <div role="alert" className="space-y-2 p-3 text-xs text-red-700">
+            <div role="alert" className="space-y-2 p-3 text-xs text-red-700 dark:text-red-400">
               <p>Extension inventory could not be loaded: {errorMessage(inventoryError)}</p>
               <Button variant="outline" size="sm" onClick={() => void refresh()}>
                 Retry inventory
@@ -915,7 +994,10 @@ export function AgentsProviderExtensionsTab({
           ) : (
             <>
               {inventoryStatus === "stale-error" && (
-                <p role="alert" className="mb-2 rounded bg-red-500/10 p-2 text-xs text-red-700">
+                <p
+                  role="alert"
+                  className="mb-2 rounded bg-red-500/10 p-2 text-xs text-red-700 dark:text-red-400"
+                >
                   Refresh failed. Showing last known extension inventory:{" "}
                   {errorMessage(inventoryError)}
                 </p>
@@ -931,9 +1013,19 @@ export function AgentsProviderExtensionsTab({
                 </p>
               )}
               {inventoryStatus === "empty" ? (
-                <p role="status" className="p-3 text-xs text-muted-foreground">
-                  No matching extensions.
-                </p>
+                <div role="status" className="space-y-2 p-3 text-sm text-muted-foreground">
+                  <p>No matching extensions.</p>
+                  <p>
+                    {state.filters.query ||
+                    state.filters.harness !== "all" ||
+                    state.filters.source !== "all" ||
+                    state.filters.scope !== "all"
+                      ? "Clear the search or change the filters to see more results."
+                      : state.filters.kind === "plugin"
+                        ? "Install plugins with your provider's tools, then refresh this inventory. Plugin installation is not available here."
+                        : "Create a skill or custom agent with New extension, or refresh after adding one with your provider's tools."}
+                  </p>
+                </div>
               ) : (
                 visibleItems.map((item) => (
                   <button
@@ -946,7 +1038,13 @@ export function AgentsProviderExtensionsTab({
                     role="option"
                     aria-selected={state.selectedId === item.id}
                     tabIndex={state.selectedId === item.id ? 0 : -1}
-                    onClick={() => dispatch({ type: "select", id: item.id })}
+                    onClick={() => {
+                      dispatch({ type: "select", id: item.id })
+                      setMobileDetail(true)
+                      if (window.matchMedia("(max-width: 767px)").matches) {
+                        requestAnimationFrame(() => detailRef.current?.focus())
+                      }
+                    }}
                     className={cn(
                       "mb-1 w-full rounded-md px-3 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
                       state.selectedId === item.id ? "bg-foreground/8" : "hover:bg-foreground/5",
@@ -969,13 +1067,28 @@ export function AgentsProviderExtensionsTab({
           )}
         </div>
         <div className="border-t border-border/70 p-2">
-          <Button variant="ghost" className="h-8 w-full justify-start" onClick={beginCreate}>
-            <Plus className="mr-2 h-3.5 w-3.5" /> New extension
-          </Button>
+          {state.filters.kind !== "plugin" && (
+            <Button variant="ghost" className="h-8 w-full justify-start" onClick={beginCreate}>
+              <Plus className="mr-2 h-3.5 w-3.5" /> New extension
+            </Button>
+          )}
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-y-auto">
+      <main
+        ref={detailRef}
+        tabIndex={-1}
+        aria-label="Extension details"
+        className={cn(
+          "min-w-0 flex-1 overflow-y-auto outline-none md:block",
+          mobileDetail ? "block" : "hidden",
+        )}
+      >
+        {!state.flow && !preview && (
+          <Button variant="ghost" className="m-3 md:hidden" onClick={restoreInventoryFocus}>
+            Back to extensions
+          </Button>
+        )}
         {recentBackup && !preview && !state.flow && (
           <div
             role="status"
@@ -996,6 +1109,7 @@ export function AgentsProviderExtensionsTab({
             preview={preview}
             confirmed={state.previewConfirmed}
             pending={pending}
+            error={applyError}
             onConfirmed={(confirmed) => dispatch({ type: "confirm-preview", confirmed })}
             onBack={() => {
               setPreview(null)
@@ -1029,7 +1143,40 @@ export function AgentsProviderExtensionsTab({
               restoreInventoryFocus()
             }}
             onPreview={preparePreview}
+            previewPending={previewPending}
+            previewError={previewError}
           />
+        ) : state.flow ? (
+          <div
+            ref={previewStatusRef}
+            tabIndex={-1}
+            aria-label="Extension preview status"
+            className="space-y-3 p-4 outline-none"
+          >
+            {previewError ? (
+              <p role="alert" className="text-sm text-red-700 dark:text-red-400">
+                Preview failed: {previewError}
+              </p>
+            ) : (
+              <p role="status" className="text-sm">
+                Preparing preview…
+              </p>
+            )}
+            {previewError && (
+              <Button variant="outline" onClick={() => void preparePreview()}>
+                Retry preview
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              onClick={() => {
+                dispatch({ type: "cancel" })
+                restoreInventoryFocus()
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
         ) : selected ? (
           <DetailPanel
             item={selected}
@@ -1037,6 +1184,17 @@ export function AgentsProviderExtensionsTab({
             taskId={taskId}
             tasks={tasks.data ?? []}
             tasksError={tasks.error}
+            onRetryTasks={async () => {
+              const focused = document.activeElement
+              await tasks.refetch()
+              if (focused && !focused.isConnected && document.activeElement === document.body) {
+                requestAnimationFrame(() =>
+                  detailRef.current
+                    ?.querySelector<HTMLButtonElement>('[aria-label="Task filter"]')
+                    ?.focus(),
+                )
+              }
+            }}
             hasProject={Boolean(verifiedProject)}
             policySupported={policySupported}
             onPolicyScope={setPolicyScope}
@@ -1070,6 +1228,7 @@ function DetailPanel({
   taskId,
   tasks,
   tasksError,
+  onRetryTasks,
   hasProject,
   policySupported,
   onPolicyScope,
@@ -1085,6 +1244,7 @@ function DetailPanel({
   taskId: string
   tasks: Array<{ id: string; name: string }>
   tasksError: unknown
+  onRetryTasks: () => void
   hasProject: boolean
   policySupported: boolean
   onPolicyScope: (scope: "user" | "project" | "task") => void
@@ -1114,10 +1274,10 @@ function DetailPanel({
   const canDisable = item.hook ? item.hook.enabled : policySupported
   return (
     <div className="mx-auto max-w-3xl space-y-5 p-6">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold">{item.name}</h3>
+            <h3 className="break-words text-sm font-semibold">{item.name}</h3>
             <HarnessBadge harness={item.harness} />
             <SupportBadge support={item.support} />
             <span className="rounded bg-foreground/8 px-1.5 py-0.5 text-[10px]">
@@ -1160,7 +1320,7 @@ function DetailPanel({
           </Button>
         </div>
       </div>
-      <div className="grid grid-cols-4 gap-2 text-xs">
+      <div className="grid grid-cols-2 gap-2 text-xs lg:grid-cols-4">
         <Fact label="Harness" value={harnessLabels[item.harness]} />
         <Fact label="Kind" value={kindLabels[item.kind]} />
         <Fact label="Source" value={sourceLabels[item.source]} />
@@ -1174,7 +1334,7 @@ function DetailPanel({
           {item.capability.mutations.join(", ") || "none"}.
         </p>
         {item.capability.limitations.map((limitation) => (
-          <p key={limitation} className="mt-2 text-xs text-amber-700">
+          <p key={limitation} className="mt-2 text-xs text-amber-700 dark:text-amber-400">
             {limitation}
           </p>
         ))}
@@ -1189,7 +1349,7 @@ function DetailPanel({
       {item.native && (
         <div className="space-y-3 rounded-md border border-border p-4">
           <h4 className="text-xs font-semibold">Resolved enablement policy</h4>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Filter
               label="Policy scope"
               value={policyScope}
@@ -1212,8 +1372,11 @@ function DetailPanel({
                   disabled={Boolean(tasksError)}
                 />
                 {Boolean(tasksError) && (
-                  <p role="alert" className="text-xs text-red-700">
+                  <p role="alert" className="text-xs text-red-700 dark:text-red-400">
                     Tasks could not be loaded: {errorMessage(tasksError)}
+                    <Button variant="outline" className="mt-2 block" onClick={onRetryTasks}>
+                      Retry tasks
+                    </Button>
                   </p>
                 )}
               </div>
@@ -1228,7 +1391,7 @@ function DetailPanel({
             Precedence: task override → project override → user default → fixed enabled default.
           </p>
           {!policySupported && (
-            <p className="text-xs text-amber-700">
+            <p className="text-xs text-amber-700 dark:text-amber-400">
               {item.native.resolved.reason ??
                 `The ${policyScope} scope is unsupported or incomplete.`}
             </p>
@@ -1283,7 +1446,7 @@ function DetailPanel({
               }
             />
           </dl>
-          <p className="text-xs text-amber-700">
+          <p className="text-xs text-amber-700 dark:text-amber-400">
             Dry-run and enable require separate Tier 3 approvals. Native harness consumption remains{" "}
             {item.capability.runtimeConsumption}.
           </p>
@@ -1339,6 +1502,8 @@ function EditorPanel({
   onDraft,
   onCancel,
   onPreview,
+  previewPending,
+  previewError,
 }: {
   mode: "create" | "edit" | "copy"
   draft: Draft
@@ -1347,9 +1512,13 @@ function EditorPanel({
   onDraft: (draft: Draft) => void
   onCancel: () => void
   onPreview: () => void
+  previewPending: boolean
+  previewError: string | null
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null)
-  useEffect(() => headingRef.current?.focus(), [])
+  useEffect(() => {
+    if (document.activeElement === document.body) headingRef.current?.focus()
+  }, [])
   const isHook = draft.kind === "hook"
   const capability = capabilities.find(
     (entry) =>
@@ -1377,7 +1546,7 @@ function EditorPanel({
       role="region"
       aria-labelledby="extension-editor-title"
     >
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h3
           ref={headingRef}
           id="extension-editor-title"
@@ -1396,15 +1565,20 @@ function EditorPanel({
           </Button>
           <Button
             size="sm"
-            disabled={Boolean(blockingReason)}
+            disabled={Boolean(blockingReason) || previewPending}
             aria-describedby={blockingReason ? "extension-editor-blocking-reason" : undefined}
             onClick={onPreview}
           >
-            Preview exact change
+            {previewPending ? "Preparing preview…" : "Preview exact change"}
           </Button>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-3">
+      {previewError && (
+        <p role="alert" className="text-sm text-red-700 dark:text-red-400">
+          Preview failed: {previewError}. Your draft is still here. Try Preview exact change again.
+        </p>
+      )}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Filter
           label={mode === "copy" ? "Target harness" : "Harness"}
           value={draft.harness}
@@ -1434,7 +1608,9 @@ function EditorPanel({
       <p
         className={cn(
           "rounded-md p-3 text-xs",
-          supported ? "bg-emerald-500/10 text-emerald-700" : "bg-amber-500/10 text-amber-700",
+          supported
+            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+            : "bg-amber-500/10 text-amber-700 dark:text-amber-400",
         )}
       >
         {supported
@@ -1442,7 +1618,11 @@ function EditorPanel({
           : `${kindLabels[draft.kind]} on ${harnessLabels[draft.harness]} has no approved native preview/apply/restore adapter. No provider-native write will be offered.`}
       </p>
       {blockingReason && (
-        <p id="extension-editor-blocking-reason" role="alert" className="text-xs text-amber-700">
+        <p
+          id="extension-editor-blocking-reason"
+          role="alert"
+          className="text-xs text-amber-700 dark:text-amber-400"
+        >
           {blockingReason}
         </p>
       )}
@@ -1496,7 +1676,11 @@ function EditorPanel({
             />
           </Field>
           {!draft.description.trim() && (
-            <p id="copy-source-description-note" role="status" className="text-xs text-amber-700">
+            <p
+              id="copy-source-description-note"
+              role="status"
+              className="text-xs text-amber-700 dark:text-amber-400"
+            >
               Source description is missing. Preview remains available; the target adapter will
               report whether this metadata can be converted.
             </p>
@@ -1539,6 +1723,7 @@ function PreviewPanel({
   preview,
   confirmed,
   pending,
+  error,
   onConfirmed,
   onBack,
   onCancel,
@@ -1547,20 +1732,23 @@ function PreviewPanel({
   preview: ActionPreview
   confirmed: boolean
   pending: boolean
+  error: string | null
   onConfirmed: (confirmed: boolean) => void
   onBack: () => void
   onCancel: () => void
   onApply: () => void
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null)
-  useEffect(() => headingRef.current?.focus(), [])
+  useEffect(() => {
+    if (document.activeElement === document.body) headingRef.current?.focus()
+  }, [])
   const applicable =
     preview.support !== "unsupported" &&
     preview.support !== "unsupported until fixed" &&
     !(preview.type === "copy" && !preview.preview.canApply)
   return (
     <div className="mx-auto max-w-3xl space-y-5 p-6" aria-labelledby="extension-preview-title">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h3
           ref={headingRef}
           id="extension-preview-title"
@@ -1574,7 +1762,7 @@ function PreviewPanel({
       <Fact label="Exact target path" value={preview.path} wrap />
       <Fact label="Support result" value={preview.support} wrap />
       {preview.warnings.length > 0 && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700">
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
           {preview.warnings.map((warning) => (
             <p key={warning}>{warning}</p>
           ))}
@@ -1582,7 +1770,7 @@ function PreviewPanel({
       )}
       <div className="space-y-1.5">
         <Label>Exact resulting diff</Label>
-        <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 font-mono text-[11px]">
+        <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 p-3 font-mono text-[11px]">
           {preview.diff || "No changes."}
         </pre>
       </div>
@@ -1595,16 +1783,21 @@ function PreviewPanel({
         <input
           type="checkbox"
           checked={confirmed}
-          disabled={!applicable}
+          disabled={!applicable || pending}
           onChange={(event) => onConfirmed(event.target.checked)}
         />
         <span>I reviewed the exact harness, scope, path, support state, and resulting diff.</span>
       </label>
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" onClick={onCancel}>
+      {error && (
+        <p role="alert" className="text-sm text-red-700 dark:text-red-400">
+          Change failed: {error}. Review the preview and retry, or go back to edit.
+        </p>
+      )}
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="ghost" disabled={pending} onClick={onCancel}>
           Cancel
         </Button>
-        <Button variant="outline" onClick={onBack}>
+        <Button variant="outline" disabled={pending} onClick={onBack}>
           Back
         </Button>
         <Button disabled={!applicable || !confirmed || pending} onClick={onApply}>
@@ -1678,10 +1871,10 @@ function SupportBadge({ support }: { support: string }) {
       className={cn(
         "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
         positive
-          ? "bg-emerald-500/10 text-emerald-700"
+          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
           : support === "unsupported" || support === "disabled"
-            ? "bg-red-500/10 text-red-700"
-            : "bg-amber-500/10 text-amber-700",
+            ? "bg-red-500/10 text-red-700 dark:text-red-400"
+            : "bg-amber-500/10 text-amber-700 dark:text-amber-400",
       )}
     >
       {support}
@@ -1692,11 +1885,11 @@ function SupportBadge({ support }: { support: string }) {
 function HarnessBadge({ harness }: { harness: ExtensionHarness }) {
   const tone =
     harness === "claude-code"
-      ? "bg-orange-500/10 text-orange-700"
+      ? "bg-orange-500/10 text-orange-700 dark:text-orange-400"
       : harness === "codex"
-        ? "bg-blue-500/10 text-blue-700"
+        ? "bg-blue-500/10 text-blue-700 dark:text-blue-400"
         : harness === "cursor-agent"
-          ? "bg-violet-500/10 text-violet-700"
+          ? "bg-violet-500/10 text-violet-700 dark:text-violet-400"
           : "bg-foreground/8 text-muted-foreground"
   return (
     <span

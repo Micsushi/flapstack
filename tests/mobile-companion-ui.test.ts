@@ -70,6 +70,6 @@ describe("mobile companion user surfaces", () => {
     expect(app?.body).toContain("State is stale")
     expect(app?.body).toContain("serviceWorker.register")
     expect(manifest?.body).toContain('"display":"standalone"')
-    expect(worker?.body).toContain("mobile-companion-v2")
+    expect(worker?.body).toContain("mobile-companion-v4")
   })
 })

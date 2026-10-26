@@ -12,6 +12,16 @@ export const workspaceEditTargetSchema = workspaceEditScopeSchema.extend({
     .max(4096)
     .refine((value) => !value.includes("\0")),
 })
+export const openWorkspaceDraftSchema = workspaceEditTargetSchema.extend({
+  recovery: z
+    .object({
+      draftId: z.string().uuid(),
+      leaseToken: z.string().uuid(),
+      content: z.string().max(workspaceEditMaxBytes),
+      pendingUpdateContent: z.string().max(workspaceEditMaxBytes).optional(),
+    })
+    .optional(),
+})
 export const saveWorkspaceEditSchema = workspaceEditTargetSchema.extend({
   id: z.string().uuid(),
   expectedSha256: z.string().regex(/^[a-f0-9]{64}$/),

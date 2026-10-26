@@ -1,3 +1,5 @@
+import { isAbsolutePath } from "../../lib/file-target"
+
 export const PORTABILITY_RESULT_PAGE_SIZE = 50
 
 export type PortabilityDecision = {
@@ -62,7 +64,7 @@ export function parseTargetRootMappings(value: string): Record<string, string> {
       throw new Error("Target mappings use project-id=/absolute/path.")
     const id = entry.slice(0, separator).trim()
     const path = entry.slice(separator + 1).trim()
-    if (!path.startsWith("/")) throw new Error(`Target path for ${id} must be absolute.`)
+    if (!isAbsolutePath(path)) throw new Error(`Target path for ${id} must be absolute.`)
     if (mappings[id]) throw new Error(`Target mapping for ${id} is duplicated.`)
     mappings[id] = path
   }

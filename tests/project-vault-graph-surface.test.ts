@@ -41,4 +41,15 @@ describe("project vault graph surface", () => {
     expect(source).toContain("includedBytes")
     expect(source).toContain("estimatedTokens")
   })
+
+  it("keeps graph and linked visual reads retryable and truthful", () => {
+    expect(source).toContain("graph.refetch()")
+    expect(source).toContain("previewGraphContext.refetch()")
+    expect(source).toContain("visualHistory.refetch()")
+    expect(source).toContain("linkedVisuals.refetch()")
+    expect(source).toContain("Visual artifacts unavailable:")
+    expect(source).toContain("Linked visual artifacts unavailable:")
+    expect(source).toContain("linkedVisuals.error ?")
+    expect(source).toContain("!linkedVisuals.isFetching &&")
+  })
 })
