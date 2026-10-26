@@ -37,7 +37,7 @@ export const taskProposalReviewSchema = z
     taskDescription: z.string().trim().max(20_000).nullable(),
     status: taskProposalTargetStatusSchema,
     permissionMode: planPromotionPermissionModeSchema,
-    customPermissions: z.record(z.unknown()).nullable(),
+    customPermissions: z.record(z.string(), z.unknown()).nullable(),
     worktreeMode: planPromotionWorktreeModeSchema,
     seedText: z.string().trim().min(1).max(40_000),
   })

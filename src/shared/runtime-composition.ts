@@ -19,7 +19,7 @@ export const runtimeCapabilitySnapshotSchema = z
   .object({
     schemaVersion: z.literal(1),
     fingerprint: sha256Schema,
-    capabilities: z.record(z.enum(["available", "unavailable", "unknown", "lossy"])),
+    capabilities: z.record(z.string(), z.enum(["available", "unavailable", "unknown", "lossy"])),
   })
   .strict()
 
@@ -243,7 +243,7 @@ export const crossProviderTaskEnvelopeSchema = z
     visibleContextManifest: visibleContextManifestSchema,
     fileAndArtifactRefs: z.array(identifierSchema).max(1_000),
     requiredCapabilities: z.array(identifierSchema).max(100),
-    outputSchema: z.record(z.unknown()).nullable(),
+    outputSchema: z.record(z.string(), z.unknown()).nullable(),
     permissionCeiling: delegationAuthorityCeilingSchema,
     worktreeLeaseId: identifierSchema.nullable(),
     deadline: z.string().datetime().nullable(),

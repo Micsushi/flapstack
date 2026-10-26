@@ -725,7 +725,7 @@ const clarificationAnswerActionSchema = z
     type: z.literal("clarification.answer"),
     requestId: identifierSchema,
     answers: z
-      .record(z.array(boundedText(4_000)).min(1).max(13))
+      .record(z.string(), z.array(boundedText(4_000)).min(1).max(13))
       .refine((answers) => Object.keys(answers).length <= 8, {
         message: "Clarification answers exceed the question limit.",
       }),

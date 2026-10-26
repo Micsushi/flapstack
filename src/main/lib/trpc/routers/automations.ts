@@ -39,7 +39,7 @@ export const automationsRouter = router({
           limit: z.number().int().min(1).max(100).default(20),
           cursor: z.string().max(64).optional(),
         })
-        .default({}),
+        .prefault({}),
     )
     .query(({ input }) => service().list(user, input)),
 
@@ -69,7 +69,7 @@ export const automationsRouter = router({
           limit: z.number().int().min(1).max(200).default(100),
           cursor: z.string().max(1024).optional(),
         })
-        .default({}),
+        .prefault({}),
     )
     .query(({ input }) => ui().listInbox(input)),
 

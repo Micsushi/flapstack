@@ -46,7 +46,7 @@ export const taskProposalsRouter = router({
           limit: z.number().int().min(1).max(100).default(20),
           cursor: z.string().max(64).optional(),
         })
-        .default({}),
+        .prefault({}),
     )
     .query(({ input }) => handle(() => service().list(user, input))),
 

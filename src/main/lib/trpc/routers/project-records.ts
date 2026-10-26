@@ -167,21 +167,21 @@ export const projectRecordsRouter = router({
   workflow: publicProcedure
     .input(
       z
-        .record(z.unknown())
+        .record(z.string(), z.unknown())
         .refine((value) => !("actor" in value), "Actor identity is launcher-provided."),
     )
     .mutation(async ({ input }) => (await configuredProjectRecordsClient()).workflow(input)),
   create: publicProcedure
     .input(
       z
-        .record(z.unknown())
+        .record(z.string(), z.unknown())
         .refine((value) => !("actor" in value), "Actor identity is launcher-provided."),
     )
     .mutation(async ({ input }) => (await configuredProjectRecordsClient()).createRecord(input)),
   setup: publicProcedure
     .input(
       z
-        .record(z.unknown())
+        .record(z.string(), z.unknown())
         .refine((value) => !("actor" in value), "Actor identity is launcher-provided."),
     )
     .mutation(async ({ input }) => (await configuredProjectRecordsClient()).setup(input)),

@@ -133,7 +133,7 @@ export const projectRecordSchema = z
     if (record.kind !== "blocker") return
     const result = projectBlockerDetailsSchema.safeParse(record)
     if (!result.success) {
-      for (const issue of result.error.issues) context.addIssue(issue)
+      for (const issue of result.error.issues) context.addIssue({ ...issue })
     }
     if (!["blocked", "resolved", "superseded"].includes(record.state)) {
       context.addIssue({ code: "custom", path: ["state"], message: "Invalid blocker state" })
@@ -174,7 +174,7 @@ export const patchProjectRecordSchema = z
     path: projectRecordPathSchema,
     expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
     recordId: z.string().min(1).max(200),
-    changes: z.record(z.unknown()),
+    changes: z.record(z.string(), z.unknown()),
   })
   .strict()
 export type ProjectRecord = z.infer<typeof projectRecordSchema>
@@ -214,7 +214,7 @@ export const yapAttachmentSourceSchema = z
     mime: z.string().regex(/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/),
     byteLength: z.number().int().positive(),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    origin: z.record(z.unknown()).nullable().optional(),
+    origin: z.record(z.string(), z.unknown()).nullable().optional(),
     status: z.enum(["complete", "missing", "failed"]),
     instructionText: z.string().optional(),
   })
@@ -238,7 +238,7 @@ export const yapInputSchema = z
     originalText: z.string(),
     segments: z.array(yapSourceSegmentSchema),
     attachments: z.array(yapAttachmentSourceSchema),
-    origin: z.record(z.unknown()).nullable().optional(),
+    origin: z.record(z.string(), z.unknown()).nullable().optional(),
     sourceValidity: z
       .object({
         valid: z.boolean(),

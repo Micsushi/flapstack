@@ -32,7 +32,7 @@ export const mobileClientRouter = router({
           targetId: z.string().min(1).max(200),
           targetVersion: z.number().int().positive(),
           scopeVersion: z.number().int().positive(),
-          answers: z.record(z.array(z.string().trim().min(1).max(4000)).min(1).max(13)),
+          answers: z.record(z.string(), z.array(z.string().trim().min(1).max(4000)).min(1).max(13)),
           confirmed: z.literal(true),
         })
         .strict(),

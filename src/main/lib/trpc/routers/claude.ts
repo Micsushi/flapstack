@@ -973,7 +973,7 @@ export const claudeRouter = router({
         model: z.string().optional(),
         effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
         reasoningEnabled: z.boolean().default(true),
-        outputSchema: z.record(z.unknown()).nullable().optional(),
+        outputSchema: z.record(z.string(), z.unknown()).nullable().optional(),
         images: z.array(imageAttachmentSchema).optional(), // Image attachments
         historyEnabled: z.boolean().optional(),
         offlineModeEnabled: z.boolean().optional(), // Whether offline mode (Ollama) is enabled in settings
@@ -3378,7 +3378,7 @@ ${prompt}
         transport: z.enum(["stdio", "http"]),
         command: z.string().optional(),
         args: z.array(z.string()).optional(),
-        env: z.record(z.string()).optional(),
+        env: z.record(z.string(), z.string()).optional(),
         url: z.string().url().optional(),
         authType: z.enum(["none", "oauth", "bearer"]).optional(),
         bearerToken: z.string().optional(),
@@ -3460,7 +3460,7 @@ ${prompt}
           .optional(),
         command: z.string().optional(),
         args: z.array(z.string()).optional(),
-        env: z.record(z.string()).optional(),
+        env: z.record(z.string(), z.string()).optional(),
         url: z.string().url().optional(),
         authType: z.enum(["none", "oauth", "bearer"]).optional(),
         bearerToken: z.string().optional(),

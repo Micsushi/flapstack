@@ -140,7 +140,7 @@ const runtimeDelegationInputSchema = z.object({
   selectedFileRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
   selectedArtifactRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
   requiredCapabilities: z.array(z.string().trim().min(1).max(512)).max(100).optional(),
-  outputSchema: z.record(z.unknown()).nullable().optional(),
+  outputSchema: z.record(z.string(), z.unknown()).nullable().optional(),
   priorAttemptId: z.string().trim().min(1).max(512).nullable().optional(),
   deadline: z.string().datetime().nullable().optional(),
   confirmedPreviewDigest: z

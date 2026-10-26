@@ -87,6 +87,7 @@ export const agentInputResponseSchema = z.object({
   requestId: boundedText(200),
   mode: z.enum(["structured", "chat"]),
   answers: z.record(
+    z.string(),
     z
       .array(boundedText(AGENT_INPUT_LIMITS.answerText))
       .max(AGENT_INPUT_LIMITS.optionsPerQuestion + 1),

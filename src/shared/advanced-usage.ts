@@ -227,14 +227,14 @@ export const usageInsightQuerySchema = z
         minRatio: z.number().min(0.05).max(1).default(0.5),
       })
       .strict()
-      .default({}),
+      .prefault({}),
     anomaly: z
       .object({
         minBaselineBuckets: z.number().int().min(3).max(100).default(3),
         spikeMultiplier: z.number().min(1.1).max(100).default(3),
       })
       .strict()
-      .default({}),
+      .prefault({}),
   })
   .strict()
   .superRefine((value, context) => {

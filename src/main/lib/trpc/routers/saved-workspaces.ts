@@ -91,7 +91,7 @@ export const savedWorkspacesRouter = router({
           ownerKind: z.enum(["manual", "orchestration"]).optional(),
           search: z.string().max(256).optional(),
         })
-        .default({}),
+        .prefault({}),
     )
     .query(({ input }) => lifecycleMutation(() => service().list(input))),
 

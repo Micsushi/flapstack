@@ -263,7 +263,7 @@ export const planSourcesRouter = router({
     .input(
       z.object({
         projectId: z.string().min(1),
-        expectedFingerprints: z.record(z.string()).optional(),
+        expectedFingerprints: z.record(z.string(), z.string()).optional(),
       }),
     )
     .query(({ input }) =>
