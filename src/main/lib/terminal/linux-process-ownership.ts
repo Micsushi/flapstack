@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs"
+import { performance } from "node:perf_hooks"
 
 interface ProcessIdentity {
   pid: number
@@ -112,7 +113,8 @@ export class LinuxProcessOwnership {
   async stop(): Promise<boolean> {
     for (const signal of ["SIGTERM", "SIGKILL"] as const) {
       const signalled = new Set<number>()
-      for (let attempt = 0; attempt < (signal === "SIGTERM" ? 80 : 20); attempt++) {
+      const deadline = performance.now() + (signal === "SIGTERM" ? 2_000 : 500)
+      do {
         this.capture()
         for (const identity of [...this.identities.values()].reverse()) {
           if (signalled.has(identity.pid)) continue
@@ -127,8 +129,10 @@ export class LinuxProcessOwnership {
           signalled.add(identity.pid)
         }
         if (this.survivors().length === 0) return true
-        await new Promise((resolve) => setTimeout(resolve, 25))
-      }
+        const remaining = deadline - performance.now()
+        if (remaining <= 0) break
+        await new Promise((resolve) => setTimeout(resolve, Math.min(25, remaining)))
+      } while (performance.now() < deadline)
     }
     this.capture()
     return this.survivors().length === 0
