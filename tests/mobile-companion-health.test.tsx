@@ -13,11 +13,13 @@ const mock = vi.hoisted(() => ({
   deviceQuery: vi.fn(),
   grantQuery: vi.fn(),
   devices: [{ deviceId: "d", name: "Phone", pairedAt: 0 }],
+  success: vi.fn(),
+  error: vi.fn(),
 }))
 vi.mock("qrcode", () => ({
   default: { toDataURL: mock.qr },
 }))
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock("sonner", () => ({ toast: { success: mock.success, error: mock.error } }))
 vi.mock("../src/renderer/components/dialogs/settings-tabs/remote-computer-client", () => ({
   RemoteComputerClientSection: () => null,
 }))
@@ -25,6 +27,7 @@ vi.mock("../src/renderer/lib/trpc", () => ({
   trpc: {
     projects: { list: { useQuery: () => ({ data: [{ id: "project-1", name: "Flapstack" }] }) } },
     useUtils: () => ({
+      projects: { list: { invalidate: mock.invalidate } },
       mobileBridge: Object.fromEntries(
         ["getStatus", "listInterfaces", "listDevices", "listGrants"].map((key) => [
           key,
@@ -94,6 +97,8 @@ beforeEach(() => {
   mock.create.mockReset()
   mock.mutation.mockReset()
   mock.invalidate.mockReset()
+  mock.success.mockClear()
+  mock.error.mockClear()
   mock.query.mockClear()
   container = document.createElement("div")
   document.body.append(container)
@@ -239,4 +244,40 @@ it("grants the selected named project without requiring an internal ID", async (
       grant: expect.objectContaining({ resources: [{ kind: "project", id: "project-1" }] }),
     }),
   )
+})
+it("does not duplicate an access grant while the first request is pending", async () => {
+  let resolve!: () => void
+  mock.mutation.mockImplementation(
+    () =>
+      new Promise<void>((done) => {
+        resolve = done
+      }),
+  )
+  await render()
+  const resource = container.querySelector('[aria-label="Project to allow"]') as HTMLSelectElement
+  await act(async () => {
+    resource.value = "project-1"
+    resource.dispatchEvent(new Event("change", { bubbles: true }))
+  })
+  await click("Allow chats and controls")
+  await click("Granting access…")
+  const calls = mock.mutation.mock.calls.length
+  await act(async () => resolve())
+  expect(calls).toBe(1)
+})
+
+it("reports a saved grant separately from a failed list refresh", async () => {
+  mock.mutation.mockResolvedValue({})
+  mock.invalidate.mockRejectedValue(new Error("Read unavailable"))
+  await render()
+  const project = container.querySelector<HTMLSelectElement>('[aria-label="Project to allow"]')!
+  await act(async () => {
+    project.value = "project-1"
+    project.dispatchEvent(new Event("change", { bubbles: true }))
+  })
+  await click("Allow chats and controls")
+  expect(mock.mutation).toHaveBeenCalledTimes(1)
+  expect(mock.success).toHaveBeenCalledWith("Mobile authority granted")
+  expect(mock.error).toHaveBeenCalledWith(expect.stringContaining("Access was granted"))
+  expect(project.value).toBe("project-1")
 })

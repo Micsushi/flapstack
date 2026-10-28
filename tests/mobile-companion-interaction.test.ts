@@ -638,6 +638,53 @@ it("starts a fresh side conversation after promotion and refreshes an unaccepted
   expect(second.threadId).toBeUndefined()
 })
 
+it.each([false, true])(
+  "keeps a newer side draft after a delayed delivery check (ask fails: %s)",
+  async (fails) => {
+    const app = companion()
+    openConversation(app)
+    let release: ((value: unknown) => void) | undefined
+    app.api.stubSide(async (request) => {
+      if (request.operation === "list" && request.requestId)
+        return new Promise((resolve) => {
+          release = resolve
+        })
+      if (request.operation === "list") return { entries: [], before: null }
+      if (fails) throw new Error("Synthetic unknown delivery")
+      return {
+        entry: {
+          id: request.requestId,
+          question: request.question,
+          status: "running",
+          createdAt: 1,
+        },
+      }
+    })
+    const panel = app.window.document.getElementById("side-questions") as HTMLDetailsElement
+    panel.open = true
+    await vi.waitFor(() => expect(app.button("Ask")?.disabled).toBe(false))
+    const input = app.window.document.getElementById("side-message") as HTMLTextAreaElement
+    input.value = "Submitted question"
+    input.dispatchEvent(new app.window.Event("input"))
+    app.window.document
+      .getElementById("side-form")!
+      .dispatchEvent(new app.window.Event("submit", { cancelable: true }))
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"))
+    input.value = "Newer unsent question"
+    input.dispatchEvent(new app.window.Event("input"))
+    release!({ entries: [], before: null, accepted: false })
+    await vi.waitFor(() => expect(app.button("Ask")?.disabled).toBe(false))
+    expect(
+      JSON.parse(app.window.sessionStorage.getItem("flapstack-mobile-side-drafts")!)[
+        "access:chat:sub"
+      ],
+    ).toEqual({ question: "Newer unsent question" })
+    app.button("Chats")!.click()
+    openConversation(app)
+    expect(input.value).toBe("Newer unsent question")
+  },
+)
+
 it("hides the main composer while the side panel is open and restores it on close", async () => {
   const app = companion()
   openConversation(app)

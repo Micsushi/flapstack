@@ -45,6 +45,11 @@ export function AgentsMobileCompanionTab() {
   const renameDevice = trpc.mobileBridge.renameDevice.useMutation()
   const revokeDevice = trpc.mobileBridge.revokeDevice.useMutation()
   const createGrant = trpc.mobileBridge.createGrant.useMutation()
+  const granting = useRef(false)
+  const [isGranting, setIsGranting] = useState(false)
+  const grantButton = useRef<HTMLButtonElement>(null)
+  const retryReadsButton = useRef<HTMLButtonElement>(null)
+  const restoreGrantFocus = useRef(false)
   const revokeGrant = trpc.mobileBridge.revokeGrant.useMutation()
   const [bindAddress, setBindAddress] = useState("")
   const [offer, setOffer] = useState<MobilePairingOffer | null>(null)
@@ -90,6 +95,22 @@ export function AgentsMobileCompanionTab() {
     Boolean(grants.error) ||
     (resourceKind === "project" && (projects.isLoading || Boolean(projects.error)))
 
+  useEffect(() => {
+    if (isGranting || isRefreshingDiscovery || !restoreGrantFocus.current) return
+    const frame = requestAnimationFrame(() => {
+      restoreGrantFocus.current = false
+      const active = document.activeElement
+      if (
+        active !== document.body &&
+        !(active === grantButton.current && grantButton.current?.disabled)
+      )
+        return
+      const target = authorityReadUnavailable ? retryReadsButton.current : grantButton.current
+      if (target && !target.disabled) target.focus()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [isGranting, isRefreshingDiscovery, authorityReadUnavailable])
+
   const activeDevices = useMemo(
     () => (devices.data ?? []).filter((device) => device.revokedAt === undefined),
     [devices.data],
@@ -128,14 +149,16 @@ export function AgentsMobileCompanionTab() {
     }
   }, [displayedOffer, qrAttempt])
 
-  const refresh = async () => {
-    await Promise.all([
-      utils.mobileBridge.getStatus.invalidate(),
-      utils.mobileBridge.listInterfaces.invalidate(),
-      utils.mobileBridge.listDevices.invalidate(),
-      utils.mobileBridge.listGrants.invalidate(),
-      utils.projects.list.invalidate(),
+  const refresh = async (throwOnError = false) => {
+    const results = await Promise.allSettled([
+      utils.mobileBridge.getStatus.invalidate(undefined, undefined, { throwOnError }),
+      utils.mobileBridge.listInterfaces.invalidate(undefined, undefined, { throwOnError }),
+      utils.mobileBridge.listDevices.invalidate(undefined, undefined, { throwOnError }),
+      utils.mobileBridge.listGrants.invalidate(undefined, undefined, { throwOnError }),
+      utils.projects.list.invalidate(undefined, undefined, { throwOnError }),
     ])
+    const failure = results.find((result) => result.status === "rejected")
+    if (failure) throw failure.reason
   }
 
   const setEnabled = async (enabled: boolean) => {
@@ -227,7 +250,10 @@ export function AgentsMobileCompanionTab() {
   }
 
   const grantControl = async () => {
-    if (!grantDeviceId || !resourceId.trim()) return
+    if (granting.current || !grantDeviceId || !resourceId.trim()) return
+    granting.current = true
+    restoreGrantFocus.current = document.activeElement === grantButton.current
+    setIsGranting(true)
     try {
       const resource: MobileResourceRef = { kind: resourceKind, id: resourceId.trim() }
       await createGrant.mutateAsync({
@@ -240,10 +266,17 @@ export function AgentsMobileCompanionTab() {
           resources: [resource],
         },
       })
-      await refresh()
       toast.success("Mobile authority granted")
+      await refresh(true).catch(() => {
+        toast.error(
+          "Access was granted, but the list could not be refreshed. Refresh discovery before changing access again.",
+        )
+      })
     } catch (error) {
       toast.error(mobileSettingsError(error, "Mobile authority could not be granted."))
+    } finally {
+      granting.current = false
+      setIsGranting(false)
     }
   }
 
@@ -286,6 +319,7 @@ export function AgentsMobileCompanionTab() {
             variant="outline"
             size="sm"
             className="shrink-0"
+            ref={retryReadsButton}
             disabled={isRefreshingDiscovery}
             onClick={() => void refresh()}
           >
@@ -592,10 +626,13 @@ export function AgentsMobileCompanionTab() {
           )}
         </div>
         <Button
+          ref={grantButton}
           disabled={authorityReadUnavailable || !grantDeviceId || !resourceId.trim()}
+          aria-disabled={isGranting || undefined}
+          aria-busy={isGranting || undefined}
           onClick={() => void grantControl()}
         >
-          Allow chats and controls
+          {isGranting ? "Granting access…" : "Allow chats and controls"}
         </Button>
         {grants.error && !grants.data && (
           <p role="alert" className="text-sm text-destructive">

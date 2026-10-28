@@ -898,7 +898,7 @@ $("side-form").addEventListener("submit", async event => {
     if (!current.accepted) {
       const latest = current.entries.at(-1)
       request = {operation:"ask", question, requestId:request.requestId, ...(latest?.threadId && !latest.promotedChatId ? {threadId:latest.threadId} : {})}
-      sideDrafts[key] = request; sessionStorage.setItem("flapstack-mobile-side-drafts", JSON.stringify(sideDrafts))
+      if (sideDrafts[key]?.requestId === request.requestId) { sideDrafts[key] = request; sessionStorage.setItem("flapstack-mobile-side-drafts", JSON.stringify(sideDrafts)) }
     }
     sideBusy = false
     await changeSide(request)

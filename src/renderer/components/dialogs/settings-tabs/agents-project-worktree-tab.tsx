@@ -77,10 +77,12 @@ function ProjectDetail({
   projectId,
   draft,
   setDraft,
+  onRemoved,
 }: {
   projectId: string
   draft: ProjectDraft
   setDraft: Dispatch<SetStateAction<ProjectDraft>>
+  onRemoved: (id: string) => void
 }) {
   // Get config for selected project
   const {
@@ -138,6 +140,11 @@ function ProjectDetail({
   // Delete project mutation
   const deleteMutation = trpc.projects.delete.useMutation({
     onSuccess: () => {
+      utils.projects.list.setData(undefined, (current) =>
+        current?.filter((item) => item.id !== projectId),
+      )
+      onRemoved(projectId)
+      void utils.invalidate()
       toast.success("Project removed from list")
       setSelectedProject((current) => {
         if (current?.id === projectId) {
@@ -824,6 +831,7 @@ function ProjectDetail({
 
 // --- Main Two-Panel Component ---
 export function AgentsProjectsTab() {
+  const utils = trpc.useUtils()
   const selectedProject = useAtomValue(selectedProjectAtom)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -861,6 +869,11 @@ export function AgentsProjectsTab() {
   const openFolderMutation = trpc.projects.openFolder.useMutation({
     onSuccess: (project) => {
       if (project) {
+        utils.projects.list.setData(undefined, (current) => [
+          project,
+          ...(current ?? []).filter((item) => item.id !== project.id),
+        ])
+        void utils.projects.list.invalidate()
         setSelectedProjectId(project.id)
       }
     },
@@ -1032,6 +1045,18 @@ export function AgentsProjectsTab() {
             projectId={selectedProjectId}
             draft={drafts[selectedProjectId] ?? emptyDraft}
             setDraft={setDraft}
+            onRemoved={(id) => {
+              const origin = document.activeElement
+              setSelectedProjectId((current) => (current === id ? null : current))
+              requestAnimationFrame(() => {
+                if (
+                  document.activeElement === document.body &&
+                  (origin === document.body || !origin?.isConnected)
+                ) {
+                  searchInputRef.current?.focus()
+                }
+              })
+            }}
           />
         ) : error && !projects ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-4">
