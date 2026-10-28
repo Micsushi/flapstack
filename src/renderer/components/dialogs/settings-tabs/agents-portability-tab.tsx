@@ -33,6 +33,10 @@ export function AgentsPortabilityTab() {
   const capabilities = trpc.importExport.getCapabilities.useQuery()
   const projects = trpc.importExport.listProjects.useQuery()
   const privateSync = trpc.importExport.getPrivateSync.useQuery()
+  const completedBackups = trpc.importExport.listCompletedBackups.useQuery(undefined, {
+    refetchOnMount: "always",
+    retry: false,
+  })
   const utils = trpc.useUtils()
   const [selectedScopes, setSelectedScopes] = useState<PortableScopeId[]>(["settings", "projects"])
   const [selectedProjects, setSelectedProjects] = useState<string[]>([])
@@ -56,8 +60,12 @@ export function AgentsPortabilityTab() {
   const [plan, setPlan] = useState<ImportPlan | null>(null)
   const [page, setPage] = useState(0)
   const [resolutions, setResolutions] = useState<Record<string, Resolution>>({})
-  const [lastBackup, setLastBackup] = useState<{ operationId: string; backupPath: string } | null>(
-    null,
+  const [backupId, setBackupId] = useState("")
+  const backupSelect = useRef<HTMLSelectElement>(null)
+  const refreshBackups = useRef<HTMLButtonElement>(null)
+  const restoreFocus = useRef<HTMLElement | null>(null)
+  const selectedBackup = completedBackups.data?.backups.find(
+    (backup) => backup.operationId === backupId,
   )
   const [syncRepo, setSyncRepo] = useState("")
   const [syncRemote, setSyncRemote] = useState("")
@@ -120,6 +128,15 @@ export function AgentsPortabilityTab() {
     commitSync.isPending ||
     pushSync.isPending
   const queryError = capabilities.error ?? projects.error ?? privateSync.error
+  useEffect(() => {
+    if (busy || completedBackups.isFetching || !restoreFocus.current) return
+    const origin = restoreFocus.current
+    restoreFocus.current = null
+    if (document.activeElement === origin || document.activeElement === document.body) {
+      if (backupSelect.current?.disabled) refreshBackups.current?.focus()
+      else backupSelect.current?.focus()
+    }
+  }, [busy, completedBackups.isFetching])
   const isRefreshingReads = capabilities.isFetching || projects.isFetching || privateSync.isFetching
   const capabilitiesUnavailable =
     capabilities.isLoading || Boolean(capabilities.error) || !capabilities.data
@@ -337,6 +354,7 @@ export function AgentsPortabilityTab() {
             <LabeledInput
               label="Bundle directory"
               value={bundlePath}
+              disabled={busy}
               onChange={(value) => {
                 browseGeneration.current += 1
                 setBundlePath(value)
@@ -364,6 +382,7 @@ export function AgentsPortabilityTab() {
                 "browse",
               )
             }}
+            disabled={busy}
           >
             Browse…
           </Button>
@@ -411,6 +430,7 @@ export function AgentsPortabilityTab() {
           <LabeledInput
             label="Extensions target root"
             value={importExtensionsRoot}
+            disabled={busy}
             onChange={(value) => {
               setImportExtensionsRoot(value)
               invalidateImportPlan()
@@ -420,6 +440,7 @@ export function AgentsPortabilityTab() {
           <LabeledInput
             label="Project roots"
             value={importProjectRoots}
+            disabled={busy}
             onChange={(value) => {
               setImportProjectRoots(value)
               invalidateImportPlan()
@@ -429,6 +450,7 @@ export function AgentsPortabilityTab() {
           <LabeledInput
             label="Project vault roots"
             value={importVaultRoots}
+            disabled={busy}
             onChange={(value) => {
               setImportVaultRoots(value)
               invalidateImportPlan()
@@ -524,6 +546,7 @@ export function AgentsPortabilityTab() {
                         ) : entry.kind === "conflict" ? (
                           <select
                             aria-label={`Resolve conflict ${entry.id}`}
+                            disabled={busy}
                             value={resolutions[entry.id] ?? ""}
                             onChange={(event) => {
                               importGeneration.current += 1
@@ -594,10 +617,7 @@ export function AgentsPortabilityTab() {
                       confirmed: true,
                       resolutions,
                     })
-                    setLastBackup({
-                      operationId: result.operationId,
-                      backupPath: result.backupPath,
-                    })
+                    void completedBackups.refetch()
                     setStatus(
                       `Import applied: ${result.applied} changes, ${result.skipped} skipped. Backup: ${result.backupPath}${result.conflictArtifactPath ? `. Conflict artifacts: ${result.conflictArtifactPath}` : ""}`,
                     )
@@ -611,35 +631,93 @@ export function AgentsPortabilityTab() {
           </div>
         )}
 
-        {lastBackup && (
-          <div className="rounded border border-border p-3 text-sm">
-            <p className="font-medium">Latest pre-import backup</p>
-            <p className="break-all text-xs text-muted-foreground">{lastBackup.backupPath}</p>
-            <Button
-              variant="outline"
-              className="mt-2"
-              disabled={busy}
-              onClick={() => {
-                if (
-                  !window.confirm(
-                    "Restore this pre-import backup? Current imported database and files will be replaced.",
-                  )
+        <div className="space-y-2 text-sm">
+          <label htmlFor="completed-import-backup" className="block font-medium">
+            Completed import backup
+          </label>
+          <select
+            ref={backupSelect}
+            id="completed-import-backup"
+            className="w-full min-w-0 rounded border border-border bg-background p-2"
+            value={selectedBackup ? backupId : ""}
+            disabled={busy || completedBackups.isFetching || Boolean(completedBackups.error)}
+            onChange={(event) => setBackupId(event.target.value)}
+          >
+            <option value="">Choose a backup</option>
+            {completedBackups.data?.backups.map((backup) => (
+              <option key={backup.operationId} value={backup.operationId}>
+                {new Date(backup.recordedAt).toLocaleString()} · {backup.operationId.slice(0, 8)}
+                {backup.available ? "" : " (unavailable)"}
+              </option>
+            ))}
+          </select>
+          {completedBackups.isFetching && <p role="status">Loading import backups…</p>}
+          {completedBackups.error && (
+            <p role="alert">Could not load import backups: {completedBackups.error.message}</p>
+          )}
+          {completedBackups.data &&
+            !completedBackups.error &&
+            !completedBackups.isFetching &&
+            completedBackups.data.backups.length === 0 && (
+              <p>No completed import backups found for this profile.</p>
+            )}
+          {completedBackups.data?.unreadable ? (
+            <p>Some recovery journals could not be read. Refresh after repairing access.</p>
+          ) : null}
+          {completedBackups.data?.limited && (
+            <p>Discovery reached its safety limit; this list may be incomplete.</p>
+          )}
+          {selectedBackup && (
+            <p className="break-words">
+              Backup from {new Date(selectedBackup.recordedAt).toLocaleString()}. Restoring replaces
+              the entire database and imported files, including changes made after this backup.
+              Backup contents are checked when you restore.
+            </p>
+          )}
+          {selectedBackup && !selectedBackup.available && (
+            <p role="alert">Backup files are missing or unavailable. Restore is blocked.</p>
+          )}
+          {restoreBackup.error && <p role="alert">Restore failed: {restoreBackup.error.message}</p>}
+          <Button
+            ref={refreshBackups}
+            variant="ghost"
+            disabled={busy || completedBackups.isFetching}
+            onClick={() => void completedBackups.refetch()}
+          >
+            Refresh backups
+          </Button>
+          <Button
+            variant="outline"
+            disabled={
+              busy ||
+              completedBackups.isFetching ||
+              Boolean(completedBackups.error) ||
+              !selectedBackup?.available
+            }
+            onClick={(event) => {
+              if (!selectedBackup?.available) return
+              if (
+                !window.confirm(
+                  `Restore backup from ${new Date(selectedBackup.recordedAt).toLocaleString()} (${selectedBackup.operationId.slice(0, 8)})? This replaces the entire database and imported files. Changes made after this backup will be lost.`,
                 )
-                  return
-                void run("Restoring backup…", async () => {
-                  await restoreBackup.mutateAsync({
-                    operationId: lastBackup.operationId,
-                    confirmed: true,
-                  })
-                  setStatus("Backup restored.")
+              )
+                return
+              restoreFocus.current = event.currentTarget
+              void run("Restoring backup…", async () => {
+                await restoreBackup.mutateAsync({
+                  operationId: selectedBackup.operationId,
+                  confirmed: true,
                 })
-              }}
-            >
-              <ArchiveRestore className="mr-2 h-4 w-4" />
-              Restore
-            </Button>
-          </div>
-        )}
+                setStatus("Backup restored.")
+                setBackupId("")
+                void completedBackups.refetch()
+              })
+            }}
+          >
+            <ArchiveRestore className="mr-2 h-4 w-4" />
+            Restore selected backup
+          </Button>
+        </div>
         <Button
           variant="ghost"
           disabled={busy}
@@ -954,11 +1032,13 @@ function LabeledInput({
   value,
   onChange,
   placeholder,
+  disabled,
 }: {
   label: string
   value: string
   onChange(value: string): void
   placeholder?: string
+  disabled?: boolean
 }) {
   const id = `portability-${label.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}`
   return (
@@ -968,6 +1048,7 @@ function LabeledInput({
         id={id}
         value={value}
         placeholder={placeholder}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
       />
     </label>

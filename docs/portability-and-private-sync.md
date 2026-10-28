@@ -80,7 +80,14 @@ Failures restore file backups; a failure after database commit also restores
 the database backup, including the commit-before-journal persistence window.
 Startup checks incomplete journals before database
 initialization and rolls them back. Settings exposes manual restore and recovery
-actions with destructive confirmation.
+actions with destructive confirmation. Completed imports remain discoverable after
+closing Settings or restarting, from this profile's existing recovery journals.
+Choose a backup explicitly before restoring: this replaces the entire database
+and imported files, so later changes will be lost. Listing checks file availability;
+restore validates all recorded backup bindings and contents before writing.
+Missing files block restore. Refresh backups retries a failed listing. Discovery
+reads at most 200 directory entries and 32 MB of journal metadata per request and
+reports unreadable journals or an incomplete list rather than hiding those limits.
 
 ## User-owned private git sync
 

@@ -1,6 +1,6 @@
 import Database from "better-sqlite3"
 import { spawnSync } from "node:child_process"
-import { mkdir, readFile, readdir, rename, symlink, writeFile } from "node:fs/promises"
+import { mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { describe, expect, it } from "vitest"
 import { fileSymlinksSupported } from "./helpers/symlink-capability"
@@ -9,6 +9,7 @@ import {
   applyPortableImport as applyPortableImportUnchecked,
   createPortableImportConfirmation,
   createPortableImportPlan,
+  listCompletedImportBackups,
   recoverInterruptedImports,
   restorePortableBackup,
 } from "../src/main/lib/portability/importer"
@@ -394,6 +395,21 @@ describe("portability-import-apply", () => {
 
   it("manually restores a completed import backup", async () => {
     const fixture = await appliedFixture()
+    const listed = await listCompletedImportBackups({
+      stateRoot: fixture.stateRoot,
+      databasePath: fixture.targetPath,
+    })
+    expect(listed.backups).toEqual([
+      { operationId: fixture.operationId, available: true, recordedAt: expect.any(String) },
+    ])
+    expect(
+      (
+        await listCompletedImportBackups({
+          stateRoot: fixture.stateRoot,
+          databasePath: join(fixture.stateRoot, "other-profile.db"),
+        })
+      ).backups,
+    ).toEqual([])
     await restorePortableBackup({
       stateRoot: fixture.stateRoot,
       operationId: fixture.operationId,
@@ -405,6 +421,46 @@ describe("portability-import-apply", () => {
       "Local",
     )
     restored.close()
+    expect(
+      (
+        await listCompletedImportBackups({
+          stateRoot: fixture.stateRoot,
+          databasePath: fixture.targetPath,
+        })
+      ).backups,
+    ).toEqual([])
+  })
+
+  it("discovers without trusting backup contents and blocks corrupt or missing backups before writes", async () => {
+    const fixture = await appliedFixture()
+    const input = { stateRoot: fixture.stateRoot, databasePath: fixture.targetPath }
+    const journal = JSON.parse(
+      await readFile(join(fixture.stateRoot, "journals", `${fixture.operationId}.json`), "utf8"),
+    )
+    await writeFile(journal.databaseBackupPath, "corrupted")
+    expect((await listCompletedImportBackups(input)).backups[0].available).toBe(true)
+    await expect(
+      restorePortableBackup({ ...input, operationId: fixture.operationId }),
+    ).rejects.toThrow()
+    expect(JSON.parse(await readFile(fixture.targetFile, "utf8")).label).toBe("incoming")
+    await rm(journal.databaseBackupPath)
+    expect((await listCompletedImportBackups(input)).backups[0].available).toBe(false)
+    await expect(
+      restorePortableBackup({ ...input, operationId: fixture.operationId }),
+    ).rejects.toThrow()
+    await writeFile(join(fixture.stateRoot, "journals", "broken.json"), "{")
+    expect((await listCompletedImportBackups(input)).unreadable).toBe(1)
+  })
+
+  it("reports directory read failures and recovers on a later listing", async () => {
+    const stateRoot = await tempRoot()
+    const input = { stateRoot, databasePath: join(stateRoot, "target.db") }
+    expect((await listCompletedImportBackups(input)).backups).toEqual([])
+    await writeFile(join(stateRoot, "journals"), "not a directory")
+    await expect(listCompletedImportBackups(input)).rejects.toThrow()
+    await rm(join(stateRoot, "journals"))
+    await mkdir(join(stateRoot, "journals"))
+    expect((await listCompletedImportBackups(input)).backups).toEqual([])
   })
 
   it("materializes both database values and both file byte versions", async () => {

@@ -11,6 +11,7 @@ import {
   applyPortableImport,
   createPortableImportConfirmation,
   createPortableImportPlan,
+  listCompletedImportBackups,
   mergePortableImportTargetRoots,
   readPortableImportPlan,
   recoverInterruptedImports,
@@ -57,6 +58,18 @@ export const importExportRouter = router({
   })),
 
   listProjects: publicProcedure.query(() => listProjects()),
+
+  listCompletedBackups: publicProcedure.query(async () => {
+    const release = beginPortabilityReader()
+    try {
+      return await listCompletedImportBackups({
+        stateRoot: stateRoot(),
+        databasePath: getDatabasePath(),
+      })
+    } finally {
+      release()
+    }
+  }),
 
   chooseExportPath: publicProcedure.mutation(async ({ ctx }) => {
     const options = {

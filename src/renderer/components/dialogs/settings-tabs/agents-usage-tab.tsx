@@ -8,7 +8,14 @@ import { Badge } from "../../ui/badge"
 import { Progress } from "../../ui/progress"
 import { Tabs, TabsList, TabsTrigger } from "../../ui/tabs"
 import { trpc } from "../../../lib/trpc"
-import { useEffect, useId, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react"
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react"
 import {
   accountLabel,
   buildCurrentUsageSummaries,
@@ -1088,6 +1095,7 @@ export function AgentsUsageTab() {
   })
   const secretPresenceQuery = trpc.usage.getSecretPresence.useQuery()
   const [secrets, setSecrets] = useState<Record<string, string>>({})
+  const credentialsRef = useRef<HTMLDivElement>(null)
 
   const capabilities = capabilitiesQuery.data
   const states = statesQuery.data ?? []
@@ -1119,7 +1127,26 @@ export function AgentsUsageTab() {
     onSettled: () => void utils.usage.getSettings.invalidate(),
   })
   const setSecret = trpc.usage.setSecret.useMutation({
-    onSettled: () => void utils.usage.getSecretPresence.invalidate(),
+    onSuccess: (_result, { key, value }) => {
+      if (value !== null) {
+        setSecrets((current) => (current[key] === value ? { ...current, [key]: "" } : current))
+      }
+    },
+    onSettled: (_result, _error, { key }) => {
+      void utils.usage.getSecretPresence.invalidate()
+      requestAnimationFrame(() => {
+        const input = document.getElementById(`usage-credential-${key}`)
+        if (!credentialsRef.current?.contains(input)) return
+        const active = document.activeElement
+        if (
+          active === document.body ||
+          (active instanceof HTMLButtonElement &&
+            active.disabled &&
+            active.parentElement === input?.parentElement)
+        )
+          input?.focus()
+      })
+    },
   })
   const installDaemon = trpc.usage.installDaemon.useMutation({
     onSettled: () => {
@@ -1656,7 +1683,10 @@ export function AgentsUsageTab() {
             </div>
           )}
 
-          <div className="bg-background rounded-lg border border-border p-4 space-y-3">
+          <div
+            ref={credentialsRef}
+            className="bg-background rounded-lg border border-border p-4 space-y-3"
+          >
             <div>
               <h4 className="text-sm font-medium text-foreground">Credentials</h4>
               <p className="text-xs text-muted-foreground mt-1">
@@ -1676,11 +1706,15 @@ export function AgentsUsageTab() {
                 const configured =
                   secretPresence?.[field.key as keyof typeof secretPresence] ?? false
                 return (
-                  <div key={field.key} className="flex items-center gap-2">
-                    <label className="w-44 shrink-0 text-xs text-muted-foreground">
+                  <div key={field.key} className="flex flex-wrap items-center gap-2">
+                    <label
+                      htmlFor={`usage-credential-${field.key}`}
+                      className="w-full shrink-0 text-xs text-muted-foreground sm:w-44"
+                    >
                       {field.label}
                     </label>
                     <input
+                      id={`usage-credential-${field.key}`}
                       type="password"
                       autoComplete="off"
                       value={secrets[field.key] ?? ""}
@@ -1695,7 +1729,6 @@ export function AgentsUsageTab() {
                       disabled={!secrets[field.key] || setSecret.isPending}
                       onClick={() => {
                         setSecret.mutate({ key: field.key, value: secrets[field.key] })
-                        setSecrets((current) => ({ ...current, [field.key]: "" }))
                       }}
                       className="text-xs px-2 py-1 rounded border border-border hover:bg-foreground/5 disabled:opacity-50"
                     >

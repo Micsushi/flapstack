@@ -1,7 +1,7 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { randomUUID } from "node:crypto"
-import { lstat, mkdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises"
+import { lstat, mkdir, opendir, realpath, rename, rm, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { z } from "zod"
 import * as appDatabaseSchema from "../db/schema"
@@ -928,6 +928,75 @@ async function recoverInterruptedImportsInsideLifecycle(
     results.push({ operationId: journal.operationId, action: "rolled-back" })
   }
   return results
+}
+
+/** Discovery only: restore still validates every backup's contents and binding. */
+export async function listCompletedImportBackups(input: {
+  stateRoot: string
+  databasePath: string
+}) {
+  const backups: Array<{ operationId: string; recordedAt: string; available: boolean }> = []
+  let unreadable = 0
+  let limited = false
+  let inspected = 0
+  let bytes = 0
+  const root = join(input.stateRoot, "journals")
+  let directory
+  try {
+    await assertSafeDirectory(root)
+    directory = await opendir(root)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { backups, unreadable, limited }
+    throw error
+  }
+  for await (const entry of directory) {
+    if (++inspected > 200) {
+      limited = true
+      break
+    }
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue
+    try {
+      const path = join(root, entry.name)
+      const info = await lstat(path)
+      bytes += info.size
+      if (bytes > 32_000_000) {
+        limited = true
+        break
+      }
+      const journal = importJournalSchema.parse(await readJsonFile(path))
+      if (
+        journal.phase !== "complete" ||
+        resolve(journal.databasePath) !== resolve(input.databasePath)
+      )
+        continue
+      if (entry.name !== `${journal.operationId}.json`) throw new Error("Journal identity mismatch")
+      const sources = [
+        journal.databaseBackupPath,
+        ...journal.fileBackups.flatMap((file) => (file.backupPath ? [file.backupPath] : [])),
+      ]
+      let available = true
+      for (const source of sources) {
+        try {
+          const backup = await lstat(source)
+          if (!backup.isFile() || backup.isSymbolicLink()) available = false
+        } catch {
+          available = false
+        }
+      }
+      backups.push({
+        operationId: journal.operationId,
+        recordedAt: info.mtime.toISOString(),
+        available,
+      })
+    } catch {
+      unreadable += 1
+    }
+  }
+  backups.sort(
+    (a, b) =>
+      b.recordedAt.localeCompare(a.recordedAt) || a.operationId.localeCompare(b.operationId),
+  )
+  return { backups, unreadable, limited }
 }
 
 export async function restorePortableBackup(input: {
