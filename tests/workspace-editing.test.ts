@@ -90,6 +90,7 @@ beforeEach(() => {
   mkdirSync(root)
   writeFileSync(join(root, "file.txt"), original)
   sqlite = new Database(join(container, "test.db"))
+  sqlite.pragma("journal_mode=WAL")
   sqlite.pragma("foreign_keys=ON")
   db = createDb()
   migrate(db, { migrationsFolder: resolve("drizzle") })
