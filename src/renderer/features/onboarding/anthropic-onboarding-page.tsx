@@ -26,6 +26,7 @@ export function AnthropicOnboardingPage() {
       />
 
       <button
+        aria-label="Back to connection methods"
         onClick={handleBack}
         className="fixed top-12 left-4 flex items-center justify-center h-8 w-8 rounded-full hover:bg-foreground/5 transition-colors"
       >
