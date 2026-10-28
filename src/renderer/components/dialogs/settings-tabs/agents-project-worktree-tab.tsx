@@ -864,6 +864,9 @@ export function AgentsProjectsTab() {
         setSelectedProjectId(project.id)
       }
     },
+    onError: (error) => {
+      toast.error(`Failed to add project: ${error.message}`)
+    },
   })
 
   // Filter projects by search

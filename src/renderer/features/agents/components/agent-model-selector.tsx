@@ -2,10 +2,14 @@
 
 import { Brain, ChevronDown, ChevronRight, Zap } from "lucide-react"
 import { useSetAtom } from "jotai"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { agentsLoginModalOpenAtom, codexLoginModalOpenAtom } from "../../../lib/atoms"
-import { createPortal } from "react-dom"
-import { AnimatePresence, motion } from "motion/react"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "../../../components/ui/dialog"
 import {
   Command,
   CommandEmpty,
@@ -307,8 +311,6 @@ export function AgentModelTuningSelector({
   )
 }
 
-const DIALOG_EASING = [0.55, 0.055, 0.675, 0.19] as const
-
 function CrossProviderConfirmDialog({
   isOpen,
   providerName,
@@ -316,6 +318,7 @@ function CrossProviderConfirmDialog({
   onConfirm,
   onDelegate,
   onClose,
+  returnFocusRef,
 }: {
   isOpen: boolean
   providerName: string
@@ -323,93 +326,70 @@ function CrossProviderConfirmDialog({
   onConfirm: () => void
   onDelegate?: () => void
   onClose: () => void
+  returnFocusRef: RefObject<HTMLButtonElement | null>
 }) {
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => {
-    setMounted(true)
-  }, [])
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!isOpen) return
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault()
-        onClose()
-      }
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault()
-        onConfirm()
-      }
-    }
-    document.addEventListener("keydown", handleKeyDown)
-    return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [isOpen, onConfirm, onClose])
-
-  if (!mounted) return null
-  const portalTarget = typeof document !== "undefined" ? document.body : null
-  if (!portalTarget) return null
-
-  return createPortal(
-    <AnimatePresence mode="wait" initial={false}>
-      {isOpen && (
-        <>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1, transition: { duration: 0.18, ease: DIALOG_EASING } }}
-            exit={{
-              opacity: 0,
-              pointerEvents: "none" as const,
-              transition: { duration: 0.15, ease: DIALOG_EASING },
-            }}
-            className="fixed inset-0 z-[45] bg-black/25"
-            onClick={onClose}
-            style={{ pointerEvents: "auto" }}
-          />
-          <div className="fixed top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%] z-[46] pointer-events-none">
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              transition={{ duration: 0.2, ease: DIALOG_EASING }}
-              className="w-[90vw] max-w-[400px] pointer-events-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="bg-background rounded-2xl border shadow-2xl overflow-hidden">
-                <div className="p-6">
-                  <h2 className="text-xl font-semibold mb-2">Switch to {providerName}</h2>
-                  <p className="text-sm text-muted-foreground">
-                    A distinct child Chat will receive only the visible conversation context. Hidden
-                    provider state is not transferred.
-                  </p>
-                  <dl className="mt-4 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <dt className="text-muted-foreground">Selected model</dt>
-                      <dd className="truncate font-medium">{modelName}</dd>
-                    </div>
-                  </dl>
-                </div>
-                <div className="bg-muted p-4 flex items-center justify-end border-t border-border rounded-b-xl">
-                  <div className="flex items-center gap-2">
-                    <Button onClick={onClose} variant="ghost" className="rounded-md">
-                      Cancel
-                    </Button>
-                    {onDelegate ? (
-                      <Button onClick={onDelegate} variant="outline" className="rounded-md">
-                        Delegate task
-                      </Button>
-                    ) : null}
-                    <Button onClick={onConfirm} variant="default" className="rounded-md">
-                      New chat
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
+  return (
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+    >
+      <DialogContent
+        ref={contentRef}
+        aria-modal="true"
+        showCloseButton={false}
+        className="w-[90vw] max-w-[400px] gap-0 p-0 rounded-2xl shadow-2xl overflow-hidden"
+        onClick={(event) => event.stopPropagation()}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          cancelRef.current?.focus()
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          if (
+            document.activeElement === document.body ||
+            contentRef.current?.contains(document.activeElement)
+          ) {
+            returnFocusRef.current?.focus()
+          }
+        }}
+      >
+        <div className="p-6">
+          <DialogTitle className="text-xl font-semibold mb-2 leading-normal tracking-normal">
+            Switch to {providerName}
+          </DialogTitle>
+          <DialogDescription>
+            A distinct child Chat will receive only the visible conversation context. Hidden
+            provider state is not transferred.
+          </DialogDescription>
+          <dl className="mt-4 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-muted-foreground">Selected model</dt>
+              <dd className="truncate font-medium">{modelName}</dd>
+            </div>
+          </dl>
+        </div>
+        <div className="bg-muted p-4 flex items-center justify-end border-t border-border rounded-b-xl">
+          <div className="flex items-center gap-2">
+            <Button ref={cancelRef} onClick={onClose} variant="ghost" className="rounded-md">
+              Cancel
+            </Button>
+            {onDelegate ? (
+              <Button onClick={onDelegate} variant="outline" className="rounded-md">
+                Delegate task
+              </Button>
+            ) : null}
+            <Button onClick={onConfirm} variant="default" className="rounded-md">
+              New chat
+            </Button>
           </div>
-        </>
-      )}
-    </AnimatePresence>,
-    portalTarget,
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -435,6 +415,7 @@ export function AgentModelSelector({
   const setClaudeLoginOpen = useSetAtom(agentsLoginModalOpenAtom)
   const setCodexLoginOpen = useSetAtom(codexLoginModalOpenAtom)
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
+  const modelTriggerRef = useRef<HTMLButtonElement>(null)
   const [pendingContinuation, setPendingContinuation] = useState<{
     provider: AgentProviderId
     targetModelId: string
@@ -749,6 +730,7 @@ export function AgentModelSelector({
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
+          ref={modelTriggerRef}
           data-tour="model"
           className={cn(
             "flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs transition-[background-color,color,border-color] duration-150 ease-out outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
@@ -952,6 +934,7 @@ export function AgentModelSelector({
       </PopoverContent>
 
       <CrossProviderConfirmDialog
+        returnFocusRef={modelTriggerRef}
         isOpen={confirmDialogOpen}
         providerName={
           pendingContinuation?.provider === "codex"
