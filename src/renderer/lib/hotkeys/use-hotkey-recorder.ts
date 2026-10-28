@@ -163,6 +163,7 @@ export function useHotkeyRecorder({
 
   // Track if we've recorded a complete combination
   const hasRecordedRef = useRef(false)
+  const composingRef = useRef(false)
 
   // Reset state when recording starts (not when it stops, to avoid flicker)
   useEffect(() => {
@@ -170,6 +171,7 @@ export function useHotkeyRecorder({
       setModifiers(new Set())
       setMainKey(null)
       hasRecordedRef.current = false
+      composingRef.current = false
     }
   }, [isRecording])
 
@@ -177,6 +179,8 @@ export function useHotkeyRecorder({
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (!isRecording) return
+      composingRef.current = e.isComposing || e.keyCode === 229
+      if (composingRef.current) return
 
       e.preventDefault()
       e.stopPropagation()
@@ -189,21 +193,27 @@ export function useHotkeyRecorder({
         return
       }
 
-      if (isModifier(key)) {
-        // Add modifier
-        setModifiers((prev) => new Set([...prev, key]))
-      } else {
+      // Include modifiers already held when recording began.
+      setModifiers(
+        new Set([
+          ...(e.metaKey ? ["cmd"] : []),
+          ...(e.ctrlKey ? ["ctrl"] : []),
+          ...(e.altKey ? ["opt"] : []),
+          ...(e.shiftKey ? ["shift"] : []),
+        ]),
+      )
+      if (!isModifier(key)) {
         // Set main key
         setMainKey(key)
       }
     },
-    [isRecording, modifiers, onCancel],
+    [isRecording, onCancel],
   )
 
   // Handle keyup
   const handleKeyUp = useCallback(
     (e: KeyboardEvent) => {
-      if (!isRecording) return
+      if (!isRecording || composingRef.current || e.isComposing || e.keyCode === 229) return
       // Don't process keyup after recording - keep state frozen
       if (hasRecordedRef.current) return
 

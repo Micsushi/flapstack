@@ -21,6 +21,45 @@ describe("Keyboard Settings", () => {
     container.remove()
   })
 
+  it("ignores IME recording events and captures a modifier held before recording", async () => {
+    const root = createRoot(container)
+    try {
+      await act(async () =>
+        root.render(createElement(Provider, null, createElement(AgentsKeyboardTab))),
+      )
+      const change = container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Change Toggle sidebar shortcut"]',
+      )!
+      await act(async () => change.click())
+      for (const options of [{ isComposing: true }, { keyCode: 229 }]) {
+        for (const type of ["keydown", "keyup"]) {
+          const event = new KeyboardEvent(type, {
+            key: "Enter",
+            cancelable: true,
+            ...(type === "keydown" ? options : {}),
+          })
+          await act(async () => {
+            window.dispatchEvent(event)
+          })
+          expect(event.defaultPrevented).toBe(false)
+        }
+      }
+      expect(change.textContent).toContain("Press keys")
+      // No Control keydown: it was held before recording started.
+      for (const type of ["keydown", "keyup"]) {
+        await act(async () => {
+          window.dispatchEvent(new KeyboardEvent(type, { key: "p", code: "KeyP", ctrlKey: true }))
+        })
+      }
+      expect(container.textContent).toContain("Go to file already uses this shortcut")
+      expect(localStorage.getItem("preferences:custom-hotkeys") ?? "").not.toContain(
+        '"toggle-sidebar"',
+      )
+    } finally {
+      await act(async () => root.unmount())
+    }
+  })
+
   it("persists a valid edit, rejects a conflict, and resets the override", async () => {
     const root = createRoot(container)
     await act(async () => {

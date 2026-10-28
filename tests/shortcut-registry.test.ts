@@ -195,6 +195,40 @@ describe("shortcut registry", () => {
     expect(inputAction).toBe("toggle-sidebar")
   })
 
+  it.each(["", "true", "plaintext-only"])("protects inherited contenteditable=%s", (value) => {
+    const editor = document.createElement("div")
+    editor.setAttribute("contenteditable", value)
+    const child = document.createElement("span")
+    editor.append(child)
+    let action: unknown = "unset"
+    child.addEventListener("keydown", (event) => {
+      action = resolveRendererShortcut(event as KeyboardEvent, { version: 2, bindings: {} })
+    })
+    child.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "?",
+        code: "Slash",
+        shiftKey: true,
+        bubbles: true,
+      }),
+    )
+    expect(action).toBeNull()
+  })
+
+  it("leaves composing and already-consumed events alone, including global shortcuts", () => {
+    for (const options of [{ isComposing: true }, { keyCode: 229 }, {}]) {
+      const event = new KeyboardEvent("keydown", {
+        key: "\\",
+        code: "Backslash",
+        ctrlKey: true,
+        cancelable: true,
+        ...options,
+      })
+      if (Object.keys(options).length === 0) event.preventDefault()
+      expect(resolveRendererShortcut(event, { version: 2, bindings: {} })).toBeNull()
+    }
+  })
+
   it("protects terminals, Monaco, and dialogs and leaves native accelerators to Electron", () => {
     const config = { version: 2 as const, bindings: {} }
     for (const target of [

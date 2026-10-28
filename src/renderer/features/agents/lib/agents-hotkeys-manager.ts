@@ -46,7 +46,7 @@ export function isShortcutFocusAllowed(
   if (action.focusPolicy === "global") return true
   if (!(target instanceof Element)) return true
   return !target.closest(
-    'input, textarea, select, [contenteditable="true"], .monaco-editor, .xterm, [role="dialog"], [aria-modal="true"]',
+    'input, textarea, select, [contenteditable]:not([contenteditable="false"]), .monaco-editor, .xterm, [role="dialog"], [aria-modal="true"]',
   )
 }
 
@@ -55,6 +55,7 @@ export function resolveRendererShortcut(
   config: CustomHotkeysConfig,
   options: { availableActionIds?: ReadonlySet<string> } = {},
 ): ShortcutAction | null {
+  if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return null
   const conflicts = detectConflicts(config)
   for (const action of ALL_SHORTCUT_ACTIONS) {
     if (action.dispatch !== "renderer") continue
