@@ -1371,6 +1371,25 @@ export const chatsRouter = router({
    */
   restore: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
     const db = getDatabase()
+    const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
+    if (chat?.projectId) {
+      const project = db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+      if (!project || project.archivedAt) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Restore the project before restoring this chat.",
+        })
+      }
+    }
+    if (chat?.taskId) {
+      const task = db.select().from(tasks).where(eq(tasks.id, chat.taskId)).get()
+      if (!task || task.archivedAt) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "This chat belongs to an archived historical task and cannot be restored here.",
+        })
+      }
+    }
     return db
       .update(chats)
       .set({ archivedAt: null })

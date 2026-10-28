@@ -293,9 +293,13 @@ export const ArchivePopover = memo(function ArchivePopover({ trigger }: ArchiveP
 
   // Local restore mutation
   const localRestoreMutation = trpc.chats.restore.useMutation({
+    onError: (error) => toast.error(error.message || "Failed to restore chat"),
     onSuccess: (restoredChat) => {
       // Optimistically add restored chat to the main list cache
       if (restoredChat) {
+        setSelectedChatId(restoredChat.id)
+        setSelectedChatIsRemote(false)
+        setChatSourceMode("local")
         utils.chats.list.setData({}, (oldData) => {
           return upsertChatInSidebarOrder(oldData, restoredChat)
         })
@@ -303,6 +307,7 @@ export const ArchivePopover = memo(function ArchivePopover({ trigger }: ArchiveP
       // Invalidate both lists to refresh
       utils.chats.list.invalidate()
       utils.chats.listArchived.invalidate()
+      utils.chats.archiveSummary.invalidate()
     },
   })
 
@@ -313,6 +318,7 @@ export const ArchivePopover = memo(function ArchivePopover({ trigger }: ArchiveP
     onSuccess: ({ deletedCount, failedChatIds }) => {
       utils.chats.list.invalidate()
       utils.chats.listArchived.invalidate()
+      utils.chats.archiveSummary.invalidate()
       utils.chats.getFileStats.invalidate()
       if (failedChatIds.length > 0) {
         toast.warning(
@@ -442,13 +448,10 @@ export const ArchivePopover = memo(function ArchivePopover({ trigger }: ArchiveP
                 setChatSourceMode("sandbox")
               },
             })
+            setOpen(false)
           } else {
-            localRestoreMutation.mutate({ id: chat.id })
-            setSelectedChatId(chat.id)
-            setSelectedChatIsRemote(false)
-            setChatSourceMode("local")
+            localRestoreMutation.mutate({ id: chat.id }, { onSuccess: () => setOpen(false) })
           }
-          setOpen(false)
         }
       }
     },
@@ -517,9 +520,6 @@ export const ArchivePopover = memo(function ArchivePopover({ trigger }: ArchiveP
         })
       } else {
         localRestoreMutation.mutate({ id })
-        setSelectedChatId(id)
-        setSelectedChatIsRemote(false)
-        setChatSourceMode("local")
       }
     },
     [

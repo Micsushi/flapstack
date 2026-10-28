@@ -13,12 +13,24 @@ export function McpExternalMutationRefreshBridge() {
     if (!window.desktopApi?.onProductMcpInvalidation) return
     const invalidate = createProductMcpRendererInvalidator({
       projectsList: () => utils.projects.list.invalidate(),
-      projectsArchived: () => utils.projects.listArchived.invalidate(),
+      projectsArchived: () =>
+        Promise.all([
+          utils.projects.listArchived.invalidate(),
+          utils.chats.archiveSummary.invalidate(),
+        ]),
       tasksList: () => Promise.all([utils.tasks.list.invalidate(), utils.tasks.board.invalidate()]),
-      tasksArchived: () => utils.tasks.listArchived.invalidate(),
+      tasksArchived: () =>
+        Promise.all([
+          utils.tasks.listArchived.invalidate(),
+          utils.chats.archiveSummary.invalidate(),
+        ]),
       task: (id) => utils.tasks.get.invalidate({ id }),
       chatsList: () => utils.chats.list.invalidate(),
-      chatsArchived: () => utils.chats.listArchived.invalidate(),
+      chatsArchived: () =>
+        Promise.all([
+          utils.chats.listArchived.invalidate(),
+          utils.chats.archiveSummary.invalidate(),
+        ]),
       chat: (id) =>
         Promise.all([
           utils.chats.get.invalidate({ id }),

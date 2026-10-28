@@ -3652,9 +3652,11 @@ function AgentsSidebarInner({
 
   // Restore chat mutation (for undo)
   const restoreChatMutation = trpc.chats.restore.useMutation({
+    onError: (error) => toast.error(error.message || "Failed to restore chat"),
     onSuccess: (_, variables) => {
       utils.chats.list.invalidate()
       utils.chats.listArchived.invalidate()
+      utils.chats.archiveSummary.invalidate()
       // Select the restored chat
       setSelectedChatId(variables.id)
     },
@@ -3664,6 +3666,7 @@ function AgentsSidebarInner({
     onSuccess: () => {
       utils.projects.list.invalidate()
       utils.projects.listArchived.invalidate()
+      utils.chats.archiveSummary.invalidate()
       utils.chats.list.invalidate()
       utils.tasks.list.invalidate()
       utils.tasks.listArchived.invalidate()
@@ -3675,6 +3678,7 @@ function AgentsSidebarInner({
     onSuccess: ({ deletedCount, failedChatIds }, variables) => {
       utils.chats.list.invalidate()
       utils.chats.listArchived.invalidate()
+      utils.chats.archiveSummary.invalidate()
       utils.chats.getFileStats.invalidate()
       const requestedIds = new Set(variables?.ids ?? [])
       const failedIds = new Set(failedChatIds)
@@ -3771,6 +3775,7 @@ function AgentsSidebarInner({
 
       utils.chats.list.invalidate()
       utils.chats.listArchived.invalidate()
+      utils.chats.archiveSummary.invalidate()
 
       // If archiving the currently selected chat, navigate based on auto-advance setting
       if (selectedChatId === variables.id) {
@@ -3861,7 +3866,18 @@ function AgentsSidebarInner({
               },
             })
           } else {
-            restoreChatMutation.mutate({ id: lastItem.chatId })
+            restoreChatMutation.mutate(
+              { id: lastItem.chatId },
+              {
+                onError: () => {
+                  const timeoutId = setTimeout(
+                    () => removeWorkspaceFromStack(lastItem.chatId),
+                    10000,
+                  )
+                  setUndoStack((prev) => [...prev, { ...lastItem, timeoutId }])
+                },
+              },
+            )
           }
         } else if (lastItem.type === "subchat") {
           // Restore sub-chat tab (re-add to open tabs)
@@ -3882,6 +3898,7 @@ function AgentsSidebarInner({
     restoreChatMutation,
     restoreRemoteChatMutation,
     restoreProjectMutation,
+    removeWorkspaceFromStack,
     setSelectedChatId,
   ])
 
@@ -3904,6 +3921,7 @@ function AgentsSidebarInner({
 
       utils.chats.list.invalidate()
       utils.chats.listArchived.invalidate()
+      utils.chats.archiveSummary.invalidate()
 
       if (!replayingActionHistoryRef.current) {
         recordAppAction({
@@ -4233,6 +4251,7 @@ function AgentsSidebarInner({
     onSuccess: (_, variables) => {
       utils.projects.list.invalidate()
       utils.projects.listArchived.invalidate()
+      utils.chats.archiveSummary.invalidate()
       utils.tasks.list.invalidate()
       utils.tasks.listArchived.invalidate()
       utils.chats.list.invalidate()

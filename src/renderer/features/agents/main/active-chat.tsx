@@ -6367,8 +6367,9 @@ function ChatViewScoped({
     mergePrMutation.mutate({ chatId, method: "squash" })
   }, [chatId, mergePrMutation])
 
-  // Restore archived workspace mutation (silent - no toast)
+  // Restore archived workspace mutation
   const restoreWorkspaceMutation = trpc.chats.restore.useMutation({
+    onError: (error) => toast.error(error.message || "Failed to restore chat"),
     onSuccess: (restoredChat) => {
       if (restoredChat) {
         // Update the main chat list cache
@@ -6379,6 +6380,7 @@ function ChatViewScoped({
       // Invalidate both lists to refresh
       trpcUtils.chats.list.invalidate()
       trpcUtils.chats.listArchived.invalidate()
+      trpcUtils.chats.archiveSummary.invalidate()
       // Invalidate this chat's data to update isArchived state
       utils.agents.getAgentChat.invalidate({ chatId })
     },
