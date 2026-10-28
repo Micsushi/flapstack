@@ -139,6 +139,7 @@ let reconnectTimer = null
 let reconnectAttempt = 0
 let connectionGeneration = 0
 let connectionDeadline = null
+let reconnectPaused = sessionStorage.getItem("flapstack-mobile-reconnect-paused") === "true"
 let lastMessageAt = 0
 const drafts = readJson(sessionStorage.getItem("flapstack-mobile-drafts")) || {}
 const draftKey = () => selectedChat ? selectedChat + ":" + (selectedConversation || "") : "new:" + activeGrantId + ":" + newChatProject
@@ -369,11 +370,15 @@ if (offer) {
 $("pairing").hidden = !!sessionCredential && !offer
 $("settings").open = !sessionCredential
 connectButton.disabled = !sessionCredential
+if (reconnectPaused) {
+  announce("Access was revoked. Review this phone’s access on the computer before reconnecting.")
+  $("settings").open = true
+}
 $("fingerprint-confirmed").addEventListener("change", updatePairButton)
 $("device-name").addEventListener("input", updatePairButton)
-grantInput.addEventListener("change", () => { void connect() })
+grantInput.addEventListener("change", () => { void connect(true) })
 pairButton.addEventListener("click", pair)
-connectButton.addEventListener("click", connect)
+connectButton.addEventListener("click", () => { void connect(true) })
 $("notifications").addEventListener("click", async () => {
   if (!("Notification" in window)) return announce("Notifications are unavailable in this browser.")
   const permission = await Notification.requestPermission()
@@ -422,21 +427,22 @@ async function pair() {
       publicKeyAlgorithm: "P-256",
       publicKey: pem(spki),
     })
-    await storePrivateKey(keys.privateKey)
     const challengeProof = {
       sessionId: paired.challenge.sessionId,
       deviceId: paired.challenge.deviceId,
       challenge: paired.challenge.challenge,
     }
     const signature = await signText(await challengeMessage(challengeProof), keys.privateKey)
-    sessionCredential = await post("/mobile/v1/authenticate", {...challengeProof, signature})
-    localStorage.setItem("flapstack-mobile-session", JSON.stringify(sessionCredential))
+    const credential = await post("/mobile/v1/authenticate", {...challengeProof, signature})
+    await storePrivateKey(keys.privateKey)
+    localStorage.setItem("flapstack-mobile-session", JSON.stringify(credential))
+    sessionCredential = credential
     history.replaceState(null, "", "/")
     $("pairing").hidden = true
     connectButton.disabled = false
     connectButton.focus()
     pairingBusy = false
-    await connect()
+    await connect(true)
   } catch {
     announce("Pairing failed safely. Confirm the fingerprint and create a fresh offer.")
   } finally {
@@ -447,8 +453,13 @@ async function pair() {
   }
 }
 
-async function connect() {
+async function connect(manual = false) {
   if (pairingBusy) return
+  if (manual) {
+    reconnectPaused = false
+    sessionStorage.removeItem("flapstack-mobile-reconnect-paused")
+  }
+  if (reconnectPaused) return
   const generation = ++connectionGeneration
   clearTimeout(reconnectTimer)
   clearTimeout(connectionDeadline)
@@ -570,10 +581,15 @@ function applyEnvelope(envelope) {
       }
     }
     if (envelope.payload.type === "scope.revoked") {
+      reconnectPaused = true
+      sessionStorage.setItem("flapstack-mobile-reconnect-paused", "true")
+      connectionGeneration++
+      clearTimeout(reconnectTimer); clearTimeout(connectionDeadline)
+      const revokedSocket = socket; socket = null
       saveDraft(); currentItems.clear(); setOnline(false)
       announce("Access was revoked. Review this phone’s access on the computer before reconnecting.")
       $("settings").open = true
-      socket.close(1000, "scope-revoked")
+      revokedSocket?.close(1000, "scope-revoked")
       return
     }
     if (envelope.payload.type === "resnapshot.required") {
@@ -967,12 +983,15 @@ function openKeyDb() {
 }
 async function storePrivateKey(key) {
   const db = await openKeyDb()
-  await new Promise((resolve,reject) => {
-    const request = db.transaction("credentials","readwrite").objectStore("credentials").put(key,"device-private-key")
-    request.onsuccess = resolve
-    request.onerror = () => reject(request.error)
-  })
-  db.close()
+  try {
+    await new Promise((resolve,reject) => {
+      const transaction = db.transaction("credentials","readwrite")
+      transaction.oncomplete = resolve
+      transaction.onabort = () => reject(transaction.error || new Error("Could not save pairing key"))
+      transaction.onerror = () => reject(transaction.error)
+      transaction.objectStore("credentials").put(key,"device-private-key")
+    })
+  } finally { db.close() }
 }
 async function readPrivateKey() {
   const db = await openKeyDb()

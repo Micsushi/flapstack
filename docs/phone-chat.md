@@ -30,8 +30,11 @@ and usage limits still apply on the computer.
 ## Reconnect and drafts
 
 The browser retains its pairing key on that device and authenticates again after
-a disconnect or application restart. A revoked grant or device needs desktop
-attention. Offline controls cannot send messages. Drafts stay in the current
+a disconnect or application restart. When access is revoked, automatic reconnect
+pauses, including after a reload in the same tab. Review access on the desktop,
+then choose **Connect** or select another allowed scope. A failed authentication
+during re-pairing preserves the previous pairing key. Offline controls cannot
+send messages. Drafts stay in the current
 browser tab's session storage across reloads and reconnects; closing the tab may
 remove them. If a paged snapshot is interrupted, the browser reconnects and
 continues recovery instead of treating the temporary page failure as an access

@@ -5453,6 +5453,7 @@ const ChatViewInner = memo(function ChatViewInner({
                 chatId={parentChatId}
                 taskId={taskId ?? null}
                 worktreePath={projectPath ?? null}
+                onFocusComposer={() => editorRef.current?.focus()}
               />
 
               {/* Input - isolated component to prevent re-renders */}

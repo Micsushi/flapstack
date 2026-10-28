@@ -313,6 +313,39 @@ export const attachmentsRouter = router({
     throw new Error("Attachment has no readable text content")
   }),
 
+  preview: publicProcedure.input(z.object({ id: z.string() })).query(async ({ input }) => {
+    const attachment = getDatabase()
+      .select()
+      .from(attachments)
+      .where(eq(attachments.id, input.id))
+      .get()
+    if (!attachment) throw new Error("Attachment not found")
+    if (attachment.storedPath) {
+      if (attachment.kind === "image") {
+        const data = await readStoredAttachment(attachment)
+        const image = inspectImage(data)
+        if (!image) throw new Error("Image preview is not available for this attachment")
+        return {
+          kind: "image" as const,
+          dataUrl: `data:${image.mimeType};base64,${data.toString("base64")}`,
+        }
+      }
+      if (attachment.mimeType && !TEXT_FILE_MIME_TYPES.has(attachment.mimeType)) {
+        return { kind: "unsupported" as const }
+      }
+      const data = await readStoredAttachment(attachment, 2_000_000)
+      if (sniffFileMimeType(data) || !isSafeUtf8Text(data)) return { kind: "unsupported" as const }
+      return { kind: "text" as const, content: data.toString("utf8") }
+    }
+    if (attachment.contentText !== null) {
+      if (Buffer.byteLength(attachment.contentText, "utf8") > 2_000_000) {
+        throw new Error("Attachment exceeds the preview size limit")
+      }
+      return { kind: "text" as const, content: attachment.contentText }
+    }
+    return { kind: "unsupported" as const }
+  }),
+
   delete: publicProcedure
     .input(z.object({ id: z.string(), chatId: z.string() }))
     .mutation(async ({ input }) => {

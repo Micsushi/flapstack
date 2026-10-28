@@ -1,22 +1,34 @@
 "use client"
 
-import { Eye, FileText, FolderInput, Plus, Upload } from "lucide-react"
+import { Eye, FileText, FolderInput, Plus, Trash2, Upload } from "lucide-react"
 import { useSetAtom } from "jotai"
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { Button } from "../../../components/ui/button"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../../components/ui/alert-dialog"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../../components/ui/dialog"
 import { Input } from "../../../components/ui/input"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
+import { toRootedFileTarget } from "../../../lib/file-target"
 import { fileViewerOpenAtomFamily } from "../atoms"
 
 type AttachmentTrayProps = {
   chatId: string
   taskId?: string | null
   worktreePath?: string | null
+  onFocusComposer?: () => void
 }
 
 function formatKind(kind: string) {
@@ -27,14 +39,35 @@ function formatKind(kind: string) {
 
 const ATTACHMENT_PREVIEW_COUNT = 6
 
-export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayProps) {
+export function AttachmentTray({
+  chatId,
+  taskId,
+  worktreePath,
+  onFocusComposer,
+}: AttachmentTrayProps) {
   const utils = trpc.useUtils()
-  const [targetPaths, setTargetPaths] = useState<Record<string, string>>({})
-  const [showAll, setShowAll] = useState(false)
-  const [textPreview, setTextPreview] = useState<{ name: string; content: string } | null>(null)
-  const [visualPreviewId, setVisualPreviewId] = useState<string | null>(null)
+  const trayRef = useRef<HTMLDivElement>(null)
+  const deleteTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const deleteDialogRef = useRef<HTMLDivElement>(null)
+  const deletedIdRef = useRef<string | null>(null)
   const fileViewerAtom = useMemo(() => fileViewerOpenAtomFamily(chatId), [chatId])
   const setFileViewerPath = useSetAtom(fileViewerAtom)
+  const [targetPaths, setTargetPaths] = useState<Record<string, string>>({})
+  const [showAll, setShowAll] = useState(false)
+  const [previewAttachment, setPreviewAttachment] = useState<{ id: string; name: string } | null>(
+    null,
+  )
+  const [visualPreviewId, setVisualPreviewId] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string
+    chatId: string
+    name: string
+    taskId: string | null
+  } | null>(null)
+  const preview = trpc.attachments.preview.useQuery(
+    { id: previewAttachment?.id ?? "" },
+    { enabled: Boolean(previewAttachment), retry: false },
+  )
   const { data: attachments = [] } = trpc.attachments.listByChat.useQuery(
     { chatId },
     { enabled: !!chatId },
@@ -72,47 +105,54 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
     onError: (error) => toast.error(error.message || "Failed to write attachment"),
   })
 
+  const deleteMutation = trpc.attachments.delete.useMutation({
+    onSuccess: (deleted, variables) => {
+      deletedIdRef.current = variables.id
+      utils.attachments.listByChat.invalidate({ chatId: variables.chatId })
+      if (deleted?.taskId) utils.attachments.listByTask.invalidate({ taskId: deleted.taskId })
+      utils.attachments.preview.reset({ id: variables.id })
+      setDeleteTarget((current) => (current?.id === variables.id ? null : current))
+      setPreviewAttachment((current) => (current?.id === variables.id ? null : current))
+      toast.success("Saved attachment permanently deleted")
+    },
+    onError: (error) =>
+      toast.error(error.message || "Failed to delete attachment. Retry the deletion."),
+  })
+
   const visibleAttachments = useMemo(
     () => (showAll ? attachments : attachments.slice(0, ATTACHMENT_PREVIEW_COUNT)),
     [attachments, showAll],
   )
 
   const viewArtifact = (artifact: (typeof taskArtifacts)[number]) => {
-    const artifactPath = artifact.storedPath ?? artifact.sourcePath
-    if (artifactPath) {
-      setFileViewerPath(artifactPath)
+    if (
+      !artifact.storedPath &&
+      artifact.contentText === null &&
+      artifact.sourcePath &&
+      toRootedFileTarget(worktreePath, artifact.sourcePath)
+    ) {
+      setFileViewerPath(artifact.sourcePath)
       return
     }
-    if (artifact.contentText !== null) {
-      setTextPreview({ name: artifact.name, content: artifact.contentText })
-      return
-    }
-    toast.error("This artifact has no readable content")
-  }
-
-  const viewAttachment = (attachment: (typeof attachments)[number]) => {
-    if (attachment.storedPath) {
-      setFileViewerPath(attachment.storedPath)
-      return
-    }
-    if (attachment.contentText !== null) {
-      setTextPreview({ name: attachment.name, content: attachment.contentText })
-      return
-    }
-    toast.error("This attachment has no readable content")
+    setPreviewAttachment({ id: artifact.id, name: artifact.name })
   }
 
   if (attachments.length === 0 && taskArtifacts.length === 0 && taskVisuals.length === 0)
     return null
 
   return (
-    <div className="px-2 pb-2">
+    <div ref={trayRef} className="px-2 pb-2">
       <div className="w-full max-w-2xl mx-auto rounded-lg border border-border/70 bg-background/95 p-2 shadow-sm">
         {attachments.length > 0 && (
           <div className="flex items-center gap-2 px-1 pb-2 text-xs font-medium text-muted-foreground">
             <FileText className="h-3.5 w-3.5" />
             <span>Attachments</span>
           </div>
+        )}
+        {attachments.length > 0 && (
+          <p className="px-1 pb-2 text-[11px] text-muted-foreground">
+            Saved copies remain when removed from a draft.
+          </p>
         )}
         <div className="space-y-1.5">
           {visibleAttachments.map((attachment) => {
@@ -121,10 +161,10 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
             return (
               <div
                 key={attachment.id}
-                className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5"
+                className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5"
                 title={`${attachment.name} · ${attachment.id}`}
               >
-                <div className="min-w-0 flex-1">
+                <div className="w-full min-w-0 sm:w-auto sm:flex-1">
                   <div className="truncate text-xs font-medium text-foreground">
                     {attachment.name}
                   </div>
@@ -141,7 +181,10 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
                       variant="ghost"
                       className="h-7 w-7 shrink-0"
                       aria-label={`View ${attachment.name}`}
-                      onClick={() => viewAttachment(attachment)}
+                      data-attachment-view={attachment.id}
+                      onClick={() =>
+                        setPreviewAttachment({ id: attachment.id, name: attachment.name })
+                      }
                     >
                       <Eye className="h-3.5 w-3.5" />
                     </Button>
@@ -156,7 +199,7 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
                       [attachment.id]: event.target.value,
                     }))
                   }
-                  className="h-7 w-40 rounded-md text-xs"
+                  className="h-7 w-24 rounded-md text-xs sm:w-40"
                   disabled={!worktreePath}
                 />
                 <Tooltip>
@@ -222,6 +265,25 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
                   </TooltipTrigger>
                   <TooltipContent>Overwrite in worktree</TooltipContent>
                 </Tooltip>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 shrink-0"
+                  aria-label={`Permanently delete saved ${attachment.name}`}
+                  onClick={(event) => {
+                    deleteTriggerRef.current = event.currentTarget
+                    deletedIdRef.current = null
+                    setDeleteTarget({
+                      id: attachment.id,
+                      chatId: attachment.chatId,
+                      name: attachment.name,
+                      taskId: attachment.taskId,
+                    })
+                  }}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
               </div>
             )
           })}
@@ -259,6 +321,7 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
                         size="icon"
                         variant="ghost"
                         className="h-7 w-7 shrink-0"
+                        aria-label={`View ${artifact.name}`}
                         onClick={() => viewArtifact(artifact)}
                       >
                         <Eye className="h-3.5 w-3.5" />
@@ -297,14 +360,85 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
           </div>
         )}
       </div>
-      <Dialog open={!!textPreview} onOpenChange={(open) => !open && setTextPreview(null)}>
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && !deleteMutation.isPending && setDeleteTarget(null)}
+      >
+        <AlertDialogContent
+          ref={deleteDialogRef}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            const active = document.activeElement
+            if (active && active !== document.body && !deleteDialogRef.current?.contains(active))
+              return
+            if (!deletedIdRef.current && deleteTriggerRef.current?.isConnected) {
+              deleteTriggerRef.current.focus()
+              return
+            }
+            const next = Array.from(
+              trayRef.current?.querySelectorAll<HTMLButtonElement>(
+                "button[data-attachment-view]",
+              ) ?? [],
+            ).find((button) => button.dataset.attachmentView !== deletedIdRef.current)
+            if (next) next.focus()
+            else onFocusComposer?.()
+          }}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>Permanently delete {deleteTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This deletes the saved copy from this chat
+              {deleteTarget?.taskId ? " and its shared task artifacts" : ""}. Sent messages, draft
+              copies, and files already written elsewhere are not deleted. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteMutation.isPending}
+              onClick={(event) => {
+                event.preventDefault()
+                if (deleteTarget)
+                  deleteMutation.mutate({ id: deleteTarget.id, chatId: deleteTarget.chatId })
+              }}
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Permanently delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <Dialog
+        open={!!previewAttachment}
+        onOpenChange={(open) => !open && setPreviewAttachment(null)}
+      >
         <DialogContent className="max-h-[80vh] max-w-2xl overflow-hidden">
           <DialogHeader>
-            <DialogTitle>{textPreview?.name ?? "Task artifact"}</DialogTitle>
+            <DialogTitle>{previewAttachment?.name ?? "Attachment"}</DialogTitle>
           </DialogHeader>
-          <pre className="max-h-[65vh] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-xs">
-            {textPreview?.content}
-          </pre>
+          {preview.error ? (
+            <div role="alert" className="space-y-2 text-sm text-destructive">
+              <p>{preview.error.message}</p>
+              <Button variant="outline" onClick={() => void preview.refetch()}>
+                Retry
+              </Button>
+            </div>
+          ) : preview.data?.kind === "text" ? (
+            <pre className="max-h-[65vh] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-xs">
+              {preview.data.content}
+            </pre>
+          ) : preview.data?.kind === "image" ? (
+            <img
+              src={preview.data.dataUrl}
+              alt={previewAttachment?.name ?? "Attachment"}
+              className="max-h-[65vh] w-full object-contain"
+            />
+          ) : preview.data?.kind === "unsupported" ? (
+            <p className="text-sm text-muted-foreground">
+              Preview is not available for this file type.
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">Loading preview…</p>
+          )}
         </DialogContent>
       </Dialog>
       <Dialog
