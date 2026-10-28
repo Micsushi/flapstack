@@ -17,7 +17,9 @@ describe("agents mobile companion recovery surface", () => {
     expect(source).toContain("Authority grants unavailable.")
     expect(source).toContain("authorityReadUnavailable")
     expect(source).toContain("refresh()")
-    expect(source).toContain("utils.projects.list.invalidate(undefined, undefined, { throwOnError })")
+    expect(source).toContain(
+      "utils.projects.list.invalidate(undefined, undefined, { throwOnError })",
+    )
     expect(source).toContain('role="alert"')
   })
 })
