@@ -48,6 +48,13 @@ Replace the last four commands with their `:arm64` variants on a native arm64
 host. The smoke loads Claude, Codex, whisper.cpp, the speech sidecar,
 better-sqlite3, Sharp, and node-pty from the packaged app.
 
+The Linux CI job allows 90 minutes overall and bounds artifact upload to
+45 minutes. Native checks, packaging, and audits have taken about 38 minutes
+before upload starts; the previous 60-minute job limit cancelled a progressing
+multi-GB upload after all qualification gates passed. Test deadlines and audit
+requirements are unchanged. A passing Check is not a completed release: confirm
+that upload finishes and the artifact is available before claiming delivery.
+
 ## Install and remove
 
 Install the Debian package with the operating system package manager so all

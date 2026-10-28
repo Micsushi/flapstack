@@ -13,7 +13,8 @@ jobs:
   verify:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, Linux, X64, flapstack]
-    timeout-minutes: 60
+    # Native qualification takes about 38 minutes before the multi-GB upload.
+    timeout-minutes: 90
     concurrency:
       group: ci-${{ github.ref }}
       cancel-in-progress: true
@@ -71,6 +72,7 @@ jobs:
           test "$actual" = "$expected"
 
       - name: Upload Linux Preview
+        timeout-minutes: 45
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: flapstack-preview-linux-${{ github.sha }}
