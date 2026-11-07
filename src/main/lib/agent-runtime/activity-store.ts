@@ -523,6 +523,23 @@ function sanitizeAppend(inputValue: AgentActivityAppend): AgentActivityAppend {
         mode: "agent-content",
       }),
     })
+    const textPayload = payload as { text: string }
+    if (Buffer.byteLength(JSON.stringify(payload), "utf8") > MAX_AGENT_ACTIVITY_PAYLOAD_BYTES) {
+      const fullText = textPayload.text
+      const marker = "\n[Activity text truncated: size limit]"
+      let low = 0
+      let high = fullText.length
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2)
+        textPayload.text = fullText.slice(0, middle) + marker
+        if (Buffer.byteLength(JSON.stringify(payload), "utf8") <= MAX_AGENT_ACTIVITY_PAYLOAD_BYTES)
+          low = middle
+        else high = middle - 1
+      }
+      // Do not leave half an emoji at the truncation boundary.
+      if (low > 0 && /[\uD800-\uDBFF]/.test(fullText[low - 1]!)) low -= 1
+      textPayload.text = fullText.slice(0, low) + marker
+    }
   }
   const payloadJson = JSON.stringify(payload)
   if (Buffer.byteLength(payloadJson, "utf8") > MAX_AGENT_ACTIVITY_PAYLOAD_BYTES) {
