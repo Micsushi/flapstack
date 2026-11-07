@@ -42,13 +42,13 @@ export async function startProductMcpInvalidationBridge(options: {
     socket.setEncoding("utf8")
     socket.on("data", (chunk) => {
       buffered += chunk
-      if (Buffer.byteLength(buffered) > MAX_EVENT_BYTES) {
-        socket.destroy()
-        return
-      }
       let newline = buffered.indexOf("\n")
       while (newline >= 0) {
         const line = buffered.slice(0, newline)
+        if (Buffer.byteLength(line) > MAX_EVENT_BYTES) {
+          socket.destroy()
+          return
+        }
         buffered = buffered.slice(newline + 1)
         try {
           const event = parseProductMcpRendererInvalidation(JSON.parse(line))
@@ -58,6 +58,7 @@ export async function startProductMcpInvalidationBridge(options: {
         }
         newline = buffered.indexOf("\n")
       }
+      if (Buffer.byteLength(buffered) > MAX_EVENT_BYTES) socket.destroy()
     })
   })
   await new Promise<void>((resolve, reject) => {

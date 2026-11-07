@@ -511,6 +511,19 @@ function sanitizeAppend(inputValue: AgentActivityAppend): AgentActivityAppend {
     maxString: MAX_AGENT_ACTIVITY_METADATA_STRING,
     mode: agentContentKind(input.kind) ? "agent-content" : "diagnostic",
   }) as AgentActivityAppend["payload"]
+  // Answer text follows the payload contract, not the shorter metadata-string limit.
+  if (
+    agentContentKind(input.kind) &&
+    "text" in boundedPayload &&
+    typeof boundedPayload.text === "string"
+  ) {
+    Object.assign(payload, {
+      text: sanitizeRuntimeText(boundedPayload.text, {
+        maxLength: MAX_AGENT_ACTIVITY_PAYLOAD_BYTES,
+        mode: "agent-content",
+      }),
+    })
+  }
   const payloadJson = JSON.stringify(payload)
   if (Buffer.byteLength(payloadJson, "utf8") > MAX_AGENT_ACTIVITY_PAYLOAD_BYTES) {
     throw new AgentActivityError(
