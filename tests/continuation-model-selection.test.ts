@@ -36,10 +36,45 @@ import {
   initializeSubChatCodexModelAtom,
   lastSelectedCodexModelIdAtom,
   subChatCodexModelIdAtomFamily,
+  subChatCodexReasoningAtomFamily,
 } from "../src/renderer/features/agents/atoms"
 import { ACPChatTransport } from "../src/renderer/features/agents/lib/acp-chat-transport"
 
 describe("persisted continuation model", () => {
+  it("restores the combined model and effort saved by new chat creation", async () => {
+    const subChatId = "combined-luna-max"
+    appStore.set(initializeSubChatCodexModelAtom, { subChatId, model: "gpt-5.6-luna/max" })
+    expect(appStore.get(subChatCodexModelIdAtomFamily(subChatId))).toBe("gpt-5.6-luna")
+    expect(appStore.get(subChatCodexReasoningAtomFamily(subChatId))).toBe("max")
+    mocks.launch.mockImplementation(
+      () =>
+        new ReadableStream({
+          start(controller) {
+            controller.close()
+          },
+        }),
+    )
+    const transport = new ACPChatTransport({
+      chatId: "combined-chat",
+      subChatId,
+      cwd: "/owned",
+      mode: "write",
+      provider: "codex",
+    })
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await transport.sendMessages({
+        messages: [
+          { id: `send-${attempt}`, role: "user", parts: [{ type: "text", text: "Synthetic" }] },
+        ],
+      })
+      expect(mocks.launch).toHaveBeenLastCalledWith(
+        expect.objectContaining({ model: "gpt-5.6-luna", reasoningEffort: "max" }),
+      )
+    }
+    appStore.set(initializeSubChatCodexModelAtom, { subChatId, model: "gpt-5.5/high" })
+    expect(appStore.get(subChatCodexModelIdAtomFamily(subChatId))).toBe("gpt-5.6-luna")
+    expect(appStore.get(subChatCodexReasoningAtomFamily(subChatId))).toBe("max")
+  })
   it("uses the reviewed target on first transport dispatch instead of the global default", async () => {
     appStore.set(lastSelectedCodexModelIdAtom, "gpt-5.6-sol")
     const subChatId = "reviewed-child"

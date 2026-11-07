@@ -462,7 +462,17 @@ export const initializeSubChatCodexModelAtom = atom(
     if (!model || !input.subChatId) return
     const current = get(subChatCodexModelIdsStorageAtom)
     if (current[input.subChatId] !== undefined) return
-    set(subChatCodexModelIdsStorageAtom, { ...current, [input.subChatId]: model })
+    const [modelId, effort] = model.split("/")
+    set(subChatCodexModelIdsStorageAtom, { ...current, [input.subChatId]: modelId })
+    if (effort && ["none", "low", "medium", "high", "xhigh", "max", "ultra"].includes(effort)) {
+      const reasoning = get(subChatCodexReasoningStorageAtom)
+      if (reasoning[input.subChatId] === undefined) {
+        set(subChatCodexReasoningStorageAtom, {
+          ...reasoning,
+          [input.subChatId]: effort as CodexReasoningPreference,
+        })
+      }
+    }
   },
 )
 
