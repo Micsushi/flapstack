@@ -7,7 +7,7 @@ import {
   LOCAL_DICTATION_PRIVACY_NOTE,
 } from "../../../lib/local-dictation-readiness"
 
-const DOWNLOAD_TOAST_ID = "local-whisper-model-download"
+const DOWNLOAD_TOAST_ID = "local-dictation-model-download"
 
 export function useLocalDictationSetup(openVoiceSettings: () => void) {
   const utils = trpc.useUtils()
@@ -35,7 +35,7 @@ export function useLocalDictationSetup(openVoiceSettings: () => void) {
 
   const startDownload = useCallback(() => {
     requestedDownloadRef.current = true
-    toast.loading("Starting Local Whisper model download", {
+    toast.loading("Preparing dictation model", {
       id: DOWNLOAD_TOAST_ID,
       description: LOCAL_DICTATION_PRIVACY_NOTE,
       duration: Infinity,
@@ -89,7 +89,7 @@ export function useLocalDictationSetup(openVoiceSettings: () => void) {
       return
     }
     if (readiness.kind === "needs-model") {
-      toast.info("Local Whisper model is not installed", {
+      toast.info("Dictation model is not installed", {
         id: DOWNLOAD_TOAST_ID,
         description: readiness.description,
         duration: Infinity,

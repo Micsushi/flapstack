@@ -355,10 +355,12 @@ export const voiceRouter = router({
         }
       }),
     )
-    const available = availability.find((entry) => entry.available)
+    const selected = availability.find((entry) => entry.adapterId === settings.sttAdapterId)
+    const available = selected?.available ? selected : undefined
     if (available) {
       return {
         available: true,
+        selectedAdapterId: settings.sttAdapterId,
         method: available.adapterId,
         reason: undefined,
         adapters: availability,
@@ -367,8 +369,9 @@ export const voiceRouter = router({
 
     return {
       available: false,
+      selectedAdapterId: settings.sttAdapterId,
       method: null,
-      reason: availability[0]?.reason || "Configure local Whisper.",
+      reason: selected?.reason || "Configure dictation in Voice settings.",
       adapters: availability,
     }
   }),

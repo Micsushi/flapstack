@@ -11,6 +11,7 @@ type LocalAdapterAvailability = {
 
 export type LocalDictationAvailability = {
   available: boolean
+  selectedAdapterId?: string
   method?: string | null
   reason?: string
   adapters?: readonly LocalAdapterAvailability[]
@@ -36,8 +37,12 @@ export function getLocalDictationReadiness(
   modelStatus?: LocalDictationModelStatus,
 ): LocalDictationReadiness {
   const localAdapter = availability?.adapters?.find(
-    (adapter) => adapter.adapterId === "local-whisper",
+    (adapter) =>
+      adapter.adapterId ===
+      (availability.selectedAdapterId ?? availability.method ?? "local-whisper"),
   )
+  const parakeet = localAdapter?.adapterId === "local-parakeet"
+  const modelName = parakeet ? "Parakeet" : "Local Whisper"
 
   if (!availability || !localAdapter) {
     return {
@@ -46,6 +51,18 @@ export function getLocalDictationReadiness(
       title: "Checking local dictation",
       description: LOCAL_DICTATION_PRIVACY_NOTE,
       action: "wait",
+    }
+  }
+
+  if (localAdapter.adapterId === "openai-whisper") {
+    return {
+      kind: localAdapter.available ? "ready" : "needs-engine",
+      ready: localAdapter.available,
+      title: localAdapter.available ? "Cloud dictation ready" : "Cloud dictation needs setup",
+      description:
+        localAdapter.reason ??
+        "Recordings are sent to OpenAI using your selected cloud dictation setting.",
+      action: localAdapter.available ? "record" : "open-settings",
     }
   }
 
@@ -63,8 +80,12 @@ export function getLocalDictationReadiness(
     return {
       kind: "needs-engine",
       ready: false,
-      title: "Local dictation needs whisper.cpp",
-      description: `Install whisper.cpp and set the whisper-cli path in Voice settings. ${LOCAL_DICTATION_PRIVACY_NOTE}`,
+      title: parakeet
+        ? "Parakeet dictation engine is missing"
+        : "Local dictation needs whisper.cpp",
+      description: parakeet
+        ? `Reinstall Flapstack to restore its dictation engine. ${LOCAL_DICTATION_PRIVACY_NOTE}`
+        : `Install whisper.cpp and set the whisper-cli path in Voice settings. ${LOCAL_DICTATION_PRIVACY_NOTE}`,
       action: "open-settings",
     }
   }
@@ -93,7 +114,7 @@ export function getLocalDictationReadiness(
     return {
       kind: "checking",
       ready: false,
-      title: "Checking Local Whisper model",
+      title: `Checking ${modelName} model`,
       description: LOCAL_DICTATION_PRIVACY_NOTE,
       action: "wait",
     }
@@ -113,7 +134,7 @@ export function getLocalDictationReadiness(
     return {
       kind: "downloading",
       ready: false,
-      title: `Downloading Local Whisper model (${modelStatus.percent}%)`,
+      title: `Downloading ${modelName} model (${modelStatus.percent}%)`,
       description: LOCAL_DICTATION_PRIVACY_NOTE,
       action: "wait",
       percent: modelStatus.percent,
@@ -124,7 +145,7 @@ export function getLocalDictationReadiness(
     return {
       kind: "error",
       ready: false,
-      title: "Local Whisper model download failed",
+      title: `${modelName} model download failed`,
       description: `${modelStatus.message} ${LOCAL_DICTATION_PRIVACY_NOTE}`,
       action: "retry",
     }
@@ -134,7 +155,9 @@ export function getLocalDictationReadiness(
     kind: "needs-model",
     ready: false,
     title: "Local dictation needs a model",
-    description: `Download the Local Whisper base model once (about 150 MB). ${LOCAL_DICTATION_PRIVACY_NOTE}`,
+    description: parakeet
+      ? `The included Parakeet model is missing or damaged. Download it again (about 731 MB). ${LOCAL_DICTATION_PRIVACY_NOTE}`
+      : `Download the Local Whisper base model once (about 150 MB). ${LOCAL_DICTATION_PRIVACY_NOTE}`,
     action: "download",
   }
 }

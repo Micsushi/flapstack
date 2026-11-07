@@ -256,6 +256,10 @@
     ],
     "extraResources": [
       {
+        "from": "build/generated/speech-models",
+        "to": "speech-models"
+      },
+      {
         "from": "resources/project-records-runtime.json.gz",
         "to": "project-records-runtime.json.gz"
       },

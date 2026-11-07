@@ -25,6 +25,36 @@ const availability = (overrides: {
 })
 
 describe("local dictation readiness", () => {
+  it("uses selected Parakeet readiness instead of a missing Whisper model", () => {
+    const selected = {
+      available: true,
+      selectedAdapterId: "local-parakeet",
+      adapters: [
+        { adapterId: "local-whisper", available: false, canAutoProvision: true },
+        { adapterId: "local-parakeet", available: true, canAutoProvision: true },
+      ],
+    }
+    expect(
+      getLocalDictationReadiness(selected, { status: "present", sizeBytes: 731357568 }).ready,
+    ).toBe(true)
+    selected.adapters[1]!.available = false
+    expect(getLocalDictationReadiness(selected, { status: "downloading", percent: 5 }).title).toBe(
+      "Downloading Parakeet model (5%)",
+    )
+    expect(getLocalDictationReadiness(selected, { status: "absent" }).description).toContain(
+      "731 MB",
+    )
+  })
+
+  it("does not promise local privacy when cloud dictation is selected", () => {
+    const readiness = getLocalDictationReadiness({
+      available: true,
+      selectedAdapterId: "openai-whisper",
+      adapters: [{ adapterId: "openai-whisper", available: true }],
+    })
+    expect(readiness.ready).toBe(true)
+    expect(readiness.description).toContain("sent to OpenAI")
+  })
   it("keeps first-use state actionable while readiness is loading", () => {
     expect(getLocalDictationReadiness()).toMatchObject({
       kind: "checking",

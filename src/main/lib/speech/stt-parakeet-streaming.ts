@@ -18,18 +18,8 @@ import { pipeline } from "node:stream/promises"
 import type { SpeechAdapterAvailability, SttAdapter } from "./types"
 import { getVoiceSettings } from "./settings"
 
-export const PARAKEET_MODEL = {
-  id: "parakeet-unified-en-q8",
-  label: "Parakeet Unified EN 0.6B Q8 (live, recommended)",
-  file: "parakeet-unified-en-0.6b-Q8_0.gguf",
-  sizeBytes: 731_357_568,
-  sha256: "4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795",
-  url: "https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf/resolve/main/parakeet-unified-en-0.6b-Q8_0.gguf",
-  license: "NVIDIA-Open-Model-License",
-  source: "https://huggingface.co/nvidia/parakeet-unified-en-0.6b",
-  licenseUrl:
-    "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/",
-} as const
+import parakeetModel from "../../../shared/parakeet-model.json"
+export const PARAKEET_MODEL = parakeetModel
 
 export type ParakeetModelStatus =
   | { status: "absent" }
@@ -39,7 +29,7 @@ export type ParakeetModelStatus =
 
 let modelStatus: ParakeetModelStatus = { status: "absent" }
 let activeDownload: Promise<string> | null = null
-let validatedModel: { size: number; mtimeMs: number; valid: boolean } | null = null
+let validatedModel: { file: string; size: number; mtimeMs: number; valid: boolean } | null = null
 const SIDECAR_REQUEST_TIMEOUT_MS = 120_000
 
 function speechDataDir() {
@@ -47,6 +37,12 @@ function speechDataDir() {
 }
 
 export function getParakeetModelPath() {
+  const local = localModelPath()
+  if (existsSync(local) || !app.isPackaged) return local
+  return path.join(process.resourcesPath, "speech-models", PARAKEET_MODEL.file)
+}
+
+function localModelPath() {
   return path.join(speechDataDir(), "models", PARAKEET_MODEL.file)
 }
 
@@ -96,11 +92,15 @@ async function validModel() {
   const file = getParakeetModelPath()
   if (!existsSync(file)) return false
   const stat = statSync(file)
-  if (validatedModel?.size === stat.size && validatedModel.mtimeMs === stat.mtimeMs)
+  if (
+    validatedModel?.file === file &&
+    validatedModel.size === stat.size &&
+    validatedModel.mtimeMs === stat.mtimeMs
+  )
     return validatedModel.valid
   if (stat.size !== PARAKEET_MODEL.sizeBytes) return false
   const valid = (await sha256(file)) === PARAKEET_MODEL.sha256
-  validatedModel = { size: stat.size, mtimeMs: stat.mtimeMs, valid }
+  validatedModel = { file, size: stat.size, mtimeMs: stat.mtimeMs, valid }
   return valid
 }
 
@@ -128,10 +128,9 @@ export function replaceDownloadedModel(temporary: string, destination: string) {
 
 async function downloadParakeetModel() {
   if (await validModel()) {
-    writeModelNotice()
     return getParakeetModelPath()
   }
-  const destination = getParakeetModelPath()
+  const destination = localModelPath()
   const temporary = `${destination}.download`
   mkdirSync(path.dirname(destination), { recursive: true })
   rmSync(temporary, { force: true })
@@ -176,7 +175,7 @@ async function downloadParakeetModel() {
 }
 
 function writeModelNotice() {
-  const noticePath = path.join(path.dirname(getParakeetModelPath()), "PARAKEET-MODEL-LICENSE.txt")
+  const noticePath = path.join(path.dirname(localModelPath()), "PARAKEET-MODEL-LICENSE.txt")
   writeFileSync(
     noticePath,
     [

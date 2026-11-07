@@ -124,6 +124,8 @@ export async function validatePreparedTarget(target, rootDirectory = binDirector
 
 export async function preparePackageResources(targets) {
   targets = resolvePackageTargets(targets)
+  const { prepareSpeechModel } = await import("./prepare-speech-model.mjs")
+  await prepareSpeechModel()
   ensureRealDirectory(resourcesDirectory)
   const stagingRoot = fs.mkdtempSync(path.join(resourcesDirectory, ".bin-stage-"))
   const platformArgs = targets.map((target) => `--platform=${target}`)
