@@ -26,7 +26,13 @@ export class RuntimeTextChatChunkMapper {
     if (!this.started.has(id)) {
       this.started.add(id)
       this.activeId = id
-      chunks.push({ type: "text-start", id })
+      chunks.push({
+        type: "text-start",
+        id,
+        ...(event.sectionBoundary === "commentary" || event.sectionBoundary === "final_answer"
+          ? { providerMetadata: { runtime: { phase: event.sectionBoundary } } }
+          : {}),
+      })
     } else {
       this.activeId = id
     }
@@ -40,7 +46,7 @@ export class RuntimeTextChatChunkMapper {
         const delta = this.labelFilter.push(event.text)
         if (delta) chunks.push({ type: "text-delta", id, delta })
       }
-      chunks.push(...this.endActive())
+      chunks.push(...this.endActive(event.sectionBoundary))
     }
     return chunks
   }
@@ -53,7 +59,7 @@ export class RuntimeTextChatChunkMapper {
     return this.endActive()
   }
 
-  private endActive(): any[] {
+  private endActive(phase?: string | null): any[] {
     if (!this.activeId) return []
     const id = this.activeId
     this.activeId = null
@@ -61,7 +67,13 @@ export class RuntimeTextChatChunkMapper {
     const trailing = this.labelFilter.endPart()
     return [
       ...(trailing ? [{ type: "text-delta", id, delta: trailing }] : []),
-      { type: "text-end", id },
+      {
+        type: "text-end",
+        id,
+        ...(phase === "commentary" || phase === "final_answer"
+          ? { providerMetadata: { runtime: { phase } } }
+          : {}),
+      },
     ]
   }
 

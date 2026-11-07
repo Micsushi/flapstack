@@ -1191,21 +1191,6 @@ export const SimpleIsolatedGroup = memo(function SimpleIsolatedGroup({
           sandboxSetupStatus={sandboxSetupStatus}
         />
       )}
-
-      {/* Planning indicator */}
-      {isStreaming &&
-        isLastGroup &&
-        assistantMsgIds.length === 0 &&
-        sandboxSetupStatus === "ready" && (
-          <div className="mt-4">
-            <ToolCallComponent
-              icon={toolRegistry["tool-planning"]?.icon}
-              title={toolRegistry["tool-planning"]?.title({}) || "Planning..."}
-              isPending={true}
-              isError={false}
-            />
-          </div>
-        )}
     </MessageGroupComponent>
   )
 }, areSimpleGroupPropsEqual)

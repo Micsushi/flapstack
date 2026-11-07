@@ -393,21 +393,32 @@ function getDistanceFromScrollBottom(container: HTMLElement) {
   return Math.max(0, container.scrollHeight - container.scrollTop - container.clientHeight)
 }
 
-const STREAMING_WORDS = ["Thinking", "Working", "Cooking"] as const
+const STREAMING_WORDS = [
+  "Thinking",
+  "Working",
+  "Cooking",
+  "Pondering",
+  "Mulling",
+  "Considering",
+] as const
 
 function StreamingCue() {
   const [wordIndex, setWordIndex] = useState(0)
   useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return
     const timer = window.setInterval(
       () => setWordIndex((current) => (current + 1) % STREAMING_WORDS.length),
-      1_800,
+      4_000,
     )
     return () => window.clearInterval(timer)
   }, [])
 
   return (
     <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground" role="status">
-      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" aria-hidden />
+      <span
+        className="h-1.5 w-1.5 animate-pulse motion-reduce:animate-none rounded-full bg-blue-500"
+        aria-hidden
+      />
       <span>{STREAMING_WORDS[wordIndex]}…</span>
     </div>
   )

@@ -51,6 +51,7 @@ import { formatReasoningStatus, getReasoningStartedAt } from "../lib/reasoning-d
 import { ForkContext } from "./isolated-message-group"
 import { MemoizedTextPart } from "./memoized-text-part"
 import { formatMessageTimestamp } from "../lib/message-timestamp"
+import { findAnswerPartIndex, isProgressText } from "../lib/assistant-text-phase"
 
 // Map first word of an ACP tool title to a canonical Claude Code tool type.
 // Codex tool calls arrive with type = "tool-Read README.md", "tool-Run echo ---",
@@ -872,18 +873,17 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   // Keep one Codex-style run disclosure. Provider summaries can arrive after the
   // final answer, so select the final text explicitly instead of relying on order.
   const { shouldCollapse, hasActivity, visibleStepsCount, collapseBeforeIndex } = useMemo(() => {
-    let lastTextIndex = -1
+    const live = isStreaming && isLastMessage
+    const lastTextIndex = findAnswerPartIndex(messageParts, live)
     let hasActivity = false
 
     for (let i = 0; i < messageParts.length; i++) {
       const part = messageParts[i]
-      if (part.type?.startsWith("tool-") || isReasoningPart(part)) hasActivity = true
-      if (part.type === "text" && part.text?.trim()) {
-        lastTextIndex = i
-      }
+      if (part.type?.startsWith("tool-") || isReasoningPart(part) || isProgressText(part, live))
+        hasActivity = true
     }
 
-    const hasFinalText = hasActivity && lastTextIndex !== -1 && (!isStreaming || !isLastMessage)
+    const hasFinalText = hasActivity && lastTextIndex !== -1
 
     // Collapse only when there's final text after tools
     const shouldCollapse = hasFinalText

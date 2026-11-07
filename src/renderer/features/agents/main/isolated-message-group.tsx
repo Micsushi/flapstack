@@ -562,21 +562,6 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
           />
         </ForkContext.Provider>
       )}
-
-      {/* Planning indicator */}
-      {isStreaming &&
-        isLastGroup &&
-        assistantIds.length === 0 &&
-        sandboxSetupStatus === "ready" && (
-          <div className="mt-4">
-            <ToolCallComponent
-              icon={toolRegistry["tool-planning"]?.icon}
-              title={toolRegistry["tool-planning"]?.title({}) || "Planning..."}
-              isPending={true}
-              isError={false}
-            />
-          </div>
-        )}
     </MessageGroupWrapper>
   )
 }, areGroupPropsEqual)

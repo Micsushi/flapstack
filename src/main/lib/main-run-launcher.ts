@@ -247,7 +247,12 @@ export class MainRuntimeLaunchService {
               ? { developerInstructions: context.instructions }
               : {}),
             ...codexPermissionOptions(context.launch.permission.mode),
-            ...(Object.keys(config).length > 0 ? { config } : {}),
+            config: {
+              ...config,
+              model_reasoning_summary: context.launch.controls.reasoningDisplay
+                ? "detailed"
+                : "none",
+            },
           }
         },
         resolveThreadVisibility: (context) =>

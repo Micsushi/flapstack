@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { SimpleGit, StatusResult } from "simple-git"
@@ -133,8 +133,19 @@ export async function captureWorktreeTree(worktreePath: string): Promise<string>
   const tempDir = await mkdtemp(join(tmpdir(), "flapstack-checkpoint-"))
   try {
     const tempIndexPath = join(tempDir, "index")
+    const indexPath = (
+      await createGit(worktreePath).raw([
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        "index",
+      ])
+    ).trim()
+    const hasIndex = existsSync(indexPath)
+    // Reuse Git's file-stat cache without ever changing the user's index.
+    if (hasIndex) await copyFile(indexPath, tempIndexPath)
     const git = createGit(worktreePath).env({ GIT_INDEX_FILE: tempIndexPath })
-    await git.raw(["read-tree", "HEAD"])
+    if (!hasIndex) await git.raw(["read-tree", "HEAD"])
     await git.raw(["add", "-A"])
     const tree = (await git.raw(["write-tree"])).trim()
     if (!tree) throw new Error("Could not capture worktree tree")
