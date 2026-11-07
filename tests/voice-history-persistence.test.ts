@@ -20,7 +20,13 @@ import {
   reconcileVoiceHistory,
   recordSpeech,
   recordTranscription,
+  pruneVoiceHistory,
+  markSpeechPlayed,
 } from "../src/main/lib/speech/history"
+import { setVoiceSettings } from "../src/main/lib/speech/settings"
+import { prepareSpeech } from "../src/main/lib/speech/prepare"
+import { kokoroTtsAdapter } from "../src/main/lib/speech/tts-kokoro"
+import { nativeTtsAdapter } from "../src/main/lib/speech/tts-native"
 
 let directory = ""
 let databasePath = ""
@@ -42,6 +48,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   closeDatabase()
   delete process.env.FLAPSTACK_DB_PATH
   delete process.env.FLAPSTACK_CONFIG_DIR
@@ -50,6 +57,51 @@ afterEach(() => {
 })
 
 describe("Voice history durable audio", () => {
+  it("prepares once, reuses audio for Play, and retains it until opted into unplayed expiry", async () => {
+    const speak = vi.spyOn(kokoroTtsAdapter, "speak").mockResolvedValue({
+      audioBase64: Buffer.from("kokoro-audio").toString("base64"),
+      mimeType: "audio/wav",
+      adapterId: "kokoro",
+    })
+    const input = { chatId: "chat-1", messageId: "reply-1", text: "Hello there." }
+    const [prepared, playback] = await Promise.all([prepareSpeech(input), prepareSpeech(input)])
+    expect(prepared.artifactId).toBe(playback.artifactId)
+    expect(speak).toHaveBeenCalledTimes(1)
+    expect(speak).toHaveBeenCalledWith(expect.objectContaining({ rate: 1 }))
+    const id = prepared.artifactId!
+    getDatabase()
+      .update(voiceArtifacts)
+      .set({ createdAt: new Date(Date.now() - 40 * 86_400_000) })
+      .where(eq(voiceArtifacts.id, id))
+      .run()
+    await pruneVoiceHistory()
+    expect(getDatabase().select().from(voiceArtifacts).all()).toHaveLength(1)
+    setVoiceSettings({ unplayedAudioRetentionDays: 7 })
+    markSpeechPlayed(id)
+    await pruneVoiceHistory()
+    expect(getDatabase().select().from(voiceArtifacts).all()).toHaveLength(1)
+    getDatabase()
+      .update(voiceArtifacts)
+      .set({ lastPlayedAt: null })
+      .where(eq(voiceArtifacts.id, id))
+      .run()
+    await pruneVoiceHistory()
+    expect(getDatabase().select().from(voiceArtifacts).all()).toHaveLength(0)
+  })
+
+  it("reports Kokoro failure without substituting a system voice, then allows retry", async () => {
+    const speak = vi
+      .spyOn(kokoroTtsAdapter, "speak")
+      .mockRejectedValueOnce(new Error("Model unavailable"))
+      .mockResolvedValue({ audioBase64: "AA==", mimeType: "audio/wav", adapterId: "kokoro" })
+    const native = vi.spyOn(nativeTtsAdapter, "speak")
+    const input = { chatId: "chat-1", messageId: "reply-1", text: "Hello there." }
+    await expect(prepareSpeech(input)).rejects.toThrow("Model unavailable")
+    await expect(prepareSpeech(input)).resolves.toMatchObject({ adapterId: "kokoro" })
+    expect(speak).toHaveBeenCalledTimes(2)
+    expect(native).not.toHaveBeenCalled()
+  })
+
   it("finalizes audio before publishing its metadata row", async () => {
     const transcription = await recordTranscription({
       chatId: "chat-1",

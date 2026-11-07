@@ -7,6 +7,7 @@ import { basename, dirname, join } from "node:path"
 import { chats, getDatabase, subChats, voiceArtifacts } from "../db"
 import { createId } from "../db/utils"
 import type { TtsResult } from "./types"
+import { getVoiceSettings } from "./settings"
 
 const AUDIO_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const AUDIO_MAX_BYTES = 500 * 1024 * 1024
@@ -189,6 +190,7 @@ export async function reconcileVoiceHistory(): Promise<{
     await rm(join(root, entry.name), { recursive: true, force: true })
     removedEntries += 1
   }
+  await pruneVoiceHistory()
   return { repairedRows, removedEntries }
 }
 
@@ -360,6 +362,15 @@ export async function deleteVoiceHistoryEntry(id: string) {
   return { deleted: true }
 }
 
+export function markSpeechPlayed(id: string) {
+  getDatabase()
+    .update(voiceArtifacts)
+    .set({ lastPlayedAt: new Date() })
+    .where(eq(voiceArtifacts.id, id))
+    .run()
+  return { success: true }
+}
+
 export function getVoiceHistoryAudioPath(id: string) {
   const artifact = getDatabase()
     .select()
@@ -369,7 +380,8 @@ export function getVoiceHistoryAudioPath(id: string) {
   return artifact?.audioPath && existsSync(artifact.audioPath) ? artifact.audioPath : null
 }
 
-async function pruneVoiceHistory() {
+export async function pruneVoiceHistory() {
+  const { unplayedAudioRetentionDays } = getVoiceSettings()
   const rows = getDatabase()
     .select()
     .from(voiceArtifacts)
@@ -379,6 +391,16 @@ async function pruneVoiceHistory() {
   let total = 0
   const cutoff = Date.now() - AUDIO_RETENTION_MS
   for (const row of rows) {
+    if (row.kind === "speech") {
+      if (
+        !unplayedAudioRetentionDays ||
+        row.lastPlayedAt ||
+        (row.createdAt?.getTime() ?? 0) >= Date.now() - unplayedAudioRetentionDays * 86_400_000
+      )
+        continue
+      await deleteVoiceHistoryEntry(row.id)
+      continue
+    }
     total += row.byteLength
     if ((row.createdAt?.getTime() ?? 0) >= cutoff && total <= AUDIO_MAX_BYTES) continue
     if (row.audioPath)

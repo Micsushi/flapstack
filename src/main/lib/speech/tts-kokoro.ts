@@ -6,7 +6,7 @@ import type { SpeechAdapterAvailability, TtsAdapter, TtsInput, TtsResult, TtsVoi
 
 const require = createRequire(import.meta.url)
 
-// Offline Kokoro neural TTS (S2.0: default TTS, system voice is the fallback).
+// Offline Kokoro neural TTS. System voices are a separate, explicit selection.
 // Ported from agent-hotline's native-kokoro-tts. kokoro-js downloads the ONNX
 // model on first use via @huggingface/transformers and caches it in the app
 // speech dir, so no API key and no bundled model in the installer.
@@ -48,11 +48,10 @@ export const kokoroTtsAdapter: TtsAdapter = {
         status: "not-configured",
         reason:
           runtimeMissingReason ??
-          "Kokoro runtime is not installed. Native OS voice fallback is available.",
+          "Kokoro runtime is not installed. Repair the app installation to use Kokoro.",
       }
     }
-    // The model itself downloads on first speak; report available and let the
-    // first synthesis fetch it (with the system voice as an automatic fallback).
+    // The model downloads on first synthesis, then runs locally.
     return { available: true, status: "available" }
   },
 
@@ -137,7 +136,7 @@ async function loadModel(): Promise<KokoroModel> {
     if (!runtime) {
       throw new Error(
         runtimeMissingReason ??
-          "Kokoro runtime is not installed. Native OS voice fallback is available.",
+          "Kokoro runtime is not installed. Repair the app installation to use Kokoro.",
       )
     }
     const { transformers, kokoro } = runtime
@@ -163,8 +162,8 @@ type KokoroRuntime = {
 
 async function tryResolveRuntime(): Promise<KokoroRuntime | null> {
   try {
-    const transformers =
-      (await import("@huggingface/transformers")) as KokoroRuntime["transformers"]
+    // Kokoro's CJS entry uses this instance; the ESM env has a separate cacheDir.
+    const transformers = require("@huggingface/transformers") as KokoroRuntime["transformers"]
     const kokoro = require("kokoro-js") as KokoroRuntime["kokoro"]
     runtimeMissingReason = null
     return { transformers, kokoro }

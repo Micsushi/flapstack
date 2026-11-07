@@ -85,6 +85,7 @@ import { useResolvedHotkeyDisplay } from "../../../lib/hotkeys"
 import { appStore } from "../../../lib/jotai-store"
 import { api } from "../../../lib/mock-api"
 import { trpc, trpcClient } from "../../../lib/trpc"
+import { prepareReplyAudio } from "../../../lib/prepare-reply-audio"
 import { stopManagedSpeech } from "../../../lib/speech-playback"
 import { cn } from "../../../lib/utils"
 import { hotPathConsole as console } from "../../../lib/hot-path-console"
@@ -7693,6 +7694,8 @@ Make sure to preserve all functionality from both branches when resolving confli
           // Check if this was a manual abort (ESC/Ctrl+C) - skip sound if so
           const wasManuallyAborted = agentChatStore.wasManuallyAborted(subChatId)
           agentChatStore.clearManuallyAborted(subChatId)
+          if (!wasManuallyAborted && !event?.isAbort && !event?.isError)
+            prepareReplyAudio(chatId, subChatId, event?.message ?? newChat.messages.at(-1))
           // Get CURRENT values at runtime (not stale closure values)
           const currentActiveSubChatId = subChatStore.getState().activeSubChatId
           const currentSelectedChatId = appStore.get(selectedAgentChatIdAtom)
@@ -8024,7 +8027,7 @@ Make sure to preserve all functionality from both branches when resolving confli
           pruneIfDetachedAndIdle(newId)
         },
         // Clear loading when streaming completes
-        onFinish: () => {
+        onFinish: (event: any) => {
           clearLoading(setLoadingSubChats, newId)
 
           // Sync status to global store for queue processing (even when component unmounted)
@@ -8034,6 +8037,8 @@ Make sure to preserve all functionality from both branches when resolving confli
           // Check if this was a manual abort (ESC/Ctrl+C) - skip sound if so
           const wasManuallyAborted = agentChatStore.wasManuallyAborted(newId)
           agentChatStore.clearManuallyAborted(newId)
+          if (!wasManuallyAborted && !event?.isAbort && !event?.isError)
+            prepareReplyAudio(chatId, newId, event?.message ?? newChat.messages.at(-1))
 
           // Get CURRENT values at runtime (not stale closure values)
           const currentActiveSubChatId = subChatStore.getState().activeSubChatId

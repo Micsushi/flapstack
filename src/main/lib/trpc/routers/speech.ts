@@ -1,10 +1,8 @@
 import { z } from "zod"
 import {
   getNativeTtsAvailability,
-  resolveAvailableTtsAdapter,
   resolveSttAdapter,
   resolveSupportedTtsVoiceId,
-  resolveTtsVoiceId,
   resolveTtsAdapter,
   sttAdapterImplementations,
   sttAdapters,
@@ -13,7 +11,7 @@ import {
 } from "../../speech/registry"
 import { getVoiceSettings, setVoiceSettings } from "../../speech/settings"
 import { createFallbackSpokenSummary } from "../../speech/spoken-summary"
-import { resolveSpeechText } from "../../speech/speech-text"
+import { prepareSpeech } from "../../speech/prepare"
 import { SpeechRequestOwnership } from "../../speech/request-ownership"
 import { ensureModel, getSttModelStatus, listWhisperModels } from "../../speech/stt-whisper-cpp"
 import {
@@ -22,15 +20,9 @@ import {
   parakeetSidecar,
   PARAKEET_MODEL,
 } from "../../speech/stt-parakeet-streaming"
-import { speakWithTtsFallback } from "../../speech/tts-fallback"
-import { nativeTtsAdapter } from "../../speech/tts-native"
 import {
-  createSpeechSynthesisKey,
-  findReusableSpeech,
-  getStoredSpokenText,
-  persistSpokenText,
   readSpeechAudio,
-  recordSpeech,
+  markSpeechPlayed,
   searchVoiceHistory,
   deleteVoiceHistoryEntry,
   getVoiceHistoryAudioPath,
@@ -78,6 +70,10 @@ export const speechRouter = router({
         voiceByTtsAdapterId: z.record(z.string(), z.string().nullable()).optional(),
         rate: z.number().min(0.5).max(2).optional(),
         preferOffline: z.boolean().optional(),
+        prepareReplyAudio: z.boolean().optional(),
+        unplayedAudioRetentionDays: z
+          .union([z.literal(0), z.literal(1), z.literal(7), z.literal(30)])
+          .optional(),
       }),
     )
     .mutation(({ input }) => {
@@ -165,97 +161,31 @@ export const speechRouter = router({
       if (!isSpeechRequestActive(windowId, requestId))
         throw new Error("Speech request was cancelled.")
 
-      const settings = getVoiceSettings()
-      const storedText = getStoredSpokenText(input.subChatId, input.messageId)
-      const text = resolveSpeechText(input.text, storedText)
-      if (!text)
-        return {
-          skipped: true as const,
-          reason: "no-speakable-text",
-          artifactId: null,
-          historySaved: true as const,
-          historyError: null,
-        }
-      persistSpokenText({
-        subChatId: input.subChatId,
-        messageId: input.messageId,
-        text,
-      })
-      const adapter = await resolveAvailableTtsAdapter(settings)
+      const result = await prepareSpeech(input)
       if (!isSpeechRequestActive(windowId, requestId))
         throw new Error("Speech request was cancelled.")
-      const requestedVoiceId = resolveTtsVoiceId(
-        settings.ttsAdapterId,
-        adapter.id,
-        input.voiceId ?? settings.voiceByTtsAdapterId[settings.ttsAdapterId] ?? settings.voiceId,
-      )
-      const resolvedVoiceId = resolveSupportedTtsVoiceId(
-        requestedVoiceId,
-        await adapter.listVoices(),
-      )
-      const rate = input.rate ?? settings.rate
-      const synthesisKey = createSpeechSynthesisKey({
-        text,
-        adapterId: adapter.id,
-        voiceId: resolvedVoiceId,
-        rate,
-      })
-      const reusable = input.chatId
-        ? await findReusableSpeech({
-            chatId: input.chatId,
-            messageId: input.messageId,
-            synthesisKey,
-          })
-        : null
-      if (reusable)
-        return {
-          ...reusable.result,
-          spokenText: text,
-          skipped: false as const,
-          artifactId: reusable.id,
-          historySaved: true as const,
-          historyError: null,
-        }
-      const ttsInput = {
-        text,
-        voiceId: resolvedVoiceId,
-        rate,
-        requestScopeId,
-        shouldContinue: () => isSpeechRequestActive(windowId, requestId),
-      }
-      const result = await speakWithTtsFallback(adapter, nativeTtsAdapter, ttsInput, {
-        shouldContinue: () => isSpeechRequestActive(windowId, requestId),
-      })
-      if (!isSpeechRequestActive(windowId, requestId))
-        throw new Error("Speech request was cancelled.")
-      let artifact = null
-      let historyError: string | null = null
-      if (input.chatId) {
-        try {
-          artifact = await recordSpeech({
-            chatId: input.chatId,
-            subChatId: input.subChatId,
-            messageId: input.messageId,
-            text,
-            result,
-            synthesisKey,
-            voiceId: resolvedVoiceId,
-            rate,
-          })
-        } catch (error) {
-          historyError = error instanceof Error ? error.message : String(error)
-          console.error("[Speech] Playback succeeded but history persistence failed:", error)
-        }
-      }
-      return {
-        ...result,
-        spokenText: text,
-        skipped: false as const,
-        artifactId: artifact?.id ?? null,
-        historySaved: historyError === null,
-        historyError,
-      }
+      return result
     }),
+
+  prepareReply: publicProcedure
+    .input(
+      z.object({
+        text: z.string(),
+        chatId: z.string(),
+        subChatId: z.string(),
+        messageId: z.string(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      if (!getVoiceSettings().prepareReplyAudio) return { prepared: false }
+      const result = await prepareSpeech(input)
+      if (!result.historySaved) throw new Error(result.historyError || "Could not save reply audio")
+      return { prepared: !result.skipped, artifactId: result.artifactId }
+    }),
+
+  markPlayed: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => markSpeechPlayed(input.id)),
 
   stopSpeaking: publicProcedure.mutation(async ({ ctx }) => {
     const windowId = ctx.getWindow()?.id ?? 0

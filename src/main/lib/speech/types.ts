@@ -89,6 +89,8 @@ export type VoiceSettings = {
   voiceByTtsAdapterId: Record<string, string | null>
   rate: number
   preferOffline: boolean
+  prepareReplyAudio: boolean
+  unplayedAudioRetentionDays: 0 | 1 | 7 | 30
 }
 
 export type WhisperModelId = "tiny" | "base" | "small"
@@ -107,4 +109,6 @@ export const defaultVoiceSettings: VoiceSettings = {
   voiceByTtsAdapterId: {},
   rate: 1,
   preferOffline: true,
+  prepareReplyAudio: true,
+  unplayedAudioRetentionDays: 0,
 }

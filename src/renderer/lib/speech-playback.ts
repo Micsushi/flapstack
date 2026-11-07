@@ -69,6 +69,7 @@ export async function playManagedSpeech(
 
   const url = URL.createObjectURL(base64ToBlob(result.audioBase64, result.mimeType))
   const audio = new Audio(url)
+  audio.preservesPitch = true
   const current = { audio, url, onStopped: options.onStopped }
   activeSpeech = current
   notifyManagedSpeechChanged()

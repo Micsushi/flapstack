@@ -44,16 +44,7 @@ export async function resolveAvailableSttAdapter(
 }
 
 export async function resolveAvailableTtsAdapter(settings: Pick<VoiceSettings, "ttsAdapterId">) {
-  const preferred = resolveTtsAdapter(settings)
-  const ordered = [
-    preferred,
-    ...ttsAdapterImplementations.filter((adapter) => adapter.id !== preferred.id),
-  ]
-  for (const adapter of ordered) {
-    const availability = await adapter.isAvailable()
-    if (availability.available) return adapter
-  }
-  return preferred
+  return resolveTtsAdapter(settings)
 }
 
 export function resolveTtsVoiceId(

@@ -266,6 +266,7 @@ export const PlayButton = memo(function PlayButton({
     setCurrentTime(resumeAt)
     setSpeechPlaybackPosition(playbackKey, { currentTime: resumeAt, duration: nextDuration })
     audioRef.current = audio
+    if (result.artifactId) void trpcClient.speech.markPlayed.mutate({ id: result.artifactId })
     setState("playing")
   }, [text, playbackRate, chatId, subChatId, messageId, playbackKey, duration])
 

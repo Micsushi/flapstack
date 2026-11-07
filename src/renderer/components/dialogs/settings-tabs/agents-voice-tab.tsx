@@ -3,6 +3,7 @@ import { useSetAtom } from "jotai"
 import { Copy, Download, FolderOpen, Play, Plus, Square, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { trpc } from "../../../lib/trpc"
+import { recordAppAction } from "../../../lib/app-action-history"
 import { playManagedSpeech, stopManagedSpeech } from "../../../lib/speech-playback"
 import { agentsSettingsDialogActiveTabAtom, agentsSettingsDialogOpenAtom } from "../../../lib/atoms"
 import { desktopViewAtom } from "../../../features/agents/atoms"
@@ -147,6 +148,21 @@ export function AgentsVoiceTab() {
     if (patch.rate !== undefined || patch.voiceId !== undefined || patch.ttsAdapterId !== undefined)
       stopManagedSpeech()
     updateSettings.mutate(patch)
+  }
+  const updateAudioStorage = (
+    patch: Pick<Partial<typeof settings>, "prepareReplyAudio" | "unplayedAudioRetentionDays">,
+  ) => {
+    const previous = Object.fromEntries(
+      Object.keys(patch).map((key) => [key, settings[key as keyof typeof settings]]),
+    )
+    updateSettings.mutate(patch, {
+      onSuccess: () =>
+        recordAppAction({
+          label: "Reply audio settings",
+          undo: () => updateSettings.mutateAsync(previous),
+          redo: () => updateSettings.mutateAsync(patch),
+        }),
+    })
   }
   const selectedTtsAvailability = adapters.availability.tts?.[settings.ttsAdapterId]
   const selectedSttAvailability = adapters.availability.stt?.[settings.sttAdapterId]
@@ -493,7 +509,39 @@ export function AgentsVoiceTab() {
         <h4 className="text-xs font-medium uppercase tracking-normal text-muted-foreground">
           Text to speech
         </h4>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={settings.prepareReplyAudio ?? true}
+            disabled={updateSettings.isPending}
+            onChange={(event) => updateAudioStorage({ prepareReplyAudio: event.target.checked })}
+          />
+          Prepare audio when a reply finishes, without playing it
+        </label>
+        <label className="space-y-1.5 block">
+          <span className="text-sm text-foreground">Delete unplayed reply audio</span>
+          <select
+            value={settings.unplayedAudioRetentionDays ?? 0}
+            disabled={updateSettings.isPending}
+            onChange={(event) =>
+              updateAudioStorage({
+                unplayedAudioRetentionDays: Number(event.target.value) as 0 | 1 | 7 | 30,
+              })
+            }
+            className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
+          >
+            <option value={0}>Never automatically</option>
+            <option value={1}>After 1 day</option>
+            <option value={7}>After 7 days</option>
+            <option value={30}>After 30 days</option>
+          </select>
+          <span className="text-xs text-muted-foreground">
+            Played audio stays in Voice history. Deleted audio can be generated again from the
+            message.
+          </span>
+        </label>
         <select
+          aria-label="Speech engine"
           data-dev-voice-control="tts-adapter"
           value={settings.ttsAdapterId}
           onChange={(event) => {
@@ -570,14 +618,16 @@ export function AgentsVoiceTab() {
             data-dev-voice-action="preview"
             type="button"
             onClick={async () => {
-              stopManagedSpeech()
-              const result = await speak.mutateAsync({ text: previewText, rate: 1 })
-              if (result.skipped) return
-              if (!result.historySaved)
-                toast.warning("Speech played but Voice History could not save", {
-                  description: result.historyError || undefined,
+              try {
+                stopManagedSpeech()
+                const result = await speak.mutateAsync({ text: previewText, rate: 1 })
+                if (result.skipped) return
+                await playManagedSpeech(result, { rate: settings.rate })
+              } catch (error) {
+                toast.error("Could not prepare voice preview", {
+                  description: error instanceof Error ? error.message : String(error),
                 })
-              await playManagedSpeech(result, { rate: settings.rate })
+              }
             }}
             className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border hover:bg-accent"
             title="Preview voice"

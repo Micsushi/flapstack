@@ -1,5 +1,14 @@
 # Stage 3 Voice manual verification matrix (S3-F9)
 
+Current reply audio behavior (November 2026): Kokoro remains selected if loading
+fails; an error is shown instead of silently using a system voice. Replies prepare
+audio after successful completion, including chats in the background, without
+auto-playing. Settings > Voice can disable preparation or expire unplayed audio
+after 1, 7, or 30 days. The default keeps reply audio until manually deleted.
+Expiry runs at startup and after audio saves. Played replies are retained.
+Playback reuses saved 1x speech and changes speed with pitch preservation.
+The historical matrix below describes the earlier release, not these changes.
+
 Historical Stage 3 evidence record. S3-F9 later closed at Tier 2. Remaining
 owner or platform observations belong to the current owner backlog and do not
 reopen core completion.
