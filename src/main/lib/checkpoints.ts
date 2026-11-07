@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs"
-import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises"
+import { createReadStream, existsSync, readFileSync } from "node:fs"
+import { copyFile, mkdtemp, rm } from "node:fs/promises"
+import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { SimpleGit, StatusResult } from "simple-git"
@@ -7,7 +8,6 @@ import { eq } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import { checkpoints, fileChangeManifests, getDatabase } from "./db"
 import type * as schema from "./db/schema"
-import { computeContentHash } from "./git/cache"
 import { splitUnifiedDiffByFile } from "./git/diff-parser"
 import { createGit } from "./git/git-factory"
 
@@ -44,11 +44,21 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-async function hashWorktreeFile(worktreePath: string, filePath: string): Promise<string | null> {
+export async function hashWorktreeFile(
+  worktreePath: string,
+  filePath: string,
+): Promise<string | null> {
   const absolutePath = join(worktreePath, filePath)
-  if (!existsSync(absolutePath)) return null
-  const content = await readFile(absolutePath)
-  return computeContentHash(content.toString("base64"))
+  const hash = createHash("sha256")
+  try {
+    // Node's decoder preserves base64 boundaries while keeping each chunk bounded.
+    for await (const chunk of createReadStream(absolutePath, { encoding: "base64" }))
+      hash.update(chunk)
+    return hash.digest("hex").slice(0, 16)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
+    throw error
+  }
 }
 
 async function buildStatusSnapshot(
@@ -94,18 +104,16 @@ async function buildStatusSnapshot(
     })
 
     const files: Record<string, FileSnapshot> = {}
-    await Promise.all(
-      status.files.map(async (file) => {
-        const hash = await hashWorktreeFile(worktreePath, file.path)
-        files[file.path] = {
-          path: file.path,
-          index: file.index,
-          workingTree: file.working_dir,
-          hash,
-          missing: hash === null,
-        }
-      }),
-    )
+    for (const file of status.files) {
+      const hash = await hashWorktreeFile(worktreePath, file.path)
+      files[file.path] = {
+        path: file.path,
+        index: file.index,
+        workingTree: file.working_dir,
+        hash,
+        missing: hash === null,
+      }
+    }
 
     return {
       gitCommit,
