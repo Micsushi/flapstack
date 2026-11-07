@@ -87,7 +87,7 @@ describe("AgentInputDialog", () => {
     expect(document.activeElement).toBe(composer)
     act(() => container.querySelector("button")!.click())
     await paint()
-    expect(document.activeElement).toBe(container.querySelector('input[type="radio"]'))
+    expect(document.activeElement).toBe(document.body.querySelector('input[type="radio"]'))
     act(() => root!.render(<View requestId="second" />))
     expect(container.querySelector('[role="region"]')).toBeNull()
     act(() => container.querySelector("button")!.click())
@@ -117,17 +117,17 @@ describe("AgentInputDialog", () => {
         </>,
       ),
     )
-    const labels = [...container.querySelectorAll('[role="region"]')].map((region) =>
+    const labels = [...document.body.querySelectorAll('[role="dialog"]')].map((region) =>
       region.getAttribute("aria-labelledby"),
     )
     expect(new Set(labels).size).toBe(2)
     for (const label of labels) expect(document.getElementById(label!)).not.toBeNull()
   })
 
-  it("renders as a docked region instead of an interruptive modal", () => {
+  it("renders a named dialog outside the chat dock", () => {
     renderDialog()
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-    expect(document.body.querySelector('[role="region"]')).not.toBeNull()
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(document.body.querySelector('[role="region"]')).toBeNull()
   })
 
   it("uses radio semantics and makes a custom single answer mutually exclusive", async () => {
@@ -146,7 +146,7 @@ describe("AgentInputDialog", () => {
     expect(radios[0]!.checked).toBe(false)
 
     const submit = [...document.body.querySelectorAll("button")].find(
-      (button) => button.textContent === "Submit",
+      (button) => button.textContent === "Send answer",
     )!
     await act(async () => submit.click())
     expect(callbacks.onAnswer).toHaveBeenCalledWith({ "question-1": ["Other: Gamma"] })
@@ -210,7 +210,7 @@ describe("AgentInputDialog", () => {
     const secondRadio = document.body.querySelector('input[type="radio"]') as HTMLInputElement
     await act(async () => secondRadio.click())
     const submit = [...document.body.querySelectorAll("button")].find(
-      (button) => button.textContent === "Submit",
+      (button) => button.textContent === "Send answer",
     )!
     await act(async () => submit.click())
 

@@ -24,10 +24,11 @@ import {
   type CodexProtocolServerRequest,
 } from "./protocol-client"
 import { sanitizeRuntimeText } from "../sanitizer"
+import { AGENT_INPUT_TIMEOUT_MS } from "../../../../shared/agent-input"
 import type { CodexThreadVisibility } from "../../../../shared/codex-thread-visibility"
 
 const execFileAsync = promisify(execFile)
-const PERMISSION_TIMEOUT_MS = 60_000
+const PERMISSION_TIMEOUT_MS = AGENT_INPUT_TIMEOUT_MS
 const MAX_MODEL_PAGES = 10
 
 type ClientPurpose = { cwd?: string; env?: NodeJS.ProcessEnv }
@@ -373,11 +374,13 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     const value = isServerRequest(request)
       ? request
       : { id: "direct", method: "mcpServer/elicitation/request", params: record(request) }
-    if (!this.options.requestInput) return cancelInput()
+    const cancelled =
+      value.method === "item/tool/requestUserInput" ? { answers: {} } : cancelInput()
+    if (!this.options.requestInput) return cancelled
     return await withTimeout(
       this.options.requestInput(context, value),
       this.options.permissionTimeoutMs ?? PERMISSION_TIMEOUT_MS,
-      cancelInput(),
+      cancelled,
       context.signal,
     )
   }
@@ -537,7 +540,10 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     context: RuntimeAdapterContext,
     request: CodexProtocolServerRequest,
   ): Promise<unknown> {
-    if (request.method === "mcpServer/elicitation/request") {
+    if (
+      request.method === "mcpServer/elicitation/request" ||
+      request.method === "item/tool/requestUserInput"
+    ) {
       return await this.requestInput(context, request)
     }
     if (!isPermissionMethod(request.method)) {
@@ -693,7 +699,7 @@ function withServiceTier(
 async function initialize(client: CodexProtocolClient): Promise<void> {
   await client.request("initialize", {
     clientInfo: { name: "flapstack", title: "Flapstack", version: CODEX_RUNTIME_ADAPTER_VERSION },
-    capabilities: null,
+    capabilities: { experimentalApi: true },
   })
 }
 
@@ -872,7 +878,7 @@ function denyPermission(method: string): unknown {
   if (method === "item/permissions/requestApproval") {
     return { permissions: {}, scope: "turn", strictAutoReview: true }
   }
-  return { decision: "cancel" }
+  return { decision: "decline" }
 }
 
 function validatePermissionResponse(method: string, value: unknown): unknown {
@@ -887,7 +893,12 @@ function validatePermissionResponse(method: string, value: unknown): unknown {
   const amendment = record(decision)
   const validAmendment =
     (isRecord(amendment.acceptWithExecpolicyAmendment) &&
-      isRecord(record(amendment.acceptWithExecpolicyAmendment).execpolicy_amendment)) ||
+      Array.isArray(record(amendment.acceptWithExecpolicyAmendment).execpolicy_amendment) &&
+      (record(amendment.acceptWithExecpolicyAmendment).execpolicy_amendment as unknown[]).length >
+        0 &&
+      (record(amendment.acceptWithExecpolicyAmendment).execpolicy_amendment as unknown[]).every(
+        (value) => typeof value === "string",
+      )) ||
     (isRecord(amendment.applyNetworkPolicyAmendment) &&
       isRecord(record(amendment.applyNetworkPolicyAmendment).network_policy_amendment))
   if (

@@ -112,7 +112,7 @@ import {
   resolveLocalModelToolTiers,
 } from "../../shared/local-model-contract"
 import { parseCustomPermissionCapabilities } from "../../shared/permission-capabilities"
-import type { AgentInputRequest } from "../../shared/agent-input"
+import { AGENT_INPUT_TIMEOUT_MS, type AgentInputRequest, type AgentInputOption } from "../../shared/agent-input"
 import { agentInputLifecycle } from "./agent-input/service"
 import {
   formatClaudeInputAnswers,
@@ -203,7 +203,7 @@ export class MainRuntimeLaunchService {
     this.permissionHandler =
       options.permissionHandler ??
       ((runId, request) => this.requestDefaultPermission(runId, request))
-    this.inputHandler = options.inputHandler
+    this.inputHandler = options.inputHandler ?? ((runId, request) => this.requestDefaultInput(runId, request))
     const nativeFactory = createFlapstackNativeAdapterFactory({
       resolveDelegation: (harness) =>
         createLegacyDelegation(
@@ -517,7 +517,7 @@ export class MainRuntimeLaunchService {
     input?: MainRunLauncherOptions["inputHandler"]
   }): void {
     this.permissionHandler = handlers.permission
-    this.inputHandler = handlers.input
+    this.inputHandler = handlers.input ?? ((runId, request) => this.requestDefaultInput(runId, request))
   }
 
   diagnostics() {
@@ -556,7 +556,18 @@ export class MainRuntimeLaunchService {
           ? String(record.id)
           : `${runId}:permission:${randomUUID()}`
     const createdAt = Date.now()
+    const params = isPlainRecord(record.params) ? record.params : record
+    const options: AgentInputOption[] = [{ id: "allow-once", label: "Allow once" }]
+    const codexApproval = method === "item/commandExecution/requestApproval" || method === "item/fileChange/requestApproval"
+    if (codexApproval || method === "item/permissions/requestApproval") {
+      options.push({ id: "allow-session", label: "Allow for this session", description: "Remember this approval in the current Codex session." })
+    }
+    const amendment = params.proposedExecpolicyAmendment
+    const canRemember = method === "item/commandExecution/requestApproval" && Array.isArray(amendment) && amendment.length > 0 && amendment.every(value => typeof value === "string")
+    if (canRemember) options.push({ id: "allow-always", label: "Always allow matching commands", description: `Save a Codex rule for: ${(amendment as string[]).join(" ").slice(0, 450)}` })
+    options.push({ id: "deny", label: "Deny", description: "Do not run this action; let the agent continue." })
     const inputRequest: AgentInputRequest = {
+      kind: "permission",
       requestId,
       chatId: run.subChatId,
       runId,
@@ -572,22 +583,18 @@ export class MainRuntimeLaunchService {
           id: "permission",
           header: "Permission",
           question: permissionRequestQuestion(toolName, record),
-          options: [
-            { id: "allow-once", label: "Allow once" },
-            { id: "deny", label: "Deny" },
-          ],
+          options,
           multiSelect: false,
           allowCustom: false,
         },
       ],
       status: "pending",
       createdAt,
-      expiresAt: createdAt + 15 * 60_000,
+      expiresAt: createdAt + AGENT_INPUT_TIMEOUT_MS,
     }
-    const resolution = await agentInputLifecycle.create(inputRequest, { timeoutMs: 15 * 60_000 })
-    const allowed =
-      resolution.status === "answered" &&
-      resolution.response.answers.permission?.includes("Allow once")
+    const resolution = await agentInputLifecycle.create(inputRequest, { timeoutMs: AGENT_INPUT_TIMEOUT_MS })
+    const answer = resolution.status === "answered" ? resolution.response.answers.permission?.[0] : undefined
+    const allowed = answer === "Allow once" || answer === "Allow for this session" || (canRemember && answer === "Always allow matching commands")
 
     if (provider === "claude-code") {
       return allowed
@@ -598,9 +605,32 @@ export class MainRuntimeLaunchService {
         : { behavior: "deny", message: "User denied the tool request." }
     }
     if (method === "item/permissions/requestApproval") {
-      return codexPermissionProfileApproval(record, allowed)
+      return { ...codexPermissionProfileApproval(record, allowed), scope: answer === "Allow for this session" ? "session" : "turn" }
     }
-    return { decision: allowed ? "accept" : "cancel" }
+    if (canRemember && answer === "Always allow matching commands") return { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } } }
+    return { decision: answer === "Allow for this session" ? "acceptForSession" : allowed ? "accept" : "decline" }
+  }
+
+  private async requestDefaultInput(runId: string, request: unknown): Promise<unknown> {
+    const run = this.runs.get(runId) ?? loadRunningAgentRun(this.databasePath, runId)
+    const record = isPlainRecord(request) ? request : {}
+    if (!run || record.method !== "item/tool/requestUserInput" || !isPlainRecord(record.params)) {
+      throw new Error("This provider input request is not supported.")
+    }
+    const raw = Array.isArray(record.params.questions) ? record.params.questions : []
+    if (raw.some(question => isPlainRecord(question) && question.isSecret === true)) {
+      throw new Error("Secret input is not supported by the question dialog.")
+    }
+    const questions = normalizeClaudeInputQuestions(raw).map((question, index) => ({
+      ...question,
+      id: isPlainRecord(raw[index]) && typeof raw[index].id === "string" ? raw[index].id as string : question.id,
+    }))
+    const resolution = await agentInputLifecycle.create({
+      kind: "question", requestId: `${runId}:input:${String(record.id)}`, chatId: run.subChatId,
+      runId, origin: { harness: run.harness, provider: "codex", toolName: "request_user_input" },
+      capability: { mode: "native", sameRun: true }, questions, status: "pending", createdAt: Date.now(),
+    }, { timeoutMs: AGENT_INPUT_TIMEOUT_MS })
+    return { answers: resolution.status === "answered" ? Object.fromEntries(Object.entries(resolution.response.answers).map(([id, answers]) => [id, { answers }])) : {} }
   }
 
   private async requestInputFromProvider(runId: string, request: unknown): Promise<unknown> {
@@ -967,6 +997,7 @@ export class MainRuntimeLaunchService {
     detail?: string | null,
   ): Promise<void> {
     const terminal = terminalStatus(lifecycle)
+    if (terminal) agentInputLifecycle.cancelByRun(runId, "This run has ended.")
     const afterCheckpointId = terminal ? await this.captureCompletionArtifacts(runId) : undefined
     const db = this.open()
     let activityInvalidation: AgentActivityInvalidation | undefined
@@ -2358,7 +2389,7 @@ function permissionRequestQuestion(toolName: string, request: Record<string, unk
   const toolInput = isPlainRecord(request.toolInput) ? request.toolInput : {}
   const detail = firstPermissionDetail(params, toolInput)
   return detail
-    ? `Allow ${toolName} for this run?\n\n${detail.slice(0, 1_000)}`
+    ? `Allow ${toolName}?\n\n${detail.slice(0, 1_000)}`
     : `Allow ${toolName} for this run?`
 }
 

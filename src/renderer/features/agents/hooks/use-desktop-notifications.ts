@@ -6,7 +6,11 @@
 import { useCallback, useRef, useEffect } from "react"
 import { useAtomValue } from "jotai"
 import { isDesktopApp } from "../../../lib/utils/platform"
-import { desktopNotificationsEnabledAtom, notifyWhenFocusedAtom } from "../../../lib/atoms"
+import {
+  desktopNotificationsEnabledAtom,
+  notifyWhenFocusedAtom,
+  soundNotificationsEnabledAtom,
+} from "../../../lib/atoms"
 
 // throttle interval to prevent notification spam (ms)
 const NOTIFICATION_THROTTLE_MS = 3000
@@ -21,6 +25,34 @@ const NOTIFICATION_PRIORITY = {
 
 type NotificationPriority = keyof typeof NOTIFICATION_PRIORITY
 
+async function playNeedsInputSound(): Promise<void> {
+  if (typeof AudioContext === "undefined") return
+  let audio: AudioContext | undefined
+  try {
+    audio = new AudioContext()
+    await audio.resume()
+    for (const [offset, frequency] of [
+      [0, 660],
+      [0.18, 880],
+    ]) {
+      const tone = audio.createOscillator()
+      const gain = audio.createGain()
+      tone.frequency.value = frequency!
+      gain.gain.setValueAtTime(0, audio.currentTime + offset!)
+      gain.gain.linearRampToValueAtTime(0.12, audio.currentTime + offset! + 0.015)
+      gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + offset! + 0.15)
+      tone.connect(gain).connect(audio.destination)
+      tone.start(audio.currentTime + offset!)
+      tone.stop(audio.currentTime + offset! + 0.16)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400))
+  } catch {
+    // The desktop notification still appears when audio is unavailable.
+  } finally {
+    await audio?.close().catch(() => {})
+  }
+}
+
 export interface NotificationOptions {
   title: string
   body: string
@@ -31,6 +63,7 @@ export interface NotificationOptions {
 }
 
 interface AgentNotificationTarget {
+  permission?: boolean
   chatId?: string
   subChatId?: string
   parentChatName?: string
@@ -39,6 +72,7 @@ interface AgentNotificationTarget {
 export function useDesktopNotifications() {
   const notificationsEnabled = useAtomValue(desktopNotificationsEnabledAtom)
   const notifyWhenFocused = useAtomValue(notifyWhenFocusedAtom)
+  const soundEnabled = useAtomValue(soundNotificationsEnabledAtom)
 
   // track last notification time to throttle rapid-fire notifications
   const lastNotificationTime = useRef<number>(0)
@@ -74,7 +108,7 @@ export function useDesktopNotifications() {
       if (!isDesktopApp()) {
         // fallback for web - use browser Notification API if available
         if ("Notification" in window && Notification.permission === "granted") {
-          new Notification(title, { body, silent: options?.silent })
+          new Notification(title, { body, silent: options?.silent ?? !soundEnabled })
         }
         return
       }
@@ -94,7 +128,7 @@ export function useDesktopNotifications() {
           pendingNotification.current = {
             title,
             body,
-            silent: options?.silent,
+            silent: options?.silent ?? !soundEnabled,
             priority: options?.priority,
             chatId: options?.chatId,
             subChatId: options?.subChatId,
@@ -115,6 +149,7 @@ export function useDesktopNotifications() {
                 body: pending.body,
                 chatId: pending.chatId,
                 subChatId: pending.subChatId,
+                silent: pending.silent,
               })
             }
           }, NOTIFICATION_THROTTLE_MS - timeSinceLastNotification)
@@ -130,9 +165,10 @@ export function useDesktopNotifications() {
         body,
         chatId: options?.chatId,
         subChatId: options?.subChatId,
+        silent: options?.silent ?? !soundEnabled,
       })
     },
-    [notificationsEnabled],
+    [notificationsEnabled, soundEnabled],
   )
 
   const notifyAgentComplete = useCallback(
@@ -175,11 +211,8 @@ export function useDesktopNotifications() {
 
   const notifyAgentNeedsInput = useCallback(
     (chatName: string, target?: AgentNotificationTarget) => {
-      if (!notifyWhenFocused && document.hasFocus()) {
-        return
-      }
-
-      const title = "Input Required"
+      if (notificationsEnabled && soundEnabled) void playNeedsInputSound()
+      const title = target?.permission ? "Permission needed" : "Your answer is needed"
       const parentChatName = target?.parentChatName
       const body =
         chatName && parentChatName && chatName !== parentChatName
@@ -189,11 +222,12 @@ export function useDesktopNotifications() {
             : "Agent is waiting for your input"
       showNotification(title, body, {
         priority: "input",
+        silent: true,
         chatId: target?.chatId,
         subChatId: target?.subChatId,
       })
     },
-    [showNotification, notifyWhenFocused],
+    [showNotification, notificationsEnabled, soundEnabled],
   )
 
   const notifyPlanReady = useCallback(

@@ -30,6 +30,7 @@ export const agentInputQuestionSchema = z.object({
 
 export const agentInputRequestSchema = z
   .object({
+    kind: z.enum(["question", "permission"]).optional(),
     requestId: boundedText(200),
     chatId: boundedText(200),
     runId: boundedText(200),

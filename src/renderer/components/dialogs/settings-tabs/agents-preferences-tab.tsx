@@ -538,7 +538,7 @@ export function AgentsPreferencesTab() {
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Sound Notifications</span>
             <span className="text-xs text-muted-foreground">
-              Play a sound when agent completes work while you're away
+                Play sounds for completed work and a distinct chime when your response is needed
             </span>
           </div>
           <Switch

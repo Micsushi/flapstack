@@ -235,6 +235,7 @@ function getWindowFromEvent(event: Electron.IpcMainInvokeEvent): BrowserWindow |
 }
 
 interface DesktopNotificationOptions {
+  silent?: boolean
   title: string
   body: string
   chatId?: string
@@ -339,7 +340,7 @@ function registerIpcHandlers(): void {
         title: options.title,
         body: options.body,
         ...(icon && { icon }),
-        ...(process.platform === "win32" && { silent: false }),
+        silent: options.silent === true,
       })
 
       notification.on("click", () => {

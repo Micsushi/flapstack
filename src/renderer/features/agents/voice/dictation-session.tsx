@@ -36,7 +36,7 @@ export type DictationTarget = {
   allowCloudSelectedContext?: boolean
 }
 
-type DictationSessionValue = {
+export type DictationSessionValue = {
   activeTargetKey: string | null
   isRecording: boolean
   isStarting: boolean

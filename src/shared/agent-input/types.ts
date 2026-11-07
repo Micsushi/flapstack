@@ -1,5 +1,7 @@
 import type { HarnessProvider } from "../harness-types"
 
+export const AGENT_INPUT_TIMEOUT_MS = 15 * 60_000
+
 export const AGENT_INPUT_CAPABILITY_MODES = [
   "native",
   "injected-tool",
@@ -51,6 +53,7 @@ export interface AgentInputOrigin {
 }
 
 export interface AgentInputRequest {
+  kind?: "question" | "permission"
   requestId: string
   chatId: string
   runId: string

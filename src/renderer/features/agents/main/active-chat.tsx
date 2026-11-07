@@ -258,6 +258,7 @@ import { AttachmentTray } from "../ui/attachment-tray"
 import { isPlanFile } from "../ui/agent-tool-utils"
 import { AgentUserMessageBubble } from "../ui/agent-user-message-bubble"
 import { AgentInputDialog, useAgentInputDisclosure } from "../ui/agent-input-dialog"
+import { useDictationSession } from "../voice/dictation-session"
 import { AgentsHeaderControls } from "../ui/agents-header-controls"
 import { ChatTitleEditor } from "../ui/chat-title-editor"
 import { getHarnessChipMeta } from "../constants"
@@ -2900,6 +2901,7 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Unified display questions: prefer pending (live), fall back to expired
   const displayQuestions = pendingQuestions ?? expiredQuestions
+  const questionDictation = useDictationSession()
   const isQuestionExpired = !pendingQuestions && !!expiredQuestions
   const isQuestionContinuation =
     isQuestionExpired ||
@@ -2908,6 +2910,7 @@ const ChatViewInner = memo(function ChatViewInner({
   const { open: questionDialogOpen, setOpen: setQuestionDialogOpen } = useAgentInputDisclosure(
     displayQuestions?.toolUseId,
     isActive,
+    displayQuestions?.request?.kind !== "permission",
   )
 
   useEffect(() => {
@@ -2945,6 +2948,7 @@ const ChatViewInner = memo(function ChatViewInner({
       chatId: parentChatId,
       subChatId,
       parentChatName: workspaceName || undefined,
+      permission: pendingQuestions.request?.kind === "permission",
     })
   }, [notifyAgentNeedsInput, parentChatId, pendingQuestions, subChatId, workspaceName])
 
@@ -5390,6 +5394,7 @@ const ChatViewInner = memo(function ChatViewInner({
                     onOpenChange={setQuestionDialogOpen}
                     onAnswer={handleQuestionsAnswer}
                     onSkip={handleQuestionsSkip}
+                    dictation={questionDictation}
                     onAnswerInChat={() => {
                       setQuestionDialogOpen(false)
                       queueMicrotask(() => editorRef.current?.focus())
@@ -5400,8 +5405,7 @@ const ChatViewInner = memo(function ChatViewInner({
                       <div className="mx-auto flex w-full max-w-2xl items-start justify-between gap-3 rounded-t-xl border border-b-0 border-border bg-muted/30 px-3 py-2">
                         <div className="min-w-0 text-xs text-muted-foreground">
                           <div className="font-medium text-foreground" role="status">
-                            {displayQuestions.questions.length} agent question
-                            {displayQuestions.questions.length === 1 ? "" : "s"}
+                            {displayQuestions.request?.kind === "permission" ? "Permission needed" : `${displayQuestions.questions.length} question${displayQuestions.questions.length === 1 ? "" : "s"}`}
                           </div>
                           <div className="line-clamp-2 break-words">
                             {displayQuestions.questions[0]?.question}
@@ -5420,7 +5424,7 @@ const ChatViewInner = memo(function ChatViewInner({
                           aria-expanded={false}
                           onClick={() => setQuestionDialogOpen(true)}
                         >
-                          Answer questions
+                          {displayQuestions.request?.kind === "permission" ? "Review permission" : "Answer questions"}
                         </Button>
                       </div>
                     </div>

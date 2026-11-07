@@ -115,7 +115,8 @@ export function handleAgentInputChunk(
   appStore.set(pendingUserQuestionsAtom, pendingMap)
 
   const expiredMap = new Map(appStore.get(expiredUserQuestionsAtom))
-  if (chunk.event.status === "expired") expiredMap.set(pending.subChatId, pending)
+  if (chunk.event.status === "expired" && pending.request?.kind !== "permission")
+    expiredMap.set(pending.subChatId, pending)
   else expiredMap.delete(pending.subChatId)
   appStore.set(expiredUserQuestionsAtom, expiredMap)
 

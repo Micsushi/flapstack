@@ -246,6 +246,7 @@ contextBridge.exposeInMainWorld("desktopApi", {
   setBadge: (count: number | null) => ipcRenderer.invoke("app:set-badge", count),
   setBadgeIcon: (imageData: string | null) => ipcRenderer.invoke("app:set-badge-icon", imageData),
   showNotification: (options: {
+    silent?: boolean
     title: string
     body: string
     chatId?: string
@@ -537,6 +538,7 @@ export interface DesktopApi {
   setBadge: (count: number | null) => Promise<void>
   setBadgeIcon: (imageData: string | null) => Promise<void>
   showNotification: (options: {
+    silent?: boolean
     title: string
     body: string
     chatId?: string

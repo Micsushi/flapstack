@@ -84,6 +84,7 @@ export interface ProductMcpRendererInvalidation {
 }
 
 export interface DesktopNotificationOptions extends NotificationNavigationPayload {
+  silent?: boolean
   title: string
   body: string
 }
