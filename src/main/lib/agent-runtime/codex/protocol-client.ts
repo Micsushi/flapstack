@@ -6,7 +6,9 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 2_000
 const MAX_PENDING_REQUESTS = 128
 const MAX_CONCURRENT_SERVER_REQUESTS = 32
 const MAX_QUEUED_NOTIFICATIONS = 2_048
-const MAX_PROTOCOL_LINE_BYTES = 1_048_576
+// Completed commands and image tools carry their full results in one JSON-RPC line.
+const MAX_PROTOCOL_LINE_BYTES = 64 * 1024 * 1024
+const MAX_QUEUED_NOTIFICATION_BYTES = 128 * 1024 * 1024
 const MAX_STDERR_BYTES = 32_768
 
 export type CodexProtocolNotification = {
@@ -38,7 +40,8 @@ type PendingRequest = {
 }
 
 class AsyncNotificationQueue implements AsyncIterable<CodexProtocolNotification> {
-  private readonly values: CodexProtocolNotification[] = []
+  private readonly values: Array<{ value: CodexProtocolNotification; bytes: number }> = []
+  private queuedBytes = 0
   private readonly waiters: Array<{
     resolve: (value: IteratorResult<CodexProtocolNotification>) => void
     reject: (error: Error) => void
@@ -46,13 +49,18 @@ class AsyncNotificationQueue implements AsyncIterable<CodexProtocolNotification>
   private terminalError: Error | null = null
   private ended = false
 
-  push(value: CodexProtocolNotification): boolean {
+  push(value: CodexProtocolNotification, bytes: number): boolean {
     if (this.ended) return false
     const waiter = this.waiters.shift()
     if (waiter) waiter.resolve({ done: false, value })
     else {
-      if (this.values.length >= MAX_QUEUED_NOTIFICATIONS) return false
-      this.values.push(value)
+      if (
+        this.values.length >= MAX_QUEUED_NOTIFICATIONS ||
+        this.queuedBytes + bytes > MAX_QUEUED_NOTIFICATION_BYTES
+      )
+        return false
+      this.values.push({ value, bytes })
+      this.queuedBytes += bytes
     }
     return true
   }
@@ -71,7 +79,10 @@ class AsyncNotificationQueue implements AsyncIterable<CodexProtocolNotification>
     return {
       next: async () => {
         const value = this.values.shift()
-        if (value) return { done: false, value }
+        if (value) {
+          this.queuedBytes -= value.bytes
+          return { done: false, value: value.value }
+        }
         if (this.terminalError) throw this.terminalError
         if (this.ended) return { done: true, value: undefined }
         return await new Promise<IteratorResult<CodexProtocolNotification>>((resolve, reject) => {
@@ -113,7 +124,8 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
     throw new Error("No Flapstack authority registered for Codex server request.")
   }
   private stderr = ""
-  private stdoutRemainder = Buffer.alloc(0)
+  private stdoutChunks: Buffer[] = []
+  private stdoutBytes = 0
   private alive = true
   private closing: Promise<void> | null = null
 
@@ -235,23 +247,22 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
       const newline = data.indexOf(0x0a, offset)
       const end = newline === -1 ? data.length : newline
       const segment = data.subarray(offset, end)
-      if (this.stdoutRemainder.length + segment.length > MAX_PROTOCOL_LINE_BYTES) {
-        this.failProtocol(new Error("[codex-runtime] Oversized App Server message."))
+      if (this.stdoutBytes + segment.length > MAX_PROTOCOL_LINE_BYTES) {
+        this.failProtocol(
+          new Error("[codex-runtime] Oversized App Server message (limit: 64 MiB)."),
+        )
         return
       }
       if (segment.length > 0) {
-        this.stdoutRemainder = Buffer.concat(
-          [this.stdoutRemainder, segment],
-          this.stdoutRemainder.length + segment.length,
-        )
+        this.stdoutChunks.push(segment)
+        this.stdoutBytes += segment.length
       }
       if (newline === -1) return
 
-      const line =
-        this.stdoutRemainder.at(-1) === 0x0d
-          ? this.stdoutRemainder.subarray(0, -1)
-          : this.stdoutRemainder
-      this.stdoutRemainder = Buffer.alloc(0)
+      const buffered = Buffer.concat(this.stdoutChunks, this.stdoutBytes)
+      const line = buffered.at(-1) === 0x0d ? buffered.subarray(0, -1) : buffered
+      this.stdoutChunks = []
+      this.stdoutBytes = 0
       this.handleLine(line.toString("utf8"))
       if (!this.alive) return
       offset = newline + 1
@@ -259,7 +270,7 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
   }
 
   private handleStdoutEnd(): void {
-    if (!this.alive || this.stdoutRemainder.length === 0) return
+    if (!this.alive || this.stdoutBytes === 0) return
     this.failProtocol(
       new Error("[codex-runtime] App Server stdout ended with an unterminated JSON-RPC message."),
     )
@@ -347,9 +358,14 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
       void this.handleServerRequest({ id, method, params, ...(emittedAtMs ? { emittedAtMs } : {}) })
       return
     }
-    if (!this.queue.push({ method, params, ...(emittedAtMs ? { emittedAtMs } : {}) })) {
+    if (
+      !this.queue.push(
+        { method, params, ...(emittedAtMs ? { emittedAtMs } : {}) },
+        Buffer.byteLength(line, "utf8"),
+      )
+    ) {
       const failure = new Error(
-        `[codex-runtime] App Server notification buffer exceeded ${MAX_QUEUED_NOTIFICATIONS} events.`,
+        `[codex-runtime] App Server notification buffer exceeded ${MAX_QUEUED_NOTIFICATIONS} events or 128 MiB.`,
       )
       this.failProtocol(failure)
     }
@@ -400,6 +416,8 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
   private terminate(error: Error): void {
     if (!this.alive) return
     this.alive = false
+    this.stdoutChunks = []
+    this.stdoutBytes = 0
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout)
       pending.reject(error)

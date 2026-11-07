@@ -499,6 +499,62 @@ describe("direct Codex Runtime adapter", () => {
 })
 
 describe("Codex App Server JSON-RPC transport bounds", () => {
+  it("preserves large completed command results across fragmented UTF-8 frames", async () => {
+    const fake = fakeChild()
+    const client = spawnCodexProtocolClient({
+      command: "/fake/codex",
+      spawnProcess: () => fake.child,
+    })
+    const output = "search result 🐈\n".repeat(80_000)
+    const params = { item: { type: "commandExecution", stdout: output, aggregatedOutput: output } }
+    const frame = Buffer.from(
+      `${JSON.stringify({ method: "item/completed", params })}\r\n${JSON.stringify({ method: "turn/completed", params: {} })}\n`,
+    )
+    const iterator = client.notifications()[Symbol.asyncIterator]()
+    for (let offset = 0; offset < frame.length; offset += 8191) {
+      fake.stdout.write(frame.subarray(offset, offset + 8191))
+    }
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { method: "item/completed", params },
+    })
+    await expect(iterator.next()).resolves.toMatchObject({ value: { method: "turn/completed" } })
+    expect(client.isAlive()).toBe(true)
+    await client.close()
+  })
+
+  it("accepts large request replies and releases consumed notification bytes", async () => {
+    const fake = fakeChild()
+    const client = spawnCodexProtocolClient({
+      command: "/fake/codex",
+      spawnProcess: () => fake.child,
+    })
+    const output = "x".repeat(8 * 1024 * 1024)
+    const reply = client.request("thread/read", {})
+    fake.stdout.write(`${JSON.stringify({ id: 1, result: { output } })}\n`)
+    await expect(reply).resolves.toEqual({ output })
+    const frame = `${JSON.stringify({ method: "item/completed", params: { output } })}\n`
+    const iterator = client.notifications()[Symbol.asyncIterator]()
+    for (let index = 0; index < 17; index += 1) {
+      fake.stdout.write(frame)
+      await expect(iterator.next()).resolves.toMatchObject({ value: { method: "item/completed" } })
+    }
+    expect(client.isAlive()).toBe(true)
+    await client.close()
+  })
+
+  it("bounds total queued bytes even below the notification count limit", async () => {
+    const fake = fakeChild()
+    const client = spawnCodexProtocolClient({
+      command: "/fake/codex",
+      spawnProcess: () => fake.child,
+    })
+    const frame = `${JSON.stringify({ method: "item/completed", params: { output: "x".repeat(8 * 1024 * 1024) } })}\n`
+    for (let index = 0; index < 16; index += 1) fake.stdout.write(frame)
+    expect(client.isAlive()).toBe(false)
+    expect(fake.kills).toContain("SIGTERM")
+    await client.close()
+  })
+
   it("allows one bounded restore deadline without extending ordinary requests", async () => {
     vi.useFakeTimers()
     const fake = fakeChild()
@@ -570,7 +626,10 @@ describe("Codex App Server JSON-RPC transport bounds", () => {
       spawnProcess: () => oversized.child,
     })
     const oversizedNext = oversizedClient.notifications()[Symbol.asyncIterator]().next()
-    oversized.stdout.write(Buffer.alloc(1_048_577, 0x78))
+    const chunk = Buffer.alloc(1024 * 1024, 0x78)
+    for (let index = 0; index < 64; index += 1) oversized.stdout.write(chunk)
+    expect(oversizedClient.isAlive()).toBe(true)
+    oversized.stdout.write("x")
     await expect(oversizedNext).rejects.toThrow("Oversized App Server message")
     expect(oversizedClient.isAlive()).toBe(false)
 
