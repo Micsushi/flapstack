@@ -624,6 +624,11 @@ export function AgentsVoiceTab() {
                 if (result.skipped) return
                 await playManagedSpeech(result, { rate: settings.rate })
               } catch (error) {
+                if (
+                  (error instanceof DOMException && error.name === "AbortError") ||
+                  (error instanceof Error && error.message.includes("Speech request was cancelled"))
+                )
+                  return
                 toast.error("Could not prepare voice preview", {
                   description: error instanceof Error ? error.message : String(error),
                 })
