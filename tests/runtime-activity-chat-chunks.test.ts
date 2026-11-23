@@ -26,15 +26,13 @@ describe("Runtime activity normal chat projection", () => {
         params: { threadId: "thread", turnId: "turn", diff: "-BEFORE\n+AFTER\n" },
       })),
     ]
-    const events = notifications
-      .flatMap(mapCodexNotification)
-      .map((event, index) =>
-        activity(event.kind, event.payload, {
-          ...event,
-          sequence: index + 1,
-          eventId: `event-${index}`,
-        }),
-      )
+    const events = notifications.flatMap(mapCodexNotification).map((event, index) =>
+      activity(event.kind, event.payload, {
+        ...event,
+        sequence: index + 1,
+        eventId: `event-${index}`,
+      }),
+    )
     expect(events.filter((event) => event.phase === "snapshot")).toHaveLength(4)
     expect(events.filter((event) => event.kind === "patch")).toHaveLength(5)
     const mapper = new RuntimeActivityChatChunkMapper("run")

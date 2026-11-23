@@ -215,6 +215,11 @@ export function QueueProcessor() {
       (state) => state.queues,
       () => checkAllQueues(),
     )
+    // The ready event can precede the foreground sender releasing its lock.
+    const unsubscribeProcessing = useMessageQueueStore.subscribe(
+      (state) => state.processingQueues,
+      () => checkAllQueues(),
+    )
     const unsubscribeHeldQueues = useMessageQueueStore.subscribe(
       (state) => state.heldQueues,
       () => checkAllQueues(),
@@ -233,6 +238,7 @@ export function QueueProcessor() {
     return () => {
       unsubscribeQueue()
       unsubscribeHeldQueues()
+      unsubscribeProcessing()
       unsubscribeStatus()
 
       // Clear all timers

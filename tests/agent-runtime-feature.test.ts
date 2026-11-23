@@ -144,7 +144,7 @@ describe("Agent Runtime feature acceptance", () => {
     const router = read("src/main/lib/trpc/routers/agent-runtime-chat.ts")
     expect(router).toContain("await assertRuntimeCheckoutReady(input.chatId)")
     expect(router.indexOf("await assertRuntimeCheckoutReady(input.chatId)")).toBeLessThan(
-      router.indexOf("materializeInteractiveRuntimeRun(database, input"),
+      router.indexOf("run = materializeInteractiveRuntimeRun("),
     )
   })
 })

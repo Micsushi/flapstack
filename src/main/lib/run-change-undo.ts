@@ -471,18 +471,17 @@ export async function getRunChangeReview(runId: string, filePath?: string) {
     "--",
     ...(filePath ? [`:(literal)${filePath}`] : []),
   ]
-  const options = {
-    cwd: worktreePath,
-    env:
-      before.profileObjects || after.profileObjects
-        ? { ...process.env, ...checkpointReadEnvironment() }
-        : undefined,
-    windowsHide: true,
-    timeout: GIT_TIMEOUTS.LOCAL,
-    maxBuffer: 2 * 1024 * 1024,
-  }
   try {
-    const { stdout } = await execFileAsync("git", diffArgs, options)
+    const { stdout } = await execFileAsync("git", diffArgs, {
+      cwd: worktreePath,
+      env:
+        before.profileObjects || after.profileObjects
+          ? { ...process.env, ...checkpointReadEnvironment() }
+          : undefined,
+      windowsHide: true,
+      timeout: GIT_TIMEOUTS.LOCAL,
+      maxBuffer: 2 * 1024 * 1024,
+    })
     return { ...changeSet, diff: stdout }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw error

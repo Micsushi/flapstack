@@ -215,7 +215,7 @@ function seedConversation(
 
 async function runClaude(runId: string, prompt = `Prompt for ${runId}`): Promise<any[]> {
   const caller = claudeRouter.createCaller({ getWindow: () => null })
-  const stream = await caller.chat({
+  const stream = await caller.compatibilityChat({
     runId,
     chatId: "chat-1",
     subChatId: "sub-1",

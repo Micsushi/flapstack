@@ -28,8 +28,10 @@ describe("Settings navigation", () => {
   it("keeps every released tab in registry, search, sidebar, and direct content routing", () => {
     const content = readSource("src/renderer/features/settings/settings-content.tsx")
     const sidebar = readSource("src/renderer/features/settings/settings-sidebar.tsx")
-    expect(sidebar).toContain('getVisibleSettingsTabs("main"')
-    expect(sidebar).toContain('getVisibleSettingsTabs("advanced"')
+    expect(sidebar).toContain("getSettingsGroups(")
+    const groups = readSource("src/renderer/features/settings/settings-visibility.ts")
+    expect(groups).toContain('getVisibleSettingsTabs("main"')
+    expect(groups).toContain('getVisibleSettingsTabs("advanced"')
 
     for (const tab of SETTINGS_TAB_REGISTRY.filter(
       (entry) => entry.released && entry.section !== "development",
@@ -78,7 +80,7 @@ describe("Settings navigation", () => {
     const preferences = readSource(
       "src/renderer/components/dialogs/settings-tabs/agents-preferences-tab.tsx",
     )
-    expect(preferences).toContain("Configure shared agent behavior and app preferences")
+    expect(preferences).toContain("Advanced preferences")
     expect(preferences).not.toContain("Configure Claude's behavior and features")
   })
 })

@@ -15,19 +15,17 @@ describe("renderer cross-provider continuation authority", () => {
 
     expect(start).toBeGreaterThan(-1)
     expect(end).toBeGreaterThan(start)
-    expect(handler).toContain("previewRuntimeContinuation")
+    const action = readFileSync(
+      join(process.cwd(), "src/renderer/features/agents/components/compact-handoff-action.tsx"),
+      "utf8",
+    )
+    expect(action).toContain("previewRuntimeContinuation")
+    expect(action).toContain("digest: snapshot.digest")
+    expect(action).toContain("snapshot.authorityCeiling.permissionMode")
     expect(handler).toContain("continueWithRuntime")
     expect(handler).toContain("targetModel")
-    expect(handler).toContain("confirmedPreviewDigest: preview.digest")
-    expect(handler).toContain("Continue with ${modelName}?")
-    expect(handler).toContain("formatModelDisplayName(preview.targetSnapshot.model)")
-    expect(handler).toContain("Provider: ${preview.targetSnapshot.harness}")
-    expect(handler).toContain("Messages to include:")
-    expect(handler).toContain("Permission:")
-    expect(handler).toContain("Network:")
-    expect(handler).toContain("Worktree: ${worktreeName}")
-    expect(handler).not.toContain("Preview digest:")
-    expect(handler).toContain("if (!confirmed)")
+    expect(handler).toContain("compactSourceSubChatId: subChatId")
+    expect(handler).toContain("confirmedPreviewDigest: confirmation.digest")
     expect(handler).not.toContain("writePastedText")
     expect(handler).not.toContain("createSubChat")
     expect(handler).not.toContain("pendingChatHistoryAtom")
@@ -48,7 +46,7 @@ describe("renderer cross-provider continuation authority", () => {
     )
 
     expect(selector).toContain("targetModelId")
-    expect(selector).toContain("Selected model")
+    expect(selector).toContain("<CompactHandoffAction")
     expect(selector).not.toContain("skip-cross-provider-dialog")
     expect(selector).not.toContain("Don't ask again")
   })

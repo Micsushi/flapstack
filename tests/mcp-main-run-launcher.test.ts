@@ -32,7 +32,7 @@ vi.mock("../src/main/lib/trpc/routers", () => ({
   createAppRouter: () => ({
     createCaller: () => ({
       codex: { chat: harnessMocks.codex },
-      claude: { chat: harnessMocks.claude },
+      claude: { compatibilityChat: harnessMocks.claude },
       cursor: { chat: harnessMocks.cursor },
       opencode: { chat: harnessMocks.opencode },
       localModels: {
@@ -1251,18 +1251,27 @@ describe("scheduled native assistant persistence", () => {
     const runId = "scheduled-result"
     if (action === "create-task-run") {
       seedOrchestrationRun(runId, "scheduled-task", "codex", "codex")
-      sqlite.prepare("UPDATE orchestration_agents SET id = 'automation-occurrence', chat_id = ? WHERE run_id = ?")
+      sqlite
+        .prepare(
+          "UPDATE orchestration_agents SET id = 'automation-occurrence', chat_id = ? WHERE run_id = ?",
+        )
         .run(`chat-${runId}`, runId)
     } else {
       seedRun(runId, "running", "automation-occurrence-1", "codex", "codex")
     }
     sqlite.prepare("UPDATE agent_runs SET status = 'running' WHERE id = ?").run(runId)
-    sqlite.prepare(`INSERT INTO automations
+    sqlite
+      .prepare(
+        `INSERT INTO automations
       (id, name, scope_type, chat_id, project_id, action_type, prompt, harness, permission_mode)
-      VALUES ('scheduled', 'Scheduled result', ?, ?, ?, ?, 'Prompt', 'codex', 'read-only')`)
-      .run(action === "create-task-run" ? "project" : action === "run-chat" ? "chat" : "global",
+      VALUES ('scheduled', 'Scheduled result', ?, ?, ?, ?, 'Prompt', 'codex', 'read-only')`,
+      )
+      .run(
+        action === "create-task-run" ? "project" : action === "run-chat" ? "chat" : "global",
         action === "run-chat" ? `chat-${runId}` : null,
-        action === "create-task-run" ? "project-scheduled-task" : null, action)
+        action === "create-task-run" ? "project-scheduled-task" : null,
+        action,
+      )
     sqlite.exec(`INSERT INTO automation_triggers (id, automation_id, type, cron, timezone, catch_up)
       VALUES ('trigger', 'scheduled', 'schedule', '* * * * *', 'UTC', 'none');
       INSERT INTO automation_occurrences (id, automation_id, trigger_id, dedupe_key, state, scheduled_for)
@@ -1270,57 +1279,98 @@ describe("scheduled native assistant persistence", () => {
       INSERT INTO automation_executions
       (id, occurrence_id, attempt, state, run_id, authority_snapshot, budget_snapshot, started_at)
       VALUES ('execution', 'occurrence', 1, 'running', 'scheduled-result', '{}', '{}', 1);`)
-    sqlite.prepare("UPDATE automation_executions SET authority_snapshot = ? WHERE id = 'execution'")
+    sqlite
+      .prepare("UPDATE automation_executions SET authority_snapshot = ? WHERE id = 'execution'")
       .run(JSON.stringify({ target: { chatId: action === "run-chat" ? `chat-${runId}` : null } }))
-    createAgentActivityStore(sqlite).appendBatch(runId, [{
-      provider: "openai", kind: "agent-text", phase: "completed",
-      displayClass: "summary", privacyClass: "public", payload: { text: "SCHEDULED_REPLY" },
-    }])
+    createAgentActivityStore(sqlite).appendBatch(runId, [
+      {
+        provider: "openai",
+        kind: "agent-text",
+        phase: "completed",
+        displayClass: "summary",
+        privacyClass: "public",
+        payload: { text: "SCHEDULED_REPLY" },
+      },
+    ])
     const service = new MainRuntimeLaunchService({ databasePath: path })
-    // Completion artifact capture is separately covered; this exercises the real SQL lifecycle projection.
-    vi.spyOn(service as any, "captureCompletionArtifacts").mockResolvedValue(undefined)
     return { runId, service, finish: () => (service as any).persistLifecycle(runId, "completed") }
   }
 
-  it.each(["run-chat", "create-chat-run", "create-task-run"])("persists %s output once before a later user turn and across reopen", async (action) => {
-    const { runId, finish } = scheduledFixture(action)
-    const subId = `sub-${runId}`
-    const row = sqlite.prepare("SELECT messages FROM sub_chats WHERE id = ?").get(subId) as { messages: string }
-    const messages = JSON.parse(row.messages)
-    messages.push({ id: "later-user", role: "user", parts: [{ type: "text", text: "Next question" }] })
-    sqlite.prepare("UPDATE sub_chats SET messages = ? WHERE id = ?").run(JSON.stringify(messages), subId)
-    // Owner edits must not invalidate the already-started execution's frozen target.
-    if (action === "run-chat") {
-      sqlite.exec("INSERT INTO chats (id, name, scope) VALUES ('edited-target', 'New target', 'global')")
-      sqlite.exec("UPDATE automations SET chat_id = 'edited-target'")
-    }
-    await finish()
-    await finish()
-    const reopened = new Database(path)
-    try {
-      const saved = reopened.prepare("SELECT messages FROM sub_chats WHERE id = ?").get(subId) as { messages: string }
-      const actual = JSON.parse(saved.messages)
-      expect(actual.map((message: any) => message.role)).toEqual(["user", "assistant", "user"])
-      expect(actual[1]).toMatchObject({ parts: [{ type: "text", text: "SCHEDULED_REPLY" }], metadata: { runId } })
-      expect(actual[2].id).toBe("later-user")
-      expect(reopened.prepare("SELECT status FROM agent_runs WHERE id = ?").get(runId)).toEqual({ status: "success" })
-    } finally { reopened.close() }
-  })
+  it.each(["run-chat", "create-chat-run", "create-task-run"])(
+    "persists %s output once before a later user turn and across reopen",
+    async (action) => {
+      const { runId, finish } = scheduledFixture(action)
+      const subId = `sub-${runId}`
+      const row = sqlite.prepare("SELECT messages FROM sub_chats WHERE id = ?").get(subId) as {
+        messages: string
+      }
+      const messages = JSON.parse(row.messages)
+      messages.push({
+        id: "later-user",
+        role: "user",
+        parts: [{ type: "text", text: "Next question" }],
+      })
+      sqlite
+        .prepare("UPDATE sub_chats SET messages = ? WHERE id = ?")
+        .run(JSON.stringify(messages), subId)
+      // Owner edits must not invalidate the already-started execution's frozen target.
+      if (action === "run-chat") {
+        sqlite.exec(
+          "INSERT INTO chats (id, name, scope) VALUES ('edited-target', 'New target', 'global')",
+        )
+        sqlite.exec("UPDATE automations SET chat_id = 'edited-target'")
+      }
+      await finish()
+      await finish()
+      const reopened = new Database(path)
+      try {
+        const saved = reopened
+          .prepare("SELECT messages FROM sub_chats WHERE id = ?")
+          .get(subId) as { messages: string }
+        const actual = JSON.parse(saved.messages)
+        expect(actual.map((message: any) => message.role)).toEqual(["user", "assistant", "user"])
+        expect(actual[1]).toMatchObject({
+          parts: [{ type: "text", text: "SCHEDULED_REPLY" }],
+          metadata: { runId },
+        })
+        expect(actual[2].id).toBe("later-user")
+        expect(reopened.prepare("SELECT status FROM agent_runs WHERE id = ?").get(runId)).toEqual({
+          status: "success",
+        })
+      } finally {
+        reopened.close()
+      }
+    },
+  )
 
-  it.each(["unassociated", "wrong-prompt", "wrong-target", "wrong-subchat"])("does not project an unrelated %s run", async (mismatch) => {
-    const { runId, finish } = scheduledFixture()
-    if (mismatch === "unassociated") sqlite.exec("UPDATE automation_executions SET run_id = NULL")
-    if (mismatch === "wrong-prompt") sqlite.prepare("UPDATE agent_runs SET prompt_message_id = 'automation-other-1' WHERE id = ?").run(runId)
-    if (mismatch === "wrong-target") {
-      sqlite.exec("INSERT INTO chats (id, name, scope) VALUES ('other-chat', 'Other', 'global')")
-      sqlite.prepare("UPDATE automation_executions SET authority_snapshot = ?").run(JSON.stringify({ target: { chatId: "other-chat" } }))
-    }
-    if (mismatch === "wrong-subchat") {
-      sqlite.exec("INSERT INTO chats (id, name, scope) VALUES ('other-chat', 'Other', 'global')")
-      sqlite.prepare("UPDATE sub_chats SET chat_id = 'other-chat' WHERE id = ?").run(`sub-${runId}`)
-    }
-    await finish()
-    const row = sqlite.prepare("SELECT messages FROM sub_chats WHERE id = ?").get(`sub-${runId}`) as { messages: string }
-    expect(JSON.parse(row.messages).some((message: any) => message.role === "assistant")).toBe(false)
-  })
+  it.each(["unassociated", "wrong-prompt", "wrong-target", "wrong-subchat"])(
+    "does not project an unrelated %s run",
+    async (mismatch) => {
+      const { runId, finish } = scheduledFixture()
+      if (mismatch === "unassociated") sqlite.exec("UPDATE automation_executions SET run_id = NULL")
+      if (mismatch === "wrong-prompt")
+        sqlite
+          .prepare("UPDATE agent_runs SET prompt_message_id = 'automation-other-1' WHERE id = ?")
+          .run(runId)
+      if (mismatch === "wrong-target") {
+        sqlite.exec("INSERT INTO chats (id, name, scope) VALUES ('other-chat', 'Other', 'global')")
+        sqlite
+          .prepare("UPDATE automation_executions SET authority_snapshot = ?")
+          .run(JSON.stringify({ target: { chatId: "other-chat" } }))
+      }
+      if (mismatch === "wrong-subchat") {
+        sqlite.exec("INSERT INTO chats (id, name, scope) VALUES ('other-chat', 'Other', 'global')")
+        sqlite
+          .prepare("UPDATE sub_chats SET chat_id = 'other-chat' WHERE id = ?")
+          .run(`sub-${runId}`)
+      }
+      await finish()
+      const row = sqlite
+        .prepare("SELECT messages FROM sub_chats WHERE id = ?")
+        .get(`sub-${runId}`) as { messages: string }
+      expect(JSON.parse(row.messages).some((message: any) => message.role === "assistant")).toBe(
+        false,
+      )
+    },
+  )
 })

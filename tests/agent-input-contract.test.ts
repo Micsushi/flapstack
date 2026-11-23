@@ -59,6 +59,7 @@ describe("agent input contract", () => {
 
   it("declares one honest capability per current harness family", () => {
     expect(listAgentInputCapabilities().map(({ harness }) => harness)).toEqual([
+      "antigravity",
       "claude-code",
       "codex",
       "cursor-agent",

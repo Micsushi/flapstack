@@ -597,7 +597,7 @@ export function NewChatForm({
         ? codexCatalog.isError
           ? "Codex could not load its models. Refresh the list to try again."
           : !liveCodexModels
-            ? "Checking which Codex models are available."
+            ? null
             : codexSelectionIssue(liveCodexModels, codexSelection, selectedCodexReasoning)
         : null)
 
@@ -1379,14 +1379,27 @@ export function NewChatForm({
       toast.error(modelBlockedReason)
       return
     }
-    if (newChatHarness === "codex" && (!liveCodexModels || codexCatalog.isFetching)) {
-      const live = await trpcUtils.codex.listModels.fetch().catch(() => undefined)
-      const issue = codexSelectionIssue(live, codexSelection, selectedCodexReasoning)
+    const originalEditor = editorRef.current
+    const original = originalEditor?.getValue()
+    if (newChatHarness === "claude-code" && !hasCustomClaudeConfig && !availableModels.isOffline) {
+      const issue = await availableModels.verifyModel(profile?.model ?? lastSelectedModelId)
       if (issue) {
         toast.error(issue)
         return
       }
     }
+
+    if (newChatHarness === "codex" && (!liveCodexModels || codexCatalog.isFetching)) {
+      const live = await trpcUtils.codex.listModels.fetch().catch(() => undefined)
+      const issue = live
+        ? codexSelectionIssue(live, codexSelection, selectedCodexReasoning)
+        : "Codex could not load its models. Refresh the list to try again."
+      if (issue) {
+        toast.error(issue)
+        return
+      }
+    }
+    if (editorRef.current !== originalEditor || editorRef.current?.getValue() !== original) return
     if (!agentProfileSelection && selectedAgent.id === "local" && !localModelPicker.canLaunch) {
       toast.error("Choose a refreshed, chat-capable local model before launch.")
       setSettingsActiveTab("local-models")
@@ -1557,6 +1570,9 @@ export function NewChatForm({
     finishVoiceBeforeSend,
     localModelPicker.canLaunch,
     modelBlockedReason,
+    availableModels,
+    hasCustomClaudeConfig,
+    lastSelectedModelId,
     newChatHarness,
     liveCodexModels,
     codexCatalog.isFetching,

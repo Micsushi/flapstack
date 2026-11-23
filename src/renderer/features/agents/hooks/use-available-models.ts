@@ -18,6 +18,7 @@ function canonicalId(id: string) {
 }
 
 export function useAvailableModels(enabled = true) {
+  const utils = trpc.useUtils()
   const discovery = trpc.claudeCode.listModels.useQuery(undefined, {
     enabled,
     staleTime: 300_000,
@@ -48,7 +49,7 @@ export function useAvailableModels(enabled = true) {
   }, [discovery.data])
   function modelIssue(id: string | undefined) {
     if (discovery.isError) return "Claude could not load its models. Refresh the list to try again."
-    if (!discovery.data) return "Checking which Claude models are available."
+    if (!discovery.data) return null
     if (!id || !models.some((model) => model.id === id || model.id === canonicalId(id)))
       return `Claude model ${id || "(unset)"} is unavailable. Choose another model.`
     return null
@@ -57,7 +58,28 @@ export function useAvailableModels(enabled = true) {
   const defaultModelId = models.find(
     (model) => model.id === recommended || (recommended && model.id === canonicalId(recommended)),
   )?.id
-  const shared = { models, modelIssue, defaultModelId, retry: () => void discovery.refetch() }
+  async function verifyModel(id: string | undefined) {
+    if (discovery.data || discovery.isError) return modelIssue(id)
+    try {
+      const live = await utils.claudeCode.listModels.fetch()
+      if (
+        id &&
+        (id === "claude-haiku-5-5" ||
+          live.some((row) => row.id === id || canonicalId(row.id) === id))
+      )
+        return null
+      return "The selected Claude model is unavailable. Choose another model."
+    } catch {
+      return "Claude could not load its models. Refresh the list to try again."
+    }
+  }
+  const shared = {
+    models,
+    modelIssue,
+    verifyModel,
+    defaultModelId,
+    retry: () => void discovery.refetch(),
+  }
 
   const showOfflineFeatures = useAtomValue(showOfflineModeFeaturesAtom)
   const { data: ollamaStatus } = trpc.ollama.getStatus.useQuery(undefined, {

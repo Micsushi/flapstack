@@ -1450,7 +1450,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         ? codexCatalog.isError
           ? "Codex could not load its models. Refresh the list to try again."
           : !liveCodexModels
-            ? "Checking which Codex models are available."
+            ? null
             : codexSelectionIssue(
                 liveCodexModels,
                 selectedSubChatCodexModelId,
@@ -1751,6 +1751,27 @@ export const ChatInputArea = memo(function ChatInputArea({
         toast.error(modelBlockedReason)
         return
       }
+      const originalEditor = editorRef.current
+      const original = originalEditor?.getValue()
+      if (provider === "claude-code" && !hasCustomClaudeConfig && !availableModels.isOffline) {
+        const issue = await availableModels.verifyModel(selectedSubChatModelId)
+        if (issue) {
+          toast.error(issue)
+          return
+        }
+      }
+
+      if (provider === "codex" && !liveCodexModels) {
+        const live = await trpcUtils.codex.listModels.fetch().catch(() => undefined)
+        const issue = live
+          ? codexSelectionIssue(live, selectedSubChatCodexModelId, selectedCodexReasoning)
+          : "Codex could not load its models. Refresh the list to try again."
+        if (issue) {
+          toast.error(issue)
+          return
+        }
+      }
+      if (editorRef.current !== originalEditor || editorRef.current?.getValue() !== original) return
       if (localModelMissing) {
         toast.error("Choose a local model before sending.")
         return
@@ -1801,6 +1822,14 @@ export const ChatInputArea = memo(function ChatInputArea({
       worktreeWasReplaced,
       localModelMissing,
       modelBlockedReason,
+      availableModels,
+      hasCustomClaudeConfig,
+      provider,
+      selectedSubChatModelId,
+      liveCodexModels,
+      selectedSubChatCodexModelId,
+      selectedCodexReasoning,
+      trpcUtils,
       steerOnEnter,
     ],
   )

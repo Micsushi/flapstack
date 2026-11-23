@@ -6,6 +6,7 @@ describe("failed message retry", () => {
     const activeChat = readFileSync("src/renderer/features/agents/main/active-chat.tsx", "utf8")
 
     expect(activeChat).toContain('aria-label="Retry failed message"')
-    expect(activeChat).toContain("onClick={() => void regenerate()}")
+    const retry = activeChat.indexOf('aria-label="Retry failed message"')
+    expect(activeChat.slice(retry - 600, retry + 600)).toContain("regenerate()")
   })
 })

@@ -273,7 +273,7 @@ function seedClaudeExtensionPolicy(): void {
 }
 
 async function launchThroughClaudeRouter(run: QueuedAgentRun): Promise<void> {
-  const stream = await claudeRouter.createCaller({ getWindow: () => null }).chat({
+  const stream = await claudeRouter.createCaller({ getWindow: () => null }).compatibilityChat({
     runId: run.runId,
     chatId: run.chatId,
     subChatId: run.subChatId,
@@ -330,14 +330,14 @@ function seedLegacyQueue(sqlite: Database.Database): void {
     directory,
     "mcp-order-a",
     1,
-    ...testRuntimeSnapshotSqlValues("claude-code", "claude-code"),
+    ...testRuntimeSnapshotSqlValues("claude-code", "flapstack-native"),
   )
   insert.run(
     "run-b",
     directory,
     "mcp-order-b",
     2,
-    ...testRuntimeSnapshotSqlValues("claude-code", "claude-code"),
+    ...testRuntimeSnapshotSqlValues("claude-code", "flapstack-native"),
   )
 }
 

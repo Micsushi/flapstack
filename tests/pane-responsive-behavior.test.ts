@@ -26,7 +26,7 @@ describe("pane-local responsive behavior", () => {
     expect(title).toContain("headerControlItems.map((_, index) => index).reverse()")
     expect(title).toContain('mode === "compact"')
     expect(title).toContain("visibleAuxiliaryTagCount")
-    expect(title).toContain('forceOverflow={tagLayout.mode === "compact"}')
+    expect(title).toMatch(/\bforceOverflow\s+pinnedStart=/)
     const composer = source("src/renderer/features/agents/main/chat-input-area.tsx")
     expect(composer).toContain('menuLabel="More composer settings"')
     expect(composer).toContain("usageRatio={0.8}")
@@ -46,7 +46,7 @@ describe("pane-local responsive behavior", () => {
 
   it("reserves the scrollbar gutter beside the chat bottom dock", () => {
     expect(source("src/renderer/features/agents/main/active-chat.tsx")).toContain(
-      'className="absolute bottom-0 left-0 right-3 z-20"',
+      'className="relative z-20 shrink-0 bg-background pr-3"',
     )
   })
 
@@ -87,9 +87,7 @@ describe("pane-local responsive behavior", () => {
     const assistantMessage = source("src/renderer/features/agents/main/assistant-message-item.tsx")
     const styles = source("src/renderer/styles/agents-styles.css")
 
-    expect(activeChat).toContain(
-      "const usableChatHeight = chatContainerHeightRef.current - bottomDockHeightRef.current",
-    )
+    expect(activeChat).toContain("const usableChatHeight = chatContainerHeightRef.current")
     expect(activeChat).toContain("usableChatHeight < 400")
     expect(userMessage).toContain("data-floating-message-jump")
     expect(userMessage).toContain("data-message-inline-action")

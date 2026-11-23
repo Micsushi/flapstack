@@ -189,7 +189,7 @@ describe("background dictation send ownership", () => {
     )
 
     expect(inputSource).toContain("const sendToCapturedChat = onSend")
-    expect(inputSource).toContain("sendToCapturedChat(inputValue)")
+    expect(inputSource).toMatch(/sendToCapturedChat\(\s*inputValue[,)]/)
     expect(chatSource).toContain("inputValueOverride ?? editorRef.current?.getValue()")
   })
 
