@@ -34,7 +34,7 @@ import {
   windowManager,
 } from "./window-manager"
 import { createInitialLaunchPresentationResolver } from "./launch-presentation"
-import { isHeadlessPerformanceProfile } from "../lib/mcp-test-control/lifecycle"
+import { isHeadlessPerformanceProfile, isSandboxRuntime } from "../lib/mcp-test-control/lifecycle"
 import {
   cleanupFailedWorkbenchWindowCreation,
   clampWorkbenchWindowBounds,
@@ -262,6 +262,7 @@ function registerIpcHandlers(): void {
   // App info
   ipcMain.handle("app:version", () => app.getVersion())
   ipcMain.handle("app:isPackaged", () => app.isPackaged)
+  ipcMain.handle("app:isSandbox", () => isSandboxRuntime(app.isPackaged))
 
   // Windows: Frame preference persistence
   ipcMain.handle("window:set-frame-preference", (_event, useNativeFrame: boolean) => {

@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld("desktopApi", {
   arch: process.arch,
   getVersion: () => ipcRenderer.invoke("app:version"),
   isPackaged: () => ipcRenderer.invoke("app:isPackaged"),
+  isSandbox: () => ipcRenderer.invoke("app:isSandbox"),
 
   // Window controls
   windowMinimize: () => ipcRenderer.invoke("window:minimize"),
@@ -451,6 +452,7 @@ export interface DesktopApi {
   arch: string
   getVersion: () => Promise<string>
   isPackaged: () => Promise<boolean>
+  isSandbox: () => Promise<boolean>
   // Window controls
   windowMinimize: () => Promise<void>
   windowMaximize: () => Promise<void>

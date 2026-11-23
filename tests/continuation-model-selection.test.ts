@@ -36,7 +36,6 @@ import {
   initializeSubChatCodexModelAtom,
   lastSelectedCodexModelIdAtom,
   subChatCodexModelIdAtomFamily,
-  subChatCodexReasoningAtomFamily,
 } from "../src/renderer/features/agents/atoms"
 import { ACPChatTransport } from "../src/renderer/features/agents/lib/acp-chat-transport"
 
@@ -75,39 +74,42 @@ describe("persisted continuation model", () => {
     expect(appStore.get(subChatCodexModelIdAtomFamily(subChatId))).toBe("gpt-5.6-luna")
     expect(appStore.get(subChatCodexReasoningAtomFamily(subChatId))).toBe("max")
   })
-  it("uses the reviewed target on first transport dispatch instead of the global default", async () => {
-    appStore.set(lastSelectedCodexModelIdAtom, "gpt-5.6-sol")
-    const subChatId = "reviewed-child"
-    // Reading a default while metadata is pending must not become an explicit edit.
-    appStore.set(initializeSubChatCodexModelAtom, { subChatId, model: undefined })
-    expect(appStore.get(subChatCodexModelIdAtomFamily(subChatId))).toBe("gpt-5.6-sol")
-    appStore.set(initializeSubChatCodexModelAtom, { subChatId, model: "gpt-5.5" })
-    expect(appStore.get(subChatCodexModelIdAtomFamily(subChatId))).toBe("gpt-5.5")
-    expect(appStore.get(lastSelectedCodexModelIdAtom)).toBe("gpt-5.6-sol")
-    mocks.launch.mockResolvedValue(
-      new ReadableStream({
-        start(controller) {
-          controller.close()
-        },
-      }),
-    )
-    await new ACPChatTransport({
-      chatId: "child",
-      subChatId,
-      cwd: "/owned",
-      mode: "write",
-      provider: "codex",
-    }).sendMessages({
-      messages: [{ id: "send", role: "user", parts: [{ type: "text", text: "Synthetic" }] }],
-    })
-    expect(mocks.launch).toHaveBeenLastCalledWith(
-      expect.objectContaining({
+  it.each(["gpt-5.5", "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"])(
+    "uses the reviewed %s target on first transport dispatch instead of the global default",
+    async (model) => {
+      appStore.set(lastSelectedCodexModelIdAtom, "gpt-5.6-sol")
+      const subChatId = `reviewed-child-${model}`
+      // Reading a default while metadata is pending must not become an explicit edit.
+      appStore.set(initializeSubChatCodexModelAtom, { subChatId, model: undefined })
+      expect(appStore.get(subChatCodexModelIdAtomFamily(subChatId))).toBe("gpt-5.6-sol")
+      appStore.set(initializeSubChatCodexModelAtom, { subChatId, model })
+      expect(appStore.get(subChatCodexModelIdAtomFamily(subChatId))).toBe(model)
+      expect(appStore.get(lastSelectedCodexModelIdAtom)).toBe("gpt-5.6-sol")
+      mocks.launch.mockResolvedValue(
+        new ReadableStream({
+          start(controller) {
+            controller.close()
+          },
+        }),
+      )
+      await new ACPChatTransport({
         chatId: "child",
         subChatId,
-        model: "gpt-5.5",
-      }),
-    )
-  })
+        cwd: "/owned",
+        mode: "write",
+        provider: "codex",
+      }).sendMessages({
+        messages: [{ id: "send", role: "user", parts: [{ type: "text", text: "Synthetic" }] }],
+      })
+      expect(mocks.launch).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          chatId: "child",
+          subChatId,
+          model,
+        }),
+      )
+    },
+  )
 
   it("preserves explicit child edits across metadata refresh, Runtime change and reopening", () => {
     const subChatId = "edited-child"

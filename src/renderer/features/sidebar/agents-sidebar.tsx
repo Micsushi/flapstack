@@ -3105,6 +3105,19 @@ function AgentsSidebarInner({
   onChatSelect,
 }: AgentsSidebarProps) {
   const shouldReduceMotion = useReducedMotion()
+  const [isSandbox, setIsSandbox] = useState(import.meta.env.DEV)
+  useEffect(() => {
+    let active = true
+    window.desktopApi
+      ?.isSandbox?.()
+      .then((value) => {
+        if (active) setIsSandbox(value)
+      })
+      .catch((error) => console.error("Failed to read app environment", error))
+    return () => {
+      active = false
+    }
+  }, [])
   const stableWindowId = useMemo(() => getWindowId(), [])
   const [groupedChatIds, setGroupedChatIds] = useState(() =>
     getGroupedChatIds(
@@ -7325,8 +7338,12 @@ function AgentsSidebarInner({
       {!isMobileFullscreen && (
         <div className="flex h-10 flex-shrink-0 items-center gap-2.5 px-2 pt-1">
           <img src={flapstackLogo} className="h-6 w-6 shrink-0" alt="" />
-          <span className="min-w-0 truncate text-base font-semibold text-foreground/90">
-            Flapstack
+          <span
+            className="flex min-w-0 items-baseline gap-1 text-base font-semibold text-foreground/90"
+            title={isSandbox ? "Flapstack (Sandbox)" : "Flapstack"}
+          >
+            <span className="truncate">Flapstack</span>
+            {isSandbox && <span className="shrink-0 text-sm">(Sandbox)</span>}
           </span>
           <ButtonCustom
             variant="ghost"

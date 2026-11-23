@@ -7,11 +7,35 @@ const CODEX_CONTEXT_WINDOW = 258_400
 // Picker list: only concrete model versions, matching what Claude Code exposes
 // by default. Alias ids ("opus", "best", ...) stay in CLAUDE_MODEL_ID_MAP so
 // previously stored selections keep resolving.
+// Model IDs and effort support: https://platform.claude.com/docs/en/models/overview
+// and /docs/en/build-with-claude/effort (checked 2026-10-19).
+// Keep both provider lists newest-release first, including across model families.
 export const CLAUDE_MODELS = [
+  {
+    id: "claude-haiku-5-5",
+    name: "Haiku",
+    version: "5.5",
+    efforts: CLAUDE_DEEP_EFFORTS,
+    contextWindow: CLAUDE_CONTEXT_WINDOW,
+  },
+  {
+    id: "claude-sonnet-5-5",
+    name: "Sonnet",
+    version: "5.5",
+    efforts: CLAUDE_DEEP_EFFORTS,
+    contextWindow: CLAUDE_CONTEXT_WINDOW,
+  },
   {
     id: "claude-opus-5-5",
     name: "Opus",
     version: "5.5",
+    efforts: CLAUDE_DEEP_EFFORTS,
+    contextWindow: CLAUDE_CONTEXT_WINDOW,
+  },
+  {
+    id: "claude-fable-5-1",
+    name: "Fable",
+    version: "5.1",
     efforts: CLAUDE_DEEP_EFFORTS,
     contextWindow: CLAUDE_CONTEXT_WINDOW,
   },
@@ -23,9 +47,9 @@ export const CLAUDE_MODELS = [
     contextWindow: CLAUDE_CONTEXT_WINDOW,
   },
   {
-    id: "claude-opus-4-8",
-    name: "Opus",
-    version: "4.8",
+    id: "claude-sonnet-5",
+    name: "Sonnet",
+    version: "5",
     efforts: CLAUDE_DEEP_EFFORTS,
     contextWindow: CLAUDE_CONTEXT_WINDOW,
   },
@@ -37,9 +61,9 @@ export const CLAUDE_MODELS = [
     contextWindow: CLAUDE_CONTEXT_WINDOW,
   },
   {
-    id: "claude-sonnet-5",
-    name: "Sonnet",
-    version: "5",
+    id: "claude-opus-4-8",
+    name: "Opus",
+    version: "4.8",
     efforts: CLAUDE_DEEP_EFFORTS,
     contextWindow: CLAUDE_CONTEXT_WINDOW,
   },
@@ -56,6 +80,9 @@ export const CLAUDE_MODEL_ID_MAP: Record<string, string> = {
   "sonnet[1m]": "sonnet[1m]",
   "opus[1m]": "opus[1m]",
   "claude-opus-5-5": "claude-opus-5-5",
+  "claude-fable-5-1": "claude-fable-5-1",
+  "claude-sonnet-5-5": "claude-sonnet-5-5",
+  "claude-haiku-5-5": "claude-haiku-5-5",
   "claude-fable-5": "claude-fable-5",
   "claude-opus-5": "claude-opus-5",
   "claude-opus-4-8": "claude-opus-4-8",
@@ -84,11 +111,38 @@ const CODEX_ULTRA_REASONING_LEVELS: readonly CodexReasoningLevel[] = [
   "ultra",
 ]
 
+// Codex choices: https://learn.chatgpt.com/docs/models (checked 2026-10-19).
+// Access still depends on the account and provider rollout; these are picker
+// options, not an assertion that a particular account can use every model.
 export const CODEX_MODELS = [
   {
-    id: "gpt-5.5",
-    name: "GPT-5.5",
-    reasoningLevels: CODEX_STANDARD_REASONING_LEVELS,
+    id: "gpt-6.1-sol",
+    name: "GPT-6.1 Sol",
+    reasoningLevels: CODEX_ULTRA_REASONING_LEVELS,
+    authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
+    supportsFastMode: true,
+    contextWindow: CODEX_CONTEXT_WINDOW,
+  },
+  {
+    id: "gpt-6-sol",
+    name: "GPT-6 Sol",
+    reasoningLevels: CODEX_DEEP_REASONING_LEVELS,
+    authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
+    supportsFastMode: true,
+    contextWindow: CODEX_CONTEXT_WINDOW,
+  },
+  {
+    id: "gpt-6-luna",
+    name: "GPT-6 Luna",
+    reasoningLevels: CODEX_DEEP_REASONING_LEVELS,
+    authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
+    supportsFastMode: true,
+    contextWindow: CODEX_CONTEXT_WINDOW,
+  },
+  {
+    id: "gpt-6-astra",
+    name: "GPT-6 Astra",
+    reasoningLevels: CODEX_ULTRA_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
     contextWindow: CODEX_CONTEXT_WINDOW,
@@ -118,8 +172,8 @@ export const CODEX_MODELS = [
     contextWindow: CODEX_CONTEXT_WINDOW,
   },
   {
-    id: "gpt-5.4",
-    name: "GPT-5.4",
+    id: "gpt-5.5",
+    name: "GPT-5.5",
     reasoningLevels: CODEX_STANDARD_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
@@ -131,6 +185,14 @@ export const CODEX_MODELS = [
     reasoningLevels: CODEX_STANDARD_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: false,
+    contextWindow: CODEX_CONTEXT_WINDOW,
+  },
+  {
+    id: "gpt-5.4",
+    name: "GPT-5.4",
+    reasoningLevels: CODEX_STANDARD_REASONING_LEVELS,
+    authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
+    supportsFastMode: true,
     contextWindow: CODEX_CONTEXT_WINDOW,
   },
   {

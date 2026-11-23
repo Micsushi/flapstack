@@ -14,13 +14,16 @@ import {
 } from "../src/shared/model-catalog"
 
 describe("Claude model catalog", () => {
-  it("exposes only concrete model versions in the picker", () => {
+  it("exposes concrete Claude models newest-release first across families", () => {
     expect(CLAUDE_MODELS.map((model) => model.id)).toEqual([
+      "claude-haiku-5-5",
+      "claude-sonnet-5-5",
       "claude-opus-5-5",
+      "claude-fable-5-1",
       "claude-opus-5",
-      "claude-opus-4-8",
-      "claude-fable-5",
       "claude-sonnet-5",
+      "claude-fable-5",
+      "claude-opus-4-8",
       "claude-haiku-4-5",
     ])
     for (const model of CLAUDE_MODELS) {
@@ -30,6 +33,10 @@ describe("Claude model catalog", () => {
   })
 
   it("passes explicit Claude model ids through to the SDK", () => {
+    for (const id of ["claude-fable-5-1", "claude-sonnet-5-5", "claude-haiku-5-5"]) {
+      expect(CLAUDE_MODEL_ID_MAP[id]).toBe(id)
+      expect(CLAUDE_MODELS.find((model) => model.id === id)?.efforts).toContain("max")
+    }
     expect(CLAUDE_MODEL_ID_MAP["claude-opus-5-5"]).toBe("claude-opus-5-5")
     expect(CLAUDE_MODEL_ID_MAP["claude-opus-5"]).toBe("claude-opus-5")
     expect(CLAUDE_MODEL_ID_MAP["claude-opus-4-8"]).toBe("claude-opus-4-8")
@@ -60,14 +67,18 @@ describe("Claude model catalog", () => {
     expect(CODEX_MODELS.some((model) => model.id === "gpt-5.5")).toBe(true)
   })
 
-  it("exposes only current Codex model choices", () => {
+  it("exposes Codex models newest-release first, not by capability or model number", () => {
     expect(CODEX_MODELS.map((model) => model.id)).toEqual([
-      "gpt-5.5",
+      "gpt-6.1-sol",
+      "gpt-6-sol",
+      "gpt-6-luna",
+      "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
-      "gpt-5.4",
+      "gpt-5.5",
       "gpt-5.4-mini",
+      "gpt-5.4",
       "gpt-5.3-codex-spark",
     ])
     for (const model of CODEX_MODELS) {
@@ -88,6 +99,15 @@ describe("Claude model catalog", () => {
   })
 
   it("tracks Codex reasoning levels per model", () => {
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-6-astra")?.reasoningLevels).toContain(
+      "ultra",
+    )
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-6.1-sol")?.reasoningLevels).toContain(
+      "ultra",
+    )
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-6-luna")?.reasoningLevels).not.toContain(
+      "ultra",
+    )
     expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-sol")?.reasoningLevels).toContain(
       "ultra",
     )
@@ -122,6 +142,11 @@ describe("Claude model catalog", () => {
   })
 
   it("displays Codex model ids from stored and provider formats", () => {
+    expect(formatModelDisplayName("gpt-6-astra/ultra")).toBe("GPT-6 Astra")
+    expect(formatModelDisplayName("gpt-6.1-sol[max]")).toBe("GPT-6.1 Sol")
+    expect(formatModelDisplayName("claude-fable-5-1")).toBe("Fable 5.1")
+    expect(formatModelDisplayName("claude-sonnet-5-5")).toBe("Sonnet 5.5")
+    expect(formatModelDisplayName("claude-haiku-5-5")).toBe("Haiku 5.5")
     expect(formatModelDisplayName("gpt-5.6-sol/ultra")).toBe("GPT-5.6 Sol")
     expect(formatModelDisplayName("gpt-5.6-terra[max]")).toBe("GPT-5.6 Terra")
   })

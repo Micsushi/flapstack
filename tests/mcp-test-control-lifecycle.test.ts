@@ -6,6 +6,7 @@ import {
   isDevTestControlEnabled,
   isHiddenPreviewVerification,
   isPreviewExecutable,
+  isSandboxRuntime,
   isStage6PerformanceProfile,
   isHeadlessPerformanceProfile,
   resolveFlapstackProtocol,
@@ -13,6 +14,19 @@ import {
 } from "../src/main/lib/mcp-test-control/lifecycle"
 
 describe("test-control lifecycle", () => {
+  it("labels development and isolated previews without labeling the installed Preview profile", () => {
+    const preview = "C:\\Apps\\Flapstack Preview.exe"
+    expect(isSandboxRuntime(false, {}, preview)).toBe(true)
+    expect(isSandboxRuntime(true, {}, preview)).toBe(false)
+    expect(isSandboxRuntime(true, { FLAPSTACK_PREVIEW_INSTANCE: "  " }, preview)).toBe(false)
+    expect(isSandboxRuntime(true, { FLAPSTACK_PREVIEW_INSTANCE: "test" }, preview)).toBe(true)
+    expect(
+      isSandboxRuntime(true, { ELECTRON_RENDERER_URL: "http://localhost:5173" }, preview),
+    ).toBe(true)
+    expect(
+      isSandboxRuntime(true, { FLAPSTACK_PREVIEW_INSTANCE: "test" }, "C:\\Apps\\Flapstack.exe"),
+    ).toBe(false)
+  })
   it("requires matching explicit Preview identity and rejects mixed or shared hidden profiles", () => {
     const executable = "C:\\Apps\\Flapstack Preview.exe"
     const resources = mkdtempSync(resolve(tmpdir(), "flapstack-preview-identity-"))

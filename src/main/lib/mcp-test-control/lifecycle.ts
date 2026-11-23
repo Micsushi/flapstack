@@ -88,3 +88,16 @@ export function resolvePreviewUserDataName(instance?: string): string {
   if (!trimmed) return "Flapstack Preview"
   return `Flapstack Preview ${trimmed.replace(/[^a-zA-Z0-9_-]/g, "-")}`
 }
+
+/** A Preview release is also used for normal installs; only named profiles are test instances. */
+export function isSandboxRuntime(
+  isPackaged: boolean,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  executablePath = process.execPath,
+): boolean {
+  return (
+    !isPackaged ||
+    Boolean(env.ELECTRON_RENDERER_URL) ||
+    (isPreviewExecutable(executablePath) && Boolean(env.FLAPSTACK_PREVIEW_INSTANCE?.trim()))
+  )
+}
