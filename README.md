@@ -45,7 +45,8 @@ Install the Antigravity CLI and sign in with `agy`. In a chat, select Gemini
 and choose a model and effort from the options your account provides. Gemini
 requires Full access. To see approval requests from Antigravity, turn on
 **Ask when Antigravity requires approval** in the model menu. Antigravity may
-already permit some actions. Reply to follow-up questions in the chat.
+already permit some actions. When Gemini opens a question form, answer with
+text, a choice, multiple choices, or yes/no to continue the same turn.
 
 ## Product Direction
 

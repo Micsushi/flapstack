@@ -7,7 +7,7 @@ const CONTINUATION_LIMITATION =
 const BUILTIN_CAPABILITIES: Readonly<Record<HarnessProvider, AgentInputCapability>> = {
   "claude-code": { mode: "native", sameRun: true },
   codex: { mode: "continuation", sameRun: false, limitation: CONTINUATION_LIMITATION },
-  antigravity: { mode: "continuation", sameRun: false, limitation: CONTINUATION_LIMITATION },
+  antigravity: { mode: "native", sameRun: true },
   "cursor-agent": { mode: "continuation", sameRun: false, limitation: CONTINUATION_LIMITATION },
   openrouter: { mode: "continuation", sameRun: false, limitation: CONTINUATION_LIMITATION },
   nanogpt: { mode: "continuation", sameRun: false, limitation: CONTINUATION_LIMITATION },

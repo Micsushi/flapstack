@@ -1,6 +1,8 @@
 import {
   ClientSideConnection,
   ndJsonStream,
+  RequestError,
+  type ClientCapabilities,
   type ContentBlock,
   type RequestPermissionRequest,
 } from "@agentclientprotocol/sdk"
@@ -19,6 +21,7 @@ import type {
 } from "../../../../shared/agent-runtime"
 import { eventRecord } from "../event-values"
 import { AntigravityEvents } from "./events"
+import { answerAntigravityForm, type AskAntigravityQuestion } from "./questions"
 import { antigravityPermissions } from "../../../../shared/antigravity-permissions"
 
 function executable() {
@@ -66,6 +69,7 @@ type Dependencies = {
   images: (runId: string) => Array<{ base64Data: string; mediaType: string }>
   append: (runId: string, events: AgentActivityAppend[]) => Promise<void>
   permission: (runId: string, request: unknown) => Promise<unknown>
+  ask: AskAntigravityQuestion
 }
 
 async function bounded<T>(action: Promise<T>, label: string, timeout = 15_000): Promise<T> {
@@ -129,6 +133,11 @@ function connect(context: RuntimeAdapterContext, deps: Dependencies) {
           stop(error instanceof Error ? error : new Error(String(error)))
         }
       },
+      async extMethod(method, params) {
+        if (method !== "elicitation/create") throw RequestError.methodNotFound(method)
+        if (params.sessionId !== state.sessionId || !state.collecting) return { action: "cancel" }
+        return answerAntigravityForm(context, params, deps.ask)
+      },
       async requestPermission(request: RequestPermissionRequest) {
         const cancelled = { outcome: { outcome: "cancelled" as const } }
         if (request.sessionId !== state.sessionId || !state.collecting || context.signal.aborted)
@@ -170,10 +179,14 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
     const run = connect(context, deps)
     runs.set(context.runId, run)
     const { state, connection, cwd } = run
+    // SDK 0.14.1 forwards draft ACP capabilities and requests through extMethod.
+    const clientCapabilities: ClientCapabilities & { elicitation: { form: object } } = {
+      elicitation: { form: {} },
+    }
     const init = await bounded(
       connection.initialize({
         protocolVersion: 1,
-        clientCapabilities: {},
+        clientCapabilities,
         clientInfo: { name: "Flapstack", version: "1" },
       }),
       "initialization",
@@ -271,7 +284,7 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
             },
           },
           limitations: [
-            "Only Full access is supported. Optional native approvals follow Antigravity's rules. Conversational questions continue in the next turn.",
+            "Only Full access is supported. Native approval requests follow Antigravity's rules. Form questions support text, choices and yes/no answers.",
           ],
           unavailableReason: reason,
         },
@@ -316,8 +329,12 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
     async requestPermission(context, request) {
       return deps.permission(context.runId, request)
     },
-    async requestInput() {
-      throw new Error("Antigravity uses conversation replies for questions.")
+    async requestInput(context, request) {
+      const params = eventRecord(request)
+      const run = runs.get(context.runId)
+      if (!run?.state.collecting || params.sessionId !== run.state.sessionId)
+        return { action: "cancel" }
+      return answerAntigravityForm(context, params, deps.ask)
     },
     async cancel(context) {
       const run = runs.get(context.runId)

@@ -352,6 +352,8 @@ export class MainRuntimeLaunchService {
               images: (runId) => this.runs.get(runId)?.images ?? [],
               append: (runId, events) => this.appendActivity(runId, events),
               permission: (runId, request) => this.requestPermissionFromProvider(runId, request),
+              ask: (request, signal) =>
+                agentInputLifecycle.create(request, { signal, timeoutMs: AGENT_INPUT_TIMEOUT_MS }),
             }),
         },
         { runtime: "flapstack-native", factory: nativeFactory },
