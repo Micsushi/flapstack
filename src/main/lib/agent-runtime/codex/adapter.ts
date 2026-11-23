@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { CodexFileChangeApprovals } from "./file-change-approval"
 import { promisify } from "node:util"
 import type { AgentActivityAppend } from "../../../../shared/agent-activity"
 import type { LiveCodexModel, CodexReasoningLevel } from "../../../../shared/model-catalog"
@@ -50,6 +51,7 @@ type CodexRunState = {
   cancelled: boolean
   archived: boolean
   recoveredPromptPrefix?: string
+  fileChangeApprovals: CodexFileChangeApprovals
   pendingNotifications: CodexProtocolNotification[]
 }
 
@@ -75,7 +77,7 @@ type CodexRuntimeAdapterOptions = {
   cancelledFirstThreadContext?: (context: RuntimeAdapterContext, threadId: string) => string | null
   requestPermission?: (
     context: RuntimeAdapterContext,
-    request: CodexProtocolServerRequest,
+    request: CodexProtocolServerRequest & { fileChangeScope?: string },
   ) => Promise<unknown>
   requestInput?: (
     context: RuntimeAdapterContext,
@@ -348,6 +350,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     state.streaming = true
     try {
       for await (const notification of notificationsForState(state)) {
+        state.fileChangeApprovals.observe(notification)
         const events = mapCodexNotification(notification)
         await this.append(context, events)
         for (const event of events) yield event
@@ -522,6 +525,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       cancellationPromise: null,
       cancelled: false,
       archived: false,
+      fileChangeApprovals: new CodexFileChangeApprovals(),
       pendingNotifications: [],
     }
     client.setRequestHandler((request) => this.handleServerRequest(context, request))
@@ -598,9 +602,21 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     await this.append(context, [permissionActivity(request.method, activityParams, "started")])
     const fallback = denyPermission(request.method)
     try {
+      const state = this.states.get(context.runId)
+      const fileChangeScope =
+        this.options.requestPermission &&
+        request.method === "item/fileChange/requestApproval" &&
+        state &&
+        state.threadId === request.params.threadId &&
+        (!state.turnId || state.turnId === request.params.turnId)
+          ? await state.fileChangeApprovals.matching(request.params, context.signal)
+          : undefined
       const response = this.options.requestPermission
         ? await withTimeout(
-            this.options.requestPermission(context, request),
+            this.options.requestPermission(
+              context,
+              fileChangeScope ? { ...request, fileChangeScope } : request,
+            ),
             this.options.permissionTimeoutMs ?? PERMISSION_TIMEOUT_MS,
             fallback,
             context.signal,

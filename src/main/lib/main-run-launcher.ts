@@ -1,6 +1,7 @@
 import { buildRecordTaskRunContext } from "./project-records/run-context"
 import { recordRunTimingInterval } from "./run-timings"
 import { createAntigravityAdapter } from "./agent-runtime/antigravity/adapter"
+import { codexFileChangeQuestion } from "./agent-runtime/codex/file-change-approval"
 import type { AgentActivityInvalidation } from "../../shared/agent-activity"
 import { broadcastAgentActivityInvalidation } from "./agent-runtime/activity-service"
 import Database from "better-sqlite3"
@@ -371,6 +372,11 @@ export class MainRuntimeLaunchService {
         { runtime: "flapstack-native", factory: nativeFactory },
       ])
     this.coordinator = new RuntimeLaunchCoordinator(this.registry, {
+      prepareWorkspace: async ({ runId, launch }) => {
+        if (launch.resolvedRuntime !== "flapstack-native" || launch.harness === "antigravity") {
+          await this.serializePersistedOperation(runId, () => this.captureBeforeCheckpoint(runId))
+        }
+      },
       persistIntent: (request) => this.persistIntent(request.runId, request.launch),
       persistSession: (request, session) => this.persistSession(request.runId, session),
       persistTurn: (request, session, turn) =>
@@ -393,14 +399,6 @@ export class MainRuntimeLaunchService {
         throw new RuntimeLaunchCancelledError(run.runId)
       }
       const resolvedLaunch = run.runtimeLaunch ?? legacyLaunch(run)
-      if (resolvedLaunch.resolvedRuntime !== "flapstack-native" || run.harness === "antigravity") {
-        await this.serializePersistedOperation(run.runId, () =>
-          this.captureBeforeCheckpoint(run.runId),
-        )
-        if (this.prelaunchCancellations.has(run.runId)) {
-          throw new RuntimeLaunchCancelledError(run.runId)
-        }
-      }
       const persistedSession = await this.loadPersistedSession(run.runId)
       let recordTaskContext = ""
       if (
@@ -433,6 +431,9 @@ export class MainRuntimeLaunchService {
         },
         resolvedLaunch,
       )
+      if (this.prelaunchCancellations.has(run.runId)) {
+        throw new RuntimeLaunchCancelledError(run.runId)
+      }
       await this.coordinator.launch({
         runId: run.runId,
         chatId: run.chatId,
@@ -2582,6 +2583,8 @@ export function codexPermissionProfileApproval(
 function permissionRequestQuestion(toolName: string, request: Record<string, unknown>): string {
   const params = isPlainRecord(request.params) ? request.params : request
   const toolInput = isPlainRecord(request.toolInput) ? request.toolInput : {}
+  if (request.method === "item/fileChange/requestApproval")
+    return codexFileChangeQuestion(params, request.fileChangeScope)
   const detail = firstPermissionDetail(params, toolInput)
   return detail
     ? `Allow ${toolName}?\n\n${detail.slice(0, 1_000)}`

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import {
   chmod,
   lstat,
@@ -17,7 +17,7 @@ import { tmpdir } from "node:os"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { promisify } from "node:util"
 import { eq } from "drizzle-orm"
-import { agentRuns, checkpoints, fileChangeManifests, getDatabase } from "./db"
+import { agentRuns, checkpoints, fileChangeManifests, getDatabase, getDatabasePath } from "./db"
 import {
   captureWorktreeTree,
   checkpointReadEnvironment,
@@ -181,6 +181,45 @@ async function readTreeFile(
 function sameState(left: UndoFileState | null, right: UndoFileState | null): boolean {
   if (left === null || right === null) return left === right
   return left.kind === right.kind && left.content.equals(right.content)
+}
+
+class UnprovenCheckpointContent extends Error {}
+
+async function readCheckpointFile(
+  worktreePath: string,
+  snapshot: CheckpointStatusSnapshot,
+  tree: string,
+  path: string,
+) {
+  if (snapshot.originals && Object.hasOwn(snapshot.originals, path)) {
+    const key = snapshot.originals[path]
+    if (key === null) return null
+    if (typeof key !== "string" || !/^[a-f0-9]{64}$/.test(key))
+      throw new Error("Invalid checkpoint file identity")
+    const cached = await readUndoFileState(
+      join(dirname(getDatabasePath()), "checkpoint-files", key),
+    )
+    if (!cached || cached.kind !== "file")
+      throw new UnprovenCheckpointContent("The original checkpoint file is unavailable")
+    return cached
+  }
+  const saved = await readTreeFile(worktreePath, tree, path, snapshot.profileObjects)
+  if (!saved || saved.kind !== "file" || snapshot.crlfPaths !== undefined) return saved
+  // Historical dirty-file hashes were computed over the base64 of the physical bytes.
+  const digest = snapshot.files[path]?.hash
+  const matches = (bytes: Buffer) =>
+    createHash("sha256").update(bytes.toString("base64")).digest("hex").slice(0, 16) === digest
+  if (digest && matches(saved.content)) return saved
+  if (digest && !saved.content.includes(0)) {
+    const crlf = Buffer.from(
+      saved.content.toString("latin1").replace(/(?<!\r)\n/g, "\r\n"),
+      "latin1",
+    )
+    if (matches(crlf)) return { ...saved, content: crlf }
+  }
+  throw new UnprovenCheckpointContent(
+    "This older checkpoint cannot verify the file’s original bytes",
+  )
 }
 
 function executableMode(mode: number): boolean {
@@ -448,14 +487,17 @@ export async function undoRunChangeSet(runId: string) {
     const conflicts: Array<{ filePath: string; reason: string }> = []
     for (const file of [...changeSet.files].reverse()) {
       const { worktreeRoot, absolutePath } = await resolveSafeUndoPath(worktreePath, file.filePath)
-      const [current, afterContent, beforeContent] = await Promise.all([
-        readUndoFileState(absolutePath),
-        readTreeFile(worktreePath, afterTree, file.filePath, afterSnapshot.profileObjects),
-        readTreeFile(worktreePath, beforeTree, file.filePath, beforeSnapshot.profileObjects),
-      ])
-      const merged = await planInverseFileState(current, afterContent, beforeContent)
-      if (merged.conflict) conflicts.push({ filePath: file.filePath, reason: merged.conflict })
-      else
+      try {
+        const [current, afterContent, beforeContent] = await Promise.all([
+          readUndoFileState(absolutePath),
+          readCheckpointFile(worktreePath, afterSnapshot, afterTree, file.filePath),
+          readCheckpointFile(worktreePath, beforeSnapshot, beforeTree, file.filePath),
+        ])
+        const merged = await planInverseFileState(current, afterContent, beforeContent)
+        if (merged.conflict) {
+          conflicts.push({ filePath: file.filePath, reason: merged.conflict })
+          continue
+        }
         plans.push({
           filePath: file.filePath,
           worktreeRoot,
@@ -463,6 +505,10 @@ export async function undoRunChangeSet(runId: string) {
           current,
           result: merged.result ?? null,
         })
+      } catch (error) {
+        if (!(error instanceof UnprovenCheckpointContent)) throw error
+        conflicts.push({ filePath: file.filePath, reason: error.message })
+      }
     }
 
     if (conflicts.length > 0) return { success: false as const, conflicts }

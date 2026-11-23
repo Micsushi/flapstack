@@ -57,6 +57,39 @@ describe("Runtime launch coordinator", () => {
     ])
   })
 
+  it("checks provider availability during the checkpoint and waits before dispatch", async () => {
+    const order: string[] = []
+    let rejectSnapshot!: (reason: Error) => void
+    const snapshot = new Promise<void>((_, reject) => {
+      rejectSnapshot = reject
+    })
+    const coordinator = new RuntimeLaunchCoordinator(
+      createAgentRuntimeRegistry([{ runtime: "codex", factory: () => adapter("codex", order) }]),
+      {
+        prepareWorkspace: () => {
+          order.push("checkpoint")
+          return snapshot
+        },
+        persistIntent: () => {
+          order.push("intent")
+        },
+      },
+    )
+    const running = coordinator.launch({
+      runId: "failed-checkpoint",
+      chatId: "chat",
+      subChatId: "sub",
+      launch: launch("codex", "codex"),
+      prompt: "Inspect the working tree.",
+    })
+    await Promise.resolve()
+    expect(order).toEqual(["probe", "checkpoint"])
+    rejectSnapshot(new Error("Could not save checkpoint"))
+    await expect(running).rejects.toThrow("Could not save checkpoint")
+    expect(order).toEqual(["probe", "checkpoint"])
+    expect(coordinator.runState("failed-checkpoint")).toBeNull()
+  })
+
   it("fails unavailable choices before provider intent with no fallback", async () => {
     const intent = vi.fn()
     const fallback = vi.fn(() => adapter("flapstack-native", []))

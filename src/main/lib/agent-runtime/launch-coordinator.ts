@@ -41,6 +41,7 @@ export type RuntimeLaunchLifecycle =
   | "failed"
 
 export type RuntimeLaunchHooks<TActivity = AgentActivityAppend> = {
+  prepareWorkspace?(request: RuntimeLaunchRequest): Promise<void>
   /** Idempotently records provider intent before session/start-turn calls. */
   persistIntent(request: RuntimeLaunchRequest): Promise<void> | void
   persistSession?(
@@ -130,11 +131,18 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       request.launch.resolvedRuntime,
       request.launch.harness,
     )
-    if (request.launch.preferenceSource !== "legacy") {
-      const probe = await this.registry.probe(
-        request.launch.resolvedRuntime,
-        request.launch.harness,
-      )
+    // The native availability probe does not start a session or submit a turn.
+    // Wait for both operations, including on failure, before releasing this run.
+    const [readiness, workspace] = await Promise.allSettled([
+      request.launch.preferenceSource === "legacy"
+        ? null
+        : this.registry.probe(request.launch.resolvedRuntime, request.launch.harness),
+      this.hooks.prepareWorkspace?.(request),
+    ])
+    if (workspace.status === "rejected") throw workspace.reason
+    if (readiness.status === "rejected") throw readiness.reason
+    const probe = readiness.value
+    if (probe) {
       if (!probe.available) {
         throw new RuntimeRegistryError(
           probe.reason ?? {

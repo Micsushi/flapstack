@@ -101,7 +101,7 @@ describe("interactive Runtime launch bridge", () => {
           reasoningEffort,
           reasoningEnabled: true,
         }),
-      ).toEqual({ resolvedRuntime: runtime, direct: true })
+      ).toEqual({ resolvedRuntime: runtime, runtimePreference: runtime, direct: true })
 
       const run = materializeInteractiveRuntimeRun(database, {
         runId: "run",
@@ -234,7 +234,42 @@ describe("interactive Runtime launch bridge", () => {
         model: "gpt-5.5",
         mode: "write",
       }),
-    ).toEqual({ resolvedRuntime: "flapstack-native", direct: false })
+    ).toEqual({
+      resolvedRuntime: "flapstack-native",
+      runtimePreference: "flapstack-native",
+      direct: false,
+    })
+  })
+
+  it("routes a direct submit without pinning it and rejects a changed preference before creating the run", () => {
+    seedChat("codex", "auto", [])
+    const input = {
+      chatId: "chat",
+      subChatId: "sub",
+      harness: "codex",
+      model: "model",
+      mode: "write",
+      reasoningEffort: null,
+      reasoningEnabled: true,
+    } as const
+    const route = resolveInteractiveRuntime(database, input)
+    expect(route.direct).toBe(true)
+    expect(
+      database.prepare("SELECT runtime_preference FROM chats WHERE id='chat'").pluck().get(),
+    ).toBe("auto")
+    database.prepare("UPDATE chats SET runtime_preference = 'codex-enhanced' WHERE id='chat'").run()
+    expect(() =>
+      materializeInteractiveRuntimeRun(database, {
+        ...input,
+        runId: "stale-route",
+        prompt: "hello",
+        expectedRuntimePreference: route.runtimePreference,
+      }),
+    ).toThrow("runtime selection changed")
+    expect(database.prepare("SELECT COUNT(*) FROM agent_runs").pluck().get()).toBe(0)
+    expect(
+      database.prepare("SELECT runtime_preference FROM chats WHERE id='chat'").pluck().get(),
+    ).toBe("codex-enhanced")
   })
 
   it("blocks switching an existing legacy provider session to a direct Runtime", () => {

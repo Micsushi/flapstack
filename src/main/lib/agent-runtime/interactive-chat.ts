@@ -47,6 +47,7 @@ export type InteractiveRuntimeInput = {
   reasoningEnabled: boolean
   codexThreadVisibility?: CodexThreadVisibility
   antigravityNativeApprovals?: boolean
+  expectedRuntimePreference?: AgentRuntimePreference
 }
 
 type ChatRow = {
@@ -71,7 +72,11 @@ export function resolveInteractiveRuntime(
   input: Pick<InteractiveRuntimeInput, "chatId" | "subChatId" | "harness" | "model" | "mode"> &
     Partial<Pick<InteractiveRuntimeInput, "reasoningEffort" | "reasoningEnabled">>,
   adapterProbes?: Partial<Record<ResolvedAgentRuntime, RuntimeAdapterProbe>>,
-): { resolvedRuntime: ResolvedAgentRuntime; direct: boolean } {
+): {
+  resolvedRuntime: ResolvedAgentRuntime
+  runtimePreference: AgentRuntimePreference
+  direct: boolean
+} {
   const context = requireContext(database, input.chatId, input.subChatId, input.harness)
   const permissionMode = resolvePermissionMode(context, input.mode)
   const model = input.model?.trim() || context.sub_model || context.chat_model || null
@@ -95,6 +100,7 @@ export function resolveInteractiveRuntime(
   )
   return {
     resolvedRuntime: snapshot.resolvedRuntime,
+    runtimePreference: snapshot.runtimePreference,
     direct: input.harness === "antigravity" || snapshot.resolvedRuntime !== "flapstack-native",
   }
 }
@@ -104,6 +110,7 @@ export function prepareInteractiveRuntimeLaunch(
   input: Pick<InteractiveRuntimeInput, "chatId" | "subChatId" | "harness" | "model" | "mode"> &
     Partial<Pick<InteractiveRuntimeInput, "reasoningEffort" | "reasoningEnabled">>,
   adapterProbes?: Partial<Record<ResolvedAgentRuntime, RuntimeAdapterProbe>>,
+  expectedRuntimePreference?: AgentRuntimePreference,
 ): {
   resolvedRuntime: ResolvedAgentRuntime
   runtimePreference: AgentRuntimePreference
@@ -132,6 +139,7 @@ export function prepareInteractiveRuntimeLaunch(
         snapshot.resolvedRuntime,
         snapshot.runtimePreference,
       )
+      assertRuntimeSelectionUnchanged(expectedRuntimePreference, snapshot.runtimePreference)
       pinAutomaticRuntimePreference(database, input.chatId, snapshot.runtimePreference)
       return {
         resolvedRuntime: snapshot.resolvedRuntime,
@@ -147,45 +155,44 @@ export function materializeInteractiveRuntimeRun(
   input: InteractiveRuntimeInput,
   adapterProbes?: Partial<Record<ResolvedAgentRuntime, RuntimeAdapterProbe>>,
 ): QueuedAgentRun {
-  const context = requireContext(database, input.chatId, input.subChatId, input.harness)
-  const permissionMode = resolvePermissionMode(context, input.mode)
-  const model = input.model?.trim() || context.sub_model || context.chat_model || null
-  const snapshot = constructRuntimeSnapshot(database, {
-    chatId: input.chatId,
-    harness: input.harness,
-    model,
-    permission: runtimePermissionSnapshot(permissionMode, context.custom_permissions),
-    controls: {
-      modelEffort: input.reasoningEffort,
-      ...(input.harness === "antigravity"
-        ? { antigravityNativeApprovals: input.antigravityNativeApprovals === true }
-        : {}),
-      modelThinking: input.reasoningEnabled,
-      reasoningDisplay: input.reasoningEnabled,
-    },
-    adapterProbes,
-  })
-  assertRuntimeContinuationCompatible(
-    database,
-    context,
-    snapshot.resolvedRuntime,
-    snapshot.runtimePreference,
-  )
-  if (snapshot.resolvedRuntime === "flapstack-native" && input.harness !== "antigravity") {
-    throw new Error("Interactive Runtime bridge received a Flapstack Native launch.")
-  }
+  return database
+    .transaction((): QueuedAgentRun => {
+      const context = requireContext(database, input.chatId, input.subChatId, input.harness)
+      const permissionMode = resolvePermissionMode(context, input.mode)
+      const model = input.model?.trim() || context.sub_model || context.chat_model || null
+      const snapshot = constructRuntimeSnapshot(database, {
+        chatId: input.chatId,
+        harness: input.harness,
+        model,
+        permission: runtimePermissionSnapshot(permissionMode, context.custom_permissions),
+        controls: {
+          modelEffort: input.reasoningEffort,
+          ...(input.harness === "antigravity"
+            ? { antigravityNativeApprovals: input.antigravityNativeApprovals === true }
+            : {}),
+          modelThinking: input.reasoningEnabled,
+          reasoningDisplay: input.reasoningEnabled,
+        },
+        adapterProbes,
+      })
+      assertRuntimeContinuationCompatible(
+        database,
+        context,
+        snapshot.resolvedRuntime,
+        snapshot.runtimePreference,
+      )
+      assertRuntimeSelectionUnchanged(input.expectedRuntimePreference, snapshot.runtimePreference)
+      if (snapshot.resolvedRuntime === "flapstack-native" && input.harness !== "antigravity") {
+        throw new Error("Interactive Runtime bridge received a Flapstack Native launch.")
+      }
 
-  const prompt = input.prompt.trim()
-  if (!prompt) throw new Error("Runtime launch prompt is empty.")
-  const promptMessageId = input.promptMessageId?.trim() || randomUUID()
-  const mode = normalizeChatMode(input.mode)
-  const worktreePath =
-    context.sub_worktree_path ?? context.chat_worktree_path ?? context.project_path ?? null
-  const now = nowEpochSeconds()
-  let hotlineEnabled = false
-
-  database
-    .transaction(() => {
+      const prompt = input.prompt.trim()
+      if (!prompt) throw new Error("Runtime launch prompt is empty.")
+      const promptMessageId = input.promptMessageId?.trim() || randomUUID()
+      const mode = normalizeChatMode(input.mode)
+      const worktreePath =
+        context.sub_worktree_path ?? context.chat_worktree_path ?? context.project_path ?? null
+      const now = nowEpochSeconds()
       const existing = database
         .prepare("SELECT id, status FROM agent_runs WHERE id = ?")
         .get(input.runId) as { id: string; status: string } | undefined
@@ -211,7 +218,7 @@ export function materializeInteractiveRuntimeRun(
           metadata: { harness: input.harness, ...(model ? { model } : {}) },
         })
       }
-      hotlineEnabled = resolveAgentHotlineEnabled(messages)
+      const hotlineEnabled = resolveAgentHotlineEnabled(messages)
 
       database
         .prepare(
@@ -261,42 +268,52 @@ export function materializeInteractiveRuntimeRun(
           now,
           input.subChatId,
         )
+      const launch = resolvedLaunchFromSnapshotRow({
+        harness: input.harness,
+        model,
+        permission_mode: permissionMode,
+        custom_permissions: permissionMode === "custom" ? context.custom_permissions : null,
+        runtime_snapshot_version: snapshot.runtimeSnapshotVersion,
+        runtime_preference: snapshot.runtimePreference,
+        runtime_preference_source: snapshot.runtimePreferenceSource,
+        resolved_runtime: snapshot.resolvedRuntime,
+        runtime_adapter_version: snapshot.runtimeAdapterVersion,
+        runtime_protocol_version: snapshot.runtimeProtocolVersion,
+        runtime_capability_snapshot: snapshot.runtimeCapabilitySnapshot,
+        runtime_control_snapshot: snapshot.runtimeControlSnapshot,
+      })
+      return {
+        runId: input.runId,
+        chatId: input.chatId,
+        subChatId: input.subChatId,
+        harness: input.harness,
+        prompt,
+        images: input.images,
+        chatMode: mode,
+        hotlineEnabled,
+        model,
+        reasoningEffort: queuedReasoningEffort(input.reasoningEffort),
+        permissionMode,
+        customPermissions: permissionMode === "custom" ? context.custom_permissions : null,
+        worktreePath,
+        projectPath: context.project_path,
+        codexThreadVisibility: input.codexThreadVisibility ?? "hidden",
+        interactiveChat: true,
+        runtimeLaunch: launch,
+        providerAccount: providerAccountSnapshotFromRow({ ...snapshot, harness: input.harness }),
+      }
     })
     .immediate()
+}
 
-  const launch = resolvedLaunchFromSnapshotRow({
-    harness: input.harness,
-    model,
-    permission_mode: permissionMode,
-    custom_permissions: permissionMode === "custom" ? context.custom_permissions : null,
-    runtime_snapshot_version: snapshot.runtimeSnapshotVersion,
-    runtime_preference: snapshot.runtimePreference,
-    runtime_preference_source: snapshot.runtimePreferenceSource,
-    resolved_runtime: snapshot.resolvedRuntime,
-    runtime_adapter_version: snapshot.runtimeAdapterVersion,
-    runtime_protocol_version: snapshot.runtimeProtocolVersion,
-    runtime_capability_snapshot: snapshot.runtimeCapabilitySnapshot,
-    runtime_control_snapshot: snapshot.runtimeControlSnapshot,
-  })
-  return {
-    runId: input.runId,
-    chatId: input.chatId,
-    subChatId: input.subChatId,
-    harness: input.harness,
-    prompt,
-    images: input.images,
-    chatMode: mode,
-    hotlineEnabled,
-    model,
-    reasoningEffort: queuedReasoningEffort(input.reasoningEffort),
-    permissionMode,
-    customPermissions: permissionMode === "custom" ? context.custom_permissions : null,
-    worktreePath,
-    projectPath: context.project_path,
-    codexThreadVisibility: input.codexThreadVisibility ?? "hidden",
-    interactiveChat: true,
-    runtimeLaunch: launch,
-    providerAccount: providerAccountSnapshotFromRow({ ...snapshot, harness: input.harness }),
+export function assertRuntimeSelectionUnchanged(
+  expected: AgentRuntimePreference | undefined,
+  actual: AgentRuntimePreference,
+): void {
+  if (expected !== undefined && expected !== actual) {
+    throw new Error(
+      "This chat's runtime selection changed before launch. Send again to use the current selection.",
+    )
   }
 }
 

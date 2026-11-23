@@ -60,8 +60,10 @@ export async function createDirectRuntimeStream(input: {
       throw error
     })
   const preparedAtMs = Date.now()
-  refreshPinnedRuntimeSelection(input.chatId)
-  if (!resolution.direct) return null
+  if (!resolution.direct) {
+    refreshPinnedRuntimeSelection(input.chatId)
+    return null
+  }
 
   const runId = crypto.randomUUID()
   let cancelStream: (() => void) | null = null
@@ -133,6 +135,7 @@ export async function createDirectRuntimeStream(input: {
         {
           submittedAtMs: input.submittedAtMs,
           preparedAtMs,
+          expectedRuntimePreference: resolution.runtimePreference,
           runId,
           chatId: input.chatId,
           subChatId: input.subChatId,
@@ -157,6 +160,7 @@ export async function createDirectRuntimeStream(input: {
             if (closed) return
             if (event.type === "started") {
               chunks.push({ type: "start", messageId: `reply-${runId}` })
+              refreshPinnedRuntimeSelection(input.chatId)
               startedAtMs = Date.now()
             } else if (event.type === "assistant-text") {
               for (const chunk of activityMapper.beforeText()) chunks.push(chunk)

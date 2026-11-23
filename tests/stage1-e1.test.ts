@@ -32,6 +32,7 @@ import {
   restoreCheckpoint,
 } from "../src/main/lib/checkpoints"
 import { chatsRouter } from "../src/main/lib/trpc/routers/chats"
+import { getRunChangeReview, undoRunChangeSet } from "../src/main/lib/run-change-undo"
 import { permissionsRouter } from "../src/main/lib/trpc/routers/permissions"
 import { searchRouter } from "../src/main/lib/trpc/routers/search"
 import { tasksRouter } from "../src/main/lib/trpc/routers/tasks"
@@ -1631,6 +1632,88 @@ describe("Stage 1 E1 checkpoint capture", () => {
     ).toBe(statusBeforeFailedRestore)
     expect(readFileSync(join(worktreePath, "tracked.txt"), "utf8")).toBe("live state\n")
     expect(readFileSync(join(worktreePath, "live-untracked.txt"), "utf8")).toBe("live\n")
+  })
+
+  it("reviews and undoes physical CRLF, mixed endings and staged files without losing later edits", async () => {
+    const root = join(homeDir, "newline-repo")
+    mkdirSync(root)
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: root })
+    const write = (name: string, bytes: string) => writeFileSync(join(root, name), bytes)
+    const read = (name: string) => readFileSync(join(root, name), "utf8")
+    git("init")
+    git("config", "core.autocrlf", "true")
+    write(".gitattributes", "*.txt text\nencoded.dat working-tree-encoding=UTF-16LE text\n")
+    const encoded = Buffer.from("encoded\r\n", "utf16le")
+    writeFileSync(join(root, "encoded.dat"), encoded)
+    write("clean.txt", "base\r\nkeep\r\n")
+    write("eol.txt", "line\r\n")
+    write("untouched.txt", "leave\r\n")
+    write("mixed.txt", "left\r\nmiddle\nend\r\n")
+    write("staged.txt", "index\r\n")
+    git("add", "-A")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "initial")
+    write("staged.txt", "staged\r\n")
+    git("add", "staged.txt")
+    write("staged.txt", "unstaged\nsecond\r\n")
+    const db = getDatabase(),
+      project = insertProject("newline-project", { path: root })
+    const chat = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "Newlines",
+      worktreePath: root,
+    })
+    const run = db
+      .insert(agentRuns)
+      .values({
+        chatId: chat.id,
+        harness: "codex",
+        permissionMode: "full-access",
+        worktreePath: root,
+      })
+      .returning()
+      .get()
+    await captureCheckpoint(run.id, root, "before")
+    const json = '{\r\n  "value": "from response"\r\n}\r\n'
+    write("new.json", json)
+    write("clean.txt", "changed\r\nkeep\r\n")
+    write("mixed.txt", "changed\r\nmiddle\nend\r\n")
+    writeFileSync(join(root, "encoded.dat"), Buffer.from("edited\r\n", "utf16le"))
+    write("eol.txt", "line\n")
+    write("staged.txt", "response\r\n")
+    write("untouched.txt", "leave\r\n")
+    await captureCheckpoint(run.id, root, "after")
+    const files = await captureRunManifest(run.id)
+    expect(files.map((f) => f.filePath).sort()).toEqual([
+      "clean.txt",
+      "encoded.dat",
+      "eol.txt",
+      "mixed.txt",
+      "new.json",
+      "staged.txt",
+    ])
+    const review = await getRunChangeReview(run.id)
+    expect(review.diff).toContain("from response")
+    write("new.json", json.replaceAll("\r\n", "\n"))
+    expect(await undoRunChangeSet(run.id)).toMatchObject({
+      success: false,
+      conflicts: [{ filePath: "new.json" }],
+    })
+    expect(read("clean.txt")).toBe("changed\r\nkeep\r\n")
+    write("new.json", json)
+    const undone = await undoRunChangeSet(run.id)
+    expect(undone.success).toBe(true)
+    if (!undone.success || !("recoveryCommit" in undone))
+      throw Error("Expected a new recovery commit")
+    expect(git("show", undone.recoveryCommit + ":new.json").toString()).toBe(json)
+    expect(existsSync(join(root, "new.json"))).toBe(false)
+    expect(read("clean.txt")).toBe("base\r\nkeep\r\n")
+    expect(read("mixed.txt")).toBe("left\r\nmiddle\nend\r\n")
+    expect(read("eol.txt")).toBe("line\r\n")
+    expect(readFileSync(join(root, "encoded.dat"))).toEqual(encoded)
+    expect(read("staged.txt")).toBe("unstaged\nsecond\r\n")
+    expect(git("show", ":staged.txt").toString()).toBe("staged\n")
+    expect((await getRunChangeReview(run.id)).diff).toBe(review.diff)
   })
 
   it("stores unavailable non-git checkpoints and creates an explicit no-change manifest", async () => {

@@ -10,15 +10,19 @@ export function recordSubmittedAt(
   runId: string,
   submittedAtMs?: number,
   preparedAtMs?: number,
+  launchPhases?: Record<"launch-received" | "checkout-ready" | "provider-probed", number>,
 ) {
   if (submittedAtMs === undefined || submittedAtMs > Date.now()) return
   const insert = db.prepare(
     "INSERT OR IGNORE INTO agent_run_timing_marks (run_id,phase,at_ms) VALUES (?, ?, ?)",
   )
-  insert.run(runId, "submitted", submittedAtMs)
-  if (preparedAtMs !== undefined && preparedAtMs >= submittedAtMs && preparedAtMs <= Date.now()) {
-    insert.run(runId, "prepared", preparedAtMs)
-  }
+  db.transaction(() => {
+    insert.run(runId, "submitted", submittedAtMs)
+    if (preparedAtMs !== undefined && preparedAtMs >= submittedAtMs && preparedAtMs <= Date.now()) {
+      insert.run(runId, "prepared", preparedAtMs)
+    }
+    for (const [phase, at] of Object.entries(launchPhases ?? {})) insert.run(runId, phase, at)
+  })()
 }
 
 function mark(db: AppDatabase, runId: string, phase: string, at: number, itemId = "") {

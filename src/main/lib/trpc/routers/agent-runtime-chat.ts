@@ -1,7 +1,10 @@
 import { observable } from "@trpc/server/observable"
 import { recordSubmittedAt } from "../../run-timings"
 import { antigravityModels } from "../../agent-runtime/antigravity/adapter"
-import type { ResolvedAgentRuntime } from "../../../../shared/agent-runtime"
+import {
+  AGENT_RUNTIME_PREFERENCES,
+  type ResolvedAgentRuntime,
+} from "../../../../shared/agent-runtime"
 import { app } from "electron"
 import { join } from "node:path"
 import { z } from "zod"
@@ -11,6 +14,7 @@ import { openAppDatabase } from "../../db/access"
 import { getDatabasePath } from "../../db"
 import { sleep } from "../../../../shared/sleep"
 import {
+  assertRuntimeSelectionUnchanged,
   loadInteractiveRuntimeActivity,
   loadInteractiveRuntimeAssistantParts,
   materializeInteractiveRuntimeRun,
@@ -49,6 +53,7 @@ const resolveInputSchema = z.object({
 })
 
 const launchInputSchema = resolveInputSchema.extend({
+  expectedRuntimePreference: z.enum(AGENT_RUNTIME_PREFERENCES).optional(),
   antigravityNativeApprovals: z.boolean().optional(),
   submittedAtMs: z.number().int().nonnegative().optional(),
   preparedAtMs: z.number().int().nonnegative().optional(),
@@ -110,9 +115,7 @@ export const agentRuntimeChatRouter = router({
   }),
 
   prepare: publicProcedure.input(resolveInputSchema).mutation(async ({ input }) => {
-    await assertRuntimeCheckoutReady(input.chatId)
     const path = getDatabasePath()
-    const authority = requireRuntimeLaunchAuthority(path)
     const preliminaryDatabase = openAppDatabase(path, { readonly: true })
     let preliminary
     try {
@@ -120,12 +123,22 @@ export const agentRuntimeChatRouter = router({
     } finally {
       preliminaryDatabase.close()
     }
+    // Direct launches check the checkout and provider before pinning the selection with the run row.
+    // The legacy transport has no follow-up launch through this router.
+    if (preliminary.direct) return preliminary
+    await assertRuntimeCheckoutReady(input.chatId)
+    const authority = requireRuntimeLaunchAuthority(path)
     const probe = await authority.probe(preliminary.resolvedRuntime, input.harness)
     const database = openAppDatabase(path)
     try {
-      return prepareInteractiveRuntimeLaunch(database, input, {
-        [preliminary.resolvedRuntime]: probe,
-      })
+      return prepareInteractiveRuntimeLaunch(
+        database,
+        input,
+        {
+          [preliminary.resolvedRuntime]: probe,
+        },
+        preliminary.runtimePreference,
+      )
     } finally {
       database.close()
     }
@@ -133,6 +146,7 @@ export const agentRuntimeChatRouter = router({
 
   launch: publicProcedure.input(launchInputSchema).subscription(({ input }) => {
     return observable<RuntimeChatEvent>((emit) => {
+      const launchReceived = Date.now()
       const path = getDatabasePath()
       const authority = requireRuntimeLaunchAuthority(path)
       let disposed = false
@@ -140,15 +154,30 @@ export const agentRuntimeChatRouter = router({
 
       void (async () => {
         await assertRuntimeCheckoutReady(input.chatId)
+        const checkoutReady = Date.now()
         const database = openAppDatabase(path)
         let run
         try {
           const preliminary = resolveInteractiveRuntime(database, input)
+          assertRuntimeSelectionUnchanged(
+            input.expectedRuntimePreference,
+            preliminary.runtimePreference,
+          )
           const probe = await authority.probe(preliminary.resolvedRuntime, input.harness)
-          run = materializeInteractiveRuntimeRun(database, input, {
-            [preliminary.resolvedRuntime]: probe,
+          const providerProbed = Date.now()
+          run = materializeInteractiveRuntimeRun(
+            database,
+            {
+              ...input,
+              expectedRuntimePreference: preliminary.runtimePreference,
+            },
+            { [preliminary.resolvedRuntime]: probe },
+          )
+          recordSubmittedAt(database, run.runId, input.submittedAtMs, input.preparedAtMs, {
+            "launch-received": launchReceived,
+            "checkout-ready": checkoutReady,
+            "provider-probed": providerProbed,
           })
-          recordSubmittedAt(database, run.runId, input.submittedAtMs, input.preparedAtMs)
           try {
             await bindVisualCaptureImagesToRun({
               database,

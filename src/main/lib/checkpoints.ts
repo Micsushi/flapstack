@@ -42,6 +42,7 @@ export type CheckpointStatusSnapshot = {
   indexTree?: string
   profileObjects?: boolean
   originals?: Record<string, string | null>
+  crlfPaths?: string[]
   fileCapture?: {
     listMs: number
     validateAndCopyMs: number
@@ -114,14 +115,14 @@ async function buildStatusSnapshot(
     }
 
     const profile = checkpointProfile(db)
-    const [head, staged, { originals, fileCapture }] = await Promise.all([
+    const [head, staged, { originals, fileCapture, crlfPaths, eagerTree }] = await Promise.all([
       git.revparse(["--verify", "HEAD"]).catch(() => null),
       git.raw(["write-tree"]),
       captureOriginals(worktreePath, git, profile),
     ])
     const gitCommit = head?.trim() ?? null
     const indexTree = staged.trim()
-    const treeCommit = originals ? indexTree : await captureEagerTree(worktreePath, git, profile)
+    const treeCommit = eagerTree ? await captureEagerTree(worktreePath, git, profile) : indexTree
     return {
       gitCommit,
       snapshot: {
@@ -131,6 +132,7 @@ async function buildStatusSnapshot(
         indexTree,
         profileObjects: true,
         originals,
+        crlfPaths,
         fileCapture,
       },
     }
@@ -209,6 +211,8 @@ async function copyOriginal(
 ) {
   const output = await open(destination, "wx", Number(stat.mode & 0o777n))
   try {
+    const mode = Number(stat.mode & 0o777n)
+    if (process.platform !== "win32" && mode & process.umask()) await output.chmod(mode)
     let remaining = stat.size
     while (remaining > 0n) {
       const length = remaining < BigInt(buffer.length) ? Number(remaining) : buffer.length
@@ -227,21 +231,127 @@ async function copyOriginal(
   }
 }
 
+function stamp(info: BigIntStats) {
+  return [
+    info.dev,
+    info.ino,
+    info.size,
+    info.mode,
+    info.ctimeNs,
+    info.mtimeNs,
+    info.birthtimeNs,
+  ].join(":")
+}
+
+type Ending = "index" | "crlf" | "raw"
+let lastEndings:
+  { root: string; files: Map<string, { identity: string; ending: Ending }> } | undefined
+
+function parseEndings(output: string) {
+  const endings = new Map<string, Ending>()
+  for (const entry of output.split("\0")) {
+    const tab = entry.indexOf("\t")
+    if (tab < 0) continue
+    const [index, work] = entry
+      .slice(0, tab)
+      .split(/\s+/)
+      .map((part) => part.slice(2))
+    const ending =
+      work === "crlf" && index === "lf"
+        ? "crlf"
+        : work && (work !== index || work === "mixed")
+          ? "raw"
+          : "index"
+    endings.set(entry.slice(tab + 1), ending)
+  }
+  return endings
+}
+
+async function cleanTrackedEndings(
+  root: string,
+  git: SimpleGit,
+  stages: string,
+  mustCopy: Set<string>,
+) {
+  const tracked = stages.split("\0").filter(Boolean)
+  // Above the memory bound Git remains authoritative. No prior workspace remains retained.
+  if (tracked.length > 32768) {
+    lastEndings = undefined
+    return parseEndings(await git.raw(["ls-files", "--cached", "--eol", "-z"]))
+  }
+  const prior = lastEndings?.root === root ? lastEndings.files : undefined
+  const next: NonNullable<typeof lastEndings>["files"] = new Map()
+  const endings = new Map<string, Ending>(),
+    pending = new Map<string, { physical: string; identity: string }>()
+  await eachFile(tracked, async (record) => {
+    const tab = record.indexOf("\t"),
+      name = record.slice(tab + 1)
+    if (mustCopy.has(name)) return
+    const path = safeSnapshotPath(root, name)
+    const info = await lstat(path, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") return null
+      throw error
+    })
+    if (!info) {
+      mustCopy.add(name)
+      return
+    }
+    const physical = stamp(info),
+      identity = record.slice(0, tab) + "\0" + physical
+    const cached = prior?.get(name)
+    if (cached?.identity === identity) {
+      next.set(name, cached)
+      endings.set(name, cached.ending)
+    } else pending.set(name, { physical, identity })
+  })
+  if (pending.size) {
+    const names = [...pending.keys()]
+    // A full sweep is cheaper on a cold checkout. Small changes use literal pathspecs.
+    const args = names.length > 64 || names.join(" ").length > 6000 ? [] : ["--", ...names]
+    const classified = parseEndings(
+      await git.raw(["--literal-pathspecs", "ls-files", "--cached", "--eol", "-z", ...args]),
+    )
+    await eachFile(names, async (name) => {
+      const entry = pending.get(name)!,
+        ending = classified.get(name)
+      if (
+        !ending ||
+        stamp(await lstat(safeSnapshotPath(root, name), { bigint: true })) !== entry.physical
+      ) {
+        throw new Error("File changed during checkpoint: " + name)
+      }
+      next.set(name, { identity: entry.identity, ending })
+      endings.set(name, ending)
+    })
+  }
+  lastEndings = { root, files: next }
+  return endings
+}
+
 async function captureOriginals(worktree: string, git: SimpleGit, profile: string) {
   const files = join(profile, "checkpoint-files")
   const fromRepo = relative(worktree, files)
   if (!fromRepo || (!isAbsolute(fromRepo) && fromRepo !== ".." && !fromRepo.startsWith(".." + sep)))
     throw new Error("The checkpoint profile must be outside the working repository")
   const started = Date.now()
-  const raw = await git.raw([
-    "ls-files",
-    "-z",
-    "--others",
-    "--modified",
-    "--deleted",
-    "--exclude-standard",
+  const [raw, stages, filtered] = await Promise.all([
+    git.raw(["ls-files", "-z", "--others", "--modified", "--deleted", "--exclude-standard"]),
+    git.raw(["ls-files", "--cached", "--stage", "-z"]),
+    git.raw([
+      "ls-files",
+      "--cached",
+      "-z",
+      "--",
+      ":(exclude,attr:!filter !working-tree-encoding !ident)",
+    ]),
   ])
-  const names = [...new Set(raw.split("\0").filter(Boolean))]
+  const mustCopy = new Set([...raw.split("\0"), ...filtered.split("\0")].filter(Boolean))
+  const crlfPaths: string[] = []
+  for (const [path, ending] of await cleanTrackedEndings(worktree, git, stages, mustCopy)) {
+    if (ending === "crlf" && !mustCopy.has(path)) crlfPaths.push(path)
+    else if (ending === "raw") mustCopy.add(path)
+  }
+  const names = [...mustCopy]
   const listedAt = Date.now()
   const fileCapture = {
     listMs: listedAt - started,
@@ -251,17 +361,13 @@ async function captureOriginals(worktree: string, git: SimpleGit, profile: strin
     copiedBytes: 0,
   }
   const originals: Record<string, string | null> = Object.create(null)
-  if (!names.length) return { originals, fileCapture }
+  if (!names.length) return { originals, fileCapture, crlfPaths, eagerTree: false }
   await Promise.all([
     mkdir(files, { recursive: true, mode: 0o700 }),
     mkdir(join(profile, "checkpoint-objects"), { recursive: true, mode: 0o700 }),
   ])
   const root = await realpath(worktree)
   const parents = new Map<string, Promise<string | null>>()
-  const stamp = (info: BigIntStats) =>
-    [info.dev, info.ino, info.size, info.mode, info.ctimeNs, info.mtimeNs, info.birthtimeNs].join(
-      ":",
-    )
   let unsupported = false
   const buffers: Buffer[] = []
   await eachFile(names, async (name, worker) => {
@@ -323,7 +429,7 @@ async function captureOriginals(worktree: string, git: SimpleGit, profile: strin
     originals[name] = key
   })
   fileCapture.validateAndCopyMs = Date.now() - listedAt
-  return { originals: unsupported ? undefined : originals, fileCapture }
+  return { originals, fileCapture, crlfPaths, eagerTree: unsupported }
 }
 
 async function privateWriter(
@@ -332,6 +438,7 @@ async function privateWriter(
   index: string,
   profile: string,
   work?: string,
+  gitDir?: string,
 ) {
   const realObjects = (
     await createGit(worktree).raw(["rev-parse", "--path-format=absolute", "--git-path", "objects"])
@@ -344,10 +451,50 @@ async function privateWriter(
     GIT_ALTERNATE_OBJECT_DIRECTORIES: JSON.stringify(realObjects.replaceAll("\\", "/")),
   }
   if (work) {
-    env.GIT_DIR = (await createGit(worktree).raw(["rev-parse", "--absolute-git-dir"])).trim()
+    env.GIT_DIR =
+      gitDir ?? (await createGit(worktree).raw(["rev-parse", "--absolute-git-dir"])).trim()
     env.GIT_WORK_TREE = work
   }
   return createGit(base, undefined, Object.keys(env)).env(env)
+}
+
+const rawAttributes = "* -text -crlf !eol -filter -ident !working-tree-encoding\n"
+
+async function initRawGitDir(worktree: string, temp: string) {
+  const git = createGit(worktree)
+  const [objectFormat, fileOptions] = await Promise.all([
+    git.raw(["rev-parse", "--show-object-format"]),
+    git
+      .raw(["config", "--type=bool", "--get-regexp", "^core\\.(filemode|symlinks|ignorecase)$"])
+      .catch(() => ""),
+  ])
+  const format = objectFormat.trim()
+  const dir = join(temp, "git")
+  if (format !== "sha1" && format !== "sha256") throw new Error("Unsupported Git object format")
+  // Preserve filesystem semantics but keep conversion attributes and templates private.
+  const settings = fileOptions.split("\n").flatMap((line) => {
+    const match = /^core\.(filemode|symlinks|ignorecase) (true|false)$/.exec(line.trim())
+    return match ? [match[1] + " = " + match[2]] : []
+  })
+  await Promise.all(
+    ["info", "refs", "objects"].map((name) => mkdir(join(dir, name), { recursive: true })),
+  )
+  await Promise.all([
+    writeFile(join(dir, "HEAD"), "ref: refs/heads/checkpoint\n"),
+    writeFile(
+      join(dir, "config"),
+      [
+        "[core]",
+        ...settings,
+        ...(format === "sha256"
+          ? ["repositoryformatversion = 1", "[extensions]", "objectformat = sha256"]
+          : ["repositoryformatversion = 0"]),
+        "",
+      ].join("\n"),
+    ),
+    writeFile(join(dir, "info", "attributes"), rawAttributes),
+  ])
+  return dir
 }
 
 async function captureEagerTree(worktree: string, git: SimpleGit, profile: string) {
@@ -375,16 +522,29 @@ async function projectedTree(
 ) {
   const tree = snapshot.treeCommit!
   if (!snapshot.originals) return tree
+  const raw = snapshot.crlfPaths !== undefined
   const dirty = Object.entries(snapshot.originals).filter(
-    ([name]) => !paths || paths.has(name) || basename(name) === ".gitattributes",
+    ([name]) => !paths || paths.has(name) || (!raw && basename(name) === ".gitattributes"),
   )
-  if (!dirty.length) return tree
+  const crlf = snapshot.crlfPaths?.filter((name) => !paths || paths.has(name)) ?? []
+  if (!dirty.length && !crlf.length) return tree
   const temp = await mkdtemp(join(tmpdir(), "flapstack-checkpoint-project-"))
   try {
     const work = join(temp, "work")
     await mkdir(work)
-    const git = await privateWriter(worktree, work, join(temp, "index"), profile, work)
-    await git.raw(["read-tree", snapshot.indexTree!])
+    const gitDir = raw ? await initRawGitDir(worktree, temp) : undefined
+    const git = await privateWriter(worktree, work, join(temp, "index"), profile, work, gitDir)
+    await git.raw(["read-tree", tree])
+    if (crlf.length && gitDir) {
+      const attributes = join(gitDir, "info", "attributes")
+      await writeFile(attributes, "* text eol=crlf !crlf -filter -ident !working-tree-encoding\n")
+      for (let i = 0; i < crlf.length; i += 16) {
+        const names = crlf.slice(i, i + 16)
+        for (const name of names) safeSnapshotPath(work, name)
+        await git.raw(["checkout-index", "--force", "--", ...names])
+      }
+      await writeFile(attributes, rawAttributes)
+    }
     await eachFile(dirty, async ([name, key]) => {
       const dest = safeSnapshotPath(work, name)
       if (key === null) return
@@ -394,7 +554,15 @@ async function projectedTree(
       await copyFile(source, dest)
     })
     const list = join(temp, "paths")
-    await writeFile(list, dirty.map(([name]) => name + "\0").join(""))
+    // An eager tree already excludes deleted files. Git will reject an unmatched pathspec.
+    const names = [
+      ...crlf,
+      ...dirty
+        .filter(([, key]) => key !== null || tree === snapshot.indexTree)
+        .map(([name]) => name),
+    ]
+    if (!names.length) return tree
+    await writeFile(list, names.map((name) => name + "\0").join(""))
     await git.raw([
       "--literal-pathspecs",
       "add",
@@ -426,9 +594,19 @@ export async function captureWorktreeTree(
     ).trim()
     const hasIndex = existsSync(indexPath)
     // Reuse Git's file-stat cache without ever changing the user's index.
-    if (hasIndex) await copyFile(indexPath, tempIndexPath)
-    const git = createGit(worktreePath).env({ GIT_INDEX_FILE: tempIndexPath })
+    const real = createGit(worktreePath)
+    const env: Record<string, string> = { GIT_INDEX_FILE: tempIndexPath }
+    if (changedPaths) {
+      env.GIT_DIR = await initRawGitDir(worktreePath, tempDir)
+      env.GIT_WORK_TREE = worktreePath
+      env.GIT_OBJECT_DIRECTORY = (
+        await real.raw(["rev-parse", "--path-format=absolute", "--git-path", "objects"])
+      ).trim()
+    }
+    const git = createGit(worktreePath, undefined, Object.keys(env)).env(env)
     if (!hasIndex) await git.raw(["read-tree", "--empty"])
+    else if (changedPaths) await git.raw(["read-tree", (await real.raw(["write-tree"])).trim()])
+    else await copyFile(indexPath, tempIndexPath)
     if (changedPaths) {
       // Undo only mutates these paths. Keep their current bytes recoverable without
       // copying unrelated untracked files into the user's object store.
@@ -453,6 +631,7 @@ export async function captureWorktreeTree(
         await git.raw([
           "--literal-pathspecs",
           "add",
+          "--force",
           "-A",
           "--pathspec-from-file=" + list,
           "--pathspec-file-nul",
@@ -495,6 +674,7 @@ function parseCheckpointSnapshot(value: string | null): CheckpointStatusSnapshot
         indexTree: parsed.indexTree,
         profileObjects: parsed.profileObjects,
         originals: parsed.originals,
+        crlfPaths: parsed.crlfPaths,
         fileCapture: parsed.fileCapture,
         reviewTree: parsed.reviewTree,
         skipped: parsed.skipped,
@@ -753,7 +933,17 @@ export async function restoreCheckpoint(checkpointId: string): Promise<boolean> 
       GIT_INDEX_FILE: join(temporary, "index"),
     })
     await checkout.raw(["read-tree", retainedTree])
-    await checkout.raw(["checkout-index", "-a", "-f"])
+    const writer = snapshot.crlfPaths
+      ? await privateWriter(
+          checkpoint.worktreePath,
+          checkpoint.worktreePath,
+          join(temporary, "index"),
+          checkpointProfile(db),
+          checkpoint.worktreePath,
+          await initRawGitDir(checkpoint.worktreePath, temporary),
+        )
+      : checkout
+    await writer.raw(["checkout-index", "-a", "-f"])
     await checkout.raw(["clean", "-fd"])
   } finally {
     await rm(temporary, { recursive: true, force: true })
@@ -781,6 +971,10 @@ export async function captureRunManifest(runId: string, db: AppDatabase = getDat
         (path) => beforeFiles[path] !== afterFiles[path],
       ),
     )
+    const oldCrlf = new Set(beforeSnapshot.crlfPaths),
+      newCrlf = new Set(afterSnapshot.crlfPaths)
+    for (const path of oldCrlf) if (!newCrlf.has(path)) changed.add(path)
+    for (const path of newCrlf) if (!oldCrlf.has(path)) changed.add(path)
     const privateObjects = !!(beforeSnapshot.profileObjects || afterSnapshot.profileObjects)
     if (beforeSnapshot.treeCommit !== afterSnapshot.treeCommit) {
       const staged = await checkpointReader(worktreePath, privateObjects, profile).raw([
