@@ -17,6 +17,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const SECRET_SCAN_OVERLAP_BYTES = 64 * 1024
 const PACKAGE_PROVENANCE_PATH = "resources/package-provenance.json"
 const MAX_PACKAGE_PROVENANCE_BYTES = 256 * 1024
+// Exact upstream Windows release rust-v0.166.0-alpha.6. In its read-only PE
+// section Rust pooled prefix constants from login/src/auth/api_key.rs and
+// network-proxy/src/credential_broker/providers/openai.rs without terminators.
+// Literal descriptors show the scanner match crossing distinct source strings.
+const CODEX_WINDOWS_RELEASE_SHA256 =
+  "b19b22d57e3829e12d3d5b1d48c441413e26641f4fe3072e49f333f809da23da"
+const POOLED_CODEX_LITERAL_SHA256 = new Set([
+  "5045032a4c9a448e9c399db2c8f116502ee0c1bc8cff3f6c56b50cfceb653be0",
+  "4694c03eb59bb22b82e5024a33f4fdbc98ba19ad41327de39ae9e9bd5965149c",
+])
 const SECRET_PATTERNS = [
   { kind: "GitHub token", pattern: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g },
   { kind: "Slack token", pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
@@ -130,7 +140,7 @@ export async function collectPackageFiles(packageRoot) {
   return files
 }
 
-export function findSecretFindings(filePath, buffer) {
+export function findSecretFindings(filePath, buffer, fileSha256) {
   const texts = [buffer.toString("utf8")]
   if (buffer.includes(0)) {
     texts.push(buffer.toString("utf16le"))
@@ -150,11 +160,22 @@ export function findSecretFindings(filePath, buffer) {
       pattern.lastIndex = 0
       for (const match of text.matchAll(pattern)) {
         const value = match[0]
-        const fingerprint = createHash("sha256").update(value).digest("hex").slice(0, 12)
+        const digest = createHash("sha256").update(value).digest("hex")
+        const fingerprint = digest.slice(0, 12)
         const key = `${kind}:${fingerprint}`
         if (seen.has(key)) continue
         seen.add(key)
-        findings.push({ path: filePath, kind, fingerprint })
+        const reviewed =
+          filePath === "resources/bin/codex.exe" &&
+          fileSha256 === CODEX_WINDOWS_RELEASE_SHA256 &&
+          kind === "API key" &&
+          POOLED_CODEX_LITERAL_SHA256.has(digest)
+        findings.push({
+          path: filePath,
+          kind,
+          fingerprint,
+          ...(reviewed ? { reviewedAs: "upstream pooled string literals" } : {}),
+        })
       }
     }
   }
@@ -699,13 +720,13 @@ function runWindowsDefenderScan(packageRoot, runner = spawnSync) {
   }
 }
 
-async function scanFileForSecrets(filePath, displayPath) {
+async function scanFileForSecrets(filePath, displayPath, fileSha256) {
   let overlap = Buffer.alloc(0)
   const findings = []
   const seen = new Set()
   for await (const rawChunk of createReadStream(filePath, { highWaterMark: 1024 * 1024 })) {
     const chunk = Buffer.concat([overlap, rawChunk])
-    for (const finding of findSecretFindings(displayPath, chunk)) {
+    for (const finding of findSecretFindings(displayPath, chunk, fileSha256)) {
       const key = `${finding.kind}:${finding.fingerprint}`
       if (seen.has(key)) continue
       seen.add(key)
@@ -727,7 +748,7 @@ async function scanPackageText(packageRoot) {
     if (!isAllowedNativePath(item.path)) {
       await assertNoEmbeddedPortableExecutableFile(filePath, item.path)
     }
-    findings.push(...(await scanFileForSecrets(filePath, item.path)))
+    findings.push(...(await scanFileForSecrets(filePath, item.path, item.sha256)))
   }
   const asarPath = path.join(packageRoot, "resources", "app.asar")
   let asarFiles = 0
@@ -746,7 +767,7 @@ async function scanPackageText(packageRoot) {
     findings.push(...findSecretFindings(displayPath, buffer))
   }
   return {
-    findings,
+    findings: findings.filter((finding) => !finding.reviewedAs),
     includedPaths,
     includedFileHashes,
     coverage: {
@@ -755,6 +776,7 @@ async function scanPackageText(packageRoot) {
       asarFiles,
       asarBytes,
       skippedFiles: 0,
+      reviewedFindings: findings.filter((finding) => finding.reviewedAs),
     },
   }
 }
