@@ -49,6 +49,7 @@ type CodexRunState = {
   cancellationPromise: Promise<void> | null
   cancelled: boolean
   archived: boolean
+  recoveredPromptPrefix?: string
   pendingNotifications: CodexProtocolNotification[]
 }
 
@@ -71,6 +72,7 @@ type CodexRuntimeAdapterOptions = {
   resolvePersistedTurn?: (
     context: RuntimeAdapterContext,
   ) => Promise<RuntimeAdapterTurn | null> | RuntimeAdapterTurn | null
+  cancelledFirstThreadContext?: (context: RuntimeAdapterContext, threadId: string) => string | null
   requestPermission?: (
     context: RuntimeAdapterContext,
     request: CodexProtocolServerRequest,
@@ -171,13 +173,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     this.assertContext(context)
     const state = await this.createState(context)
     try {
-      const params = withServiceTier(
-        await this.options.resolveThreadParams(context, "start"),
-        context.launch.controls.serviceTier,
-      )
-      const response = record(await state.client.request("thread/start", params))
-      this.captureThread(state, response, "thread/start")
-      return sessionFromState(state)
+      return await this.startNewThread(context, state)
     } catch (error) {
       await this.failState(state, error)
       throw error
@@ -202,6 +198,16 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
           await state.client.request("thread/resume", { ...params, threadId, excludeTurns: true }),
         )
       } catch (resumeError) {
+        if (
+          resumeError instanceof Error &&
+          resumeError.message ===
+            `[codex-runtime] thread/resume failed: no rollout found for thread id ${threadId}`
+        ) {
+          const prefix = this.options.cancelledFirstThreadContext?.(context, threadId)
+          if (prefix == null || context.signal.aborted) throw resumeError
+          state.recoveredPromptPrefix = prefix
+          return await this.startNewThread(context, state)
+        }
         if (
           !(resumeError instanceof Error) ||
           !resumeError.message.includes(`session ${threadId} is archived.`)
@@ -288,9 +294,13 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
         })
         state.turnId = await this.waitForGoalTurn(state)
       } else {
+        const turnPrompt = state.recoveredPromptPrefix
+          ? state.recoveredPromptPrefix + prompt
+          : prompt
+        state.recoveredPromptPrefix = undefined
         const input = this.options.resolveTurnInput
-          ? await this.options.resolveTurnInput(context, prompt)
-          : [{ type: "text", text: prompt, text_elements: [] }]
+          ? await this.options.resolveTurnInput(context, turnPrompt)
+          : [{ type: "text", text: turnPrompt, text_elements: [] }]
         if (!Array.isArray(input) || input.length === 0) {
           throw new Error("[codex-runtime] Flapstack launch authority returned no turn input.")
         }
@@ -541,6 +551,19 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       await client.close()
       throw error
     }
+  }
+
+  private async startNewThread(
+    context: RuntimeAdapterContext,
+    state: CodexRunState,
+  ): Promise<RuntimeAdapterSession> {
+    const params = withServiceTier(
+      await this.options.resolveThreadParams(context, "start"),
+      context.launch.controls.serviceTier,
+    )
+    const response = record(await state.client.request("thread/start", params))
+    this.captureThread(state, response, "thread/start")
+    return sessionFromState(state)
   }
 
   private captureThread(

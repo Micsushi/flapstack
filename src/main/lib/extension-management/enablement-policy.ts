@@ -9,6 +9,7 @@ import {
   extensionKinds,
   extensionScopes,
   getExtensionCapabilityForManifest,
+  providerByHarness,
   type ExtensionHarness,
   type ExtensionKind,
   type ExtensionScope,
@@ -353,27 +354,29 @@ export async function resolveExtensionInventoryState(
   }>
 > {
   const context = validateContext(database, input.projectId, input.taskId)
-  const manifests = await discoverProviderExtensions({ cwd: input.cwd, homeDir: input.homeDir })
-  return manifests
-    .map((extension) => {
-      const target = extensionPolicyTargetFromManifest(extension)
-      const resolved = resolveExtensionEnablement(database, {
-        target,
-        ...(context.projectId ? { projectId: context.projectId } : {}),
-        ...(context.taskId ? { taskId: context.taskId } : {}),
-      })
-      return {
-        extension,
-        resolved:
-          extension.capabilities.discovery === "unknown"
-            ? unsupportedManifestState(
-                resolved,
-                extension.limitations[0] ?? "Extension discovery is unavailable.",
-              )
-            : resolved,
-      }
+  const manifests = await discoverProviderExtensions({
+    cwd: input.cwd,
+    homeDir: input.homeDir,
+    provider: input.harness && providerByHarness[input.harness],
+  })
+  return manifests.map((extension) => {
+    const target = extensionPolicyTargetFromManifest(extension)
+    const resolved = resolveExtensionEnablement(database, {
+      target,
+      ...(context.projectId ? { projectId: context.projectId } : {}),
+      ...(context.taskId ? { taskId: context.taskId } : {}),
     })
-    .filter((entry) => !input.harness || entry.resolved.target.harness === input.harness)
+    return {
+      extension,
+      resolved:
+        extension.capabilities.discovery === "unknown"
+          ? unsupportedManifestState(
+              resolved,
+              extension.limitations[0] ?? "Extension discovery is unavailable.",
+            )
+          : resolved,
+    }
+  })
 }
 
 export async function buildExtensionRunContext(

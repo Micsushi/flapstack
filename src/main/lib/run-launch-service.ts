@@ -56,6 +56,7 @@ export type QueuedAgentRun = {
   worktreePath: string | null
   projectPath: string | null
   codexThreadVisibility?: CodexThreadVisibility
+  interactiveChat?: boolean
   localEndpoint?: string
   requiredLocalToolTiers?: Array<"read" | "project-write" | "shell" | "git" | "network">
   runtimeLaunch?: ResolvedRuntimeLaunch

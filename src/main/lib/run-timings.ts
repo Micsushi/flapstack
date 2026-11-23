@@ -5,11 +5,20 @@ import type * as schema from "./db/schema"
 
 type AppDatabase = BetterSQLite3Database<typeof schema>
 
-export function recordSubmittedAt(db: Database.Database, runId: string, submittedAtMs?: number) {
+export function recordSubmittedAt(
+  db: Database.Database,
+  runId: string,
+  submittedAtMs?: number,
+  preparedAtMs?: number,
+) {
   if (submittedAtMs === undefined || submittedAtMs > Date.now()) return
-  db.prepare(
-    "INSERT OR IGNORE INTO agent_run_timing_marks (run_id,phase,at_ms) VALUES (?, 'submitted', ?)",
-  ).run(runId, submittedAtMs)
+  const insert = db.prepare(
+    "INSERT OR IGNORE INTO agent_run_timing_marks (run_id,phase,at_ms) VALUES (?, ?, ?)",
+  )
+  insert.run(runId, "submitted", submittedAtMs)
+  if (preparedAtMs !== undefined && preparedAtMs >= submittedAtMs && preparedAtMs <= Date.now()) {
+    insert.run(runId, "prepared", preparedAtMs)
+  }
 }
 
 function mark(db: AppDatabase, runId: string, phase: string, at: number, itemId = "") {
@@ -17,10 +26,10 @@ function mark(db: AppDatabase, runId: string, phase: string, at: number, itemId 
     SELECT id, ${phase}, ${itemId}, ${at} FROM agent_runs WHERE id = ${runId}`)
 }
 
-export function recordCheckpointTiming(
+export function recordRunTimingInterval(
   db: AppDatabase,
   runId: string,
-  kind: "before" | "after",
+  kind: "before" | "after" | "extension-policy",
   start: number,
   end: number,
 ) {
@@ -80,6 +89,8 @@ export function readRunTimings(db: Database.Database, runId: string) {
     else marks.set(row.phase, row.at_ms)
   }
   const submitted = marks.get("submitted")
+  const rowStarted = marks.get("start")
+  const prepared = marks.get("prepared")
   if (submitted !== undefined) marks.set("start", submitted)
   const first = (phase: string, at: number) => {
     marks.set(phase, Math.min(marks.get(phase) ?? at, at))
@@ -134,6 +145,12 @@ export function readRunTimings(db: Database.Database, runId: string) {
     return later == null || earlier == null ? null : Math.max(0, later - earlier)
   }
   return {
+    prepareMs: elapsed("prepared"),
+    prepareToRunRowMs:
+      rowStarted === undefined || prepared === undefined
+        ? null
+        : Math.max(0, rowStarted - prepared),
+    extensionPolicyMs: elapsed("extension-policy-end", "extension-policy-start"),
     preLaunchMs: elapsed("spawn-start") ?? elapsed("end"),
     beforeCheckpointMs: elapsed("before-end", "before-start"),
     spawnContextMs: elapsed("provider-ready", "spawn-start") ?? elapsed("spawn-end", "spawn-start"),

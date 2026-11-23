@@ -11,7 +11,11 @@ export class AntigravityEvents {
   private kind: "agent-text" | "provider-visible-reasoning" | null = null
   private pending = ""
   private part = 0
-  private readonly tools = new Map<string, { name: string; kind?: string | null }>()
+  private answeredSinceTool = false
+  private readonly tools = new Map<
+    string,
+    { name: string; kind?: string | null; outcome?: "completed" | "failed" }
+  >()
 
   constructor(
     private readonly sessionId: string,
@@ -42,6 +46,17 @@ export class AntigravityEvents {
     return [event]
   }
 
+  completionError(): Error | null {
+    if (this.answeredSinceTool) return null
+    const tools = [...this.tools.values()]
+    if (tools.length && tools.every((tool) => tool.outcome === "completed")) return null
+    const failed = tools.find((tool) => tool.outcome === "failed")
+    const reason = failed
+      ? `Gemini ended without a reply after a ${failed.kind === "execute" ? "command" : "tool"} failed.`
+      : "Gemini ended without a reply or a completed tool action."
+    return new Error(`${reason} Review the activity and continue in this chat.`)
+  }
+
   update(update: SessionUpdate): AgentActivityAppend[] {
     if (
       update.sessionUpdate === "agent_message_chunk" ||
@@ -51,6 +66,7 @@ export class AntigravityEvents {
       const kind =
         update.sessionUpdate === "agent_message_chunk" ? "agent-text" : "provider-visible-reasoning"
       if (kind === "provider-visible-reasoning" && !this.showThoughts) return []
+      if (kind === "agent-text" && update.content.text.trim()) this.answeredSinceTool = true
       const events = this.kind && this.kind !== kind ? this.finish("commentary") : []
       // Each aggregate fits the store's 64 KiB encoded JSON limit, even for escaped controls.
       let delta = ""
@@ -89,7 +105,16 @@ export class AntigravityEvents {
     const previous = this.tools.get(update.toolCallId)
     const name = (update.title || previous?.name || "Tool").slice(0, 512)
     const kind = update.kind || previous?.kind
-    this.tools.set(update.toolCallId, { name, kind })
+    const exit = eventRecord(update.rawOutput).exit_code
+    const failed =
+      update.status === "failed" || (kind === "execute" && typeof exit === "number" && exit !== 0)
+    const outcome = failed
+      ? "failed"
+      : update.status === "completed"
+        ? "completed"
+        : previous?.outcome
+    if (!previous || failed) this.answeredSinceTool = false
+    this.tools.set(update.toolCallId, { name, kind, outcome })
     const phase =
       update.status === "completed" || update.status === "failed"
         ? update.status
@@ -117,7 +142,6 @@ export class AntigravityEvents {
     if (kind === "execute") {
       const command =
         typeof input.CommandLine === "string" ? input.CommandLine.slice(0, 4000) : name
-      const exit = eventRecord(update.rawOutput).exit_code
       events.push({
         ...base,
         kind: "command",

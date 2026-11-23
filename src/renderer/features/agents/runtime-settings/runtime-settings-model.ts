@@ -142,7 +142,10 @@ export function buildRuntimeSettingsRows(input: {
           available: compatible && (release?.enabledForNewLaunches ?? true),
           reason: !compatible
             ? `${runtimePreferenceLabel(value)} is incompatible with ${LABELS[harness]}.`
-            : (release?.reason ?? null),
+            : (release?.reason ??
+              (harness === "codex" && value === "flapstack-native"
+                ? "In Flapstack Native, reply to questions in chat. Codex and Codex Enhanced also support question forms."
+                : null)),
         }
       }),
     }

@@ -6,9 +6,18 @@ export function prepareReplyAudio(
   chatId: string,
   subChatId: string,
   message:
-    { id?: string; role?: string; parts?: Array<{ type: string; text?: string }> } | undefined,
+    | {
+        id?: string
+        role?: string
+        metadata?: unknown
+        parts?: Array<{ type: string; text?: string }>
+      }
+    | undefined,
 ) {
   if (message?.role !== "assistant" || !message.id) return
+  // The main process prepares completed direct Claude replies even when their chat is closed.
+  const metadata = message.metadata as { transport?: string; stoppedByUser?: boolean } | undefined
+  if (metadata?.transport === "claude-code-runtime" && !metadata.stoppedByUser) return
   const text = message.parts
     ?.filter((part) => part.type === "text" && !isProgressText(part, false))
     .map((part) => part.text ?? "")

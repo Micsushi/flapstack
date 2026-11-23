@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
   loadInteractiveRuntimeActivity,
   loadInteractiveRuntimeAssistantText,
+  loadInteractiveRuntimeAssistantParts,
   materializeInteractiveRuntimeRun,
   persistInteractiveRuntimeAssistantFallback,
   prepareInteractiveRuntimeLaunch,
@@ -16,7 +17,10 @@ import { createRuntimeDefaultsService } from "../src/main/lib/agent-runtime/defa
 import { createAgentActivityStore } from "../src/main/lib/agent-runtime/activity-store"
 import { migrateDatabase } from "../src/main/lib/db/migrate"
 import * as schema from "../src/main/lib/db/schema"
-import type { AgentRuntimePreference } from "../src/shared/agent-runtime"
+import { DEFAULT_RUNTIME_CONTROLS, type AgentRuntimePreference } from "../src/shared/agent-runtime"
+import { ClaudeRuntimeEventMapper } from "../src/main/lib/agent-runtime/claude-code/events"
+import { RuntimeTextChatChunkMapper } from "../src/renderer/features/agents/lib/runtime-text-chat-chunks"
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk"
 
 let directory = ""
 let database: Database.Database
@@ -304,6 +308,79 @@ describe("interactive Runtime launch bridge", () => {
     expect(loadInteractiveRuntimeAssistantText(database, "runtime-text-run")).toBe(
       "CLAUDE_RUNTIME_OK",
     )
+  })
+
+  it("keeps each Claude block once in live and saved output when the SDK compacts snapshots", () => {
+    seedChat("claude-code", "auto", [])
+    const runId = "claude-block-identity"
+    materializeInteractiveRuntimeRun(database, {
+      runId,
+      chatId: "chat",
+      subChatId: "sub",
+      harness: "claude-code",
+      prompt: "Read it",
+      model: null,
+      mode: "write",
+      reasoningEffort: null,
+      reasoningEnabled: true,
+    })
+    const mapper = new ClaudeRuntimeEventMapper(DEFAULT_RUNTIME_CONTROLS)
+    const store = createAgentActivityStore(database)
+    const live = new RuntimeTextChatChunkMapper(runId)
+    const displayed: string[] = []
+    let sequence = 0
+    const emit = (sdk: Record<string, unknown>) => {
+      for (const e of mapper.map({
+        uuid: String(++sequence),
+        session_id: "session",
+        ...sdk,
+      } as unknown as SDKMessage)) {
+        store.append(runId, e)
+        if (
+          e.kind === "agent-text" &&
+          (e.phase === "started" || e.phase === "delta" || e.phase === "completed")
+        ) {
+          for (const chunk of live.map({
+            phase: e.phase,
+            text: e.payload.text,
+            providerItemId: e.providerItemId ?? null,
+            providerMessageId: e.providerMessageId ?? null,
+            contentIndex: e.contentIndex ?? null,
+            sectionBoundary: null,
+          })) {
+            if (chunk.type === "text-delta") displayed.push(chunk.delta)
+          }
+        }
+      }
+    }
+    const stream = (event: Record<string, unknown>) => emit({ type: "stream_event", event })
+    stream({ type: "message_start", message: { id: "message" } })
+    stream({ type: "content_block_start", index: 0, content_block: { type: "thinking" } })
+    stream({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "thinking_delta", thinking: "Checking." },
+    })
+    stream({ type: "content_block_stop", index: 0 })
+    // Installed Claude emitted the compact snapshot before the raw stop. Each distinct
+    // source block must survive even when the author repeats exactly the same prose.
+    for (const index of [1, 2]) {
+      stream({ type: "content_block_start", index, content_block: { type: "text", text: "" } })
+      stream({ type: "content_block_delta", index, delta: { type: "text_delta", text: "Same." } })
+      emit({
+        type: "assistant",
+        message: { id: "message", content: [{ type: "text", text: "Same." }] },
+      })
+      stream({ type: "content_block_stop", index })
+    }
+    const parts = loadInteractiveRuntimeAssistantParts(database, runId)
+    expect(displayed).toEqual(["Same.", "Same."])
+    expect(parts).toEqual(displayed.map((text) => ({ type: "text", text })))
+    persistInteractiveRuntimeAssistantFallback(database, runId, parts)
+    const row = database.prepare("SELECT messages FROM sub_chats WHERE id='sub'").get() as {
+      messages: string
+    }
+    expect(JSON.parse(row.messages).at(-1).parts).toEqual(parts)
   })
 
   it("durably falls back to a normal assistant message before the renderer acknowledges it", () => {

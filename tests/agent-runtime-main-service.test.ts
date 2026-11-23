@@ -671,6 +671,51 @@ describe("process-wide Runtime launch service", () => {
     })
   })
 
+  it("keeps a late first Codex session out of the chat after Stop", async () => {
+    const first = "cancel-before-codex-turn"
+    const second = "retry-cancelled-codex"
+    seedDirectRun(first)
+    let release!: () => void
+    let creating!: () => void
+    const sessionPending = new Promise<void>((resolve) => {
+      creating = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const resumed = vi.fn()
+    const service = getMainRuntimeLaunchService(path, {
+      enableCodex: true,
+      codexFactory: () => {
+        const adapter = directAdapter()
+        const start = adapter.startSession.bind(adapter)
+        adapter.startSession = async (context) => {
+          if (context.runId === first) {
+            creating()
+            await gate
+          }
+          return await start(context)
+        }
+        adapter.resumeSession = resumed
+        return adapter
+      },
+    })
+    const original = service.launch(queued(first))
+    await sessionPending
+    await service.cancel(first, "user-cancelled")
+    release()
+    await expect(original).rejects.toMatchObject({ name: "RuntimeLaunchCancelledError" })
+    expect(
+      sqlite.prepare("SELECT session_id FROM sub_chats WHERE id=?").get(`sub-${first}`),
+    ).toEqual({ session_id: null })
+    seedFollowupRun(second, first)
+    await service.launch({ ...queued(second), chatId: `chat-${first}`, subChatId: `sub-${first}` })
+    expect(resumed).not.toHaveBeenCalled()
+    expect(
+      sqlite.prepare("SELECT session_id FROM sub_chats WHERE id=?").get(`sub-${first}`),
+    ).toEqual({ session_id: `thread-${second}` })
+  })
+
   it("resumes a second Codex turn with the durable provider thread identity", async () => {
     seedDirectRun("first-turn")
     const resumed: RuntimeAdapterSession[] = []

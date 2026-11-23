@@ -49,6 +49,10 @@ describe("provider extension contracts", () => {
 
     expect(review).toHaveLength(4)
     expect(new Set(review.map((item) => item.id)).size).toBe(4)
+    for (const provider of ["claude", "codex", "cursor", "opencode"] as const) {
+      const scoped = await discoverProviderExtensions({ cwd, homeDir: home, provider })
+      expect(scoped).toEqual(inventory.filter((entry) => entry.provider === provider))
+    }
     expect(review.map((item) => `${item.provider}:${item.kind}`).sort()).toEqual([
       "claude:skill",
       "codex:skill",

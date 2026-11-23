@@ -11,6 +11,16 @@ beforeEach(() => {
   mocks.prepare.mockResolvedValue({ prepared: true })
 })
 describe("completed reply audio", () => {
+  it("leaves completed direct Claude audio to the durable main-process completion", () => {
+    prepareReplyAudio("chat", "sub", {
+      id: "reply-run",
+      role: "assistant",
+      metadata: { transport: "claude-code-runtime" },
+      parts: [{ type: "text", text: "Done." }],
+    })
+    expect(mocks.prepare).not.toHaveBeenCalled()
+  })
+
   it("prepares only assistant prose with stable conversation and message identity", () => {
     prepareReplyAudio("chat", "sub", {
       id: "a",

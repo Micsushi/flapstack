@@ -120,7 +120,7 @@ function connect(context: RuntimeAdapterContext, deps: Dependencies) {
   }
   child.once("error", stop)
   child.once("exit", (code, signal) => {
-    if (!state.completed && !events.destroyed)
+    if (!events.writableEnded && !events.destroyed)
       events.destroy(new Error(`Antigravity exited (${signal ?? code ?? "unknown"}).`))
   })
   const connection = new ClientSideConnection(
@@ -307,24 +307,34 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
       for (const image of deps.images(context.runId))
         prompt.push({ type: "image", data: image.base64Data, mimeType: image.mediaType })
       // The durable turn has been recorded before the provider receives its prompt.
+      let terminalError: Error | null = null
+      let ended = false
       void connection
         .prompt({ sessionId: state.sessionId, prompt })
         .then((result) => {
           state.collecting = false
-          if (result.stopReason !== "end_turn")
-            throw new Error(`Antigravity ended the turn: ${result.stopReason}.`)
+          terminalError =
+            result.stopReason === "end_turn"
+              ? state.mapper!.completionError()
+              : new Error(`Antigravity ended the turn: ${result.stopReason}.`)
           for (const event of state.mapper!.finish()) state.events.write(event)
-          state.events.end()
-          state.completed = true
+          ended = true
         })
-        .catch((error) =>
-          state.events.destroy(error instanceof Error ? error : new Error(String(error))),
-        )
+        .catch((error) => {
+          terminalError = error instanceof Error ? error : new Error(String(error))
+        })
+        .finally(() => {
+          state.collecting = false
+          state.events.end()
+        })
       for await (const item of state.events) {
         const event = item as AgentActivityAppend
         await deps.append(context.runId, [event])
         yield event
       }
+      // Drain already queued tool and reasoning events before reporting a failed turn.
+      if (terminalError) throw terminalError
+      state.completed = ended && !context.signal.aborted
     },
     async requestPermission(context, request) {
       return deps.permission(context.runId, request)

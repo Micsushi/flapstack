@@ -88,6 +88,7 @@ export function migrateDatabase(
     normalizePostdatedStage3DataMigrations(sqlite, migrationsFolder)
     normalizeMultiAgentOperationsTransitionMigration(sqlite, migrationsFolder)
     normalizeRelocatedMobilePairingIdentityMigration(sqlite, migrationsFolder)
+    applySkippedNovemberPreviewMigrations(sqlite, migrationsFolder)
     migrate(database, { migrationsFolder })
     recoverLegacyQueuedRunPrompts(sqlite)
   } finally {
@@ -97,6 +98,56 @@ export function migrateDatabase(
   const violations = sqlite.pragma("foreign_key_check") as Array<Record<string, unknown>>
   if (violations.length > 0) {
     throw new Error(`Database migration left ${violations.length} foreign key violation(s).`)
+  }
+}
+
+// November Preview used the same timestamps for Codex thread visibility and
+// workspace draft recovery. Keep those rows and their data, and record each
+// canonical migration only after its own SQL succeeds.
+function applySkippedNovemberPreviewMigrations(
+  sqlite: Database.Database,
+  migrationsFolder: string,
+) {
+  if (!tableExists(sqlite, "__drizzle_migrations")) return
+  const conflicts = [
+    {
+      when: 1790000000004,
+      tag: "0077_run_timings",
+      legacy: [
+        "e9429854b6520fbc1319af722417b0a8b0fc677378a9123e3e6215ffe90a575b",
+        "ae85a9ca097369dcd9f9b02b9b5a56bf6e2617ac0358193cba7ca3ec118b1563",
+      ],
+    },
+    {
+      when: 1790000000005,
+      tag: "0078_retired_codex_selections",
+      legacy: [
+        "b40ef38e6ef344aadd71c1a5a3289ad6df9421571335777e282a1b0be3fcbeb8",
+        "6e9ea433a477ef0be2de5902f1360943005a2d8ac6c0d84d693dfcd05a603bb4",
+      ],
+    },
+  ]
+  const rowsAt = sqlite.prepare("SELECT hash FROM __drizzle_migrations WHERE created_at = ?")
+  function isSkipped(entry: (typeof conflicts)[number]) {
+    const rows = rowsAt.all(entry.when) as { hash: string }[]
+    if (!rows.some((row) => entry.legacy.includes(row.hash))) return false
+    const sql = readFileSync(join(migrationsFolder, `${entry.tag}.sql`), "utf8").replace(
+      /\r\n/g,
+      "\n",
+    )
+    const canonical = [sql, sql.replace(/\n/g, "\r\n")].map((text) =>
+      createHash("sha256").update(text).digest("hex"),
+    )
+    return !rows.some((row) => canonical.includes(row.hash))
+  }
+  if (conflicts.some(isSkipped)) {
+    sqlite
+      .transaction(() => {
+        for (const entry of conflicts.filter(isSkipped)) {
+          applyMigration(sqlite, migrationsFolder, entry)
+        }
+      })
+      .immediate()
   }
 }
 

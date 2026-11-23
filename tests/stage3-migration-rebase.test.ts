@@ -92,6 +92,47 @@ describe("Stage 3 migration rebase", () => {
     }
   })
 
+  it("replays the two migrations shadowed in the November Preview exactly once", () => {
+    const { sqlite, directory } = database("november-preview")
+    try {
+      const db = drizzle(sqlite, { schema })
+      migrate(db, { migrationsFolder: migrationSubset(directory, 76) })
+      const legacy = [
+        ["0077_run_timings", "ae85a9ca097369dcd9f9b02b9b5a56bf6e2617ac0358193cba7ca3ec118b1563"],
+        [
+          "0078_retired_codex_selections",
+          "6e9ea433a477ef0be2de5902f1360943005a2d8ac6c0d84d693dfcd05a603bb4",
+        ],
+      ] as const
+      for (const [tag, hash] of legacy) {
+        sqlite
+          .prepare("INSERT INTO __drizzle_migrations(hash,created_at) VALUES (?,?)")
+          .run(hash, migrationEntry(tag).when)
+      }
+      sqlite.exec(
+        "INSERT INTO chats(id,scope,harness,model) VALUES ('prior','global','codex','gpt-5.5/high')",
+      )
+
+      migrateDatabase(db, sqlite, sourceMigrations)
+      migrateDatabase(db, sqlite, sourceMigrations)
+
+      expect(sqlite.prepare("SELECT model FROM chats WHERE id='prior'").get()).toEqual({
+        model: "gpt-5.6-sol/high",
+      })
+      expect(sqlite.prepare("SELECT sdk_message_uuid FROM checkpoints").all()).toEqual([])
+      expect(tableNames(sqlite)).toContain("agent_run_timing_marks")
+      for (const [tag, hash] of legacy) {
+        expect(
+          sqlite
+            .prepare("SELECT hash FROM __drizzle_migrations WHERE created_at=? ORDER BY rowid")
+            .all(migrationEntry(tag).when),
+        ).toEqual([{ hash }, { hash: migrationHash(tag) }])
+      }
+    } finally {
+      sqlite.close()
+    }
+  })
+
   it("runs canonical 0037 normally for a fresh profile", () => {
     const { sqlite } = database("fresh-canonical-0037")
     try {

@@ -41,6 +41,11 @@ describe("custom worktree validation", () => {
   it("resolves and accepts a Git checkout", async () => {
     const dir = makeTempDir()
     execFileSync("git", ["init", "-b", "main", dir], { stdio: "ignore" })
+    expect(await validateCustomWorktreePath(dir)).toEqual({
+      valid: true,
+      path: realpathSync(dir),
+      branch: null,
+    })
     writeFileSync(join(dir, "README.md"), "test\n")
     execFileSync("git", ["-C", dir, "add", "README.md"])
     execFileSync(

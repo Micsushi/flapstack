@@ -223,11 +223,15 @@ export async function discoverProviderExtensions(
   options: {
     cwd?: string
     homeDir?: string
+    provider?: ProviderExtensionProvider
   } = {},
 ): Promise<ProviderExtensionManifest[]> {
   const home = path.resolve(options.homeDir ?? os.homedir())
+  const selectedRoots = roots(home, options.cwd).filter(
+    (entry) => !options.provider || entry.provider === options.provider,
+  )
   const discovered = await Promise.all(
-    roots(home, options.cwd).map(async (entry) => {
+    selectedRoots.map(async (entry) => {
       try {
         if (entry.shape === "skill-directories") return await scanSkillRoot(entry)
         return await scanFileRoot(entry)
@@ -237,8 +241,9 @@ export async function discoverProviderExtensions(
       }
     }),
   )
-  const mcp = await discoverMcpExtensions({ cwd: options.cwd, homeDir: home })
-  const claudePlugins = await discoverClaudePlugins()
+  const mcp = await discoverMcpExtensions({ ...options, homeDir: home })
+  const claudePlugins =
+    !options.provider || options.provider === "claude" ? await discoverClaudePlugins() : []
   return [...discovered.flat(), ...mcp, ...claudePlugins].sort((a, b) =>
     `${a.provider}:${a.kind}:${a.name}:${a.sourceId}`.localeCompare(
       `${b.provider}:${b.kind}:${b.name}:${b.sourceId}`,
@@ -413,6 +418,7 @@ function limitManifest(root: ExtensionRoot, total: number): ProviderExtensionMan
 async function discoverMcpExtensions(options: {
   cwd?: string
   homeDir: string
+  provider?: ProviderExtensionProvider
 }): Promise<ProviderExtensionManifest[]> {
   const configs: Array<{
     provider: ProviderExtensionProvider
@@ -483,7 +489,11 @@ async function discoverMcpExtensions(options: {
       },
     )
   }
-  const groups = await Promise.all(configs.map(discoverMcpConfig))
+  const groups = await Promise.all(
+    configs
+      .filter((config) => !options.provider || config.provider === options.provider)
+      .map(discoverMcpConfig),
+  )
   return groups.flat()
 }
 

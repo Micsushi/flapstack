@@ -8,6 +8,26 @@ import { useCodeTheme } from "../lib/hooks/use-code-theme"
 import { highlightCode } from "../lib/themes/shiki-theme-loader"
 import { MermaidBlock } from "./mermaid-block"
 
+type MarkdownNode = { type: string; url?: string; children?: MarkdownNode[] }
+
+// Local file references in provider replies are labels. The changed-file card
+// owns opening files inside the registered checkout.
+function remarkLocalFileLabels() {
+  function visit(parent: MarkdownNode) {
+    if (!parent.children) return
+    parent.children = parent.children.flatMap((node) => {
+      visit(node)
+      if (node.type === "link" && /^(?:file:|\/?[a-z]:[\\/]|\/(?!\/))/i.test(node.url ?? "")) {
+        return node.children ?? []
+      }
+      return [node]
+    })
+  }
+  return visit
+}
+
+const chatRemarkPlugins = [remarkGfm, remarkBreaks, remarkLocalFileLabels]
+
 // Function to strip emojis from text (only common emojis, preserving markdown symbols)
 export function stripEmojis(text: string): string {
   return text
@@ -447,7 +467,7 @@ export const ChatMarkdownRenderer = memo(function ChatMarkdownRenderer({
       <Streamdown
         mode="streaming"
         components={components}
-        remarkPlugins={[remarkGfm, remarkBreaks]}
+        remarkPlugins={chatRemarkPlugins}
         isAnimating={isStreaming}
         parseIncompleteMarkdown={isStreaming}
         controls={false}
@@ -672,7 +692,7 @@ const MemoizedMarkdownBlock = memo(
       <Streamdown
         mode="static"
         components={components}
-        remarkPlugins={[remarkGfm, remarkBreaks]}
+        remarkPlugins={chatRemarkPlugins}
         controls={false}
       >
         {content}

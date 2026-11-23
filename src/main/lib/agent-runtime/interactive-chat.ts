@@ -294,6 +294,7 @@ export function materializeInteractiveRuntimeRun(
     worktreePath,
     projectPath: context.project_path,
     codexThreadVisibility: input.codexThreadVisibility ?? "hidden",
+    interactiveChat: true,
     runtimeLaunch: launch,
     providerAccount: providerAccountSnapshotFromRow({ ...snapshot, harness: input.harness }),
   }
@@ -362,6 +363,7 @@ export function loadInteractiveRuntimeAssistantParts(
       const streamed = item ? codexDeltas.get(item)?.join("") : undefined
       if (item) codexDeltas.delete(item)
       const text = streamed?.startsWith(event.payload.text) ? streamed : event.payload.text
+      if (!text) continue
       parts.push({
         type: "text",
         text,

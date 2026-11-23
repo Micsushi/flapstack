@@ -51,6 +51,7 @@ const resolveInputSchema = z.object({
 const launchInputSchema = resolveInputSchema.extend({
   antigravityNativeApprovals: z.boolean().optional(),
   submittedAtMs: z.number().int().nonnegative().optional(),
+  preparedAtMs: z.number().int().nonnegative().optional(),
   runId: z.string().trim().min(1).max(512),
   prompt: z.string().min(1).max(2_000_000),
   codexThreadVisibility: z.enum(CODEX_THREAD_VISIBILITIES).default("hidden"),
@@ -147,7 +148,7 @@ export const agentRuntimeChatRouter = router({
           run = materializeInteractiveRuntimeRun(database, input, {
             [preliminary.resolvedRuntime]: probe,
           })
-          recordSubmittedAt(database, run.runId, input.submittedAtMs)
+          recordSubmittedAt(database, run.runId, input.submittedAtMs, input.preparedAtMs)
           try {
             await bindVisualCaptureImagesToRun({
               database,

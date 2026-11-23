@@ -1,11 +1,4 @@
-import {
-  constants,
-  createReadStream,
-  createWriteStream,
-  existsSync,
-  readFileSync,
-  type BigIntStats,
-} from "node:fs"
+import { constants, createReadStream, existsSync, readFileSync, type BigIntStats } from "node:fs"
 import {
   copyFile,
   mkdir,
@@ -16,9 +9,9 @@ import {
   rename,
   rm,
   writeFile,
+  type FileHandle,
 } from "node:fs/promises"
 import { createHash, randomUUID } from "node:crypto"
-import { pipeline } from "node:stream/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path"
 import type { SimpleGit, StatusResult } from "simple-git"
@@ -26,7 +19,7 @@ import { eq, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import { agentRuns, checkpoints, fileChangeManifests, getDatabase, getDatabasePath } from "./db"
 import type * as schema from "./db/schema"
-import { recordCheckpointTiming } from "./run-timings"
+import { recordRunTimingInterval } from "./run-timings"
 import { splitUnifiedDiffByFile } from "./git/diff-parser"
 import { createGit } from "./git/git-factory"
 
@@ -49,6 +42,13 @@ export type CheckpointStatusSnapshot = {
   indexTree?: string
   profileObjects?: boolean
   originals?: Record<string, string | null>
+  fileCapture?: {
+    listMs: number
+    validateAndCopyMs: number
+    listed: number
+    copied: number
+    copiedBytes: number
+  }
   reviewTree?: string
   skipped?: boolean
   error?: string
@@ -114,7 +114,7 @@ async function buildStatusSnapshot(
     }
 
     const profile = checkpointProfile(db)
-    const [head, staged, originals] = await Promise.all([
+    const [head, staged, { originals, fileCapture }] = await Promise.all([
       git.revparse(["--verify", "HEAD"]).catch(() => null),
       git.raw(["write-tree"]),
       captureOriginals(worktreePath, git, profile),
@@ -131,6 +131,7 @@ async function buildStatusSnapshot(
         indexTree,
         profileObjects: true,
         originals,
+        fileCapture,
       },
     }
   } catch (error) {
@@ -189,15 +190,41 @@ function safeSnapshotPath(root: string, name: string) {
   return join(root, name)
 }
 
-async function eachFile<T>(items: T[], operation: (item: T) => Promise<void>) {
+async function eachFile<T>(items: T[], operation: (item: T, worker: number) => Promise<void>) {
   let next = 0
   const results = await Promise.allSettled(
-    Array.from({ length: Math.min(16, items.length) }, async () => {
-      while (next < items.length) await operation(items[next++]!)
+    Array.from({ length: Math.min(16, items.length) }, async (_, worker) => {
+      while (next < items.length) await operation(items[next++]!, worker)
     }),
   )
   const failed = results.find((item) => item.status === "rejected")
   if (failed?.status === "rejected") throw failed.reason
+}
+
+async function copyOriginal(
+  source: FileHandle,
+  destination: string,
+  stat: BigIntStats,
+  buffer: Buffer,
+) {
+  const output = await open(destination, "wx", Number(stat.mode & 0o777n))
+  try {
+    let remaining = stat.size
+    while (remaining > 0n) {
+      const length = remaining < BigInt(buffer.length) ? Number(remaining) : buffer.length
+      const { bytesRead } = await source.read(buffer, 0, length)
+      if (!bytesRead) throw new Error("Checkpoint source ended before its recorded size")
+      let offset = 0
+      while (offset < bytesRead) {
+        const { bytesWritten } = await output.write(buffer, offset, bytesRead - offset)
+        if (!bytesWritten) throw new Error("Could not write complete checkpoint file")
+        offset += bytesWritten
+      }
+      remaining -= BigInt(bytesRead)
+    }
+  } finally {
+    await output.close()
+  }
 }
 
 async function captureOriginals(worktree: string, git: SimpleGit, profile: string) {
@@ -205,6 +232,7 @@ async function captureOriginals(worktree: string, git: SimpleGit, profile: strin
   const fromRepo = relative(worktree, files)
   if (!fromRepo || (!isAbsolute(fromRepo) && fromRepo !== ".." && !fromRepo.startsWith(".." + sep)))
     throw new Error("The checkpoint profile must be outside the working repository")
+  const started = Date.now()
   const raw = await git.raw([
     "ls-files",
     "-z",
@@ -214,8 +242,16 @@ async function captureOriginals(worktree: string, git: SimpleGit, profile: strin
     "--exclude-standard",
   ])
   const names = [...new Set(raw.split("\0").filter(Boolean))]
+  const listedAt = Date.now()
+  const fileCapture = {
+    listMs: listedAt - started,
+    validateAndCopyMs: 0,
+    listed: names.length,
+    copied: 0,
+    copiedBytes: 0,
+  }
   const originals: Record<string, string | null> = Object.create(null)
-  if (!names.length) return originals
+  if (!names.length) return { originals, fileCapture }
   await Promise.all([
     mkdir(files, { recursive: true, mode: 0o700 }),
     mkdir(join(profile, "checkpoint-objects"), { recursive: true, mode: 0o700 }),
@@ -227,7 +263,8 @@ async function captureOriginals(worktree: string, git: SimpleGit, profile: strin
       ":",
     )
   let unsupported = false
-  await eachFile(names, async (name) => {
+  const buffers: Buffer[] = []
+  await eachFile(names, async (name, worker) => {
     const path = safeSnapshotPath(root, name)
     const parent = dirname(path)
     const resolved =
@@ -264,10 +301,8 @@ async function captureOriginals(worktree: string, git: SimpleGit, profile: strin
       try {
         if (stamp(await source.stat({ bigint: true })) !== identity)
           throw new Error("File changed before checkpoint: " + name)
-        await pipeline(
-          createReadStream(path, { fd: source.fd, autoClose: false, highWaterMark: 256 * 1024 }),
-          createWriteStream(temp, { flags: "wx", mode: Number(stat.mode & 0o777n) }),
-        )
+        const buffer = (buffers[worker] ??= Buffer.allocUnsafe(256 * 1024))
+        await copyOriginal(source, temp, stat, buffer)
         const final = await lstat(path, { bigint: true })
         if (
           stamp(final) !== identity ||
@@ -276,14 +311,19 @@ async function captureOriginals(worktree: string, git: SimpleGit, profile: strin
         )
           throw new Error("File changed during checkpoint: " + name)
         await rename(temp, target)
+        fileCapture.copied++
+        fileCapture.copiedBytes += Number(stat.size)
+      } catch (error) {
+        await rm(temp, { force: true })
+        throw error
       } finally {
         await source.close()
-        await rm(temp, { force: true })
       }
     }
     originals[name] = key
   })
-  return unsupported ? undefined : originals
+  fileCapture.validateAndCopyMs = Date.now() - listedAt
+  return { originals: unsupported ? undefined : originals, fileCapture }
 }
 
 async function privateWriter(
@@ -455,6 +495,7 @@ function parseCheckpointSnapshot(value: string | null): CheckpointStatusSnapshot
         indexTree: parsed.indexTree,
         profileObjects: parsed.profileObjects,
         originals: parsed.originals,
+        fileCapture: parsed.fileCapture,
         reviewTree: parsed.reviewTree,
         skipped: parsed.skipped,
         error: parsed.error,
@@ -678,7 +719,7 @@ export async function captureCheckpoint(
     }
   }
 
-  recordCheckpointTiming(db, runId, kind, started, Date.now())
+  recordRunTimingInterval(db, runId, kind, started, Date.now())
   return checkpoint
 }
 

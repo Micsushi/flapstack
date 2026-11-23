@@ -62,6 +62,45 @@ describe("direct Codex Runtime recovery", () => {
     await adapter.cleanup(forkContext)
   })
 
+  it.each([
+    ["no rollout found for thread id old", "earlier prompt\n", true],
+    ["no rollout found for thread id old", null, false],
+    ["no rollout found for thread id another", "earlier prompt\n", false],
+    ["authentication failed", "earlier prompt\n", false],
+  ] as const)(
+    "recovers only the verified empty thread (%s, %s)",
+    async (reason, prefix, replace) => {
+      const client = new FakeCodexProtocolClient()
+      client.responses.set(
+        "thread/resume",
+        new Error(`[codex-runtime] thread/resume failed: ${reason}`),
+      )
+      const adapter = createCodexRuntimeAdapterFactory({
+        appendActivity: collectActivity().append,
+        resolveThreadParams: () => ({ cwd: "/worktree" }),
+        cancelledFirstThreadContext: () => prefix,
+        resolveCommand: () => "/fake/codex",
+        getBinaryVersion: async () => "0.166.0-alpha.6",
+        createClient: () => client,
+      })()
+      const context = runtimeContext()
+      const resumed = adapter.resumeSession(context, {
+        providerThreadId: "old",
+        providerSessionId: null,
+      })
+      if (replace) {
+        await adapter.startTurn(context, await resumed, "current prompt")
+        expect(client.requests.find((r) => r.method === "turn/start")?.params?.input).toEqual([
+          { type: "text", text: "earlier prompt\ncurrent prompt", text_elements: [] },
+        ])
+      } else {
+        await expect(resumed).rejects.toThrow(reason)
+      }
+      expect(client.requests.some((r) => r.method === "thread/start")).toBe(replace)
+      await adapter.cleanup(context)
+    },
+  )
+
   it("reconciles restart state without replaying uncertain turn intent", async () => {
     const active = new FakeCodexProtocolClient()
     active.responses.set("thread/read", {

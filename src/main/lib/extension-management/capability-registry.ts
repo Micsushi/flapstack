@@ -74,7 +74,7 @@ export const extensionHarnessBaselines: ExtensionHarnessBaseline[] = [
   },
 ]
 
-const providerByHarness: Record<ExtensionHarness, ProviderExtensionProvider> = {
+export const providerByHarness: Readonly<Record<ExtensionHarness, ProviderExtensionProvider>> = {
   "claude-code": "claude",
   codex: "codex",
   "cursor-agent": "cursor",

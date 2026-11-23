@@ -87,6 +87,9 @@ describe("Agent Runtime settings presentation", () => {
       available: false,
       reason: "Package gate open.",
     })
+    expect(codex.options.find((option) => option.value === "flapstack-native")?.reason).toContain(
+      "reply to questions in chat",
+    )
     expect(allowedRuntimePreferences("codex")).toEqual([
       "auto",
       "codex",

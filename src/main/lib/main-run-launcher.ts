@@ -1,4 +1,5 @@
 import { buildRecordTaskRunContext } from "./project-records/run-context"
+import { recordRunTimingInterval } from "./run-timings"
 import { createAntigravityAdapter } from "./agent-runtime/antigravity/adapter"
 import type { AgentActivityInvalidation } from "../../shared/agent-activity"
 import { broadcastAgentActivityInvalidation } from "./agent-runtime/activity-service"
@@ -240,6 +241,7 @@ export class MainRuntimeLaunchService {
         },
         resolveThreadParams: async (context, operation) => {
           const authority = await this.resolveExtensionAuthority(context, "codex")
+          const run = this.runs.get(context.runId)
           const enhanced = usesFlapstackRuntimeEnhancements(context.launch.requestedPreference)
           const config = isHiddenPreviewVerification()
             ? {}
@@ -255,6 +257,14 @@ export class MainRuntimeLaunchService {
             ...codexPermissionOptions(context.launch.permission.mode),
             config: {
               ...config,
+              ...(run?.interactiveChat && run.harness === "codex" && this.inputHandler
+                ? {
+                    features: {
+                      ...(isPlainRecord(config.features) ? config.features : {}),
+                      default_mode_request_user_input: true,
+                    },
+                  }
+                : {}),
               ...(context.launch.permission.mode === "auto-edit-project-only"
                 ? {
                     sandbox_workspace_write: {
@@ -273,6 +283,8 @@ export class MainRuntimeLaunchService {
         resolveThreadVisibility: (context) =>
           this.runs.get(context.runId)?.codexThreadVisibility ?? "hidden",
         resolvePersistedSession: (context) => this.loadPersistedSession(context.runId),
+        cancelledFirstThreadContext: (context, threadId) =>
+          this.cancelledFirstCodexThreadContext(context.runId, threadId),
         resolvePersistedTurn: (context) => this.loadPersistedTurn(context.runId),
         requestPermission: (context, request) =>
           this.requestPermissionFromProvider(context.runId, request),
@@ -361,7 +373,8 @@ export class MainRuntimeLaunchService {
     this.coordinator = new RuntimeLaunchCoordinator(this.registry, {
       persistIntent: (request) => this.persistIntent(request.runId, request.launch),
       persistSession: (request, session) => this.persistSession(request.runId, session),
-      persistTurn: (request, session, turn) => this.persistTurn(request.runId, session, turn),
+      persistTurn: (request, session, turn) =>
+        this.persistTurn(request.runId, session, turn, request.persistedSession?.providerThreadId),
       onLifecycle: (request, lifecycle, detail) =>
         this.persistLifecycle(request.runId, lifecycle, detail),
       onActivityReference: (request) => this.referenceActivity(request.runId),
@@ -1048,7 +1061,12 @@ export class MainRuntimeLaunchService {
           run.resolved_runtime === "codex"
             ? session.providerThreadId
             : (session.providerSessionId ?? session.providerThreadId)
-        if (run.sub_chat_id && identity) {
+        // Codex thread/start may return an ID before the first durable rollout exists.
+        if (
+          (run.resolved_runtime !== "codex" || run.harness !== "codex") &&
+          run.sub_chat_id &&
+          identity
+        ) {
           db.prepare("UPDATE sub_chats SET session_id = ?, updated_at = ? WHERE id = ?").run(
             identity,
             nowEpochSeconds(),
@@ -1069,13 +1087,33 @@ export class MainRuntimeLaunchService {
     runId: string,
     session: RuntimeAdapterSession,
     turn: RuntimeAdapterTurn,
+    previousThreadId?: string | null,
   ): Promise<void> {
     const db = this.open()
     let activityInvalidation: AgentActivityInvalidation | undefined
     try {
-      activityInvalidation = this.appendActivityWithDatabase(db, runId, [
-        lifecycleActivity("turn-started", "turn-started", session, turn),
-      ])
+      db.transaction(() => {
+        const run = this.requireRunRow(db, runId)
+        if (
+          run.resolved_runtime === "codex" &&
+          run.harness === "codex" &&
+          run.sub_chat_id &&
+          session.providerThreadId
+        ) {
+          db.prepare(
+            "UPDATE sub_chats SET session_id = ?, updated_at = ? WHERE id = ? AND (session_id IS ? OR session_id = ?)",
+          ).run(
+            session.providerThreadId,
+            nowEpochSeconds(),
+            run.sub_chat_id,
+            previousThreadId ?? null,
+            session.providerThreadId,
+          )
+        }
+        activityInvalidation = this.appendActivityWithDatabase(db, runId, [
+          lifecycleActivity("turn-started", "turn-started", session, turn),
+        ])
+      }).immediate()
       if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
     } finally {
       db.close()
@@ -1310,6 +1348,47 @@ export class MainRuntimeLaunchService {
     }
   }
 
+  private cancelledFirstCodexThreadContext(runId: string, threadId: string): string | null {
+    const db = this.open()
+    try {
+      // Older builds could record a late thread/start after the first run was already stopped.
+      // Only that ordering can establish that the coordinator never dispatched its first turn.
+      const row = db
+        .prepare(
+          `
+        SELECT s.messages FROM agent_runs current
+        JOIN sub_chats s ON s.id = current.sub_chat_id AND s.session_id = ?
+        JOIN agent_runs first ON first.rowid = (
+          SELECT MIN(rowid) FROM agent_runs WHERE sub_chat_id = s.id
+        )
+        JOIN agent_activity_events stop ON stop.run_id = first.id
+          AND stop.dedup_key = 'runtime:runtime:lifecycle:cancelled'
+        JOIN agent_activity_events session ON session.run_id = first.id
+          AND session.dedup_key = 'runtime:runtime:session-started'
+          AND session.provider_thread_id = s.session_id AND session.sequence > stop.sequence
+        WHERE current.id = ? AND current.status = 'running' AND current.resolved_runtime = 'codex' AND current.harness = 'codex'
+          AND first.status = 'cancelled' AND first.resolved_runtime = 'codex' AND first.harness = 'codex'
+          AND NOT EXISTS (
+            SELECT 1 FROM agent_activity_events a JOIN agent_runs r ON r.id = a.run_id
+            WHERE r.sub_chat_id = s.id AND (
+              a.provider_turn_id IS NOT NULL OR a.provider_item_id IS NOT NULL
+              OR ((a.provider_thread_id IS NOT NULL OR a.provider_session_id IS NOT NULL)
+                AND a.storage_id <> session.storage_id)
+            )
+          )
+      `,
+        )
+        .get(threadId, runId) as { messages: string } | undefined
+      if (!row) return null
+      // Imported or otherwise materialized assistant history must always keep its provider identity.
+      const messages = parseStoredChatMessages(row.messages)
+      if (!messages.length || messages.some((message) => message?.role !== "user")) return null
+      return prependPreSessionChatContext("", this.loadPreSessionUserMessages(runId))
+    } finally {
+      db.close()
+    }
+  }
+
   private async loadPersistedSession(
     runId: string,
     allowSubChatFallback = true,
@@ -1432,6 +1511,7 @@ export class MainRuntimeLaunchService {
         }
       }
       const cwd = resolveRoot(requestedCwd)
+      const policyStart = Date.now()
       const extension = await buildExtensionRunContext(database, {
         chatId: context.chatId,
         harness,
@@ -1442,6 +1522,7 @@ export class MainRuntimeLaunchService {
             }
           : {}),
       })
+      recordRunTimingInterval(database, context.runId, "extension-policy", policyStart, Date.now())
       const hooks = resolveEnabledManagedHooks({
         store: this.hookStore,
         harness,

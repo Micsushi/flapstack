@@ -59,6 +59,7 @@ export async function createDirectRuntimeStream(input: {
       }
       throw error
     })
+  const preparedAtMs = Date.now()
   refreshPinnedRuntimeSelection(input.chatId)
   if (!resolution.direct) return null
 
@@ -131,6 +132,7 @@ export async function createDirectRuntimeStream(input: {
       subscription = trpcClient.agentRuntimeChat.launch.subscribe(
         {
           submittedAtMs: input.submittedAtMs,
+          preparedAtMs,
           runId,
           chatId: input.chatId,
           subChatId: input.subChatId,

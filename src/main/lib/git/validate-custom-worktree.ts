@@ -22,6 +22,16 @@ export async function validateCustomWorktreePath(
     }
     const resolvedPath = await realpath(requestedPath)
     const git = simpleGit(resolvedPath)
+    // An ordinary checkout can report both facts in one Git process. The final
+    // line is the ref name. The root itself may contain a newline on Unix.
+    const location = await git.revparse(["--show-toplevel", "--abbrev-ref", "HEAD"]).catch(() => "")
+    const endOfRoot = location.lastIndexOf("\n")
+    if (endOfRoot !== -1) {
+      const root = location.slice(0, endOfRoot).replace(/\r$/, "")
+      const branch = location.slice(endOfRoot + 1).trim()
+      return { valid: true, path: await realpath(root), branch: branch === "HEAD" ? null : branch }
+    }
+    // Unborn HEAD cannot resolve a ref yet. Preserve its validated checkout root.
     if (!(await git.checkIsRepo())) {
       return {
         valid: false,

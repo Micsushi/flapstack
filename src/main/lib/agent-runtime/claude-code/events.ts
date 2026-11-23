@@ -57,8 +57,10 @@ export class ClaudeRuntimeProtocolError extends Error {
 }
 
 export class ClaudeRuntimeEventMapper {
-  private readonly blocks = new Map<number, BlockState>()
-  private messageId: string | null = null
+  private readonly streams = new Map<
+    string | null,
+    { id: string | null; blocks: Map<number, BlockState> }
+  >()
 
   constructor(private readonly controls: RuntimeLaunchControls) {}
 
@@ -85,17 +87,18 @@ export class ClaudeRuntimeEventMapper {
     const event = record(message.event)
     const type = string(event.type)
     const index = integer(event.index)
-    if (type === "message_start") {
-      this.messageId = string(record(event.message).id)
+    const parent = string(message.parent_tool_use_id)
+    if (type === "message_start" || !this.streams.has(parent)) {
+      this.streams.set(parent, { id: messageItemId(event), blocks: new Map() })
     }
+    const stream = this.streams.get(parent)!
     const base = this.base(message, type || "stream-event", {
       contentIndex: index,
-      providerItemId: messageItemId(event) || this.messageId,
-      providerMessageId: messageItemId(event) || this.messageId,
+      providerItemId: messageItemId(event) || stream.id,
+      providerMessageId: messageItemId(event) || stream.id,
     })
 
     if (type === "message_start") {
-      this.blocks.clear()
       return [
         activity(base, "lifecycle", "started", "status", "public", {
           state: "message-started",
@@ -109,19 +112,19 @@ export class ClaudeRuntimeEventMapper {
       const blockType = string(block.type) || "unknown"
       const id = string(block.id)
       const name = string(block.name)
-      this.blocks.set(index, { type: blockType, id, name, inputJson: "" })
+      stream.blocks.set(index, { type: blockType, id, name, inputJson: "" })
       return this.mapBlockStart(base, blockType, id, name)
     }
 
     if (type === "content_block_delta" && index !== null) {
       const delta = record(event.delta)
       const deltaType = string(delta.type) || "unknown"
-      return this.mapBlockDelta(base, this.blocks.get(index), deltaType, delta)
+      return this.mapBlockDelta(base, stream.blocks.get(index), deltaType, delta)
     }
 
     if (type === "content_block_stop" && index !== null) {
-      const block = this.blocks.get(index)
-      this.blocks.delete(index)
+      const block = stream.blocks.get(index)
+      stream.blocks.delete(index)
       return this.mapBlockStop(base, block)
     }
 
@@ -137,6 +140,7 @@ export class ClaudeRuntimeEventMapper {
     }
 
     if (type === "message_stop") {
+      this.streams.delete(parent)
       return [
         activity(base, "lifecycle", "completed", "status", "public", {
           state: "message-stopped",
@@ -261,7 +265,20 @@ export class ClaudeRuntimeEventMapper {
     blocks.forEach((rawBlock, index) => {
       const block = record(rawBlock)
       const type = string(block.type) || "unknown"
-      const base = childIdentity(messageBase, `block:${index}`, { contentIndex: index })
+      // The SDK also emits one-block snapshots just before the matching stream block stops.
+      // Their compact array starts at zero even when the stream block follows thinking or tools.
+      let contentIndex = index
+      const stream = this.streams.get(parentId)
+      if (
+        blocks.length === 1 &&
+        stream?.id &&
+        sdkMessage.id === stream.id &&
+        stream.blocks.size === 1
+      ) {
+        const [streamIndex, open] = stream.blocks.entries().next().value!
+        if (open.type === type && (!open.id || open.id === block.id)) contentIndex = streamIndex
+      }
+      const base = childIdentity(messageBase, `block:${index}`, { contentIndex })
       if (type === "text") {
         const text = string(block.text) || ""
         if (parentId) {
