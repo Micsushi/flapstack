@@ -279,11 +279,19 @@ export const lastSelectedClaudeEffortAtom = atomWithStorage<ClaudeEffortPreferen
   { getOnInit: true },
 )
 
-export const lastSelectedCodexModelIdAtom = atomWithStorage<string>(
+const storedCodexModelIdAtom = atomWithStorage<string>(
   "agents:lastSelectedCodexModelId",
   DEFAULT_CODEX_MODEL_ID,
   undefined,
   { getOnInit: true },
+)
+
+export const lastSelectedCodexModelIdAtom = atom(
+  (get) => {
+    const model = get(storedCodexModelIdAtom)
+    return model === "gpt-5.5" ? DEFAULT_CODEX_MODEL_ID : model
+  },
+  (_get, set, model: string) => set(storedCodexModelIdAtom, model),
 )
 
 export type CodexReasoningPreference = CodexReasoningLevel
@@ -446,24 +454,60 @@ const subChatCodexModelIdsStorageAtom = atomWithStorage<Record<string, string>>(
 
 // A persisted Chat target precedes the global default, but never replaces an
 // explicit selection already made for this conversation.
-export const initializeSubChatCodexModelAtom = atom(
+export const initializeSubChatModelAtom = atom(
   null,
   (
     get,
     set,
     input: {
       subChatId: string
+      harness: "codex" | "claude-code"
       model: string | null | undefined
       parentHarness?: string
       parentModel?: string | null
+      lastRunSelection?: {
+        model: string | null
+        effort: string | null
+        reasoningDisplay: boolean | null
+      }
     },
   ) => {
-    const model = input.model || (input.parentHarness === "codex" ? input.parentModel : null)
-    if (!model || !input.subChatId) return
+    if (!input.subChatId) return
+    const saved = input.lastRunSelection
+    const model =
+      input.model ||
+      (input.parentHarness === input.harness ? input.parentModel : null) ||
+      saved?.model
+    const display = get(subChatReasoningEnabledStorageAtom)
+    if (typeof saved?.reasoningDisplay === "boolean" && display[input.subChatId] === undefined) {
+      set(subChatReasoningEnabledAtomFamily(input.subChatId), saved.reasoningDisplay)
+    }
+    if (input.harness === "claude-code") {
+      if (model && get(subChatModelIdsStorageAtom)[input.subChatId] === undefined) {
+        const uiModel =
+          Object.keys(CLAUDE_MODEL_ID_MAP).find((id) => CLAUDE_MODEL_ID_MAP[id] === model) ?? model
+        set(subChatModelIdAtomFamily(input.subChatId), uiModel)
+      }
+      const effort = saved?.effort
+      if (
+        effort &&
+        ["low", "medium", "high", "xhigh", "max"].includes(effort) &&
+        get(subChatClaudeEffortStorageAtom)[input.subChatId] === undefined
+      ) {
+        set(subChatClaudeEffortAtomFamily(input.subChatId), effort as ClaudeEffortPreference)
+      }
+      return
+    }
+    if (!model) return
     const current = get(subChatCodexModelIdsStorageAtom)
-    if (current[input.subChatId] !== undefined) return
-    const [modelId, effort] = model.split("/")
-    set(subChatCodexModelIdsStorageAtom, { ...current, [input.subChatId]: modelId })
+    const [modelId, explicitEffort] = model.split("/")
+    if (current[input.subChatId] === undefined || current[input.subChatId] === "gpt-5.5") {
+      set(
+        subChatCodexModelIdAtomFamily(input.subChatId),
+        modelId === "gpt-5.5" ? DEFAULT_CODEX_MODEL_ID : modelId,
+      )
+    }
+    const effort = explicitEffort || saved?.effort
     if (effort && ["none", "low", "medium", "high", "xhigh", "max", "ultra"].includes(effort)) {
       const reasoning = get(subChatCodexReasoningStorageAtom)
       if (reasoning[input.subChatId] === undefined) {
@@ -479,8 +523,9 @@ export const initializeSubChatCodexModelAtom = atom(
 export const subChatCodexModelIdAtomFamily = atomFamily((subChatId: string) =>
   atom(
     (get) => {
-      if (!subChatId) return get(lastSelectedCodexModelIdAtom)
-      return get(subChatCodexModelIdsStorageAtom)[subChatId] ?? get(lastSelectedCodexModelIdAtom)
+      const stored =
+        get(subChatCodexModelIdsStorageAtom)[subChatId] ?? get(lastSelectedCodexModelIdAtom)
+      return stored === "gpt-5.5" ? DEFAULT_CODEX_MODEL_ID : stored
     },
     (get, set, newModelId: string) => {
       if (!subChatId) {
@@ -492,6 +537,19 @@ export const subChatCodexModelIdAtomFamily = atomFamily((subChatId: string) =>
       set(subChatCodexModelIdsStorageAtom, { ...current, [subChatId]: newModelId })
     },
   ),
+)
+
+export const antigravityModelSelectionsAtom = atomWithStorage<Record<string, string>>(
+  "agents:antigravityModels",
+  {},
+  undefined,
+  { getOnInit: true },
+)
+export const antigravityNativeApprovalsAtom = atomWithStorage(
+  "agents:antigravityNativeApprovals",
+  false,
+  undefined,
+  { getOnInit: true },
 )
 
 // --- Cursor (`cursor-agent`) model selection - Stage 2 Track D (D5) ---
@@ -608,6 +666,12 @@ export const subChatModeAtomFamily = atomFamily((subChatId: string) =>
 
 // Model ID to full Claude model string mapping
 export const MODEL_ID_MAP = CLAUDE_MODEL_ID_MAP
+
+export function claudeModelForLaunch(modelId: string): string {
+  return Object.hasOwn(MODEL_ID_MAP, modelId)
+    ? MODEL_ID_MAP[modelId]!
+    : modelId || DEFAULT_CLAUDE_MODEL_ID
+}
 
 // Sidebar state - window-scoped so each window has independent sidebar visibility
 export const agentsSidebarOpenAtom = atomWithWindowStorage<boolean>("agents-sidebar-open", true, {

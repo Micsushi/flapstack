@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, Menu, nativeImage } from "electron"
 import { startProjectRecordsRuntime } from "./lib/project-records/runtime"
 import { existsSync, readFileSync, readlinkSync, unlinkSync } from "fs"
 import { createServer } from "http"
-import { basename, join, resolve } from "path"
+import { basename, dirname, isAbsolute, join, resolve } from "path"
 import {
   AuthManager,
   initAuthManager,
@@ -283,11 +283,27 @@ if (IS_CONTROL_DEV) {
   app.setName(APP_DISPLAY_NAME)
   console.log("[Dev] Using separate userData path:", devUserData)
 } else if (IS_PREVIEW) {
-  const previewUserData = join(
-    app.getPath("userData"),
-    "..",
-    resolvePreviewUserDataName(process.env.FLAPSTACK_PREVIEW_INSTANCE),
-  )
+  const instance = process.env.FLAPSTACK_PREVIEW_INSTANCE?.trim()
+  const explicitProfile = app.commandLine.getSwitchValue("user-data-dir")
+  let previewUserData = join(app.getPath("userData"), "..", resolvePreviewUserDataName(instance))
+  if (!instance && explicitProfile && isAbsolute(explicitProfile)) {
+    previewUserData = explicitProfile
+  } else if (!instance && process.platform === "win32") {
+    const configPath = join(dirname(process.execPath), "..", "Launcher", "launch-config.json")
+    if (existsSync(configPath)) {
+      const config = JSON.parse(readFileSync(configPath, "utf8").replace(/^\uFEFF/, ""))
+      if (
+        typeof config.selection?.executable === "string" &&
+        resolve(config.selection.executable).toLowerCase() ===
+          resolve(process.execPath).toLowerCase()
+      ) {
+        if (typeof config.profile !== "string" || !isAbsolute(config.profile)) {
+          throw new Error("The installed Flapstack launcher has no absolute profile path.")
+        }
+        previewUserData = config.profile
+      }
+    }
+  }
   app.setPath("userData", previewUserData)
   app.setName(APP_DISPLAY_NAME)
   console.log("[Preview] Using separate userData path:", previewUserData)

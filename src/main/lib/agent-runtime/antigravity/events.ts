@@ -1,0 +1,172 @@
+import type { SessionUpdate } from "@agentclientprotocol/sdk"
+import { createTwoFilesPatch } from "diff"
+import { eventRecord } from "../event-values"
+import type {
+  AgentActivityAppend,
+  AgentActivityAppendBase,
+} from "../../../../shared/agent-activity"
+
+// ACP sends text deltas and tool boundaries, without a final aggregate message.
+export class AntigravityEvents {
+  private kind: "agent-text" | "provider-visible-reasoning" | null = null
+  private pending = ""
+  private part = 0
+  private readonly tools = new Map<string, { name: string; kind?: string | null }>()
+
+  constructor(
+    private readonly sessionId: string,
+    private readonly showThoughts: boolean,
+  ) {}
+
+  private identity(): AgentActivityAppendBase {
+    return {
+      provider: "antigravity",
+      providerSessionId: this.sessionId,
+      providerItemId: String(this.part),
+      phase: "delta",
+      displayClass: "provider-visible",
+      privacyClass: "public",
+    }
+  }
+
+  finish(boundary: "final_answer" | "commentary" | null = "final_answer"): AgentActivityAppend[] {
+    if (!this.kind) return []
+    const base = { ...this.identity(), phase: "completed" as const }
+    const event: AgentActivityAppend =
+      this.kind === "agent-text"
+        ? { ...base, kind: this.kind, sectionBoundary: boundary, payload: { text: this.pending } }
+        : { ...base, kind: this.kind, payload: { text: this.pending, label: "Gemini thinking" } }
+    this.part++
+    this.kind = null
+    this.pending = ""
+    return [event]
+  }
+
+  update(update: SessionUpdate): AgentActivityAppend[] {
+    if (
+      update.sessionUpdate === "agent_message_chunk" ||
+      update.sessionUpdate === "agent_thought_chunk"
+    ) {
+      if (update.content.type !== "text" || !update.content.text) return []
+      const kind =
+        update.sessionUpdate === "agent_message_chunk" ? "agent-text" : "provider-visible-reasoning"
+      if (kind === "provider-visible-reasoning" && !this.showThoughts) return []
+      const events = this.kind && this.kind !== kind ? this.finish("commentary") : []
+      // Each aggregate fits the store's 64 KiB encoded JSON limit, even for escaped controls.
+      let delta = ""
+      for (const character of update.content.text) {
+        if (this.pending.length + delta.length + character.length > 8000) {
+          if (delta) events.push(this.delta(kind, delta))
+          this.pending += delta
+          events.push(...this.finish(null))
+          delta = ""
+        }
+        this.kind = kind
+        delta += character
+      }
+      this.pending += delta
+      if (delta) events.push(this.delta(kind, delta))
+      return events
+    }
+    if (update.sessionUpdate === "plan") {
+      return [
+        ...this.finish("commentary"),
+        {
+          ...this.identity(),
+          kind: "plan",
+          phase: "updated",
+          payload: {
+            items: update.entries
+              .slice(0, 24)
+              .map((item) => ({ text: item.content.slice(0, 256), status: item.status })),
+          },
+        },
+      ]
+    }
+    if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update")
+      return []
+    const events = this.finish("commentary")
+    const previous = this.tools.get(update.toolCallId)
+    const name = (update.title || previous?.name || "Tool").slice(0, 512)
+    const kind = update.kind || previous?.kind
+    this.tools.set(update.toolCallId, { name, kind })
+    const phase =
+      update.status === "completed" || update.status === "failed"
+        ? update.status
+        : update.sessionUpdate === "tool_call"
+          ? "started"
+          : "updated"
+    const base: AgentActivityAppendBase = {
+      ...this.identity(),
+      providerItemId: update.toolCallId,
+      providerToolId: update.toolCallId,
+      phase,
+      displayClass: "tool" as const,
+      privacyClass: "sensitive" as const,
+    }
+    const state = update.status ?? "running"
+    const output = (update.content ?? [])
+      .flatMap((item) =>
+        item.type === "content" && item.content.type === "text"
+          ? [item.content.text.slice(0, 4000)]
+          : [],
+      )
+      .join("\n")
+      .slice(0, 4000)
+    const input = eventRecord(update.rawInput)
+    if (kind === "execute") {
+      const command =
+        typeof input.CommandLine === "string" ? input.CommandLine.slice(0, 4000) : name
+      const exit = eventRecord(update.rawOutput).exit_code
+      events.push({
+        ...base,
+        kind: "command",
+        payload: {
+          command,
+          state,
+          outputSummary: output || null,
+          exitCode: typeof exit === "number" && Number.isSafeInteger(exit) ? exit : null,
+        },
+      })
+    } else if (kind === "edit" || kind === "delete" || kind === "move") {
+      const edit = update.content?.find((item) => item.type === "diff")
+      const path =
+        edit?.path ??
+        update.locations?.[0]?.path ??
+        (typeof input.Path === "string" ? input.Path : null)
+      let diff: string | undefined
+      if (edit && edit.newText.length + (edit.oldText?.length ?? 0) <= 32000) {
+        diff = createTwoFilesPatch(edit.path, edit.path, edit.oldText ?? "", edit.newText, "", "", {
+          context: 2,
+          timeout: 25,
+        })?.slice(0, 4000)
+      }
+      events.push({
+        ...base,
+        kind: "patch",
+        payload: { state, path: path?.slice(0, 1024) ?? null, summary: name, diff },
+      })
+    } else {
+      events.push({
+        ...base,
+        kind: "tool",
+        payload: {
+          name,
+          state,
+          outputSummary: output || null,
+          inputSummary: update.locations?.[0]?.path?.slice(0, 1024) ?? null,
+        },
+      })
+    }
+    return events
+  }
+
+  private delta(
+    kind: "agent-text" | "provider-visible-reasoning",
+    text: string,
+  ): AgentActivityAppend {
+    return kind === "agent-text"
+      ? { ...this.identity(), kind, payload: { text } }
+      : { ...this.identity(), kind, payload: { text, label: "Gemini thinking" } }
+  }
+}

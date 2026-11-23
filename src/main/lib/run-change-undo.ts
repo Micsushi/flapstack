@@ -18,7 +18,11 @@ import { dirname, join, relative, resolve, sep } from "node:path"
 import { promisify } from "node:util"
 import { eq } from "drizzle-orm"
 import { agentRuns, checkpoints, fileChangeManifests, getDatabase } from "./db"
-import { captureWorktreeTree, type CheckpointStatusSnapshot } from "./checkpoints"
+import {
+  captureWorktreeTree,
+  checkpointReadEnvironment,
+  type CheckpointStatusSnapshot,
+} from "./checkpoints"
 import { createGit, GIT_TIMEOUTS } from "./git/git-factory"
 
 const execFileAsync = promisify(execFile)
@@ -127,6 +131,7 @@ async function readTreeFile(
   worktreePath: string,
   treeCommit: string,
   filePath: string,
+  profileObjects?: boolean,
 ): Promise<UndoFileState | null> {
   try {
     const { stdout: treeOutput } = await execFileAsync(
@@ -134,6 +139,7 @@ async function readTreeFile(
       ["ls-tree", "-z", treeCommit, "--", `:(literal)${filePath}`],
       {
         cwd: worktreePath,
+        env: profileObjects ? { ...process.env, ...checkpointReadEnvironment() } : undefined,
         encoding: "buffer",
         maxBuffer: 128 * 1024 * 1024,
         timeout: GIT_TIMEOUTS.LOCAL,
@@ -154,6 +160,7 @@ async function readTreeFile(
     }
     const { stdout } = await execFileAsync("git", ["cat-file", "blob", object], {
       cwd: worktreePath,
+      env: profileObjects ? { ...process.env, ...checkpointReadEnvironment() } : undefined,
       encoding: "buffer",
       maxBuffer: 128 * 1024 * 1024,
       timeout: GIT_TIMEOUTS.LOCAL,
@@ -372,24 +379,44 @@ export async function getRunChangeReview(runId: string, filePath?: string) {
   }
   const db = getDatabase()
   const runCheckpoints = db.select().from(checkpoints).where(eq(checkpoints.runId, runId)).all()
-  const beforeTree = parseSnapshot(
+  const before = parseSnapshot(
     runCheckpoints.find((checkpoint) => checkpoint.kind === "before")?.gitStatusJson ?? null,
-  ).treeCommit
-  const afterTree = parseSnapshot(
+  )
+  const after = parseSnapshot(
     runCheckpoints.find((checkpoint) => checkpoint.kind === "after")?.gitStatusJson ?? null,
-  ).treeCommit
+  )
+  const beforeTree = before.reviewTree ?? before.treeCommit,
+    afterTree = after.reviewTree ?? after.treeCommit
   if (!beforeTree || !afterTree) return { ...changeSet, diff: null }
   const diffArgs = [
     "diff",
     "--no-color",
-    "--find-renames",
+    "--no-renames",
+    "--no-ext-diff",
+    "--no-textconv",
     beforeTree,
     afterTree,
     "--",
     ...(filePath ? [`:(literal)${filePath}`] : []),
   ]
-  const diff = await createGit(worktreePath).raw(diffArgs)
-  return { ...changeSet, diff }
+  const options = {
+    cwd: worktreePath,
+    env:
+      before.profileObjects || after.profileObjects
+        ? { ...process.env, ...checkpointReadEnvironment() }
+        : undefined,
+    windowsHide: true,
+    timeout: GIT_TIMEOUTS.LOCAL,
+    maxBuffer: 2 * 1024 * 1024,
+  }
+  try {
+    const { stdout } = await execFileAsync("git", diffArgs, options)
+    return { ...changeSet, diff: stdout }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw error
+    const partial = (error as { stdout: string }).stdout
+    return { ...changeSet, diff: partial + "\n[Diff preview truncated at 2 MiB]" }
+  }
 }
 
 export async function undoRunChangeSet(runId: string) {
@@ -411,8 +438,10 @@ export async function undoRunChangeSet(runId: string) {
     const runCheckpoints = db.select().from(checkpoints).where(eq(checkpoints.runId, runId)).all()
     const before = runCheckpoints.find((checkpoint) => checkpoint.kind === "before")
     const after = runCheckpoints.find((checkpoint) => checkpoint.kind === "after")
-    const beforeTree = parseSnapshot(before?.gitStatusJson ?? null).treeCommit
-    const afterTree = parseSnapshot(after?.gitStatusJson ?? null).treeCommit
+    const beforeSnapshot = parseSnapshot(before?.gitStatusJson ?? null),
+      afterSnapshot = parseSnapshot(after?.gitStatusJson ?? null)
+    const beforeTree = beforeSnapshot.reviewTree ?? beforeSnapshot.treeCommit,
+      afterTree = afterSnapshot.reviewTree ?? afterSnapshot.treeCommit
     if (!beforeTree || !afterTree) throw new Error("This run predates recoverable checkpoints")
 
     const plans: FilePlan[] = []
@@ -421,8 +450,8 @@ export async function undoRunChangeSet(runId: string) {
       const { worktreeRoot, absolutePath } = await resolveSafeUndoPath(worktreePath, file.filePath)
       const [current, afterContent, beforeContent] = await Promise.all([
         readUndoFileState(absolutePath),
-        readTreeFile(worktreePath, afterTree, file.filePath),
-        readTreeFile(worktreePath, beforeTree, file.filePath),
+        readTreeFile(worktreePath, afterTree, file.filePath, afterSnapshot.profileObjects),
+        readTreeFile(worktreePath, beforeTree, file.filePath, beforeSnapshot.profileObjects),
       ])
       const merged = await planInverseFileState(current, afterContent, beforeContent)
       if (merged.conflict) conflicts.push({ filePath: file.filePath, reason: merged.conflict })
@@ -438,7 +467,10 @@ export async function undoRunChangeSet(runId: string) {
 
     if (conflicts.length > 0) return { success: false as const, conflicts }
 
-    const recoveryCommit = await captureWorktreeTree(worktreePath)
+    const recoveryCommit = await captureWorktreeTree(
+      worktreePath,
+      plans.map((plan) => plan.filePath),
+    )
     await git.raw(["update-ref", `refs/flapstack/recovery/${runId}-${Date.now()}`, recoveryCommit])
     await writePlan(plans)
     await git.raw(["update-ref", undoneRef, recoveryCommit])

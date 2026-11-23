@@ -29,6 +29,7 @@ export type RuntimeSettingsRow = {
 }
 
 const LABELS: Record<AgentHarness, string> = {
+  antigravity: "Gemini · Antigravity",
   codex: "Codex",
   "claude-code": "Claude Code",
   "cursor-agent": "Cursor Agent",

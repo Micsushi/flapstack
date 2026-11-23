@@ -27,11 +27,15 @@ const operationLocks = new Map<string, Promise<void>>()
  * @param timeout - Timeout in milliseconds (defaults to LOCAL timeout)
  * @returns Configured SimpleGit instance
  */
-export function createGit(worktreePath: string, timeout: number = GIT_TIMEOUTS.LOCAL): SimpleGit {
+export function createGit(
+  worktreePath: string,
+  timeout: number = GIT_TIMEOUTS.LOCAL,
+  additionalEnvironment: string[] = [],
+): SimpleGit {
   const options: Partial<SimpleGitOptions> = {
     baseDir: worktreePath,
     binary: "git",
-    allowEnvironment: ["GIT_INDEX_FILE"],
+    allowEnvironment: ["GIT_INDEX_FILE", ...additionalEnvironment],
     maxConcurrentProcesses: 6,
     timeout: {
       block: timeout,

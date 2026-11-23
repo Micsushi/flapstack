@@ -888,7 +888,14 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
 
   // Keep one Codex-style run disclosure. Provider summaries can arrive after the
   // final answer, so select the final text explicitly instead of relying on order.
-  const { shouldCollapse, hasActivity, visibleStepsCount, collapseBeforeIndex } = useMemo(() => {
+  const {
+    shouldCollapse,
+    hasActivity,
+    visibleStepsCount,
+    collapseBeforeIndex,
+    stepParts,
+    finalParts,
+  } = useMemo(() => {
     const live = isStreaming && isLastMessage
     const lastTextIndex = findAnswerPartIndex(messageParts, live)
     let hasActivity = false
@@ -905,11 +912,17 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
     const shouldCollapse = hasFinalText
     const collapseBeforeIndex = hasFinalText ? lastTextIndex : -1
 
-    // Calculate visible steps count for collapsible header
-    const stepParts =
-      shouldCollapse && collapseBeforeIndex !== -1
-        ? messageParts.filter((_: any, index: number) => index !== collapseBeforeIndex)
-        : messageParts
+    const stepParts = []
+    const finalParts = []
+    for (const [index, part] of messageParts.entries()) {
+      const explicitAnswer =
+        part.type === "text" && part.providerMetadata?.runtime?.phase === "final_answer"
+      if (!hasActivity || (shouldCollapse && (explicitAnswer || index === lastTextIndex))) {
+        finalParts.push(part)
+      } else {
+        stepParts.push(part)
+      }
+    }
     const visibleStepsCount = stepParts.filter((p: any) => {
       if (p.type === "step-start") return false
       if (p.type === "tool-TaskOutput") return false
@@ -926,7 +939,14 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
       return true
     }).length
 
-    return { shouldCollapse, hasActivity, visibleStepsCount, collapseBeforeIndex }
+    return {
+      shouldCollapse,
+      hasActivity,
+      visibleStepsCount,
+      collapseBeforeIndex,
+      stepParts,
+      finalParts,
+    }
   }, [
     messageParts,
     isStreaming,
@@ -948,18 +968,6 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
     const collapsedOps = planOpsSummary.operations.filter((op) => op.index < collapseBeforeIndex)
     return collapsedOps[collapsedOps.length - 1] || null
   }, [hasPlanInCollapsedSteps, planOpsSummary.operations, collapseBeforeIndex])
-
-  const stepParts = useMemo(() => {
-    if (!hasActivity) return []
-    if (!shouldCollapse || collapseBeforeIndex === -1) return messageParts
-    return messageParts.filter((_: any, index: number) => index !== collapseBeforeIndex)
-  }, [messageParts, hasActivity, shouldCollapse, collapseBeforeIndex])
-
-  const finalParts = useMemo(() => {
-    if (!hasActivity) return messageParts
-    if (!shouldCollapse || collapseBeforeIndex === -1) return []
-    return [messageParts[collapseBeforeIndex]]
-  }, [messageParts, hasActivity, shouldCollapse, collapseBeforeIndex])
 
   const hasTextContent = useMemo(
     () => messageParts.some((p: any) => p.type === "text" && p.text?.trim()),
@@ -1334,7 +1342,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             }
             return renderPart(
               part,
-              shouldCollapse ? collapseBeforeIndex + idx : idx,
+              shouldCollapse ? messageParts.indexOf(part) : idx,
               shouldCollapse,
             )
           })

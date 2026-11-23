@@ -1,4 +1,5 @@
 import { spawnCodexProtocolClient } from "../../agent-runtime/codex/protocol-client"
+import { requireRuntimeLaunchAuthority } from "../../agent-runtime/launch-access"
 import { changeCodexMcpWithUndo } from "../../codex-mcp-actions"
 import { applyMcpAction } from "../../mcp-action-history"
 import { buildRecordTaskRunContext } from "../../project-records/run-context"
@@ -13,7 +14,7 @@ import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { readdir, readFile } from "node:fs/promises"
 import { homedir } from "node:os"
-import { basename, delimiter, dirname, join, sep } from "node:path"
+import { basename, dirname, join, sep } from "node:path"
 import { z } from "zod"
 import { sleep } from "../../../../shared/sleep"
 import {
@@ -30,6 +31,7 @@ import {
   CHAT_MODES,
   resolveChatModePermission,
 } from "../../../../shared/chat-mode"
+import { legacyRunTimer, recordSubmittedAt } from "../../run-timings"
 import { captureCheckpoint } from "../../checkpoints"
 import { cancelStaleRunningRuns, completeAgentRun } from "../../agent-run-lifecycle"
 import { assertSubChatNotRewinding } from "../../sub-chat-rewind-guard"
@@ -73,6 +75,7 @@ import {
   FLAPSTACK_MCP_SERVER_NAME,
   renameProductMcpServerCollisions,
 } from "../../mcp-control/registration"
+import { resolveCodexRuntimeCommand } from "../../agent-runtime/codex/binary"
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
 import { mergeMessagesPreservingSpokenText } from "../../speech/history"
@@ -335,34 +338,6 @@ function resolveCodexAcpBinaryPath(): string {
   return toUnpackedAsarPath(resolvedPath)
 }
 
-function resolveBundledCodexCliPath(): string {
-  const binaryName = process.platform === "win32" ? "codex.exe" : "codex"
-  const resourcesDir = app.isPackaged
-    ? join(process.resourcesPath, "bin")
-    : join(app.getAppPath(), "resources", "bin", `${process.platform}-${process.arch}`)
-
-  const binaryPath = join(resourcesDir, binaryName)
-  if (existsSync(binaryPath)) {
-    return binaryPath
-  }
-
-  // Local dev may use the user's installed, macOS-approved Codex binary. This
-  // avoids downloading stale pinned binaries solely for development. Packaged
-  // releases still fail closed unless their verified bundled binary exists.
-  if (!app.isPackaged) {
-    for (const directory of (process.env.PATH || "").split(delimiter).filter(Boolean)) {
-      const installedPath = join(directory, binaryName)
-      if (existsSync(installedPath)) return installedPath
-    }
-  }
-
-  const hint = app.isPackaged
-    ? "Binary is missing from bundled resources."
-    : "Install Codex on PATH for local dev."
-
-  throw new Error(`[codex] Bundled Codex CLI not found at ${binaryPath}. ${hint}`)
-}
-
 function stripAnsi(input: string): string {
   return input.replace(ANSI_OSC_REGEX, "").replace(ANSI_ESCAPE_REGEX, "")
 }
@@ -454,7 +429,7 @@ function createMcpConfigClient(home: string) {
   // Config preparation has no account-login authority.
   delete env.OPENAI_API_KEY
   delete env.CODEX_API_KEY
-  return spawnCodexProtocolClient({ command: resolveBundledCodexCliPath(), cwd: home, env })
+  return spawnCodexProtocolClient({ command: resolveCodexRuntimeCommand(), cwd: home, env })
 }
 
 type RunCodexCliOptions = {
@@ -469,7 +444,7 @@ async function runCodexCli(
   stderr: string
   exitCode: number | null
 }> {
-  const codexCliPath = resolveBundledCodexCliPath()
+  const codexCliPath = resolveCodexRuntimeCommand()
   const cwd = options?.cwd?.trim()
 
   return await new Promise((resolvePromise, rejectPromise) => {
@@ -1410,7 +1385,7 @@ function buildCodexProviderEnv(
     ...existingConfig,
     model_reasoning_summary: reasoningEnabled ? "detailed" : "none",
     model_supports_reasoning_summaries: reasoningEnabled,
-    show_raw_agent_reasoning: reasoningEnabled,
+    show_raw_agent_reasoning: false,
     hide_agent_reasoning: !reasoningEnabled,
     ...(reasoningEffort ? { model_reasoning_effort: reasoningEffort } : {}),
     ...(serviceTier ? { service_tier: serviceTier } : {}),
@@ -1421,6 +1396,7 @@ function buildCodexProviderEnv(
       : runConfig,
   )
 
+  env.CODEX_PATH = resolveCodexRuntimeCommand()
   const apiKey = authConfig?.apiKey?.trim()
   if (!apiKey) {
     return env
@@ -1591,6 +1567,12 @@ function cleanupAllCodexProviders(): void {
 }
 
 export const codexRouter = router({
+  listModels: publicProcedure.query(async () => {
+    const probe = await requireRuntimeLaunchAuthority(getDatabasePath()).probe("codex", "codex")
+    if (!probe.available || !probe.codexModels)
+      throw new Error(probe.reason?.message ?? "Codex models unavailable.")
+    return probe.codexModels
+  }),
   getIntegration: publicProcedure.query(async () => {
     const result = await runCodexCli(["login", "status"])
     const combinedOutput = [result.stdout, result.stderr]
@@ -1662,7 +1644,7 @@ export const codexRouter = router({
       return toLoginSessionResponse(existingSession)
     }
 
-    const codexCliPath = resolveBundledCodexCliPath()
+    const codexCliPath = resolveCodexRuntimeCommand()
     const sessionId = crypto.randomUUID()
 
     const child = spawn(codexCliPath, ["login"], {
@@ -1890,6 +1872,7 @@ export const codexRouter = router({
       z.object({
         subChatId: z.string(),
         chatId: z.string(),
+        submittedAtMs: z.number().int().nonnegative().optional(),
         runId: z.string(),
         prompt: z.string(),
         model: z.string().optional(),
@@ -1972,10 +1955,12 @@ export const codexRouter = router({
           }
         }
 
+        const timing = legacyRunTimer(getDatabase, () => input.runId)
         const safeEmit = (chunk: any) => {
           if (!isActive) return
           if (!input.reasoningEnabled && String(chunk?.type).startsWith("reasoning-")) return
           try {
+            timing.chunk(chunk)
             emit.next(chunk)
           } catch {
             isActive = false
@@ -2267,6 +2252,7 @@ export const codexRouter = router({
               reasoningEffort: chatProfile?.launch.reasoningEffort ?? input.reasoningEffort,
               serviceTier: chatProfile?.launch.serviceTier,
             })
+            recordSubmittedAt(getSqliteDatabase(), input.runId, input.submittedAtMs)
             persistProjectVaultContextManifest(db, {
               runId: input.runId,
               manifest: vaultContext.manifest,
@@ -2447,6 +2433,7 @@ export const codexRouter = router({
               return reasoningPromise
             }
 
+            timing.once("spawn-start")
             const result = streamText({
               model: provider.languageModel(acpModelId, mapCodexAcpModeId(permissionMode)),
               messages: [
@@ -2610,6 +2597,7 @@ export const codexRouter = router({
             const streamedReasoningOutputTexts = new Set<string>()
             while (true) {
               const { done, value } = await reader.read()
+              if (!done && provider.getSessionId()) timing.once("spawn-end")
               if (done) break
               const valueType = (value as { type?: string } | undefined)?.type
 

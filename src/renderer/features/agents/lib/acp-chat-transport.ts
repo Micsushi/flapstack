@@ -10,20 +10,17 @@ import {
   sessionInfoAtom,
 } from "../../../lib/atoms"
 import { appStore } from "../../../lib/jotai-store"
-import { trpcClient } from "../../../lib/trpc"
+import { trpc, trpcClient } from "../../../lib/trpc"
+import { getQueryKey } from "@trpc/react-query"
+import { getQueryClient } from "../../../contexts/TRPCProvider"
 import {
+  antigravityModelSelectionsAtom,
   pendingAuthRetryMessageAtom,
   subChatCodexModelIdAtomFamily,
   subChatCodexReasoningAtomFamily,
   subChatReasoningEnabledAtomFamily,
 } from "../atoms"
-import {
-  CODEX_MODELS,
-  DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING,
-  DEFAULT_CODEX_MODEL_WITH_REASONING,
-  type CodexAuthSurface,
-  type CodexReasoningLevel,
-} from "./models"
+import { codexSelectionIssue } from "./models"
 import { getAgentSubChatStore } from "../stores/sub-chat-store"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
 import { handleAgentInputChunk } from "./agent-input-transport"
@@ -45,7 +42,8 @@ type ACPChatTransportConfig = {
   projectPath?: string
   projectId?: string
   mode: ChatMode
-  provider: "codex"
+  provider: "codex" | "antigravity"
+  model?: string | null
 }
 
 type ImageAttachment = {
@@ -56,7 +54,6 @@ type ImageAttachment = {
 
 // When a sub-chat hits auth-error, force one fresh Codex ACP session on next send.
 const forceFreshSessionSubChats = new Set<string>()
-const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODEL_WITH_REASONING
 function getStoredCodexCredentials(hasApiKey: boolean): {
   hasApiKey: boolean
   hasSubscription: boolean
@@ -101,44 +98,40 @@ async function resolveCodexCredentialsForAuthError(): Promise<{
   }
 }
 
-function getSelectedCodexModel(subChatId: string, hasApiKey: boolean): string {
-  const selectedModelId = appStore.get(subChatCodexModelIdAtomFamily(subChatId))
-  const selectedReasoning = appStore.get(subChatCodexReasoningAtomFamily(subChatId))
-  const authSurface: CodexAuthSurface = hasApiKey ? "api-key" : "chatgpt"
-  const eligibleModels = CODEX_MODELS.filter((model) => model.authSurfaces.includes(authSurface))
-  const defaultModel =
-    authSurface === "chatgpt" ? DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING : DEFAULT_CODEX_MODEL
-  const selectedModel =
-    eligibleModels.find((model) => model.id === selectedModelId) ||
-    eligibleModels.find((model) => model.id === defaultModel.split("/")[0]) ||
-    eligibleModels[0]
-
-  if (!selectedModel) {
-    return defaultModel
-  }
-
-  const normalizedReasoning = selectedModel.reasoningLevels.includes(
-    selectedReasoning as CodexReasoningLevel,
-  )
-    ? (selectedReasoning as CodexReasoningLevel)
-    : selectedModel.reasoningLevels.includes("high")
-      ? "high"
-      : selectedModel.reasoningLevels[0]
-
-  if (!normalizedReasoning) {
-    return defaultModel
-  }
-
-  return `${selectedModel.id}/${normalizedReasoning}`
+async function getSelectedCodexModel(subChatId: string): Promise<string> {
+  const modelId = appStore.get(subChatCodexModelIdAtomFamily(subChatId))
+  const effort = appStore.get(subChatCodexReasoningAtomFamily(subChatId))
+  const query = () => trpcClient.codex.listModels.query()
+  const client = getQueryClient()
+  const live = await (
+    client
+      ? client.fetchQuery({
+          queryKey: getQueryKey(trpc.codex.listModels, undefined, "query"),
+          queryFn: query,
+          staleTime: 60_000,
+        })
+      : query()
+  ).catch(() => undefined)
+  // The runtime checks the exact selection after resolving account authentication.
+  if (!live) return `${modelId}/${effort}`
+  const issue = codexSelectionIssue(live, modelId, effort)
+  if (issue) throw new Error(issue)
+  const model = live.find((entry) => entry.id === modelId)
+  return model?.reasoningLevels.length ? `${modelId}/${effort}` : modelId
 }
 
 export class ACPChatTransport implements ChatTransport<UIMessage> {
   constructor(private config: ACPChatTransportConfig) {}
 
+  get provider() {
+    return this.config.provider
+  }
+
   async sendMessages(options: {
     messages: UIMessage[]
     abortSignal?: AbortSignal
   }): Promise<ReadableStream<UIMessageChunk>> {
+    const submittedAtMs = Date.now()
     const lastUser = [...options.messages].reverse().find((message) => message.role === "user")
 
     const prompt = this.extractText(lastUser)
@@ -155,30 +148,46 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
         .getState()
         .allSubChats.find((subChat) => subChat.id === this.config.subChatId)?.mode ||
       this.config.mode
-    const forceNewSession = forceFreshSessionSubChats.has(this.config.subChatId)
-    if (forceNewSession) {
-      forceFreshSessionSubChats.delete(this.config.subChatId)
-    }
-    const hasApiKey = (await trpcClient.credentials.status.query({ id: "codex.api-key" }))
-      .configured
-    const selectedModel = getSelectedCodexModel(this.config.subChatId, hasApiKey)
     const reasoningEnabled = appStore.get(subChatReasoningEnabledAtomFamily(this.config.subChatId))
-    const directModel = splitCodexRuntimeModel(selectedModel)
     const vaultContextGraphSelection = readProjectVaultGraphSelection(this.config.projectId)
-    const directStream = await createDirectRuntimeStream({
+    const directInput = {
+      submittedAtMs,
       chatId: this.config.chatId,
       subChatId: this.config.subChatId,
-      harness: "codex",
       prompt,
       ...(typeof lastUser?.id === "string" ? { promptMessageId: lastUser.id } : {}),
-      model: directModel.model,
       mode: currentMode,
-      reasoningEffort: directModel.effort,
       reasoningEnabled,
       images,
       hotlineEnabled: resolveAgentHotlineEnabled(options.messages),
       ...(vaultContextGraphSelection ? { vaultContextGraphSelection } : {}),
       abortSignal: options.abortSignal,
+    }
+    if (this.provider === "antigravity") {
+      const model =
+        appStore.get(antigravityModelSelectionsAtom)[this.config.subChatId] ?? this.config.model
+      if (!model) throw new Error("Choose a Gemini model before sending.")
+      const stream = await createDirectRuntimeStream({
+        ...directInput,
+        harness: this.provider,
+        model,
+        reasoningEffort: null,
+      })
+      if (!stream) throw new Error("The Antigravity runtime is unavailable for this chat.")
+      clearProjectVaultGraphSelection(this.config.projectId)
+      return stream
+    }
+    const forceNewSession = forceFreshSessionSubChats.has(this.config.subChatId)
+    if (forceNewSession) {
+      forceFreshSessionSubChats.delete(this.config.subChatId)
+    }
+    const selectedModel = await getSelectedCodexModel(this.config.subChatId)
+    const directModel = splitCodexRuntimeModel(selectedModel)
+    const directStream = await createDirectRuntimeStream({
+      ...directInput,
+      harness: "codex",
+      model: directModel.model,
+      reasoningEffort: directModel.effort,
     })
     if (directStream) {
       clearProjectVaultGraphSelection(this.config.projectId)
@@ -207,6 +216,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
 
         sub = trpcClient.codex.chat.subscribe(
           {
+            submittedAtMs,
             subChatId: this.config.subChatId,
             chatId: this.config.chatId,
             runId,

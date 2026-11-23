@@ -54,6 +54,11 @@ export type HarnessChipMeta = {
 }
 
 export const HARNESS_CHIP_META: Record<HarnessChipKind, HarnessChipMeta> = {
+  antigravity: {
+    name: "Gemini",
+    color: "blue",
+    className: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
+  },
   codex: {
     name: "OpenAI",
     color: "blue",
@@ -107,6 +112,8 @@ export function getHarnessChipMeta(harness?: string | null): HarnessChipMeta {
 export function inferHarnessFromModel(model?: string | null): HarnessChipKind | null {
   const normalized = model?.toLowerCase().trim()
   if (!normalized) return null
+  if (normalized.startsWith("gemini-") || normalized.startsWith("antigravity/"))
+    return "antigravity"
   if (
     normalized.includes("claude") ||
     normalized.includes("opus") ||

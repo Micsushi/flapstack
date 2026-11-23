@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url"
 import {
   assertAllowlistedRegularFiles,
   assertBundledBinary,
+  CODEX_WINDOWS_HELPERS,
   ensureRealDirectory,
   replaceDirectoryAtomically,
   verifyCachedBinaryDigest,
@@ -15,7 +16,7 @@ import { TRANSCRIBE_CPP_VERSION } from "./prepare-stt-sidecar.mjs"
 import { whisperResourceFiles } from "./prepare-whisper-binary.mjs"
 
 export const CLAUDE_VERSION = "2.1.284"
-export const CODEX_VERSION = "0.153.4"
+export const CODEX_VERSION = "0.166.0-alpha.6"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const resourcesDirectory = path.join(root, "resources")
@@ -62,10 +63,14 @@ function expectedTargetFiles(target) {
   return [
     ".codex-asset.sha256",
     ".codex-binary.sha256",
-    ...(target === "win32-x64" ? [".codex-code-mode-host.sha256"] : []),
+    ...(target === "win32-x64"
+      ? Object.values(CODEX_WINDOWS_HELPERS).map((name) => `.${name}.sha256`)
+      : []),
     windows ? "claude.exe" : "claude",
     windows ? "codex.exe" : "codex",
-    ...(target === "win32-x64" ? ["codex-code-mode-host.exe"] : []),
+    ...(target === "win32-x64"
+      ? Object.values(CODEX_WINDOWS_HELPERS).map((name) => `${name}.exe`)
+      : []),
     ...whisperResourceFiles(target),
     windows ? "flapstack-stt-sidecar.exe" : "flapstack-stt-sidecar",
     "flapstack-stt-sidecar-LICENSE",
@@ -82,7 +87,9 @@ export async function validatePreparedTarget(target, rootDirectory = binDirector
   const binaries = [
     windows ? "claude.exe" : "claude",
     windows ? "codex.exe" : "codex",
-    ...(target === "win32-x64" ? ["codex-code-mode-host.exe"] : []),
+    ...(target === "win32-x64"
+      ? Object.values(CODEX_WINDOWS_HELPERS).map((name) => `${name}.exe`)
+      : []),
     windows ? "flapstack-stt-sidecar.exe" : "flapstack-stt-sidecar",
   ]
   for (const binary of binaries) assertBundledBinary(path.join(directory, binary), target)
@@ -110,15 +117,18 @@ export async function validatePreparedTarget(target, rootDirectory = binDirector
   ) {
     throw new Error(`${directory}: Codex binary digest validation failed`)
   }
-  if (
-    target === "win32-x64" &&
-    !(await verifyCachedBinaryDigest(
-      path.join(directory, "codex-code-mode-host.exe"),
-      target,
-      path.join(directory, ".codex-code-mode-host.sha256"),
-    ))
-  ) {
-    throw new Error(`${directory}: Codex code-mode host digest validation failed`)
+  if (target === "win32-x64") {
+    for (const [label, name] of Object.entries(CODEX_WINDOWS_HELPERS)) {
+      if (
+        !(await verifyCachedBinaryDigest(
+          path.join(directory, `${name}.exe`),
+          target,
+          path.join(directory, `.${name}.sha256`),
+        ))
+      ) {
+        throw new Error(`${directory}: ${label} digest validation failed`)
+      }
+    }
   }
 }
 

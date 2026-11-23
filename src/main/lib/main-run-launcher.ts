@@ -1,4 +1,5 @@
 import { buildRecordTaskRunContext } from "./project-records/run-context"
+import { createAntigravityAdapter } from "./agent-runtime/antigravity/adapter"
 import type { AgentActivityInvalidation } from "../../shared/agent-activity"
 import { broadcastAgentActivityInvalidation } from "./agent-runtime/activity-service"
 import Database from "better-sqlite3"
@@ -112,7 +113,11 @@ import {
   resolveLocalModelToolTiers,
 } from "../../shared/local-model-contract"
 import { parseCustomPermissionCapabilities } from "../../shared/permission-capabilities"
-import { AGENT_INPUT_TIMEOUT_MS, type AgentInputRequest, type AgentInputOption } from "../../shared/agent-input"
+import {
+  AGENT_INPUT_TIMEOUT_MS,
+  type AgentInputRequest,
+  type AgentInputOption,
+} from "../../shared/agent-input"
 import { agentInputLifecycle } from "./agent-input/service"
 import {
   formatClaudeInputAnswers,
@@ -134,7 +139,7 @@ import {
 } from "./agent-runtime/launch-access"
 import { isFrozenAgentProfileToolAllowed } from "./agent-profiles/runtime-authority"
 import {
-  loadInteractiveRuntimeAssistantText,
+  loadInteractiveRuntimeAssistantParts,
   persistInteractiveRuntimeAssistantFallback,
 } from "./agent-runtime/interactive-chat"
 import {
@@ -203,7 +208,8 @@ export class MainRuntimeLaunchService {
     this.permissionHandler =
       options.permissionHandler ??
       ((runId, request) => this.requestDefaultPermission(runId, request))
-    this.inputHandler = options.inputHandler ?? ((runId, request) => this.requestDefaultInput(runId, request))
+    this.inputHandler =
+      options.inputHandler ?? ((runId, request) => this.requestDefaultInput(runId, request))
     const nativeFactory = createFlapstackNativeAdapterFactory({
       resolveDelegation: (harness) =>
         createLegacyDelegation(
@@ -249,6 +255,15 @@ export class MainRuntimeLaunchService {
             ...codexPermissionOptions(context.launch.permission.mode),
             config: {
               ...config,
+              ...(context.launch.permission.mode === "auto-edit-project-only"
+                ? {
+                    sandbox_workspace_write: {
+                      writable_roots: [],
+                      exclude_slash_tmp: true,
+                      exclude_tmpdir_env_var: true,
+                    },
+                  }
+                : {}),
               model_reasoning_summary: context.launch.controls.reasoningDisplay
                 ? "detailed"
                 : "none",
@@ -318,6 +333,27 @@ export class MainRuntimeLaunchService {
           enabled: options.enableLocalProviderCodexContract ?? false,
           disabledReason: TRANSLATED_RUNTIME_RELEASE_REASON,
         },
+        {
+          runtime: "flapstack-native",
+          harness: "antigravity",
+          factory: () =>
+            createAntigravityAdapter({
+              cwd: (context) => {
+                const db = this.open()
+                try {
+                  return assertRegisteredFilesystemRoot(
+                    this.resolveRunCwd(context.runId),
+                    drizzle(db, { schema }),
+                  ).canonicalPath
+                } finally {
+                  db.close()
+                }
+              },
+              images: (runId) => this.runs.get(runId)?.images ?? [],
+              append: (runId, events) => this.appendActivity(runId, events),
+              permission: (runId, request) => this.requestPermissionFromProvider(runId, request),
+            }),
+        },
         { runtime: "flapstack-native", factory: nativeFactory },
       ])
     this.coordinator = new RuntimeLaunchCoordinator(this.registry, {
@@ -342,7 +378,7 @@ export class MainRuntimeLaunchService {
         throw new RuntimeLaunchCancelledError(run.runId)
       }
       const resolvedLaunch = run.runtimeLaunch ?? legacyLaunch(run)
-      if (resolvedLaunch.resolvedRuntime !== "flapstack-native") {
+      if (resolvedLaunch.resolvedRuntime !== "flapstack-native" || run.harness === "antigravity") {
         await this.serializePersistedOperation(run.runId, () =>
           this.captureBeforeCheckpoint(run.runId),
         )
@@ -354,7 +390,8 @@ export class MainRuntimeLaunchService {
       let recordTaskContext = ""
       if (
         resolvedLaunch.resolvedRuntime === "codex" ||
-        resolvedLaunch.resolvedRuntime === "claude-code"
+        resolvedLaunch.resolvedRuntime === "claude-code" ||
+        run.harness === "antigravity"
       ) {
         const sqlite = this.open()
         try {
@@ -372,7 +409,7 @@ export class MainRuntimeLaunchService {
           prompt:
             !persistedSession &&
             run.harness !== "local" &&
-            resolvedLaunch.resolvedRuntime !== "flapstack-native"
+            (resolvedLaunch.resolvedRuntime !== "flapstack-native" || run.harness === "antigravity")
               ? prependPreSessionChatContext(
                   run.prompt,
                   this.loadPreSessionUserMessages(run.runId, Boolean(recordTaskContext)),
@@ -517,7 +554,8 @@ export class MainRuntimeLaunchService {
     input?: MainRunLauncherOptions["inputHandler"]
   }): void {
     this.permissionHandler = handlers.permission
-    this.inputHandler = handlers.input ?? ((runId, request) => this.requestDefaultInput(runId, request))
+    this.inputHandler =
+      handlers.input ?? ((runId, request) => this.requestDefaultInput(runId, request))
   }
 
   diagnostics() {
@@ -558,14 +596,33 @@ export class MainRuntimeLaunchService {
     const createdAt = Date.now()
     const params = isPlainRecord(record.params) ? record.params : record
     const options: AgentInputOption[] = [{ id: "allow-once", label: "Allow once" }]
-    const codexApproval = method === "item/commandExecution/requestApproval" || method === "item/fileChange/requestApproval"
+    const codexApproval =
+      method === "item/commandExecution/requestApproval" ||
+      method === "item/fileChange/requestApproval"
     if (codexApproval || method === "item/permissions/requestApproval") {
-      options.push({ id: "allow-session", label: "Allow for this session", description: "Remember this approval in the current Codex session." })
+      options.push({
+        id: "allow-session",
+        label: "Allow for this session",
+        description: "Remember this approval in the current Codex session.",
+      })
     }
     const amendment = params.proposedExecpolicyAmendment
-    const canRemember = method === "item/commandExecution/requestApproval" && Array.isArray(amendment) && amendment.length > 0 && amendment.every(value => typeof value === "string")
-    if (canRemember) options.push({ id: "allow-always", label: "Always allow matching commands", description: `Save a Codex rule for: ${(amendment as string[]).join(" ").slice(0, 450)}` })
-    options.push({ id: "deny", label: "Deny", description: "Do not run this action; let the agent continue." })
+    const canRemember =
+      method === "item/commandExecution/requestApproval" &&
+      Array.isArray(amendment) &&
+      amendment.length > 0 &&
+      amendment.every((value) => typeof value === "string")
+    if (canRemember)
+      options.push({
+        id: "allow-always",
+        label: "Always allow matching commands",
+        description: `Save a Codex rule for: ${(amendment as string[]).join(" ").slice(0, 450)}`,
+      })
+    options.push({
+      id: "deny",
+      label: "Deny",
+      description: "Do not run this action; let the agent continue.",
+    })
     const inputRequest: AgentInputRequest = {
       kind: "permission",
       requestId,
@@ -592,9 +649,15 @@ export class MainRuntimeLaunchService {
       createdAt,
       expiresAt: createdAt + AGENT_INPUT_TIMEOUT_MS,
     }
-    const resolution = await agentInputLifecycle.create(inputRequest, { timeoutMs: AGENT_INPUT_TIMEOUT_MS })
-    const answer = resolution.status === "answered" ? resolution.response.answers.permission?.[0] : undefined
-    const allowed = answer === "Allow once" || answer === "Allow for this session" || (canRemember && answer === "Always allow matching commands")
+    const resolution = await agentInputLifecycle.create(inputRequest, {
+      timeoutMs: AGENT_INPUT_TIMEOUT_MS,
+    })
+    const answer =
+      resolution.status === "answered" ? resolution.response.answers.permission?.[0] : undefined
+    const allowed =
+      answer === "Allow once" ||
+      answer === "Allow for this session" ||
+      (canRemember && answer === "Always allow matching commands")
 
     if (provider === "claude-code") {
       return allowed
@@ -605,10 +668,17 @@ export class MainRuntimeLaunchService {
         : { behavior: "deny", message: "User denied the tool request." }
     }
     if (method === "item/permissions/requestApproval") {
-      return { ...codexPermissionProfileApproval(record, allowed), scope: answer === "Allow for this session" ? "session" : "turn" }
+      return {
+        ...codexPermissionProfileApproval(record, allowed),
+        scope: answer === "Allow for this session" ? "session" : "turn",
+      }
     }
-    if (canRemember && answer === "Always allow matching commands") return { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } } }
-    return { decision: answer === "Allow for this session" ? "acceptForSession" : allowed ? "accept" : "decline" }
+    if (canRemember && answer === "Always allow matching commands")
+      return { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } } }
+    return {
+      decision:
+        answer === "Allow for this session" ? "acceptForSession" : allowed ? "accept" : "decline",
+    }
   }
 
   private async requestDefaultInput(runId: string, request: unknown): Promise<unknown> {
@@ -618,19 +688,38 @@ export class MainRuntimeLaunchService {
       throw new Error("This provider input request is not supported.")
     }
     const raw = Array.isArray(record.params.questions) ? record.params.questions : []
-    if (raw.some(question => isPlainRecord(question) && question.isSecret === true)) {
+    if (raw.some((question) => isPlainRecord(question) && question.isSecret === true)) {
       throw new Error("Secret input is not supported by the question dialog.")
     }
     const questions = normalizeClaudeInputQuestions(raw).map((question, index) => ({
       ...question,
-      id: isPlainRecord(raw[index]) && typeof raw[index].id === "string" ? raw[index].id as string : question.id,
+      id:
+        isPlainRecord(raw[index]) && typeof raw[index].id === "string"
+          ? (raw[index].id as string)
+          : question.id,
     }))
-    const resolution = await agentInputLifecycle.create({
-      kind: "question", requestId: `${runId}:input:${String(record.id)}`, chatId: run.subChatId,
-      runId, origin: { harness: run.harness, provider: "codex", toolName: "request_user_input" },
-      capability: { mode: "native", sameRun: true }, questions, status: "pending", createdAt: Date.now(),
-    }, { timeoutMs: AGENT_INPUT_TIMEOUT_MS })
-    return { answers: resolution.status === "answered" ? Object.fromEntries(Object.entries(resolution.response.answers).map(([id, answers]) => [id, { answers }])) : {} }
+    const resolution = await agentInputLifecycle.create(
+      {
+        kind: "question",
+        requestId: `${runId}:input:${String(record.id)}`,
+        chatId: run.subChatId,
+        runId,
+        origin: { harness: run.harness, provider: "codex", toolName: "request_user_input" },
+        capability: { mode: "native", sameRun: true },
+        questions,
+        status: "pending",
+        createdAt: Date.now(),
+      },
+      { timeoutMs: AGENT_INPUT_TIMEOUT_MS },
+    )
+    return {
+      answers:
+        resolution.status === "answered"
+          ? Object.fromEntries(
+              Object.entries(resolution.response.answers).map(([id, answers]) => [id, { answers }]),
+            )
+          : {},
+    }
   }
 
   private async requestInputFromProvider(runId: string, request: unknown): Promise<unknown> {
@@ -1018,7 +1107,7 @@ export class MainRuntimeLaunchService {
           if (transition.changes === 0) return
           if (
             terminal === "success" &&
-            run.resolved_runtime !== "flapstack-native" &&
+            (run.resolved_runtime !== "flapstack-native" || run.harness === "antigravity") &&
             (run.prompt_message_id?.startsWith("mcp-mobile-") ||
               (run.prompt_message_id?.startsWith("mcp-diff-feedback-") &&
                 db
@@ -1046,7 +1135,7 @@ export class MainRuntimeLaunchService {
             persistInteractiveRuntimeAssistantFallback(
               db,
               runId,
-              loadInteractiveRuntimeAssistantText(db, runId),
+              loadInteractiveRuntimeAssistantParts(db, runId),
             )
           }
           if (run.sub_chat_id) {
@@ -1095,9 +1184,10 @@ export class MainRuntimeLaunchService {
     const sqlite = this.open()
     try {
       const run = sqlite
-        .prepare("SELECT resolved_runtime FROM agent_runs WHERE id = ?")
-        .get(runId) as { resolved_runtime: string | null } | undefined
-      if (!run || run.resolved_runtime === "flapstack-native") return undefined
+        .prepare("SELECT resolved_runtime,harness FROM agent_runs WHERE id = ?")
+        .get(runId) as { resolved_runtime: string | null; harness: string } | undefined
+      if (!run || (run.resolved_runtime === "flapstack-native" && run.harness !== "antigravity"))
+        return undefined
       return await captureAgentRunCompletionArtifacts(drizzle(sqlite, { schema }), {
         runId,
         logLabel: "runtime",
@@ -1421,13 +1511,14 @@ export class MainRuntimeLaunchService {
   private requireRunRow(db: Database.Database, runId: string) {
     const row = db
       .prepare(
-        "SELECT id, chat_id, sub_chat_id, resolved_runtime, prompt_message_id FROM agent_runs WHERE id = ?",
+        "SELECT id, chat_id, sub_chat_id, harness, resolved_runtime, prompt_message_id FROM agent_runs WHERE id = ?",
       )
       .get(runId) as
       | {
           id: string
           chat_id: string
           sub_chat_id: string | null
+          harness: string
           resolved_runtime: string
           prompt_message_id: string | null
         }
@@ -1493,6 +1584,9 @@ export async function probeClaudeRuntimeReadiness(
 
 function assertFrozenProfileToolPolicySupported(run: QueuedAgentRun): void {
   const resolvedRuntime = run.runtimeLaunch?.resolvedRuntime
+  if (run.harness === "antigravity" && run.profileRuntimeAuthority) {
+    throw new Error("Antigravity cannot enforce a frozen Agent Profile tool allowlist.")
+  }
   if (
     run.profileRuntimeAuthority &&
     (resolvedRuntime === "codex" || (!resolvedRuntime && run.harness === "codex"))
@@ -2550,8 +2644,7 @@ function codexPermissionOptions(mode: ResolvedRuntimeLaunch["permission"]["mode"
   if (mode === "auto-edit-project-only") {
     return { approvalPolicy: "never", sandbox: "workspace-write" }
   }
-  if (mode === "custom") return { approvalPolicy: "on-request", sandbox: "read-only" }
-  return { approvalPolicy: "on-request", sandbox: "workspace-write" }
+  return { approvalPolicy: "on-request", sandbox: "read-only" }
 }
 
 function claudePermissionOptions(mode: ResolvedRuntimeLaunch["permission"]["mode"]): {

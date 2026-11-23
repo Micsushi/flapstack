@@ -1,7 +1,7 @@
 import { and, eq, isNull, ne } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import { captureCheckpoint, captureRunManifest } from "./checkpoints"
-import { agentRuns } from "./db"
+import { agentRuns, checkpoints } from "./db"
 import type * as schema from "./db/schema"
 import { updateSubChatRunStatusIfAuthoritative } from "./run-status-authority"
 
@@ -63,12 +63,25 @@ export async function captureAgentRunCompletionArtifacts(
 
 export async function completeAgentRun(
   db: AppDatabase,
-  input: { runId: string; subChatId: string; status: string; logLabel: string },
+  input: {
+    runId: string
+    subChatId: string
+    status: string
+    logLabel: string
+    sdkMessageUuid?: string | null
+  },
 ) {
   const run = db.select().from(agentRuns).where(eq(agentRuns.id, input.runId)).get()
   if (!run || run.completedAt) return run
 
   const afterCheckpointId = await captureAgentRunCompletionArtifacts(db, input)
+
+  if (afterCheckpointId && input.sdkMessageUuid) {
+    db.update(checkpoints)
+      .set({ sdkMessageUuid: input.sdkMessageUuid })
+      .where(eq(checkpoints.id, afterCheckpointId))
+      .run()
+  }
 
   const completedRun = db
     .update(agentRuns)

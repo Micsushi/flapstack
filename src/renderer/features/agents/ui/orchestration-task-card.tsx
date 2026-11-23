@@ -669,6 +669,7 @@ function AgentEditorDialog({
               <option value="codex">Codex</option>
               <option value="claude-code">Claude Code</option>
               <option value="cursor-agent">Cursor</option>
+              <option value="antigravity">Gemini · Antigravity</option>
               <option value="openrouter">OpenRouter</option>
               <option value="nanogpt">NanoGPT</option>
               <option value="local">Local</option>
@@ -720,6 +721,7 @@ function AgentEditorDialog({
                     codex: "openai",
                     "claude-code": "anthropic",
                     "cursor-agent": "cursor",
+                    antigravity: "antigravity",
                     openrouter: "openrouter",
                     nanogpt: "nanogpt",
                     local: "local",
@@ -731,6 +733,7 @@ function AgentEditorDialog({
                     codex: "OpenAI",
                     "claude-code": "Anthropic",
                     "cursor-agent": "Cursor",
+                    antigravity: "Gemini · Antigravity",
                     openrouter: "OpenRouter",
                     nanogpt: "NanoGPT",
                     local: "Local / Ollama",

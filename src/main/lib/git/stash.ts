@@ -1,6 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { and, eq } from "drizzle-orm"
+import { checkpoints, getDatabase } from "../db"
+import { restoreCheckpoint } from "../checkpoints"
 import { simpleGit } from "simple-git"
 import { sleep } from "../../../shared/sleep"
 
@@ -11,70 +11,6 @@ type CheckpointPayload = {
   sdkMessageUuid: string
   indexTree: string
   worktreeTree: string
-}
-
-/**
- * Create a checkpoint ref for rollback support.
- * Stores index and worktree trees in an orphan commit under refs/checkpoints/.
- * If there are no changes, no checkpoint is created (this is fine).
- */
-export async function createRollbackStash(cwd: string, sdkMessageUuid: string): Promise<void> {
-  try {
-    const git = simpleGit(cwd)
-
-    const indexTreeRaw = await git.raw(["write-tree"])
-    const indexTree = indexTreeRaw.trim()
-    if (!indexTree) {
-      return
-    }
-
-    let worktreeTree = ""
-    let tempDir: string | undefined
-    try {
-      tempDir = await mkdtemp(join(tmpdir(), "checkpoint-index-"))
-      const tempIndexPath = join(tempDir, "index")
-      const gitWithTempIndex = simpleGit({
-        baseDir: cwd,
-        allowEnvironment: ["GIT_INDEX_FILE"],
-      }).env({
-        GIT_INDEX_FILE: tempIndexPath,
-      })
-      await gitWithTempIndex.raw(["add", "-A"])
-      worktreeTree = (await gitWithTempIndex.raw(["write-tree"])).trim()
-    } finally {
-      if (tempDir) {
-        await rm(tempDir, { recursive: true, force: true })
-      }
-    }
-
-    if (!worktreeTree) {
-      return
-    }
-
-    const checkpointPayload: CheckpointPayload = {
-      sdkMessageUuid,
-      indexTree,
-      worktreeTree,
-    }
-    const commitRaw = await git.raw([
-      "-c",
-      "user.name=Checkpoint",
-      "-c",
-      "user.email=checkpoint@local",
-      "commit-tree",
-      worktreeTree,
-      "-m",
-      JSON.stringify(checkpointPayload),
-    ])
-    const commitHash = commitRaw.trim()
-    if (!commitHash) {
-      return
-    }
-
-    await git.raw(["update-ref", `refs/checkpoints/${sdkMessageUuid}`, commitHash])
-  } catch (e) {
-    console.error("[claude] Failed to create rollback checkpoint:", e)
-  }
 }
 
 function parseCheckpointTrees(message: string): {
@@ -111,6 +47,17 @@ export async function applyRollbackStash(
   sdkMessageUuid: string,
 ): Promise<RollbackResult> {
   try {
+    const stored = getDatabase()
+      .select({ id: checkpoints.id })
+      .from(checkpoints)
+      .where(
+        and(
+          eq(checkpoints.worktreePath, worktreePath),
+          eq(checkpoints.sdkMessageUuid, sdkMessageUuid),
+        ),
+      )
+      .get()
+    if (stored) return { success: true, checkpointFound: await restoreCheckpoint(stored.id) }
     const git = simpleGit(worktreePath)
 
     const ref = `refs/checkpoints/${sdkMessageUuid}`

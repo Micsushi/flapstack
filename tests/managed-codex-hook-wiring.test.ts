@@ -38,7 +38,7 @@ vi.mock("../src/main/lib/agent-runtime/codex", async (original) => {
       actual.createCodexRuntimeAdapterFactory({
         ...options,
         resolveCommand: () => "synthetic-no-launch",
-        getBinaryVersion: async () => "0.153.4",
+        getBinaryVersion: async () => "0.166.0-alpha.6",
         createClient: () => {
           const client = new FakeCodexProtocolClient()
           boundary.clients.push(client)
@@ -171,7 +171,10 @@ it("carries lifecycle-approved hooks and extension policy through launcher-owned
         .requests.find((r) => r.method === `thread/${operation}`)!.params!
       expect(params.cwd).toBe(realpathSync(project))
       if (!expectExtensionPolicy) {
-        expect(params).not.toHaveProperty("config")
+        expect(params.config).toMatchObject({ model_reasoning_summary: "detailed" })
+        expect(params.config).not.toHaveProperty("hooks")
+        expect(params.config).not.toHaveProperty("features.hooks")
+        expect(params.config).not.toHaveProperty("skills")
       } else {
         expect(params.config).toMatchObject({
           skills: { config: [{ path: installed!.sourceId, enabled: false }] },

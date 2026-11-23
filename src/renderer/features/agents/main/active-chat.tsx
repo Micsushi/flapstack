@@ -135,7 +135,7 @@ import {
   justCreatedIdsAtom,
   lastMessagedProjectIdAtom,
   loadingSubChatsAtom,
-  MODEL_ID_MAP,
+  claudeModelForLaunch,
   pendingAuthRetryMessageAtom,
   pendingBuildPlanSubChatIdAtom,
   pendingConflictResolutionMessageAtom,
@@ -152,13 +152,16 @@ import {
   SUBCHATS_SIDEBAR_PANEL_ENABLED,
   selectedAgentChatIdAtom,
   lastSelectedAgentIdAtom,
+  antigravityModelSelectionsAtom,
   selectedCommitAtom,
   selectedDiffFilePathAtom,
   setLoading,
   subChatFilesAtom,
   agentsSidebarOpenAtom,
   subChatCodexModelIdAtomFamily,
-  initializeSubChatCodexModelAtom,
+  initializeSubChatModelAtom,
+  subChatClaudeEffortAtomFamily,
+  subChatReasoningEnabledAtomFamily,
   subChatCodexReasoningAtomFamily,
   subChatCursorModelIdAtomFamily,
   subChatOpencodeModelsAtomFamily,
@@ -3936,6 +3939,14 @@ const ChatViewInner = memo(function ChatViewInner({
           appStore.get(subChatModelIdAtomFamily(subChatId)),
         )
         appStore.set(
+          subChatClaudeEffortAtomFamily(newSubChat.id),
+          appStore.get(subChatClaudeEffortAtomFamily(subChatId)),
+        )
+        appStore.set(
+          subChatReasoningEnabledAtomFamily(newSubChat.id),
+          appStore.get(subChatReasoningEnabledAtomFamily(subChatId)),
+        )
+        appStore.set(
           subChatCodexModelIdAtomFamily(newSubChat.id),
           appStore.get(subChatCodexModelIdAtomFamily(subChatId)),
         )
@@ -5022,11 +5033,11 @@ const ChatViewInner = memo(function ChatViewInner({
   const runErrorPresentation = useMemo(
     () =>
       presentRunError(
-        error?.message ??
-          (persistedRunFailed ? "This run failed. Retry the message to try again." : undefined),
+        error?.message,
         getPlatform(),
+        persistedRunFailed ? latestRun?.limitKind : null,
       ),
-    [error?.message, persistedRunFailed],
+    [error?.message, latestRun?.limitKind, persistedRunFailed],
   )
   const jumpToTranscriptMarker = useCallback((marker: TranscriptMarker) => {
     if (
@@ -5435,7 +5446,9 @@ const ChatViewInner = memo(function ChatViewInner({
                       <div className="mx-auto flex w-full max-w-2xl items-start justify-between gap-3 rounded-t-xl border border-b-0 border-border bg-muted/30 px-3 py-2">
                         <div className="min-w-0 text-xs text-muted-foreground">
                           <div className="font-medium text-foreground" role="status">
-                            {displayQuestions.request?.kind === "permission" ? "Permission needed" : `${displayQuestions.questions.length} question${displayQuestions.questions.length === 1 ? "" : "s"}`}
+                            {displayQuestions.request?.kind === "permission"
+                              ? "Permission needed"
+                              : `${displayQuestions.questions.length} question${displayQuestions.questions.length === 1 ? "" : "s"}`}
                           </div>
                           <div className="line-clamp-2 break-words">
                             {displayQuestions.questions[0]?.question}
@@ -5454,7 +5467,9 @@ const ChatViewInner = memo(function ChatViewInner({
                           aria-expanded={false}
                           onClick={() => setQuestionDialogOpen(true)}
                         >
-                          {displayQuestions.request?.kind === "permission" ? "Review permission" : "Answer questions"}
+                          {displayQuestions.request?.kind === "permission"
+                            ? "Review permission"
+                            : "Answer questions"}
                         </Button>
                       </div>
                     </div>
@@ -6243,6 +6258,7 @@ function ChatViewScoped({
 
   const agentSubChatMetadata = (agentChat?.subChats ?? []) as Array<{
     id: string
+    model?: string | null
     name?: string | null
     mode?: ChatMode | "agent" | null
     created_at?: Date | string | null
@@ -7287,6 +7303,7 @@ Make sure to preserve all functionality from both branches when resolving confli
     (subChatId?: string): AgentProviderId => {
       const selectedDefault = appStore.get(lastSelectedAgentIdAtom)
       const defaultProvider =
+        selectedDefault === "antigravity" ||
         selectedDefault === "claude-code" ||
         selectedDefault === "codex" ||
         selectedDefault === "cursor-agent" ||
@@ -7308,6 +7325,7 @@ Make sure to preserve all functionality from both branches when resolving confli
 
       const persistedHarness = subChat?.harness || chatHarness
       if (
+        persistedHarness === "antigravity" ||
         persistedHarness === "codex" ||
         persistedHarness === "claude-code" ||
         persistedHarness === "cursor-agent" ||
@@ -7321,6 +7339,7 @@ Make sure to preserve all functionality from both branches when resolving confli
       const persistedModel = subChat?.model || chatModel
       if (typeof persistedModel === "string") {
         const normalizedModel = persistedModel.toLowerCase()
+        if (normalizedModel.startsWith("gemini-")) return "antigravity"
         if (normalizedModel.includes("codex") || normalizedModel.startsWith("gpt-")) {
           return "codex"
         }
@@ -7344,6 +7363,7 @@ Make sure to preserve all functionality from both branches when resolving confli
         const model = (message as any)?.metadata?.model
         if (typeof model !== "string") continue
         const normalizedModel = model.toLowerCase()
+        if (normalizedModel.startsWith("gemini-")) return "antigravity"
         if (normalizedModel.includes("codex") || normalizedModel.startsWith("gpt-")) {
           return "codex"
         }
@@ -7516,14 +7536,26 @@ Make sure to preserve all functionality from both branches when resolving confli
       const runWorktreePath = targetWorktreePath || worktreePath || globalRuntimePath
       const desiredSubChat = agentSubChats.find((sc) => sc.id === subChatId)
       const savedConversation = desiredSubChat as
-        { harness?: string; model?: string | null } | undefined
+        | {
+            harness?: string
+            model?: string | null
+            lastRunSelection?: {
+              model: string | null
+              effort: string | null
+              reasoningDisplay: boolean | null
+            }
+          }
+        | undefined
       const savedChat = agentChat as { harness?: string; model?: string | null }
-      if ((savedConversation?.harness || savedChat.harness) === "codex") {
-        appStore.set(initializeSubChatCodexModelAtom, {
+      const savedHarness = savedConversation?.harness || savedChat.harness
+      if (savedHarness === "codex" || savedHarness === "claude-code") {
+        appStore.set(initializeSubChatModelAtom, {
           subChatId,
+          harness: savedHarness,
           model: savedConversation?.model,
           parentHarness: savedChat.harness,
           parentModel: savedChat.model,
+          lastRunSelection: savedConversation?.lastRunSelection,
         })
       }
       const rawDesiredMessages = desiredSubChat?.messages
@@ -7597,7 +7629,7 @@ Make sure to preserve all functionality from both branches when resolving confli
               : (existing as any)?.transport instanceof OpencodeChatTransport
                 ? (existing as any).transport.getConfig().provider
                 : (existing as any)?.transport instanceof ACPChatTransport
-                  ? "codex"
+                  ? (existing as any).transport.provider
                   : "claude-code"
         if (existingProvider === overrideProvider) return existing
 
@@ -7638,7 +7670,7 @@ Make sure to preserve all functionality from both branches when resolving confli
         // Remote sandbox chat: use HTTP SSE transport
         const subChatName = subChat?.name || "Chat"
         const selectedModelId = appStore.get(subChatModelIdAtomFamily(subChatId))
-        const modelString = MODEL_ID_MAP[selectedModelId] || MODEL_ID_MAP["opus"]
+        const modelString = claudeModelForLaunch(selectedModelId)
         console.log("[getOrCreateChat] Using RemoteChatTransport", {
           sandboxUrl: chatSandboxUrl,
           model: modelString,
@@ -7676,7 +7708,7 @@ Make sure to preserve all functionality from both branches when resolving confli
             provider: chatProvider,
             model: (subChat as any)?.model || selectedModel || fallbackModel,
           })
-        } else if (chatProvider === "codex") {
+        } else if (chatProvider === "codex" || chatProvider === "antigravity") {
           console.log("[getOrCreateChat] Using ACPChatTransport", { provider: chatProvider })
           transport = new ACPChatTransport({
             chatId,
@@ -7686,7 +7718,8 @@ Make sure to preserve all functionality from both branches when resolving confli
             projectId:
               (agentChat as any)?.project?.id ?? (agentChat as any)?.projectId ?? undefined,
             mode: subChatMode,
-            provider: "codex",
+            provider: chatProvider,
+            model: (subChat as any)?.model ?? (agentChat as any)?.model,
           })
         } else if (chatProvider === "cursor-agent") {
           transport = new CursorChatTransport({
@@ -7888,6 +7921,12 @@ Make sure to preserve all functionality from both branches when resolving confli
     // New sub-chats use the user's default mode preference
     const newSubChatMode = defaultAgentMode
     const newSubChatProvider = inferProviderFromMessages(activeSubChatId || undefined)
+    const inheritedGeminiModel =
+      newSubChatProvider === "antigravity"
+        ? (appStore.get(antigravityModelSelectionsAtom)[sourceSubChatId] ??
+          agentSubChats.find((item) => item.id === sourceSubChatId)?.model ??
+          (agentChat as any)?.model)
+        : undefined
 
     // Check if this is a remote sandbox chat
     const isRemoteChat = !!(agentChat as any)?.isRemote
@@ -7938,10 +7977,24 @@ Make sure to preserve all functionality from both branches when resolving confli
 
     // Set the mode atomFamily for the new sub-chat (so currentMode reads correct value)
     appStore.set(subChatModeAtomFamily(newId), newSubChatMode)
+    if (inheritedGeminiModel) {
+      appStore.set(antigravityModelSelectionsAtom, (models) => ({
+        ...models,
+        [newId]: inheritedGeminiModel,
+      }))
+    }
     // Inherit model preferences from source sub-chat for deterministic behavior.
     appStore.set(
       subChatModelIdAtomFamily(newId),
       appStore.get(subChatModelIdAtomFamily(sourceSubChatId)),
+    )
+    appStore.set(
+      subChatClaudeEffortAtomFamily(newId),
+      appStore.get(subChatClaudeEffortAtomFamily(sourceSubChatId)),
+    )
+    appStore.set(
+      subChatReasoningEnabledAtomFamily(newId),
+      appStore.get(subChatReasoningEnabledAtomFamily(sourceSubChatId)),
     )
     appStore.set(
       subChatCodexModelIdAtomFamily(newId),
@@ -7992,7 +8045,7 @@ Make sure to preserve all functionality from both branches when resolving confli
     if (isNewSubChatRemote && newSubChatSandboxUrl) {
       // Remote sandbox chat: use HTTP SSE transport
       const selectedModelId = appStore.get(subChatModelIdAtomFamily(newId))
-      const modelString = MODEL_ID_MAP[selectedModelId] || MODEL_ID_MAP["opus"]
+      const modelString = claudeModelForLaunch(selectedModelId)
       console.log("[createNewSubChat] Using RemoteChatTransport", { model: modelString })
       newSubChatTransport = new RemoteChatTransport({
         chatId,
@@ -8025,7 +8078,7 @@ Make sure to preserve all functionality from both branches when resolving confli
           provider: chatProvider,
           model: selectedModel || fallbackModel,
         })
-      } else if (chatProvider === "codex") {
+      } else if (chatProvider === "codex" || chatProvider === "antigravity") {
         console.log("[createNewSubChat] Using ACPChatTransport", { provider: chatProvider })
         newSubChatTransport = new ACPChatTransport({
           chatId,
@@ -8034,7 +8087,8 @@ Make sure to preserve all functionality from both branches when resolving confli
           projectPath,
           projectId: (agentChat as any)?.project?.id ?? (agentChat as any)?.projectId ?? undefined,
           mode: newSubChatMode,
-          provider: "codex",
+          provider: chatProvider,
+          model: inheritedGeminiModel,
         })
       } else if (chatProvider === "cursor-agent") {
         newSubChatTransport = new CursorChatTransport({

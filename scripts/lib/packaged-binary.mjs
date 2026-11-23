@@ -29,6 +29,12 @@ const PE_MACHINE_TYPES = new Map([
   [0xaa64, "arm64"],
 ])
 
+export const CODEX_WINDOWS_HELPERS = {
+  "Codex code-mode host": "codex-code-mode-host",
+  "Codex command runner": "codex-command-runner",
+  "Codex sandbox setup": "codex-windows-sandbox-setup",
+}
+
 export function sha256File(filePath) {
   return new Promise((resolve, reject) => {
     const hash = createHash("sha256")

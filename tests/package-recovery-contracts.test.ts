@@ -112,6 +112,8 @@ function codexWindowsRelease(codex: Buffer, codeModeHost = codex) {
     assets: [
       asset("codex-x86_64-pc-windows-msvc.exe", codex),
       asset("codex-code-mode-host-x86_64-pc-windows-msvc.exe", codeModeHost),
+      asset("codex-command-runner-x86_64-pc-windows-msvc.exe", codex),
+      asset("codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe", codex),
     ],
   }
 }
@@ -364,7 +366,7 @@ describe("binary download recovery", () => {
     expect(readFileSync(markerPath, "utf8").trim()).toBe(
       createHash("sha256").update(codeModeHost).digest("hex"),
     )
-    expect(downloadFile).toHaveBeenCalledTimes(2)
+    expect(downloadFile).toHaveBeenCalledTimes(4)
 
     await expect(
       downloadCodexPlatform("0.153.4", "win32-x64", release, {
@@ -397,7 +399,7 @@ describe("binary download recovery", () => {
         downloadFile: repair,
       }),
     ).resolves.toBe(true)
-    expect(repair).toHaveBeenCalledTimes(2)
+    expect(repair).toHaveBeenCalledTimes(4)
     expect(readFileSync(hostPath)).toEqual(codeModeHost)
   })
 

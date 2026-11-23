@@ -99,6 +99,31 @@ writeFileSync(typesPath, types)
 
 const codexAcpPath = require.resolve("@agentclientprotocol/codex-acp")
 let codexAcpSource = readFileSync(codexAcpPath, "utf8")
+// Launch the same pinned executable as the direct adapter, including in paths with spaces.
+const pinnedSpawn = 'spawn(codexPath, ["app-server"], { env: spawnEnv, windowsHide: true })'
+codexAcpSource = codexAcpSource.replace(
+  'process.platform === "win32" ? spawn(`"${codexPath}" app-server`, { shell: true, env: spawnEnv }) : spawn(codexPath, ["app-server"], { env: spawnEnv })',
+  pinnedSpawn,
+)
+if (!codexAcpSource.includes(pinnedSpawn)) {
+  throw new Error("Could not configure the pinned Codex ACP executable")
+}
+// Legacy ACP starts its own App Server. Apply the same Windows fallback to that session.
+const sessionConfigLine =
+  "    const configWithWorkspaceRoots = mergeSandboxWorkspaceWriteRoots(mergedConfig, additionalDirectories);"
+const windowsFallback = `    if (process.platform === "win32") {
+      const effective = await this.codexClient.configRead({ cwd: projectPath, includeLayers: false });
+      const mode = effective.config?.windows?.sandbox;
+      mergedConfig.windows = { ...mergedConfig.windows, sandbox: mode === "elevated" || mode === "mxc" ? mode : "unelevated" };
+    }`
+if (!codexAcpSource.includes(windowsFallback)) {
+  if (!codexAcpSource.includes(sessionConfigLine))
+    throw new Error("Could not configure the Codex ACP Windows sandbox")
+  codexAcpSource = codexAcpSource.replace(
+    sessionConfigLine,
+    windowsFallback + "\n" + sessionConfigLine,
+  )
+}
 codexAcpSource = codexAcpSource.replace(
   "excludeTmpdirEnvVar: false,\n      excludeSlashTmp: false",
   "excludeTmpdirEnvVar: true,\n      excludeSlashTmp: true",

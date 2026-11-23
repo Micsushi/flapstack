@@ -4,7 +4,7 @@ Private local-first workspace for multi-project, multi-agent coding work.
 
 Flapstack is being built from the open-source 1Code codebase as a Codex-like UI
 for coordinating projects, tasks, chats, worktrees, permissions, checkpoints,
-and agent runs across tools like Codex and Claude Code.
+and agent runs across Codex, Claude Code, and Gemini through Antigravity.
 
 ## Current Status
 
@@ -27,7 +27,7 @@ Plan/Kanban contracts are documented in [Plan and Kanban](docs/plan-and-kanban.m
 
 - Base code: 1Code, rebranded to Flapstack
 - Repo visibility: private for now
-- Target harnesses: Codex and Claude Code
+- Primary harnesses include Codex, Claude Code, and Gemini through Antigravity.
 - Stage 1 shipped: global/project/task chats, unified Codex + Claude Code agent
   runs, permission modes with copy-on-create inheritance, worktree defaults,
   file/pasted-text attachments, scoped search, pin/archive, and before/after
@@ -38,6 +38,14 @@ Plan/Kanban contracts are documented in [Plan and Kanban](docs/plan-and-kanban.m
   model stays removed. Stage 6 adds up to four independent top-level Chat panes
   and bounded floating workbench windows without reviving nested conversations.
   Existing `sub_chats` rows remain internal storage compatibility.
+
+### Using Gemini through Antigravity
+
+Install the Antigravity CLI and sign in with `agy`. In a chat, select Gemini
+and choose a model and effort from the options your account provides. Gemini
+requires Full access. To see approval requests from Antigravity, turn on
+**Ask when Antigravity requires approval** in the model menu. Antigravity may
+already permit some actions. Reply to follow-up questions in the chat.
 
 ## Product Direction
 

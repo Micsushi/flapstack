@@ -1,10 +1,16 @@
-import { Route, Sparkles, Zap } from "lucide-react"
+import { Route, Sparkle, Sparkles, Zap } from "lucide-react"
 import { ClaudeCodeIcon, CodexIcon, CursorIcon } from "../../../components/ui/icons"
 
 export function hasProviderChipIcon(provider?: string | null): boolean {
-  return ["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt", "local"].includes(
-    provider ?? "",
-  )
+  return [
+    "claude-code",
+    "codex",
+    "antigravity",
+    "cursor-agent",
+    "openrouter",
+    "nanogpt",
+    "local",
+  ].includes(provider ?? "")
 }
 
 export function ProviderChipIcon({
@@ -15,6 +21,8 @@ export function ProviderChipIcon({
   className?: string
 }) {
   switch (provider) {
+    case "antigravity":
+      return <Sparkle className={className} />
     case "claude-code":
       return <ClaudeCodeIcon className={className} />
     case "codex":

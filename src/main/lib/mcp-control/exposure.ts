@@ -56,6 +56,7 @@ export function getChatMcpExposureStatus(chatId: string): McpExposureStatus {
   const harnessLabel = harness
     ? {
         codex: "Codex",
+        antigravity: "Antigravity",
         "claude-code": "Claude",
         "cursor-agent": "Cursor",
         openrouter: "OpenRouter",

@@ -84,6 +84,10 @@ import { AgentSendButton, AgentVoiceButton } from "../components/agent-send-butt
 import { AgentModeSelector } from "../components/agent-mode-selector"
 import { PermissionSelector } from "../components/permission-selector"
 import type { UploadedFile, UploadedImage } from "../hooks/use-agents-file-upload"
+import {
+  antigravityPermissionIssue,
+  useAntigravityModelPicker,
+} from "../hooks/use-antigravity-model-picker"
 import { useAvailableModels } from "../hooks/use-available-models"
 import { useVoiceInputHotkey } from "../hooks/use-voice-input-hotkey"
 import {
@@ -94,7 +98,8 @@ import {
   updateSubChatDraftText,
 } from "../lib/drafts"
 import {
-  CODEX_MODELS,
+  codexSelectionIssue,
+  selectableCodexModels,
   CURSOR_MODELS,
   DEFAULT_OPENCODE_MODELS,
   type ClaudeEffortLevel,
@@ -639,11 +644,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   const setLastSelectedCursorModelId = useSetAtom(lastSelectedCursorModelIdAtom)
   const [selectedOllamaModel, setSelectedOllamaModel] = useAtom(selectedOllamaModelAtom)
   const availableModels = useAvailableModels()
-  const [selectedModel, setSelectedModel] = useState(
-    () =>
-      availableModels.models.find((m) => m.id === selectedSubChatModelId) ||
-      availableModels.models[0],
-  )
+  const selectedModel = availableModels.models.find((model) => model.id === selectedSubChatModelId)
 
   useEffect(() => {
     for (const providerId of ["openrouter", "nanogpt"] as const) {
@@ -654,22 +655,6 @@ export const ChatInputArea = memo(function ChatInputArea({
       })
     }
   }, [enabledOpencodeModels, selectedOpencodeModels, setSelectedOpencodeModels])
-
-  // Sync selectedModel when per-subChat atom value changes (e.g., after localStorage hydration)
-  useEffect(() => {
-    const model = availableModels.models.find((m) => m.id === selectedSubChatModelId)
-    if (model && model.id !== selectedModel.id) {
-      setSelectedModel(model)
-    }
-  }, [availableModels.models, selectedModel.id, selectedSubChatModelId])
-
-  // Materialize the resolved Claude model into per-subChat storage once mounted.
-  // This prevents later global default changes from affecting existing sub-chats.
-  useEffect(() => {
-    if (provider !== "claude-code") return
-    if (!selectedModel?.id) return
-    setSelectedSubChatModelId(selectedModel.id)
-  }, [provider, selectedModel?.id, setSelectedSubChatModelId])
 
   const selectedClaudeEffort = useMemo<ClaudeEffortLevel>(() => {
     const efforts = selectedModel && "efforts" in selectedModel ? selectedModel.efforts : undefined
@@ -682,10 +667,23 @@ export const ChatInputArea = memo(function ChatInputArea({
   }, [selectedModel, selectedSubChatClaudeEffort])
 
   useEffect(() => {
-    if (provider !== "claude-code") return
+    if (
+      provider !== "claude-code" ||
+      !runtimeChat ||
+      !selectedModel ||
+      !("efforts" in selectedModel)
+    )
+      return
     if (selectedSubChatClaudeEffort === selectedClaudeEffort) return
     setSelectedSubChatClaudeEffort(selectedClaudeEffort)
-  }, [provider, selectedClaudeEffort, selectedSubChatClaudeEffort, setSelectedSubChatClaudeEffort])
+  }, [
+    provider,
+    runtimeChat,
+    selectedModel,
+    selectedClaudeEffort,
+    selectedSubChatClaudeEffort,
+    setSelectedSubChatClaudeEffort,
+  ])
 
   const { data: codexCredentialStatus } = trpc.credentials.status.useQuery(
     { id: "codex.api-key" },
@@ -712,6 +710,11 @@ export const ChatInputArea = memo(function ChatInputArea({
     refetchInterval: (query) =>
       isModelDropdownOpen && !query.state.data?.isConnected ? 2_000 : false,
   })
+  const antigravity = useAntigravityModelPicker(
+    isModelDropdownOpen || provider === "antigravity",
+    subChatId,
+    runtimeChat?.subChats.find((chat) => chat.id === subChatId)?.model ?? runtimeChat?.model,
+  )
   const { data: codexIntegration } = trpc.codex.getIntegration.useQuery(undefined, {
     enabled: isModelDropdownOpen || provider === "codex",
     staleTime: 60_000,
@@ -745,18 +748,17 @@ export const ChatInputArea = memo(function ChatInputArea({
     },
     onError: (error) => toast.error(`Could not start Cursor login: ${error.message}`),
   })
-  const codexUiModels = useMemo(() => {
-    const authSurface = hasAppCodexApiKey ? "api-key" : "chatgpt"
-    const models = CODEX_MODELS.filter((model) => model.authSurfaces.includes(authSurface))
-    return models.filter((model) => !hiddenModels.includes(model.id))
-  }, [hasAppCodexApiKey, hiddenModels])
-  const selectedCodexModel = useMemo(
-    () =>
-      codexUiModels.find((model) => model.id === selectedSubChatCodexModelId) ||
-      codexUiModels[0] ||
-      CODEX_MODELS[0]!,
-    [codexUiModels, selectedSubChatCodexModelId],
+  const codexCatalog = trpc.codex.listModels.useQuery(undefined, { staleTime: 60_000 })
+  const liveCodexModels = codexCatalog.data
+  const codexModels = useMemo(
+    () => selectableCodexModels(liveCodexModels, hasAppCodexApiKey ? "api-key" : "chatgpt"),
+    [liveCodexModels, hasAppCodexApiKey],
   )
+  const codexUiModels = useMemo(
+    () => codexModels.filter((model) => !hiddenModels.includes(model.id)),
+    [codexModels, hiddenModels],
+  )
+  const selectedCodexModel = codexModels.find((model) => model.id === selectedSubChatCodexModelId)
   const cursorUiModels = useMemo(() => {
     const liveIds = cursorModelData?.models?.length
       ? cursorModelData.models
@@ -774,67 +776,9 @@ export const ChatInputArea = memo(function ChatInputArea({
     [cursorUiModels, selectedSubChatCursorModelId],
   )
 
+  const selectedCodexReasoning = selectedSubChatCodexReasoning
   const codexFastModeEnabled =
-    selectedCodexModel.supportsFastMode === true && selectedSubChatCodexFastMode
-
-  const selectedCodexReasoning = useMemo<CodexReasoningLevel>(() => {
-    if (
-      selectedCodexModel.reasoningLevels.includes(
-        selectedSubChatCodexReasoning as CodexReasoningLevel,
-      )
-    ) {
-      return selectedSubChatCodexReasoning as CodexReasoningLevel
-    }
-
-    if (selectedCodexModel.reasoningLevels.includes("high")) {
-      return "high"
-    }
-
-    return selectedCodexModel.reasoningLevels[0]!
-  }, [selectedCodexModel, selectedSubChatCodexReasoning])
-
-  useEffect(() => {
-    if (
-      selectedCodexModel.reasoningLevels.includes(
-        selectedSubChatCodexReasoning as CodexReasoningLevel,
-      )
-    ) {
-      return
-    }
-
-    setSelectedSubChatCodexReasoning(selectedCodexReasoning)
-  }, [
-    selectedCodexModel,
-    selectedSubChatCodexReasoning,
-    selectedCodexReasoning,
-    setSelectedSubChatCodexReasoning,
-  ])
-
-  useEffect(() => {
-    if (selectedCodexModel.supportsFastMode || !selectedSubChatCodexFastMode) return
-    setSelectedSubChatCodexFastMode(false)
-  }, [
-    selectedCodexModel.supportsFastMode,
-    selectedSubChatCodexFastMode,
-    setSelectedSubChatCodexFastMode,
-  ])
-
-  // Materialize resolved Codex model/reasoning into per-subChat storage once mounted.
-  // This prevents later global default changes from affecting existing sub-chats.
-  useEffect(() => {
-    if (provider !== "codex") return
-    if (selectedCodexModel?.id) {
-      setSelectedSubChatCodexModelId(selectedCodexModel.id)
-    }
-    setSelectedSubChatCodexReasoning(selectedCodexReasoning)
-  }, [
-    provider,
-    selectedCodexModel?.id,
-    selectedCodexReasoning,
-    setSelectedSubChatCodexModelId,
-    setSelectedSubChatCodexReasoning,
-  ])
-
+    selectedCodexModel?.supportsFastMode === true && selectedSubChatCodexFastMode
   useEffect(() => {
     if (provider !== "cursor-agent") return
     if (selectedCursorModel.id) setSelectedSubChatCursorModelId(selectedCursorModel.id)
@@ -869,7 +813,7 @@ export const ChatInputArea = memo(function ChatInputArea({
 
   const selectedModelContextWindow = useMemo(() => {
     if (provider === "claude-code") return selectedModel?.contextWindow
-    if (provider === "codex") return selectedCodexModel.contextWindow
+    if (provider === "codex") return selectedCodexModel?.contextWindow
     if (provider === "openrouter" || provider === "nanogpt") {
       const catalog = provider === "openrouter" ? openrouterCatalog : nanogptCatalog
       const selectedId = selectedOpencodeModels[provider]
@@ -889,7 +833,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     nanogptCatalog,
     openrouterCatalog,
     provider,
-    selectedCodexModel.contextWindow,
+    selectedCodexModel?.contextWindow,
     selectedModel?.contextWindow,
     selectedOpencodeModels,
   ])
@@ -902,11 +846,12 @@ export const ChatInputArea = memo(function ChatInputArea({
   )
 
   const selectedModelLabel = useMemo(() => {
+    if (provider === "antigravity") return antigravity.label
     if (provider === "local") {
       return localModelPicker.selectedModelId ?? "Choose local model"
     }
     if (provider === "codex") {
-      return selectedCodexModel.name
+      return selectedCodexModel?.name ?? selectedSubChatCodexModelId
     }
 
     if (provider === "cursor-agent") {
@@ -930,15 +875,17 @@ export const ChatInputArea = memo(function ChatInputArea({
     }
 
     if (!selectedModel) {
-      return "Select model"
+      return selectedSubChatModelId || "Select model"
     }
 
     return `${selectedModel.name} ${selectedModel.version}`
   }, [
     provider,
     localModelPicker.selectedModelId,
-    selectedCodexModel.name,
+    selectedCodexModel?.name,
+    selectedSubChatCodexModelId,
     selectedCursorModel.name,
+    antigravity.label,
     selectedOpencodeModels,
     openrouterCatalog,
     nanogptCatalog,
@@ -947,6 +894,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     currentOllamaModel,
     hasCustomClaudeConfig,
     selectedModel,
+    selectedSubChatModelId,
   ])
 
   const { data: permissionResolution } = trpc.permissions.resolveForChat.useQuery(
@@ -1337,7 +1285,7 @@ export const ChatInputArea = memo(function ChatInputArea({
       if (message.includes("not its parent folder")) {
         toast.error("Choose a repository, not its parent folder", {
           description:
-            "Select a folder where Git works, such as …/GitHub/flapstack—not …/GitHub. No Chats were changed.",
+            "Select a folder where Git works, such as â€¦/GitHub/flapstackâ€”not â€¦/GitHub. No Chats were changed.",
         })
       } else {
         toast.error("Could not reconnect repository", {
@@ -1472,6 +1420,16 @@ export const ChatInputArea = memo(function ChatInputArea({
   const subChatModeAtom = useMemo(() => subChatModeAtomFamily(subChatId), [subChatId])
   const [subChatMode, setSubChatMode] = useAtom(subChatModeAtom)
   const effectivePermissionMode = resolveChatModePermission(subChatMode, requestedPermissionMode)
+  const antigravityBlockedReason =
+    provider === "antigravity"
+      ? (antigravityPermissionIssue(provider, effectivePermissionMode) ??
+        antigravity.modelIssue(antigravity.selectedModelId))
+      : null
+  const modelBlockedReason =
+    antigravityBlockedReason ??
+    (provider === "codex" && !codexCatalog.isFetching && !codexCatalog.isError
+      ? codexSelectionIssue(liveCodexModels, selectedSubChatCodexModelId, selectedCodexReasoning)
+      : null)
   const { data: permissionPreview } = trpc.permissions.previewHarness.useQuery({
     harness: provider,
     mode: effectivePermissionMode,
@@ -1759,6 +1717,10 @@ export const ChatInputArea = memo(function ChatInputArea({
   // Editor submit handler - handles Enter key with queue logic
   // If input is empty and queue has items, stop stream and send first from queue
   const handleEditorSubmit = useCallback(async () => {
+    if (modelBlockedReason) {
+      toast.error(modelBlockedReason)
+      return
+    }
     if (localModelMissing) {
       toast.error("Choose a local model before sending.")
       return
@@ -1804,6 +1766,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     worktreeBlockedReason,
     worktreeWasReplaced,
     localModelMissing,
+    modelBlockedReason,
   ])
 
   // Mention select handler
@@ -2314,6 +2277,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                 <div className="relative flex items-center gap-0.5 flex-1 min-w-0">
                   <div className="group/model-controls flex min-w-0 items-center gap-0.5">
                     <AgentModelSelector
+                      antigravity={antigravity}
                       open={isModelDropdownOpen}
                       onOpenChange={(open) => {
                         measurePerformanceNextFrame(open ? "menu-open" : "menu-close")
@@ -2340,13 +2304,10 @@ export const ChatInputArea = memo(function ChatInputArea({
                       }}
                       claude={{
                         models: availableModels.models.filter((m) => !hiddenModels.includes(m.id)),
-                        selectedModelId: selectedModel?.id,
+                        selectedModelId: selectedSubChatModelId,
                         onSelectModel: (modelId) => {
-                          const model =
-                            availableModels.models.find((item) => item.id === modelId) ||
-                            availableModels.models[0]
+                          const model = availableModels.models.find((item) => item.id === modelId)
                           if (!model) return
-                          setSelectedModel(model)
                           setSelectedSubChatModelId(model.id)
                           setLastSelectedModelId(model.id)
                         },
@@ -2367,7 +2328,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                       }}
                       codex={{
                         models: codexUiModels,
-                        selectedModelId: selectedCodexModel.id,
+                        selectedModelId: selectedSubChatCodexModelId,
                         onSelectModel: (modelId) => {
                           const model = codexUiModels.find((item) => item.id === modelId)
                           if (!model) return
@@ -2395,7 +2356,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         },
                         fastModeEnabled: codexFastModeEnabled,
                         onFastModeChange: (enabled) => {
-                          const nextEnabled = selectedCodexModel.supportsFastMode ? enabled : false
+                          const nextEnabled = selectedCodexModel?.supportsFastMode ? enabled : false
                           setSelectedSubChatCodexFastMode(nextEnabled)
                           setLastSelectedCodexFastMode(nextEnabled)
                         },
@@ -2453,6 +2414,8 @@ export const ChatInputArea = memo(function ChatInputArea({
                       }}
                     />
                     <AgentModelTuningSelector
+                      showAntigravityApprovals={effectivePermissionMode === "full-access"}
+                      antigravity={antigravity}
                       selectedAgentId={provider}
                       reasoningEnabled={reasoningOutputEnabled}
                       onReasoningEnabledChange={setReasoningOutputEnabled}
@@ -2460,7 +2423,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         models: availableModels.models.filter(
                           (model) => !hiddenModels.includes(model.id),
                         ),
-                        selectedModelId: selectedModel?.id,
+                        selectedModelId: selectedSubChatModelId,
                         hasCustomModelConfig: hasCustomClaudeConfig,
                         isOffline: availableModels.isOffline && availableModels.hasOllama,
                         selectedEffort: selectedClaudeEffort,
@@ -2470,8 +2433,8 @@ export const ChatInputArea = memo(function ChatInputArea({
                         },
                       }}
                       codex={{
-                        models: codexUiModels,
-                        selectedModelId: selectedCodexModel.id,
+                        models: codexModels,
+                        selectedModelId: selectedSubChatCodexModelId,
                         selectedReasoning: selectedCodexReasoning,
                         onSelectReasoning: (reasoning) => {
                           setSelectedSubChatCodexReasoning(reasoning)
@@ -2479,7 +2442,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         },
                         fastModeEnabled: codexFastModeEnabled,
                         onFastModeChange: (enabled) => {
-                          const nextEnabled = selectedCodexModel.supportsFastMode ? enabled : false
+                          const nextEnabled = selectedCodexModel?.supportsFastMode ? enabled : false
                           setSelectedSubChatCodexFastMode(nextEnabled)
                           setLastSelectedCodexFastMode(nextEnabled)
                         },
@@ -2952,6 +2915,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                           queueLength === 0) ||
                         isUploading ||
                         localModelMissing ||
+                        Boolean(modelBlockedReason) ||
                         Boolean(runtimeBlockedReason) ||
                         Boolean(worktreeBlockedReason)
                       }
@@ -3089,6 +3053,11 @@ export const ChatInputArea = memo(function ChatInputArea({
                 )}
               </PromptInputActions>
             </PromptInput>
+            {modelBlockedReason && (
+              <p role="status" className="mt-2 px-2 text-xs text-muted-foreground">
+                {modelBlockedReason}
+              </p>
+            )}
             {localModelMissing ? (
               <p role="status" className="mt-2 px-2 text-xs text-muted-foreground">
                 Choose a local model before sending. Saved messages remain available.
@@ -3213,7 +3182,7 @@ export const ChatInputArea = memo(function ChatInputArea({
               disabled={continueWithRuntimeMutation.isPending}
             >
               {continueWithRuntimeMutation.isPending
-                ? "Continuing…"
+                ? "Continuingâ€¦"
                 : `Continue with ${runtimePreferenceLabel(pendingRuntimeContinuation ?? "auto")}`}
             </Button>
           </AlertDialogFooter>
@@ -3233,7 +3202,7 @@ export const ChatInputArea = memo(function ChatInputArea({
           <AlertDialogHeader>
             <AlertDialogTitle>Change chat permissions?</AlertDialogTitle>
             <AlertDialogDescription className="mt-2">
-              {RUN_PERMISSION_MODE_LABELS[requestedPermissionMode]} →{" "}
+              {RUN_PERMISSION_MODE_LABELS[requestedPermissionMode]} â†’{" "}
               {pendingPermissionMode ? RUN_PERMISSION_MODE_LABELS[pendingPermissionMode] : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -3326,7 +3295,7 @@ export const ChatInputArea = memo(function ChatInputArea({
               <span>
                 <span className="block font-medium">Remember my choice</span>
                 <span className="block text-xs text-muted-foreground">
-                  You can reset this to Ask every time in Settings → Permissions.
+                  You can reset this to Ask every time in Settings â†’ Permissions.
                 </span>
               </span>
               <Switch

@@ -198,6 +198,7 @@ export const orchestrationAgentDefinitionSchema = z
     const provider = value.provider?.toLowerCase()
     const supportedProviders = {
       codex: ["codex", "openai"],
+      antigravity: ["antigravity", "gemini", "google"],
       "claude-code": ["claude", "anthropic"],
       "cursor-agent": ["cursor"],
       openrouter: ["openrouter"],

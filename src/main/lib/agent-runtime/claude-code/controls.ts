@@ -2,7 +2,7 @@ import type { RuntimeLaunchControls } from "../../../../shared/agent-runtime"
 
 export type ClaudeRuntimeSdkControls = {
   includePartialMessages: true
-  thinking?: { type: "adaptive"; display: "summarized" | "omitted" } | { type: "disabled" }
+  thinking: { type: "adaptive"; display: "summarized" | "omitted" } | { type: "disabled" }
   effort?: "low" | "medium" | "high" | "xhigh" | "max"
   forwardSubagentText: boolean
   includeHookEvents: boolean
@@ -30,19 +30,12 @@ export function buildClaudeRuntimeSdkControls(
 ): ClaudeRuntimeSdkControls {
   const effort = normalizeClaudeRuntimeEffort(controls.modelEffort)
 
-  const thinking =
-    controls.modelThinking === false
-      ? ({ type: "disabled" } as const)
-      : controls.modelThinking === true || controls.reasoningDisplay === false
-        ? ({
-            type: "adaptive",
-            display: controls.reasoningDisplay ? "summarized" : "omitted",
-          } as const)
-        : undefined
-
   return {
     includePartialMessages: true,
-    ...(thinking ? { thinking } : {}),
+    thinking:
+      controls.modelThinking === false
+        ? { type: "disabled" }
+        : { type: "adaptive", display: controls.reasoningDisplay ? "summarized" : "omitted" },
     ...(effort ? { effort } : {}),
     forwardSubagentText: controls.subagentActivity,
     includeHookEvents: controls.hookDiagnostics,

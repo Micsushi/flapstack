@@ -1379,7 +1379,7 @@ describe("Codex status normalization", () => {
     const status = normalizeCodexStatus("Logged in using ChatGPT")
 
     expect(status.state).toBe("connected_chatgpt")
-    expect(status.recommendedModel).toBe("gpt-5.3-codex-spark/high")
+    expect(status.recommendedModel).toBe("gpt-5.6-sol/high")
     expect(status.recommendedModel).toBe(SAFE_CHATGPT_CODEX_MODEL)
   })
 

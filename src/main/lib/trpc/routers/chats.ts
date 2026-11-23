@@ -6,6 +6,7 @@ import * as path from "path"
 import { simpleGit } from "simple-git"
 import { TRPCError } from "@trpc/server"
 import { z } from "zod"
+import { AGENT_HARNESSES } from "../../../../shared/harness-types"
 import { getAuthManager } from "../../../index"
 import {
   trackPRCreated,
@@ -130,7 +131,7 @@ function normalizedTagName(name: string) {
 
 const runtimeDelegationInputSchema = z.object({
   sourceChatId: z.string().trim().min(1).max(200),
-  targetHarness: z.enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt", "local"]),
+  targetHarness: z.enum(AGENT_HARNESSES),
   targetModel: z.string().trim().min(1).max(240),
   preference: agentRuntimePreferenceSchema,
   requestId: z.string().trim().min(8).max(200),
@@ -618,6 +619,7 @@ export const chatsRouter = router({
     const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
     if (!chat) return null
 
+    const savedControls = sql`CASE WHEN json_valid(${agentRuns.runtimeControlSnapshot}) THEN ${agentRuns.runtimeControlSnapshot} END`
     const chatSubChats = db
       .select({
         id: subChats.id,
@@ -631,10 +633,25 @@ export const chatsRouter = router({
         permissionMode: subChats.permissionMode,
         worktreePath: subChats.worktreePath,
         runStatus: subChats.runStatus,
+        recentModel: agentRuns.model,
+        recentEffort: sql<string | null>`json_extract(${savedControls}, '$.modelEffort')`,
+        recentReasoning: sql<number | null>`json_extract(${savedControls}, '$.reasoningDisplay')`,
         createdAt: subChats.createdAt,
         updatedAt: subChats.updatedAt,
       })
       .from(subChats)
+      .leftJoin(
+        agentRuns,
+        eq(
+          agentRuns.id,
+          sql`(
+        SELECT r.id FROM agent_runs r
+        WHERE r.chat_id = ${subChats.chatId} AND r.sub_chat_id = ${subChats.id}
+          AND r.harness = coalesce(${subChats.harness}, ${chat.harness})
+        ORDER BY r.started_at DESC, r.rowid DESC LIMIT 1
+      )`,
+        ),
+      )
       .where(eq(subChats.chatId, input.id))
       .orderBy(subChats.createdAt)
       .all()
@@ -650,7 +667,20 @@ export const chatsRouter = router({
 
     return {
       ...chat,
-      subChats: chatSubChats,
+      subChats: chatSubChats.map(
+        ({ recentModel, recentEffort, recentReasoning, ...conversation }) => ({
+          ...conversation,
+          ...(recentModel || recentEffort || recentReasoning != null
+            ? {
+                lastRunSelection: {
+                  model: recentModel,
+                  effort: recentEffort,
+                  reasoningDisplay: recentReasoning == null ? null : Boolean(recentReasoning),
+                },
+              }
+            : {}),
+        }),
+      ),
       project,
       globalRuntimePath,
       hasProviderIntent: createRuntimeChatLifecycleService(db).hasProviderIntent(input.id),
@@ -1556,7 +1586,7 @@ export const chatsRouter = router({
       z.object({
         chatId: z.string().trim().min(1).max(200),
         subChatId: z.string().trim().min(1).max(200),
-        harness: z.enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt", "local"]),
+        harness: z.enum(AGENT_HARNESSES),
       }),
     )
     .mutation(({ input }) =>
@@ -1578,9 +1608,7 @@ export const chatsRouter = router({
     .input(
       z.object({
         sourceChatId: z.string().trim().min(1).max(200),
-        targetHarness: z
-          .enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt", "local"])
-          .optional(),
+        targetHarness: z.enum(AGENT_HARNESSES).optional(),
         targetModel: z.string().trim().min(1).max(240).optional(),
         preference: agentRuntimePreferenceSchema,
         requestId: z.string().trim().min(8).max(200),
@@ -1599,9 +1627,7 @@ export const chatsRouter = router({
     .input(
       z.object({
         sourceChatId: z.string().trim().min(1).max(200),
-        targetHarness: z
-          .enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt", "local"])
-          .optional(),
+        targetHarness: z.enum(AGENT_HARNESSES).optional(),
         targetModel: z.string().trim().min(1).max(240).optional(),
         preference: agentRuntimePreferenceSchema,
         requestId: z.string().trim().min(8).max(200),

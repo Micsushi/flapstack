@@ -36,6 +36,8 @@ function fixture() {
     join(bin, "claude.exe"),
     join(bin, "codex.exe"),
     join(bin, "codex-code-mode-host.exe"),
+    join(bin, "codex-command-runner.exe"),
+    join(bin, "codex-windows-sandbox-setup.exe"),
     join(bin, "whisper-cli.exe"),
     join(bin, "flapstack-stt-sidecar.exe"),
     join(unpacked, "better-sqlite3", "build", "Release", "better_sqlite3.node"),
@@ -59,11 +61,18 @@ function fixture() {
     join(bin, ".stt-sidecar.sha256"),
     `${createHash("sha256").update(readFileSync(sidecar)).digest("hex")}\n`,
   )
-  const codeModeHost = join(bin, "codex-code-mode-host.exe")
-  writeFileSync(
-    join(bin, ".codex-code-mode-host.sha256"),
-    `${createHash("sha256").update(readFileSync(codeModeHost)).digest("hex")}\n`,
-  )
+  for (const name of [
+    "codex-code-mode-host",
+    "codex-command-runner",
+    "codex-windows-sandbox-setup",
+  ]) {
+    writeFileSync(
+      join(bin, `.${name}.sha256`),
+      `${createHash("sha256")
+        .update(readFileSync(join(bin, `${name}.exe`)))
+        .digest("hex")}\n`,
+    )
+  }
   writeFileSync(join(resources, "app.asar"), "asar")
   return app
 }

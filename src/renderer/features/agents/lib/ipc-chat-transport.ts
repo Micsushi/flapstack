@@ -14,7 +14,7 @@ import { appStore } from "../../../lib/jotai-store"
 import { trpcClient } from "../../../lib/trpc"
 import {
   compactingSubChatsAtom,
-  MODEL_ID_MAP,
+  claudeModelForLaunch,
   pendingAuthRetryMessageAtom,
   subChatModelIdAtomFamily,
   subChatClaudeEffortAtomFamily,
@@ -148,6 +148,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
     messages: UIMessage[]
     abortSignal?: AbortSignal
   }): Promise<ReadableStream<UIMessageChunk>> {
+    const submittedAtMs = Date.now()
     // Extract prompt and images from last user message
     const lastUser = [...options.messages].reverse().find((m) => m.role === "user")
     const prompt = this.extractText(lastUser)
@@ -168,7 +169,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
 
     // Read model selection dynamically per sub-chat (so split panes stay independent)
     const selectedModelId = appStore.get(subChatModelIdAtomFamily(this.config.subChatId))
-    const modelString = MODEL_ID_MAP[selectedModelId] || MODEL_ID_MAP["opus"]
+    const modelString = claudeModelForLaunch(selectedModelId)
     const claudeEffort = appStore.get(subChatClaudeEffortAtomFamily(this.config.subChatId))
 
     // Get selected Ollama model for offline mode
@@ -186,6 +187,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
     const vaultContextGraphSelection = readProjectVaultGraphSelection(this.config.projectId)
 
     const directStream = await createDirectRuntimeStream({
+      submittedAtMs,
       chatId: this.config.chatId,
       subChatId: this.config.subChatId,
       harness: "claude-code",
@@ -214,6 +216,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
         })
         const sub = trpcClient.claude.chat.subscribe(
           {
+            submittedAtMs,
             subChatId: this.config.subChatId,
             chatId: this.config.chatId,
             prompt,

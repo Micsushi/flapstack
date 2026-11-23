@@ -52,6 +52,7 @@ it("reads the latest intent across statuses without crossing chat boundaries or 
   )
   expect(await caller.latestForSubChat({ chatId: "a", subChatId: "a-sub" })).toEqual({
     id: "failed",
+    limitKind: null,
     subChatId: "a-sub",
     status: "failure",
     promptMessageId: "intent",

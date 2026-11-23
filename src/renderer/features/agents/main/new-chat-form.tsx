@@ -48,6 +48,7 @@ import {
   selectedDraftIdAtom,
   selectedProjectAtom,
   subChatReasoningEnabledAtomFamily,
+  subChatClaudeEffortAtomFamily,
   getNextMode,
   type AgentMode,
   type SelectedProject,
@@ -77,6 +78,10 @@ import {
   type SlashCommandOption,
 } from "../commands"
 import { useAgentsFileUpload } from "../hooks/use-agents-file-upload"
+import {
+  antigravityPermissionIssue,
+  useAntigravityModelPicker,
+} from "../hooks/use-antigravity-model-picker"
 import { useAvailableModels } from "../hooks/use-available-models"
 import { usePastedTextFiles } from "../hooks/use-pasted-text-files"
 import { useFocusInputOnEnter } from "../hooks/use-focus-input-on-enter"
@@ -137,7 +142,8 @@ import {
 import { useDictationSession } from "../voice/dictation-session"
 import { registerVoiceHistoryInsertTarget } from "../../../lib/voice-history-insert"
 import {
-  CODEX_MODELS,
+  codexSelectionIssue,
+  selectableCodexModels,
   CURSOR_MODELS,
   DEFAULT_OPENCODE_MODELS,
   DEFAULT_CLAUDE_MODEL_ID,
@@ -171,11 +177,12 @@ const agents: Array<{
   disabled?: boolean
 }> = [
   { id: "claude-code", name: "Claude Code", hasModels: true },
+  { id: "antigravity", name: "Gemini Â· Antigravity", hasModels: true },
   { id: "cursor-agent", name: "Cursor", hasModels: true },
   { id: "codex", name: "OpenAI Codex" },
   { id: "openrouter", name: "OpenRouter", hasModels: true },
   { id: "nanogpt", name: "NanoGPT", hasModels: true },
-  { id: "local", name: "Local Â· Ollama", hasModels: true },
+  { id: "local", name: "Local Ã‚Â· Ollama", hasModels: true },
 ]
 
 interface NewChatFormProps {
@@ -434,6 +441,22 @@ export function NewChatForm({
 
   // Get available models (with offline support)
   const availableModels = useAvailableModels()
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
+  const profile =
+    agentProfileSelection && !("invalid" in agentProfileSelection) ? agentProfileSelection : null
+  const newChatHarness = profile?.harness ?? selectedAgent.id
+  const antigravity = useAntigravityModelPicker(
+    isModelDropdownOpen || newChatHarness === "antigravity",
+  )
+  const newChatPermission = resolveChatModePermission(
+    agentMode,
+    profile ? parseRunPermissionMode(profile.permissionMode) : selectedPermissionMode,
+  )
+  const antigravityBlockedReason =
+    newChatHarness === "antigravity"
+      ? (antigravityPermissionIssue(newChatHarness, newChatPermission) ??
+        antigravity.modelIssue(profile?.model ?? antigravity.selectedModelId))
+      : null
   const [selectedOllamaModel, setSelectedOllamaModel] = useAtom(selectedOllamaModelAtom)
   const [lastSelectedCodexModelId, setLastSelectedCodexModelId] = useAtom(
     lastSelectedCodexModelIdAtom,
@@ -469,7 +492,6 @@ export function NewChatForm({
   const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(
     lastSelectedReasoningEnabledAtom,
   )
-  const pendingReasoningEnabledRef = useRef(reasoningOutputEnabled)
 
   const [selectedModel, setSelectedModel] = useState(
     () =>
@@ -506,18 +528,17 @@ export function NewChatForm({
   })
   const hasAppCodexApiKey = codexCredentialStatus?.configured === true
   const hiddenModels = useAtomValue(hiddenModelsAtom)
-  const codexUiModels = useMemo(() => {
-    const authSurface = hasAppCodexApiKey ? "api-key" : "chatgpt"
-    const models = CODEX_MODELS.filter((model) => model.authSurfaces.includes(authSurface))
-    return models.filter((model) => !hiddenModels.includes(model.id))
-  }, [hasAppCodexApiKey, hiddenModels])
-  const selectedCodexModel = useMemo(
-    () =>
-      codexUiModels.find((model) => model.id === lastSelectedCodexModelId) ||
-      codexUiModels[0] ||
-      CODEX_MODELS[0]!,
-    [codexUiModels, lastSelectedCodexModelId],
+  const codexCatalog = trpc.codex.listModels.useQuery(undefined, { staleTime: 60_000 })
+  const liveCodexModels = codexCatalog.data
+  const codexModels = useMemo(
+    () => selectableCodexModels(liveCodexModels, hasAppCodexApiKey ? "api-key" : "chatgpt"),
+    [liveCodexModels, hasAppCodexApiKey],
   )
+  const codexUiModels = useMemo(
+    () => codexModels.filter((model) => !hiddenModels.includes(model.id)),
+    [codexModels, hiddenModels],
+  )
+  const selectedCodexModel = codexModels.find((model) => model.id === lastSelectedCodexModelId)
   const cursorUiModels = useMemo(() => {
     const liveIds = cursorModelData?.models?.length
       ? cursorModelData.models
@@ -535,49 +556,23 @@ export function NewChatForm({
     [cursorUiModels, lastSelectedCursorModelId],
   )
 
+  const selectedCodexReasoning = lastSelectedCodexReasoning
   const codexFastModeEnabled =
-    selectedCodexModel.supportsFastMode === true && lastSelectedCodexFastMode
-
-  const selectedCodexReasoning = useMemo<CodexReasoningLevel>(() => {
-    if (
-      selectedCodexModel.reasoningLevels.includes(lastSelectedCodexReasoning as CodexReasoningLevel)
-    ) {
-      return lastSelectedCodexReasoning as CodexReasoningLevel
-    }
-
-    if (selectedCodexModel.reasoningLevels.includes("high")) {
-      return "high"
-    }
-
-    return selectedCodexModel.reasoningLevels[0]!
-  }, [selectedCodexModel, lastSelectedCodexReasoning])
-
-  useEffect(() => {
-    if (
-      selectedCodexModel.reasoningLevels.includes(lastSelectedCodexReasoning as CodexReasoningLevel)
-    ) {
-      return
-    }
-
-    setLastSelectedCodexReasoning(selectedCodexReasoning)
-  }, [
-    selectedCodexModel,
-    lastSelectedCodexReasoning,
-    selectedCodexReasoning,
-    setLastSelectedCodexReasoning,
-  ])
-
-  useEffect(() => {
-    if (selectedCodexModel.supportsFastMode || !lastSelectedCodexFastMode) return
-    setLastSelectedCodexFastMode(false)
-  }, [lastSelectedCodexFastMode, selectedCodexModel.supportsFastMode, setLastSelectedCodexFastMode])
+    selectedCodexModel?.supportsFastMode === true && lastSelectedCodexFastMode
+  const codexSelection = profile?.model ?? lastSelectedCodexModelId
+  const modelBlockedReason =
+    antigravityBlockedReason ??
+    (newChatHarness === "codex" && !codexCatalog.isFetching && !codexCatalog.isError
+      ? codexSelectionIssue(liveCodexModels, codexSelection, selectedCodexReasoning)
+      : null)
 
   const selectedChatModel = useMemo(() => {
+    if (selectedAgent.id === "antigravity") return antigravity.selectedModelId ?? ""
     if (selectedAgent.id === "local") {
       return localModelPicker.selectedModelId ?? ""
     }
     if (selectedAgent.id === "codex") {
-      return `${selectedCodexModel.id}/${selectedCodexReasoning}`
+      return `${lastSelectedCodexModelId}/${selectedCodexReasoning}`
     }
     if (selectedAgent.id === "cursor-agent") {
       return selectedCursorModel.id
@@ -589,9 +584,10 @@ export function NewChatForm({
   }, [
     selectedAgent.id,
     localModelPicker.selectedModelId,
-    selectedCodexModel.id,
+    lastSelectedCodexModelId,
     selectedCodexReasoning,
     selectedCursorModel.id,
+    antigravity.selectedModelId,
     lastSelectedOpencodeModels,
     selectedModel?.id,
   ])
@@ -601,11 +597,12 @@ export function NewChatForm({
     selectedOllamaModel || availableModels.recommendedModel || availableModels.ollamaModels[0]
   const claudeAgent = enabledAgents.find((agent) => agent.id === "claude-code") || fallbackAgent
   const selectedModelLabel = useMemo(() => {
+    if (selectedAgent.id === "antigravity") return antigravity.label
     if (selectedAgent.id === "local") {
       return localModelPicker.selectedModelId ?? "Choose local model"
     }
     if (selectedAgent.id === "codex") {
-      return selectedCodexModel.name
+      return selectedCodexModel?.name ?? lastSelectedCodexModelId
     }
     if (selectedAgent.id === "cursor-agent") {
       return selectedCursorModel.name
@@ -636,8 +633,10 @@ export function NewChatForm({
   }, [
     selectedAgent.id,
     localModelPicker.selectedModelId,
-    selectedCodexModel.name,
+    selectedCodexModel?.name,
+    lastSelectedCodexModelId,
     selectedCursorModel.name,
+    antigravity.label,
     lastSelectedOpencodeModels,
     openrouterCatalog,
     nanogptCatalog,
@@ -726,8 +725,6 @@ export function NewChatForm({
   const [showSlashDropdown, setShowSlashDropdown] = useState(false)
   const [slashSearchText, setSlashSearchText] = useState("")
   const [slashPosition, setSlashPosition] = useState({ top: 0, left: 0 })
-
-  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
 
   // Voice input state
   const dictation = useDictationSession()
@@ -1225,7 +1222,8 @@ export function NewChatForm({
   // Create chat mutation (real tRPC)
   const utils = trpc.useUtils()
   const createChatMutation = trpc.chats.create.useMutation({
-    onSuccess: (data) => {
+    onMutate: () => ({ reasoningOutputEnabled, selectedClaudeEffort }),
+    onSuccess: (data, input, selection) => {
       appStore.set(
         lastMessagedProjectIdAtom,
         chatScope === "global" ? null : (validatedProject?.id ?? null),
@@ -1243,10 +1241,18 @@ export function NewChatForm({
         const firstSubChatId = data.subChats[0].id
         ids.push(firstSubChatId)
         setPendingInitialGenerationIds((prev) => new Set([...prev, firstSubChatId]))
-        appStore.set(
-          subChatReasoningEnabledAtomFamily(firstSubChatId),
-          pendingReasoningEnabledRef.current,
-        )
+        if (selection) {
+          appStore.set(
+            subChatReasoningEnabledAtomFamily(firstSubChatId),
+            selection.reasoningOutputEnabled,
+          )
+          if (input.harness === "claude-code") {
+            appStore.set(
+              subChatClaudeEffortAtomFamily(firstSubChatId),
+              selection.selectedClaudeEffort,
+            )
+          }
+        }
         utils.chats.getTranscript.setData(
           { chatId: data.id, subChatId: firstSubChatId },
           {
@@ -1326,6 +1332,18 @@ export function NewChatForm({
     if (agentProfileSelection && "invalid" in agentProfileSelection) {
       toast.error("Resolve the selected Agent Profile error before starting this Chat.")
       return
+    }
+    if (modelBlockedReason) {
+      toast.error(modelBlockedReason)
+      return
+    }
+    if (newChatHarness === "codex" && (!liveCodexModels || codexCatalog.isFetching)) {
+      const live = await trpcUtils.codex.listModels.fetch().catch(() => undefined)
+      const issue = codexSelectionIssue(live, codexSelection, selectedCodexReasoning)
+      if (issue) {
+        toast.error(issue)
+        return
+      }
     }
     if (!agentProfileSelection && selectedAgent.id === "local" && !localModelPicker.canLaunch) {
       toast.error("Choose a refreshed, chat-capable local model before launch.")
@@ -1448,7 +1466,6 @@ export function NewChatForm({
     }
 
     // Create chat with selected scope, branch, and initial message
-    pendingReasoningEnabledRef.current = reasoningOutputEnabled
     createChatMutation.mutate({
       projectId: chatScope === "global" ? undefined : validatedProject?.id,
       taskId: chatScope === "task" ? selectedTask?.id : undefined,
@@ -1497,6 +1514,12 @@ export function NewChatForm({
     trpcUtils,
     finishVoiceBeforeSend,
     localModelPicker.canLaunch,
+    modelBlockedReason,
+    newChatHarness,
+    liveCodexModels,
+    codexCatalog.isFetching,
+    codexSelection,
+    selectedCodexReasoning,
     agentProfileSelection,
     setSettingsActiveTab,
     setSettingsDialogOpen,
@@ -2267,6 +2290,7 @@ export function NewChatForm({
                   <div className="flex items-center gap-0.5 flex-1 min-w-0">
                     <div className="group/model-controls flex min-w-0 items-center gap-0.5">
                       <AgentModelSelector
+                        antigravity={antigravity}
                         open={isModelDropdownOpen}
                         onOpenChange={setIsModelDropdownOpen}
                         selectedAgentId={selectedAgent.id as AgentProviderId}
@@ -2313,7 +2337,7 @@ export function NewChatForm({
                         }}
                         codex={{
                           models: codexUiModels,
-                          selectedModelId: selectedCodexModel.id,
+                          selectedModelId: lastSelectedCodexModelId,
                           onSelectModel: (modelId) => {
                             const model = codexUiModels.find((item) => item.id === modelId)
                             if (!model) return
@@ -2336,7 +2360,7 @@ export function NewChatForm({
                           fastModeEnabled: codexFastModeEnabled,
                           onFastModeChange: (enabled) =>
                             setLastSelectedCodexFastMode(
-                              selectedCodexModel.supportsFastMode ? enabled : false,
+                              selectedCodexModel?.supportsFastMode ? enabled : false,
                             ),
                           isConnected: codexIntegration?.isConnected === true,
                         }}
@@ -2396,6 +2420,8 @@ export function NewChatForm({
                         }}
                       />
                       <AgentModelTuningSelector
+                        showAntigravityApprovals={newChatPermission === "full-access"}
+                        antigravity={antigravity}
                         selectedAgentId={selectedAgent.id as AgentProviderId}
                         reasoningEnabled={reasoningOutputEnabled}
                         onReasoningEnabledChange={setReasoningOutputEnabled}
@@ -2410,14 +2436,14 @@ export function NewChatForm({
                           onSelectEffort: setLastSelectedClaudeEffort,
                         }}
                         codex={{
-                          models: codexUiModels,
-                          selectedModelId: selectedCodexModel.id,
+                          models: codexModels,
+                          selectedModelId: lastSelectedCodexModelId,
                           selectedReasoning: selectedCodexReasoning,
                           onSelectReasoning: setLastSelectedCodexReasoning,
                           fastModeEnabled: codexFastModeEnabled,
                           onFastModeChange: (enabled) =>
                             setLastSelectedCodexFastMode(
-                              selectedCodexModel.supportsFastMode ? enabled : false,
+                              selectedCodexModel?.supportsFastMode ? enabled : false,
                             ),
                         }}
                       />
@@ -2477,6 +2503,7 @@ export function NewChatForm({
                           ((chatScope === "project" || chatScope === "task") &&
                             !validatedProject) ||
                           (chatScope === "task" && !selectedTask) ||
+                          modelBlockedReason ||
                           runtimeBlockedReason,
                         )}
                         onClick={handleSend}
@@ -2488,6 +2515,11 @@ export function NewChatForm({
                 </PromptInputActions>
               </PromptInput>
 
+              {modelBlockedReason && (
+                <p role="status" className="mt-2 px-2 text-xs text-muted-foreground">
+                  {modelBlockedReason}
+                </p>
+              )}
               {runtimeBlockedReason ? (
                 <p role="alert" className="mt-2 px-2 text-xs text-amber-600 dark:text-amber-300">
                   {runtimeBlockedReason} Choose Flapstack Native to launch now.

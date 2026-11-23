@@ -1,3 +1,5 @@
+import { readRunTimings } from "../../run-timings"
+import { classifyProviderLimitError } from "../../../../shared/provider-limit-error"
 import { getRunContextHealth } from "../../project-vaults/context-health"
 import { runContextHealthInputSchema } from "../../../../shared/run-context-health"
 import { getSqliteDatabase } from "../../db"
@@ -42,6 +44,9 @@ const vaultContextGraphSelectionSchema = z.object({
 })
 
 export const runsRouter = router({
+  getTimings: publicProcedure
+    .input(z.object({ runId: z.string() }))
+    .query(({ input }) => readRunTimings(getSqliteDatabase(), input.runId)),
   getContextHealth: publicProcedure
     .input(runContextHealthInputSchema)
     .query(({ input }) => getRunContextHealth(getSqliteDatabase(), input)),
@@ -193,8 +198,8 @@ export const runsRouter = router({
 
   latestForSubChat: publicProcedure
     .input(z.object({ chatId: z.string(), subChatId: z.string() }))
-    .query(({ input }) =>
-      getDatabase()
+    .query(({ input }) => {
+      const run = getDatabase()
         .select({
           id: agentRuns.id,
           subChatId: agentRuns.subChatId,
@@ -205,8 +210,20 @@ export const runsRouter = router({
         .where(and(eq(agentRuns.chatId, input.chatId), eq(agentRuns.subChatId, input.subChatId)))
         .orderBy(desc(agentRuns.startedAt), desc(sql`${agentRuns}.rowid`))
         .limit(1)
-        .get(),
-    ),
+        .get()
+      if (run?.status !== "failure") return run && { ...run, limitKind: null }
+      const events = getSqliteDatabase()
+        .prepare(
+          `SELECT coalesce(json_extract(payload_json,'$.message'),json_extract(payload_json,'$.detail')) message
+         FROM agent_activity_events WHERE run_id=? AND phase='failed'
+         AND kind IN ('status','warning','lifecycle') AND privacy_class IN ('public','sensitive')
+         AND json_valid(payload_json) ORDER BY sequence DESC LIMIT 12`,
+        )
+        .all(run.id) as Array<{ message: string | null }>
+      const limitKind =
+        events.map((event) => classifyProviderLimitError(event.message ?? "")).find(Boolean) ?? null
+      return { ...run, limitKind }
+    }),
 
   get: publicProcedure.input(z.object({ runId: z.string() })).query(({ input }) => {
     const db = getDatabase()

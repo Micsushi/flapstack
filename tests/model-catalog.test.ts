@@ -64,7 +64,7 @@ describe("Claude model catalog", () => {
     expect(DEFAULT_CODEX_MODEL_ID).toBe("gpt-5.6-sol")
     expect(CLAUDE_MODEL_ID_MAP["claude-opus-5"]).toBe("claude-opus-5")
     expect(CLAUDE_MODEL_ID_MAP["claude-opus-4-8"]).toBe("claude-opus-4-8")
-    expect(CODEX_MODELS.some((model) => model.id === "gpt-5.5")).toBe(true)
+    expect(CODEX_MODELS.map((model) => model.id)).not.toContain("gpt-5.5")
   })
 
   it("exposes Codex models newest-release first, not by capability or model number", () => {
@@ -76,7 +76,6 @@ describe("Claude model catalog", () => {
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
-      "gpt-5.5",
       "gpt-5.4-mini",
       "gpt-5.4",
       "gpt-5.3-codex-spark",
@@ -87,7 +86,6 @@ describe("Claude model catalog", () => {
   })
 
   it("marks Codex fast mode only on supported full models", () => {
-    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.5")?.supportsFastMode).toBe(true)
     expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-sol")?.supportsFastMode).toBe(true)
     expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-terra")?.supportsFastMode).toBe(true)
     expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-luna")?.supportsFastMode).toBe(true)
@@ -120,12 +118,6 @@ describe("Claude model catalog", () => {
     expect(
       CODEX_MODELS.find((model) => model.id === "gpt-5.6-luna")?.reasoningLevels,
     ).not.toContain("ultra")
-    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.5")?.reasoningLevels).not.toContain(
-      "none",
-    )
-    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.5")?.reasoningLevels).not.toContain(
-      "max",
-    )
   })
 
   it("formats stored Codex model ids for ACP", () => {

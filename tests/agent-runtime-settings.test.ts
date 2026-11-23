@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server"
 import { createElement } from "react"
 import { describe, expect, it } from "vitest"
+import { AGENT_HARNESSES } from "../src/shared/harness-types"
 import { RuntimeSelector } from "../src/renderer/features/agents/runtime-settings/runtime-selector"
 import {
   allowedRuntimePreferences,
@@ -34,7 +35,7 @@ describe("Agent Runtime settings presentation", () => {
         },
       ],
     })
-    expect(rows).toHaveLength(6)
+    expect(rows.map((row) => row.harness)).toEqual(AGENT_HARNESSES)
     expect(rows[0]).toMatchObject({
       harness: "codex",
       selected: "auto",

@@ -1,4 +1,5 @@
 import { getVoiceSettings } from "./settings"
+import { getDatabasePath, getSqliteDatabase } from "../db"
 import { resolveTtsAdapter, resolveSupportedTtsVoiceId } from "./registry"
 import { resolveSpeechText } from "./speech-text"
 import {
@@ -18,6 +19,28 @@ export type SpeechPreparationInput = {
 }
 
 let queue: Promise<unknown> = Promise.resolve()
+
+export async function prepareStoredReply(
+  databasePath: string,
+  reply: {
+    chatId: string
+    subChatId: string
+    messageId: string
+    text: string
+  },
+) {
+  if (databasePath !== getDatabasePath() || !getVoiceSettings().prepareReplyAudio) return
+  const saved = getSqliteDatabase()
+    .prepare(
+      `SELECT 1 FROM sub_chats s, json_each(s.messages) m
+     WHERE s.id = ? AND s.chat_id = ? AND json_extract(m.value, '$.id') = ? LIMIT 1`,
+    )
+    .get(reply.subChatId, reply.chatId, reply.messageId)
+  if (saved) {
+    const result = await prepareSpeech(reply)
+    if (!result.historySaved) throw new Error(result.historyError || "Could not save reply audio")
+  }
+}
 
 /** Serialize CPU synthesis; queued requests recheck disk so Play reuses background work. */
 export function prepareSpeech(input: SpeechPreparationInput) {

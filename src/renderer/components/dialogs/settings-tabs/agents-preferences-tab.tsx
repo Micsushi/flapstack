@@ -261,14 +261,7 @@ export function AgentsPreferencesTab() {
   return (
     <div className="p-6 space-y-6">
       {/* Header - hidden on narrow screens since it's in the navigation bar */}
-      {!isNarrowScreen && (
-        <div className="flex flex-col space-y-1.5 text-center sm:text-left">
-          <h3 className="text-sm font-semibold text-foreground">Preferences</h3>
-          <p className="text-xs text-muted-foreground">
-            Configure shared agent behavior and app preferences
-          </p>
-        </div>
-      )}
+      {!isNarrowScreen && <h3 className="text-lg font-semibold text-foreground">Preferences</h3>}
 
       <SleepPreventionSetting />
 
@@ -393,10 +386,6 @@ export function AgentsPreferencesTab() {
         >
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Reasoning output</span>
-            <span className="text-xs text-muted-foreground">
-              Show deeper model reasoning output (uses more credits).{" "}
-              <span className="text-foreground/70">Disables response streaming.</span>
-            </span>
           </div>
           <Switch
             aria-label="Reasoning output"
@@ -411,9 +400,6 @@ export function AgentsPreferencesTab() {
         >
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Default chat mode</span>
-            <span className="text-xs text-muted-foreground">
-              How new chats should work by default
-            </span>
           </div>
           <Select
             value={defaultAgentMode}
@@ -538,7 +524,7 @@ export function AgentsPreferencesTab() {
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Sound Notifications</span>
             <span className="text-xs text-muted-foreground">
-                Play sounds for completed work and a distinct chime when your response is needed
+              Play sounds for completed work and a distinct chime when your response is needed
             </span>
           </div>
           <Switch
@@ -658,9 +644,6 @@ export function AgentsPreferencesTab() {
         >
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Preferred Editor</span>
-            <span className="text-xs text-muted-foreground">
-              Default app for opening project folders
-            </span>
             {availableAppsError && (
               <div className="flex items-center gap-2 pt-1">
                 <span className="text-xs text-destructive" role="alert">

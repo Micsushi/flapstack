@@ -37,16 +37,11 @@ export function AgentsBetaTab() {
         {BETA_FEATURE_REGISTRY.map((feature) => (
           <div
             key={feature.id}
-            className="flex items-start justify-between gap-3 py-3"
+            className="flex items-center gap-3 py-3"
             data-settings-id={`beta-feature-${feature.id}`}
           >
-            <details className="beta-disclosure min-w-0 flex-1">
-              <summary className="cursor-pointer text-sm font-medium text-foreground">
-                {feature.label}
-              </summary>
-              <p className="mt-2 text-xs text-muted-foreground">{feature.description}</p>
-              <BetaFeatureTutorial feature={feature.id} label={feature.label} />
-            </details>
+            <span className="min-w-0 flex-1 text-sm font-medium">{feature.label}</span>
+            <BetaFeatureTutorial feature={feature.id} label={feature.label} />
             <Switch
               checked={settings.data?.[feature.id] ?? false}
               disabled={!settings.data || settings.isError || update.isPending}

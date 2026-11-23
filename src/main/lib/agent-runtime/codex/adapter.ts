@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import type { AgentActivityAppend } from "../../../../shared/agent-activity"
+import type { LiveCodexModel, CodexReasoningLevel } from "../../../../shared/model-catalog"
 import type {
   HarnessAdapter,
   HarnessAdapterFactory,
@@ -34,6 +35,7 @@ const MAX_MODEL_PAGES = 10
 type ClientPurpose = { cwd?: string; env?: NodeJS.ProcessEnv }
 
 type CodexRunState = {
+  effort: string | null
   context: RuntimeAdapterContext
   client: CodexProtocolClient
   threadId: string | null
@@ -149,6 +151,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
         runtime: "codex",
         harness,
         available: true,
+        codexModels: models,
         versions: versions(),
         capabilities: capabilities(this.now()),
         reason: null,
@@ -195,7 +198,9 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       )
       let response: Record<string, unknown>
       try {
-        response = record(await state.client.request("thread/resume", { ...params, threadId }))
+        response = record(
+          await state.client.request("thread/resume", { ...params, threadId, excludeTurns: true }),
+        )
       } catch (resumeError) {
         if (
           !(resumeError instanceof Error) ||
@@ -212,7 +217,9 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
             { cause: restoreError },
           )
         }
-        response = record(await state.client.request("thread/resume", { ...params, threadId }))
+        response = record(
+          await state.client.request("thread/resume", { ...params, threadId, excludeTurns: true }),
+        )
       }
       this.captureThread(state, response, "thread/resume")
       return sessionFromState(state)
@@ -236,6 +243,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
         await state.client.request("thread/fork", {
           ...params,
           threadId,
+          excludeTurns: true,
           ...(lastTurnId ? { lastTurnId } : {}),
         }),
       )
@@ -292,7 +300,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
             clientUserMessageId: context.runId,
             input,
             model: context.launch.model,
-            effort: normalizeCodexRuntimeEffort(context.launch.controls.modelEffort),
+            effort: state.effort,
             ...(context.outputSchema ? { outputSchema: context.outputSchema } : {}),
             ...(context.launch.controls.serviceTier
               ? { serviceTier: context.launch.controls.serviceTier }
@@ -490,6 +498,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     }
     const client = await this.createClient({ cwd: process.cwd() })
     const state: CodexRunState = {
+      effort: normalizeCodexRuntimeEffort(context.launch.controls.modelEffort),
       context,
       client,
       threadId: null,
@@ -513,10 +522,18 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       if (!account.account)
         throw new Error("[codex-runtime] Codex account authentication unavailable.")
       const models = await discoverModels(client)
-      if (context.launch.model && !models.includes(context.launch.model)) {
+      const selected = models.find((model) => model.id === context.launch.model)
+      if (context.launch.model && !selected) {
         throw new Error(
           `[codex-runtime] Requested Codex model is unavailable: ${context.launch.model}`,
         )
+      }
+      const requested = context.launch.controls.modelEffort
+      if (requested && selected?.reasoningLevels.length) {
+        if (selected.reasoningLevels.some((level) => level === requested)) state.effort = requested
+        else if (!selected.reasoningLevels.some((level) => level === state.effort)) {
+          throw new Error(`Codex does not offer ${requested} reasoning for ${selected.name}.`)
+        }
       }
       return state
     } catch (error) {
@@ -703,8 +720,8 @@ async function initialize(client: CodexProtocolClient): Promise<void> {
   })
 }
 
-async function discoverModels(client: CodexProtocolClient): Promise<string[]> {
-  const models = new Set<string>()
+async function discoverModels(client: CodexProtocolClient): Promise<LiveCodexModel[]> {
+  const models = new Map<string, LiveCodexModel>()
   const cursors = new Set<string>()
   let cursor: string | null = null
   for (let page = 0; page < MAX_MODEL_PAGES; page += 1) {
@@ -713,13 +730,19 @@ async function discoverModels(client: CodexProtocolClient): Promise<string[]> {
     )
     for (const rawModel of array(response.data)) {
       const model = record(rawModel)
-      const id = string(model.id)
-      const slug = string(model.model)
-      if (id) models.add(id)
-      if (slug) models.add(slug)
+      const id = string(model.model) ?? string(model.id)
+      if (!id || model.hidden === true) continue
+      const reasoningLevels = array(model.supportedReasoningEfforts)
+        .map((entry) => string(record(entry).reasoningEffort))
+        .filter((level): level is CodexReasoningLevel =>
+          Boolean(
+            level && ["none", "low", "medium", "high", "xhigh", "max", "ultra"].includes(level),
+          ),
+        )
+      models.set(id, { id, name: string(model.displayName) ?? id, reasoningLevels })
     }
     const nextCursor = string(response.nextCursor)
-    if (!nextCursor) return [...models]
+    if (!nextCursor) return [...models.values()]
     if (cursors.has(nextCursor)) {
       throw new Error(`[codex-runtime] model/list repeated cursor ${nextCursor}.`)
     }
@@ -736,7 +759,9 @@ async function readCodexVersion(command: string): Promise<string> {
     timeout: 10_000,
     windowsHide: true,
   })
-  const match = `${stdout} ${stderr}`.match(/(?:codex(?:-cli)?\s+)?(\d+\.\d+\.\d+)/i)
+  const match = `${stdout} ${stderr}`.match(
+    /\bcodex(?:-cli)?\s+(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?=\s|$)/i,
+  )
   if (!match) throw new Error("Unable to parse Codex binary version.")
   return match[1]
 }

@@ -1,13 +1,32 @@
-import { createReadStream, existsSync, readFileSync } from "node:fs"
-import { copyFile, mkdtemp, rm } from "node:fs/promises"
-import { createHash } from "node:crypto"
+import {
+  constants,
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  readFileSync,
+  type BigIntStats,
+} from "node:fs"
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  lstat,
+  open,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises"
+import { createHash, randomUUID } from "node:crypto"
+import { pipeline } from "node:stream/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path"
 import type { SimpleGit, StatusResult } from "simple-git"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
-import { checkpoints, fileChangeManifests, getDatabase } from "./db"
+import { agentRuns, checkpoints, fileChangeManifests, getDatabase, getDatabasePath } from "./db"
 import type * as schema from "./db/schema"
+import { recordCheckpointTiming } from "./run-timings"
 import { splitUnifiedDiffByFile } from "./git/diff-parser"
 import { createGit } from "./git/git-factory"
 
@@ -28,6 +47,10 @@ export type CheckpointStatusSnapshot = {
   files: Record<string, FileSnapshot>
   treeCommit?: string
   indexTree?: string
+  profileObjects?: boolean
+  originals?: Record<string, string | null>
+  reviewTree?: string
+  skipped?: boolean
   error?: string
 }
 
@@ -63,6 +86,7 @@ export async function hashWorktreeFile(
 
 async function buildStatusSnapshot(
   worktreePath: string | null,
+  db: AppDatabase,
 ): Promise<{ gitCommit: string | null; snapshot: CheckpointStatusSnapshot }> {
   if (!worktreePath || !existsSync(worktreePath)) {
     return {
@@ -89,40 +113,24 @@ async function buildStatusSnapshot(
       }
     }
 
-    const gitCommit = (await git.revparse(["HEAD"])).trim()
-    const status = await git.status()
-    const indexTree = await git
-      .raw(["write-tree"])
-      .then((value) => value.trim())
-      .catch((error) => {
-        console.warn("[checkpoints] Recoverable index capture unavailable", error)
-        return undefined
-      })
-    const treeCommit = await captureWorktreeTree(worktreePath).catch((error) => {
-      console.warn("[checkpoints] Recoverable tree capture unavailable", error)
-      return undefined
-    })
-
-    const files: Record<string, FileSnapshot> = {}
-    for (const file of status.files) {
-      const hash = await hashWorktreeFile(worktreePath, file.path)
-      files[file.path] = {
-        path: file.path,
-        index: file.index,
-        workingTree: file.working_dir,
-        hash,
-        missing: hash === null,
-      }
-    }
-
+    const profile = checkpointProfile(db)
+    const [head, staged, originals] = await Promise.all([
+      git.revparse(["--verify", "HEAD"]).catch(() => null),
+      git.raw(["write-tree"]),
+      captureOriginals(worktreePath, git, profile),
+    ])
+    const gitCommit = head?.trim() ?? null
+    const indexTree = staged.trim()
+    const treeCommit = originals ? indexTree : await captureEagerTree(worktreePath, git, profile)
     return {
       gitCommit,
       snapshot: {
         available: true,
-        status,
-        files,
+        files: {},
         treeCommit,
         indexTree,
+        profileObjects: true,
+        originals,
       },
     }
   } catch (error) {
@@ -137,7 +145,234 @@ async function buildStatusSnapshot(
   }
 }
 
-export async function captureWorktreeTree(worktreePath: string): Promise<string> {
+// New snapshots write dirty blobs to the application's profile. The real repository
+// retains HEAD and the staged tree so later GC cannot remove their original blobs.
+function checkpointProfile(db: AppDatabase) {
+  const file = db.get<{ file: string }>(
+    sql`SELECT file FROM pragma_database_list WHERE name = 'main'`,
+  )?.file
+  return dirname(file || getDatabasePath())
+}
+
+export function checkpointReadEnvironment(profile = dirname(getDatabasePath())): NodeJS.ProcessEnv {
+  return {
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: JSON.stringify(
+      join(profile, "checkpoint-objects").replaceAll("\\", "/"),
+    ),
+  }
+}
+
+export function checkpointReader(
+  worktreePath: string,
+  profileObjects?: boolean,
+  profile?: string,
+): SimpleGit {
+  return profileObjects
+    ? createGit(worktreePath, undefined, ["GIT_ALTERNATE_OBJECT_DIRECTORIES"]).env(
+        checkpointReadEnvironment(profile),
+      )
+    : createGit(worktreePath)
+}
+
+function safeSnapshotPath(root: string, name: string) {
+  // Imported records must never be able to place a file outside the private staging tree.
+  if (
+    !name ||
+    isAbsolute(name) ||
+    /^[a-z]:/i.test(name) ||
+    name
+      .replaceAll("\\", "/")
+      .split("/")
+      .some((p) => p === ".." || p.toLowerCase() === ".git")
+  )
+    throw new Error("Invalid checkpoint path")
+  return join(root, name)
+}
+
+async function eachFile<T>(items: T[], operation: (item: T) => Promise<void>) {
+  let next = 0
+  const results = await Promise.allSettled(
+    Array.from({ length: Math.min(16, items.length) }, async () => {
+      while (next < items.length) await operation(items[next++]!)
+    }),
+  )
+  const failed = results.find((item) => item.status === "rejected")
+  if (failed?.status === "rejected") throw failed.reason
+}
+
+async function captureOriginals(worktree: string, git: SimpleGit, profile: string) {
+  const files = join(profile, "checkpoint-files")
+  const fromRepo = relative(worktree, files)
+  if (!fromRepo || (!isAbsolute(fromRepo) && fromRepo !== ".." && !fromRepo.startsWith(".." + sep)))
+    throw new Error("The checkpoint profile must be outside the working repository")
+  const raw = await git.raw([
+    "ls-files",
+    "-z",
+    "--others",
+    "--modified",
+    "--deleted",
+    "--exclude-standard",
+  ])
+  const names = [...new Set(raw.split("\0").filter(Boolean))]
+  const originals: Record<string, string | null> = Object.create(null)
+  if (!names.length) return originals
+  await Promise.all([
+    mkdir(files, { recursive: true, mode: 0o700 }),
+    mkdir(join(profile, "checkpoint-objects"), { recursive: true, mode: 0o700 }),
+  ])
+  const root = await realpath(worktree)
+  const parents = new Map<string, Promise<string | null>>()
+  const stamp = (info: BigIntStats) =>
+    [info.dev, info.ino, info.size, info.mode, info.ctimeNs, info.mtimeNs, info.birthtimeNs].join(
+      ":",
+    )
+  let unsupported = false
+  await eachFile(names, async (name) => {
+    const path = safeSnapshotPath(root, name)
+    const parent = dirname(path)
+    const resolved =
+      parents.get(parent) ??
+      realpath(parent).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT" || error.code === "ENOTDIR") return null
+        throw error
+      })
+    parents.set(parent, resolved)
+    const actual = await resolved
+    if (actual !== null && actual !== parent) {
+      unsupported = true
+      return
+    }
+    const stat = await lstat(path, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") return null
+      throw error
+    })
+    if (!stat) {
+      originals[name] = null
+      return
+    }
+    // Let Git preserve submodule and symlink semantics through its normal indexer.
+    if (!stat.isFile()) {
+      unsupported = true
+      return
+    }
+    const identity = stamp(stat)
+    const key = createHash("sha256").update(path).update("\0").update(identity).digest("hex")
+    const target = join(files, key)
+    if (!existsSync(target)) {
+      const temp = join(files, randomUUID() + ".partial")
+      const source = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+      try {
+        if (stamp(await source.stat({ bigint: true })) !== identity)
+          throw new Error("File changed before checkpoint: " + name)
+        await pipeline(
+          createReadStream(path, { fd: source.fd, autoClose: false, highWaterMark: 256 * 1024 }),
+          createWriteStream(temp, { flags: "wx", mode: Number(stat.mode & 0o777n) }),
+        )
+        const final = await lstat(path, { bigint: true })
+        if (
+          stamp(final) !== identity ||
+          stamp(await source.stat({ bigint: true })) !== identity ||
+          (await realpath(parent)) !== parent
+        )
+          throw new Error("File changed during checkpoint: " + name)
+        await rename(temp, target)
+      } finally {
+        await source.close()
+        await rm(temp, { force: true })
+      }
+    }
+    originals[name] = key
+  })
+  return unsupported ? undefined : originals
+}
+
+async function privateWriter(
+  worktree: string,
+  base: string,
+  index: string,
+  profile: string,
+  work?: string,
+) {
+  const realObjects = (
+    await createGit(worktree).raw(["rev-parse", "--path-format=absolute", "--git-path", "objects"])
+  ).trim()
+  const objects = join(profile, "checkpoint-objects")
+  await mkdir(objects, { recursive: true })
+  const env: Record<string, string> = {
+    GIT_INDEX_FILE: index,
+    GIT_OBJECT_DIRECTORY: objects,
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: JSON.stringify(realObjects.replaceAll("\\", "/")),
+  }
+  if (work) {
+    env.GIT_DIR = (await createGit(worktree).raw(["rev-parse", "--absolute-git-dir"])).trim()
+    env.GIT_WORK_TREE = work
+  }
+  return createGit(base, undefined, Object.keys(env)).env(env)
+}
+
+async function captureEagerTree(worktree: string, git: SimpleGit, profile: string) {
+  const temp = await mkdtemp(join(tmpdir(), "flapstack-checkpoint-"))
+  try {
+    const index = join(temp, "index")
+    const source = (
+      await git.raw(["rev-parse", "--path-format=absolute", "--git-path", "index"])
+    ).trim()
+    if (existsSync(source)) await copyFile(source, index)
+    const privateGit = await privateWriter(worktree, worktree, index, profile)
+    if (!existsSync(index)) await privateGit.raw(["read-tree", "--empty"])
+    await privateGit.raw(["add", "-A"])
+    return (await privateGit.raw(["write-tree"])).trim()
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
+}
+
+async function projectedTree(
+  worktree: string,
+  snapshot: CheckpointStatusSnapshot,
+  profile: string,
+  paths?: Set<string>,
+) {
+  const tree = snapshot.treeCommit!
+  if (!snapshot.originals) return tree
+  const dirty = Object.entries(snapshot.originals).filter(
+    ([name]) => !paths || paths.has(name) || basename(name) === ".gitattributes",
+  )
+  if (!dirty.length) return tree
+  const temp = await mkdtemp(join(tmpdir(), "flapstack-checkpoint-project-"))
+  try {
+    const work = join(temp, "work")
+    await mkdir(work)
+    const git = await privateWriter(worktree, work, join(temp, "index"), profile, work)
+    await git.raw(["read-tree", snapshot.indexTree!])
+    await eachFile(dirty, async ([name, key]) => {
+      const dest = safeSnapshotPath(work, name)
+      if (key === null) return
+      if (!/^[0-9a-f]{64}$/.test(key)) throw new Error("Invalid checkpoint file identity")
+      await mkdir(dirname(dest), { recursive: true })
+      const source = join(profile, "checkpoint-files", key)
+      await copyFile(source, dest)
+    })
+    const list = join(temp, "paths")
+    await writeFile(list, dirty.map(([name]) => name + "\0").join(""))
+    await git.raw([
+      "--literal-pathspecs",
+      "add",
+      "--force",
+      "-A",
+      "--pathspec-from-file=" + list,
+      "--pathspec-file-nul",
+    ])
+    return (await git.raw(["write-tree"])).trim()
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
+}
+
+export async function captureWorktreeTree(
+  worktreePath: string,
+  changedPaths?: string[],
+): Promise<string> {
   const tempDir = await mkdtemp(join(tmpdir(), "flapstack-checkpoint-"))
   try {
     const tempIndexPath = join(tempDir, "index")
@@ -153,8 +388,37 @@ export async function captureWorktreeTree(worktreePath: string): Promise<string>
     // Reuse Git's file-stat cache without ever changing the user's index.
     if (hasIndex) await copyFile(indexPath, tempIndexPath)
     const git = createGit(worktreePath).env({ GIT_INDEX_FILE: tempIndexPath })
-    if (!hasIndex) await git.raw(["read-tree", "HEAD"])
-    await git.raw(["add", "-A"])
+    if (!hasIndex) await git.raw(["read-tree", "--empty"])
+    if (changedPaths) {
+      // Undo only mutates these paths. Keep their current bytes recoverable without
+      // copying unrelated untracked files into the user's object store.
+      const tracked = new Set((await git.raw(["ls-files", "--cached", "-z"])).split("\0"))
+      const present: string[] = []
+      for (const name of changedPaths) {
+        if (
+          tracked.has(name) ||
+          (await lstat(safeSnapshotPath(worktreePath, name)).then(
+            () => true,
+            (error: NodeJS.ErrnoException) => {
+              if (error.code === "ENOENT" || error.code === "ENOTDIR") return false
+              throw error
+            },
+          ))
+        )
+          present.push(name)
+      }
+      if (present.length) {
+        const list = join(tempDir, "paths")
+        await writeFile(list, present.map((name) => name + "\0").join(""))
+        await git.raw([
+          "--literal-pathspecs",
+          "add",
+          "-A",
+          "--pathspec-from-file=" + list,
+          "--pathspec-file-nul",
+        ])
+      }
+    } else await git.raw(["add", "-A"])
     const tree = (await git.raw(["write-tree"])).trim()
     if (!tree) throw new Error("Could not capture worktree tree")
     return (
@@ -189,6 +453,10 @@ function parseCheckpointSnapshot(value: string | null): CheckpointStatusSnapshot
         files: parsed.files,
         treeCommit: parsed.treeCommit,
         indexTree: parsed.indexTree,
+        profileObjects: parsed.profileObjects,
+        originals: parsed.originals,
+        reviewTree: parsed.reviewTree,
+        skipped: parsed.skipped,
         error: parsed.error,
       }
     }
@@ -319,123 +587,43 @@ async function getDiffStats(
   return stats
 }
 
-async function getTreeDiffStats(
-  worktreePath: string | null,
-  beforeTree?: string,
-  afterTree?: string,
-): Promise<Map<string, { additions: number; deletions: number }>> {
+async function treeManifest(
+  worktreePath: string,
+  before: string,
+  after: string,
+  profileObjects: boolean,
+  profile: string,
+): Promise<ManifestEntryInput[]> {
+  if (before === after) return []
+  const git = checkpointReader(worktreePath, profileObjects, profile)
+  // Report both sides of a move separately so each pathname has its own undo preimage.
+  const options = ["--no-renames", "--no-ext-diff", "--no-textconv", "-z", before, after, "--"]
+  const [raw, numstat] = await Promise.all([
+    git.raw(["diff", "--raw", "--no-abbrev", ...options]),
+    git.raw(["diff", "--numstat", ...options]),
+  ])
   const stats = new Map<string, { additions: number; deletions: number }>()
-  if (!worktreePath || !beforeTree || !afterTree || !existsSync(worktreePath)) return stats
-
-  try {
-    const output = await createGit(worktreePath).raw([
-      "diff",
-      "--numstat",
-      beforeTree,
-      afterTree,
-      "--",
-    ])
-    for (const line of output.split("\n")) {
-      if (!line.trim()) continue
-      const [added, deleted, ...pathParts] = line.split("\t")
-      const filePath = pathParts[pathParts.length - 1]
-      if (!filePath) continue
-      stats.set(filePath, {
-        additions: added === "-" ? 0 : Number(added) || 0,
-        deletions: deleted === "-" ? 0 : Number(deleted) || 0,
-      })
-    }
-  } catch {
-    return stats
+  for (const line of numstat.split("\0")) {
+    const match = /^([^\t]+)\t([^\t]+)\t([\s\S]+)$/.exec(line)
+    if (match)
+      stats.set(match[3]!, { additions: Number(match[1]) || 0, deletions: Number(match[2]) || 0 })
   }
-  return stats
-}
-
-async function getGitObjectHash(
-  git: SimpleGit,
-  commit: string,
-  filePath: string,
-): Promise<string | null> {
-  try {
-    return (await git.revparse([`${commit}:${filePath}`])).trim()
-  } catch {
-    return null
+  const fields = raw.split("\0")
+  const entries: ManifestEntryInput[] = []
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const filePath = fields[i + 1]!
+    const [, , beforeHash, afterHash, code] = fields[i]!.split(" ")
+    if (!filePath || !beforeHash || !afterHash || !code)
+      throw new Error("Invalid checkpoint tree diff")
+    entries.push({
+      filePath,
+      changeType: code === "A" ? "added" : code === "D" ? "deleted" : "modified",
+      beforeHash: /^0+$/.test(beforeHash) ? null : beforeHash,
+      afterHash: /^0+$/.test(afterHash) ? null : afterHash,
+      ...(stats.get(filePath) ?? { additions: 0, deletions: 0 }),
+    })
   }
-}
-
-async function getCommitManifestEntries(params: {
-  worktreePath: string | null
-  beforeCommit?: string | null
-  afterCommit?: string | null
-}): Promise<ManifestEntryInput[]> {
-  if (
-    !params.worktreePath ||
-    !params.beforeCommit ||
-    !params.afterCommit ||
-    params.beforeCommit === params.afterCommit ||
-    !existsSync(params.worktreePath)
-  ) {
-    return []
-  }
-
-  try {
-    const git = createGit(params.worktreePath)
-    if (!(await git.checkIsRepo())) return []
-
-    const [numstat, nameStatus] = await Promise.all([
-      git.raw(["diff", "--numstat", params.beforeCommit, params.afterCommit, "--"]),
-      git.raw(["diff", "--name-status", params.beforeCommit, params.afterCommit, "--"]),
-    ])
-
-    const stats = new Map<string, { additions: number; deletions: number }>()
-    for (const line of numstat.split("\n")) {
-      if (!line.trim()) continue
-      const [additionsRaw, deletionsRaw, ...pathParts] = line.split("\t")
-      const filePath = pathParts[pathParts.length - 1]
-      if (!filePath) continue
-      stats.set(filePath, {
-        additions: additionsRaw === "-" ? 0 : Number(additionsRaw) || 0,
-        deletions: deletionsRaw === "-" ? 0 : Number(deletionsRaw) || 0,
-      })
-    }
-
-    const entries = await Promise.all(
-      nameStatus
-        .split("\n")
-        .filter((line) => line.trim())
-        .map(async (line): Promise<ManifestEntryInput | null> => {
-          const [statusRaw, ...pathParts] = line.split("\t")
-          const filePath = pathParts[pathParts.length - 1]
-          if (!statusRaw || !filePath) return null
-
-          const status = statusRaw[0]
-          const changeType =
-            status === "A"
-              ? "added"
-              : status === "D"
-                ? "deleted"
-                : status === "R"
-                  ? "renamed"
-                  : status === "C"
-                    ? "copied"
-                    : "modified"
-          const diffStat = stats.get(filePath)
-
-          return {
-            filePath,
-            changeType,
-            additions: diffStat?.additions ?? 0,
-            deletions: diffStat?.deletions ?? 0,
-            beforeHash: await getGitObjectHash(git, params.beforeCommit!, filePath),
-            afterHash: await getGitObjectHash(git, params.afterCommit!, filePath),
-          }
-        }),
-    )
-
-    return entries.filter((entry): entry is ManifestEntryInput => Boolean(entry))
-  } catch {
-    return []
-  }
+  return entries
 }
 
 export async function captureCheckpoint(
@@ -444,7 +632,19 @@ export async function captureCheckpoint(
   kind: CheckpointKind,
   db: AppDatabase = getDatabase(),
 ) {
-  const { gitCommit, snapshot } = await buildStatusSnapshot(worktreePath)
+  const started = Date.now()
+  const run = db
+    .select({ mode: agentRuns.permissionMode })
+    .from(agentRuns)
+    .where(eq(agentRuns.id, runId))
+    .get()
+  const { gitCommit, snapshot } =
+    run?.mode === "read-only"
+      ? {
+          gitCommit: null,
+          snapshot: { available: false, files: {}, skipped: true } as CheckpointStatusSnapshot,
+        }
+      : await buildStatusSnapshot(worktreePath, db)
 
   const checkpoint = db
     .insert(checkpoints)
@@ -464,7 +664,7 @@ export async function captureCheckpoint(
       await git.raw([
         "update-ref",
         `refs/flapstack/checkpoints/${checkpoint.id}`,
-        snapshot.treeCommit,
+        snapshot.profileObjects ? (gitCommit ?? snapshot.indexTree!) : snapshot.treeCommit,
       ])
       if (snapshot.indexTree) {
         await git.raw([
@@ -478,6 +678,7 @@ export async function captureCheckpoint(
     }
   }
 
+  recordCheckpointTiming(db, runId, kind, started, Date.now())
   return checkpoint
 }
 
@@ -489,76 +690,117 @@ export async function restoreCheckpoint(checkpointId: string): Promise<boolean> 
   if (!checkpoint.worktreePath) return false
 
   const snapshot = parseCheckpointSnapshot(checkpoint.gitStatusJson)
+  if (snapshot.skipped) return false
   if (!snapshot.available || !snapshot.treeCommit || !snapshot.indexTree) {
     throw new Error("Checkpoint cannot safely restore the worktree and index")
   }
 
-  const git = createGit(checkpoint.worktreePath)
+  const git = checkpointReader(checkpoint.worktreePath, snapshot.profileObjects)
   const retainedRef = `refs/flapstack/checkpoints/${checkpoint.id}`
   const retainedIndexRef = `refs/flapstack/checkpoint-indexes/${checkpoint.id}`
-  const retainedTree = (await git.raw(["rev-parse", "--verify", `${retainedRef}^{tree}`])).trim()
+  const retainedBase = (await git.raw(["rev-parse", "--verify", `${retainedRef}^{tree}`])).trim()
+  const retainedTree = snapshot.profileObjects
+    ? await projectedTree(checkpoint.worktreePath, snapshot, checkpointProfile(db))
+    : retainedBase
   const retainedIndexTree = (
     await git.raw(["rev-parse", "--verify", `${retainedIndexRef}^{tree}`])
   ).trim()
-  await git.raw(["read-tree", retainedTree])
-  await git.raw(["checkout-index", "-a", "-f"])
-  await git.raw(["clean", "-fd"])
+  const temporary = await mkdtemp(join(tmpdir(), "flapstack-restore-"))
+  try {
+    const checkout = checkpointReader(checkpoint.worktreePath, snapshot.profileObjects).env({
+      ...(snapshot.profileObjects ? checkpointReadEnvironment() : {}),
+      GIT_INDEX_FILE: join(temporary, "index"),
+    })
+    await checkout.raw(["read-tree", retainedTree])
+    await checkout.raw(["checkout-index", "-a", "-f"])
+    await checkout.raw(["clean", "-fd"])
+  } finally {
+    await rm(temporary, { recursive: true, force: true })
+  }
   await git.raw(["read-tree", retainedIndexTree])
   return true
 }
 
 export async function captureRunManifest(runId: string, db: AppDatabase = getDatabase()) {
-  db.delete(fileChangeManifests).where(eq(fileChangeManifests.runId, runId)).run()
-
   const runCheckpoints = db.select().from(checkpoints).where(eq(checkpoints.runId, runId)).all()
 
   const before = runCheckpoints.find((checkpoint) => checkpoint.kind === "before")
   const after = runCheckpoints.find((checkpoint) => checkpoint.kind === "after")
   const beforeSnapshot = parseCheckpointSnapshot(before?.gitStatusJson ?? null)
   const afterSnapshot = parseCheckpointSnapshot(after?.gitStatusJson ?? null)
-  const changedPaths = Array.from(
-    new Set([...Object.keys(beforeSnapshot.files), ...Object.keys(afterSnapshot.files)]),
-  )
-  const worktreePath = after?.worktreePath ?? before?.worktreePath ?? null
-  const treeDiffStats = await getTreeDiffStats(
-    worktreePath,
-    beforeSnapshot.treeCommit,
-    afterSnapshot.treeCommit,
-  )
-  const diffStats =
-    treeDiffStats.size > 0 ? treeDiffStats : await getDiffStats(worktreePath, changedPaths)
-  const snapshotEntries = buildManifestEntriesFromSnapshots(
-    beforeSnapshot,
-    afterSnapshot,
-    diffStats,
-    worktreePath,
-  )
-  const commitEntries = await getCommitManifestEntries({
-    worktreePath,
-    beforeCommit: beforeSnapshot.treeCommit ?? before?.gitCommit,
-    afterCommit: afterSnapshot.treeCommit ?? after?.gitCommit,
+  const worktreePath = after?.worktreePath ?? before?.worktreePath
+  let entries: ManifestEntryInput[] = []
+  if (worktreePath && beforeSnapshot.treeCommit && afterSnapshot.treeCommit) {
+    const profile = checkpointProfile(db)
+    const beforeFiles =
+        beforeSnapshot.originals ?? (Object.create(null) as Record<string, string | null>),
+      afterFiles = afterSnapshot.originals ?? (Object.create(null) as Record<string, string | null>)
+    const changed = new Set(
+      [...Object.keys(beforeFiles), ...Object.keys(afterFiles)].filter(
+        (path) => beforeFiles[path] !== afterFiles[path],
+      ),
+    )
+    const privateObjects = !!(beforeSnapshot.profileObjects || afterSnapshot.profileObjects)
+    if (beforeSnapshot.treeCommit !== afterSnapshot.treeCommit) {
+      const staged = await checkpointReader(worktreePath, privateObjects, profile).raw([
+        "diff",
+        "--name-only",
+        "--no-renames",
+        "-z",
+        beforeSnapshot.treeCommit,
+        afterSnapshot.treeCommit,
+        "--",
+      ])
+      staged
+        .split("\0")
+        .filter(Boolean)
+        .forEach((path) => changed.add(path))
+    }
+    if (changed.size) {
+      const [beforeTree, afterTree] = await Promise.all([
+        projectedTree(worktreePath, beforeSnapshot, profile, changed),
+        projectedTree(worktreePath, afterSnapshot, profile, changed),
+      ])
+      entries = await treeManifest(worktreePath, beforeTree, afterTree, privateObjects, profile)
+      beforeSnapshot.reviewTree = beforeTree
+      afterSnapshot.reviewTree = afterTree
+    }
+  } else if (!beforeSnapshot.profileObjects && !afterSnapshot.profileObjects) {
+    const paths = [
+      ...new Set([...Object.keys(beforeSnapshot.files), ...Object.keys(afterSnapshot.files)]),
+    ]
+    const stats = await getDiffStats(worktreePath ?? null, paths)
+    entries = buildManifestEntriesFromSnapshots(beforeSnapshot, afterSnapshot, stats, worktreePath)
+  }
+  if (!entries.length)
+    entries = [
+      {
+        filePath: "",
+        changeType: "none",
+        additions: 0,
+        deletions: 0,
+        beforeHash: null,
+        afterHash: null,
+      },
+    ]
+  return db.transaction((tx) => {
+    if (before && beforeSnapshot.reviewTree)
+      tx.update(checkpoints)
+        .set({ gitStatusJson: JSON.stringify(beforeSnapshot) })
+        .where(eq(checkpoints.id, before.id))
+        .run()
+    if (after && afterSnapshot.reviewTree)
+      tx.update(checkpoints)
+        .set({ gitStatusJson: JSON.stringify(afterSnapshot) })
+        .where(eq(checkpoints.id, after.id))
+        .run()
+    tx.delete(fileChangeManifests).where(eq(fileChangeManifests.runId, runId)).run()
+    return entries.map((entry) =>
+      tx
+        .insert(fileChangeManifests)
+        .values({ runId, ...entry })
+        .returning()
+        .get(),
+    )
   })
-  const entriesByPath = new Map<string, ManifestEntryInput>()
-  for (const entry of snapshotEntries) {
-    if (entry.changeType === "none" && commitEntries.length > 0) continue
-    entriesByPath.set(entry.filePath, entry)
-  }
-  for (const entry of commitEntries) {
-    entriesByPath.set(entry.filePath, entry)
-  }
-  const entries =
-    entriesByPath.size > 0
-      ? Array.from(entriesByPath.values()).sort((a, b) => a.filePath.localeCompare(b.filePath))
-      : snapshotEntries
-
-  return entries.map((entry) =>
-    db
-      .insert(fileChangeManifests)
-      .values({
-        runId,
-        ...entry,
-      })
-      .returning()
-      .get(),
-  )
 }

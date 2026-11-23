@@ -172,14 +172,6 @@ export const CODEX_MODELS = [
     contextWindow: CODEX_CONTEXT_WINDOW,
   },
   {
-    id: "gpt-5.5",
-    name: "GPT-5.5",
-    reasoningLevels: CODEX_STANDARD_REASONING_LEVELS,
-    authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
-    supportsFastMode: true,
-    contextWindow: CODEX_CONTEXT_WINDOW,
-  },
-  {
     id: "gpt-5.4-mini",
     name: "GPT-5.4 Mini",
     reasoningLevels: CODEX_STANDARD_REASONING_LEVELS,
@@ -365,6 +357,27 @@ export const DEFAULT_CLAUDE_EFFORT: ClaudeEffortLevel = "high"
 export const DEFAULT_CODEX_MODEL_ID = "gpt-5.6-sol"
 export const DEFAULT_CODEX_REASONING: CodexReasoningLevel = "high"
 export const DEFAULT_CODEX_MODEL_WITH_REASONING = `${DEFAULT_CODEX_MODEL_ID}/${DEFAULT_CODEX_REASONING}`
-export const DEFAULT_CHATGPT_CODEX_MODEL_ID = "gpt-5.3-codex-spark"
+export const DEFAULT_CHATGPT_CODEX_MODEL_ID = DEFAULT_CODEX_MODEL_ID
 export const DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING = `${DEFAULT_CHATGPT_CODEX_MODEL_ID}/${DEFAULT_CODEX_REASONING}`
 export const DEFAULT_CURSOR_MODEL_ID = "auto"
+
+export type LiveCodexModel = {
+  id: string
+  name: string
+  reasoningLevels: CodexReasoningLevel[]
+}
+
+export function selectableCodexModels(live: LiveCodexModel[] | undefined, auth: CodexAuthSurface) {
+  if (!live) return CODEX_MODELS.filter((model) => model.authSurfaces.includes(auth))
+  return live.map((model) => {
+    const known = CODEX_MODELS.find((entry) => entry.id === model.id)
+    return {
+      ...model,
+      reasoningLevels: model.reasoningLevels.length
+        ? model.reasoningLevels
+        : (known?.reasoningLevels ?? []),
+      supportsFastMode: known?.supportsFastMode ?? false,
+      contextWindow: known?.contextWindow,
+    }
+  })
+}

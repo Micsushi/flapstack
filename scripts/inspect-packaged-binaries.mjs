@@ -5,10 +5,14 @@ import { createHash } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { assertBundledBinary } from "./lib/packaged-binary.mjs"
+import { assertBundledBinary, CODEX_WINDOWS_HELPERS } from "./lib/packaged-binary.mjs"
 import { CLAUDE_VERSION, CODEX_VERSION } from "./prepare-package-resources.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const expectedCodexVersion = new RegExp(
+  `^codex(?:-cli)?\\s+${CODEX_VERSION.replaceAll(".", "\\.")}$`,
+  "im",
+)
 
 function readArg(args, name) {
   const equals = args.find((argument) => argument.startsWith(`${name}=`))
@@ -172,7 +176,12 @@ export function inspectWindowsApp(appPath, platformKey, options = {}) {
     Flapstack: appPath,
     Claude: path.join(bin, "claude.exe"),
     Codex: path.join(bin, "codex.exe"),
-    "Codex code-mode host": path.join(bin, "codex-code-mode-host.exe"),
+    ...Object.fromEntries(
+      Object.entries(CODEX_WINDOWS_HELPERS).map(([label, name]) => [
+        label,
+        path.join(bin, `${name}.exe`),
+      ]),
+    ),
     Whisper: path.join(bin, "whisper-cli.exe"),
     Parakeet: path.join(bin, "flapstack-stt-sidecar.exe"),
     "better-sqlite3": path.join(
@@ -205,10 +214,8 @@ export function inspectWindowsApp(appPath, platformKey, options = {}) {
     console.log(`${label}: regular ${inspection.format} ${inspection.architectures.join("+")}`)
   }
   assertDigestMarker(binaries.Parakeet, path.join(bin, ".stt-sidecar.sha256"))
-  assertDigestMarker(
-    binaries["Codex code-mode host"],
-    path.join(bin, ".codex-code-mode-host.sha256"),
-  )
+  for (const [label, name] of Object.entries(CODEX_WINDOWS_HELPERS))
+    assertDigestMarker(binaries[label], path.join(bin, `.${name}.sha256`))
   const asar = path.join(resources, "app.asar")
   const asarStat = fs.lstatSync(asar)
   if (!asarStat.isFile() || asarStat.isSymbolicLink()) {
@@ -248,12 +255,7 @@ export function inspectWindowsApp(appPath, platformKey, options = {}) {
       ["--version"],
       new RegExp(CLAUDE_VERSION.replaceAll(".", "\\.")),
     )
-    runSmoke(
-      "Codex",
-      binaries.Codex,
-      ["--version"],
-      new RegExp(CODEX_VERSION.replaceAll(".", "\\.")),
-    )
+    runSmoke("Codex", binaries.Codex, ["--version"], expectedCodexVersion)
     runSmoke("Whisper", binaries.Whisper, ["--help"], /whisper|usage:/i)
     runSidecarSmoke(binaries.Parakeet)
   }
@@ -350,12 +352,7 @@ export function inspectMacApp(appPath, platformKey, options = {}) {
       ["--version"],
       new RegExp(CLAUDE_VERSION.replaceAll(".", "\\.")),
     )
-    runSmoke(
-      "Codex",
-      binaries.Codex,
-      ["--version"],
-      new RegExp(CODEX_VERSION.replaceAll(".", "\\.")),
-    )
+    runSmoke("Codex", binaries.Codex, ["--version"], expectedCodexVersion)
     runSmoke("Whisper", binaries.Whisper, ["--help"], /whisper|usage:/i)
     runSidecarSmoke(binaries.Parakeet)
   }
@@ -426,12 +423,7 @@ export function inspectLinuxApp(appPath, platformKey, options = {}) {
       ["--version"],
       new RegExp(CLAUDE_VERSION.replaceAll(".", "\\.")),
     )
-    runSmoke(
-      "Codex",
-      binaries.Codex,
-      ["--version"],
-      new RegExp(CODEX_VERSION.replaceAll(".", "\\.")),
-    )
+    runSmoke("Codex", binaries.Codex, ["--version"], expectedCodexVersion)
     runSmoke("Whisper", binaries.Whisper, ["--help"], /whisper|usage:/i)
     runSidecarSmoke(binaries.Parakeet)
     runPackagedNativeModulesSmoke(appPath, path.join(resources, "app.asar", "node_modules"))

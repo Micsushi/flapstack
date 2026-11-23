@@ -36,6 +36,7 @@ export function shouldShowPersistedRunFailure(input: {
 export function presentRunError(
   rawMessage: string | null | undefined,
   platform: "darwin" | "win32" | "linux" | "unknown" = "unknown",
+  persistedLimit?: "rate" | "quota" | null,
 ): RunErrorPresentation {
   const detail = rawMessage?.trim()
   if (detail && LOCAL_LAUNCH_PERMISSION_PATTERN.test(detail)) {
@@ -52,14 +53,14 @@ export function presentRunError(
     }
   }
 
-  const limitKind = detail ? classifyProviderLimitError(detail) : null
+  const limitKind = (detail ? classifyProviderLimitError(detail) : null) ?? persistedLimit
   if (limitKind) {
     return {
       title: limitKind === "quota" ? "Usage limit reached" : "Provider rate limit",
       message:
         limitKind === "quota"
-          ? "This provider reports a usage limit. Check account usage and reset details, or switch provider or account."
-          : "This provider rejected the request with a rate limit. Check its retry or account-limit details before retrying.",
+          ? "Check your provider account for its next usage reset."
+          : "The provider received too many requests. Try again later.",
       technicalDetail: detail ?? null,
     }
   }

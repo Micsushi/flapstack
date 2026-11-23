@@ -13,12 +13,13 @@ import {
 } from "../../../lib/atoms"
 import { appStore } from "../../../lib/jotai-store"
 import { createStreamChunkBatcher } from "../../../lib/stream-chunk-batcher"
-import { pendingAuthRetryMessageAtom } from "../atoms"
+import { antigravityNativeApprovalsAtom, pendingAuthRetryMessageAtom } from "../atoms"
 
-type DirectRuntimeHarness = "codex" | "claude-code"
+type DirectRuntimeHarness = "codex" | "claude-code" | "antigravity"
 type RuntimeEffort = "minimal" | "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
 
 export async function createDirectRuntimeStream(input: {
+  submittedAtMs?: number
   chatId: string
   subChatId: string
   harness: DirectRuntimeHarness
@@ -129,6 +130,7 @@ export async function createDirectRuntimeStream(input: {
 
       subscription = trpcClient.agentRuntimeChat.launch.subscribe(
         {
+          submittedAtMs: input.submittedAtMs,
           runId,
           chatId: input.chatId,
           subChatId: input.subChatId,
@@ -141,6 +143,9 @@ export async function createDirectRuntimeStream(input: {
           reasoningEffort: input.reasoningEffort,
           reasoningEnabled: input.reasoningEnabled,
           codexThreadVisibility: appStore.get(codexThreadVisibilityAtom),
+          ...(input.harness === "antigravity"
+            ? { antigravityNativeApprovals: appStore.get(antigravityNativeApprovalsAtom) }
+            : {}),
           ...(input.vaultContextGraphSelection
             ? { vaultContextGraphSelection: input.vaultContextGraphSelection }
             : {}),
@@ -149,6 +154,7 @@ export async function createDirectRuntimeStream(input: {
           onData(event) {
             if (closed) return
             if (event.type === "started") {
+              chunks.push({ type: "start", messageId: `reply-${runId}` })
               startedAtMs = Date.now()
             } else if (event.type === "assistant-text") {
               for (const chunk of activityMapper.beforeText()) chunks.push(chunk)
@@ -305,5 +311,6 @@ export function splitCodexRuntimeModel(selection: string): {
 }
 
 function runtimeLabel(harness: DirectRuntimeHarness): string {
+  if (harness === "antigravity") return "Gemini"
   return harness === "codex" ? "Codex" : "Claude Code"
 }

@@ -2834,6 +2834,19 @@ export const mcpApprovalRequests = sqliteTable(
   ],
 )
 
+export const agentRunTimingMarks = sqliteTable(
+  "agent_run_timing_marks",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    phase: text("phase").notNull(),
+    itemId: text("item_id").notNull().default(""),
+    atMs: integer("at_ms").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.runId, table.phase, table.itemId] })],
+)
+
 // ============ CHECKPOINTS ============
 export const checkpoints = sqliteTable(
   "checkpoints",
@@ -2848,9 +2861,15 @@ export const checkpoints = sqliteTable(
     worktreePath: text("worktree_path"),
     gitCommit: text("git_commit"),
     gitStatusJson: text("git_status_json"),
+    sdkMessageUuid: text("sdk_message_uuid"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
-  (table) => [index("checkpoints_run_id_idx").on(table.runId)],
+  (table) => [
+    index("checkpoints_run_id_idx").on(table.runId),
+    index("checkpoints_sdk_message")
+      .on(table.worktreePath, table.sdkMessageUuid)
+      .where(sql`${table.sdkMessageUuid} IS NOT NULL`),
+  ],
 )
 
 export const checkpointsRelations = relations(checkpoints, ({ one }) => ({

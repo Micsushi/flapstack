@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { sanitizeRuntimeText } from "../sanitizer"
+import { LargeCodexToolFrame } from "./large-tool-frame"
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 2_000
@@ -126,6 +127,7 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
   private stderr = ""
   private stdoutChunks: Buffer[] = []
   private stdoutBytes = 0
+  private largeFrame: LargeCodexToolFrame | null = null
   private alive = true
   private closing: Promise<void> | null = null
 
@@ -165,6 +167,22 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
     params?: Record<string, unknown>,
     timeoutMs = this.requestTimeoutMs,
   ): Promise<unknown> {
+    if (
+      process.platform === "win32" &&
+      params?.sandbox !== "danger-full-access" &&
+      ["thread/start", "thread/resume", "thread/fork"].includes(method)
+    ) {
+      const response = await this.request("config/read", { cwd: params?.cwd, includeLayers: false })
+      const current = isRecord(response) && isRecord(response.config) ? response.config : {}
+      const windows = isRecord(current.windows) ? current.windows : {}
+      // A missing Windows implementation leaves a restricted thread without OS enforcement.
+      // Preserve native elevated and MXC configurations when already configured.
+      const sandbox =
+        windows.sandbox === "elevated" || windows.sandbox === "mxc" ? windows.sandbox : "unelevated"
+      const config = isRecord(params?.config) ? params.config : {}
+      const overrides = isRecord(config.windows) ? config.windows : {}
+      params = { ...params, config: { ...config, windows: { ...overrides, sandbox } } }
+    }
     if (!this.alive) throw new Error(`[codex-runtime] Cannot call ${method}; process exited.`)
     if (this.pending.size >= MAX_PENDING_REQUESTS) {
       throw new Error(`[codex-runtime] Too many pending App Server requests.`)
@@ -247,30 +265,44 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
       const newline = data.indexOf(0x0a, offset)
       const end = newline === -1 ? data.length : newline
       const segment = data.subarray(offset, end)
-      if (this.stdoutBytes + segment.length > MAX_PROTOCOL_LINE_BYTES) {
-        this.failProtocol(
-          new Error("[codex-runtime] Oversized App Server message (limit: 64 MiB)."),
-        )
-        return
+      let line: string
+      if (this.largeFrame || this.stdoutBytes + segment.length > MAX_PROTOCOL_LINE_BYTES) {
+        try {
+          if (!this.largeFrame) {
+            this.largeFrame = new LargeCodexToolFrame()
+            for (const buffered of this.stdoutChunks) this.largeFrame.write(buffered)
+            this.stdoutChunks = []
+          }
+          this.largeFrame.write(segment)
+          if (newline === -1) return
+          line = this.largeFrame.finish((id) => this.pending.get(id)?.method)
+          this.largeFrame = null
+        } catch {
+          this.failProtocol(
+            new Error(
+              "[codex-runtime] Oversized App Server message could not be safely shortened.",
+            ),
+          )
+          return
+        }
+      } else {
+        if (segment.length > 0) {
+          this.stdoutChunks.push(segment)
+          this.stdoutBytes += segment.length
+        }
+        if (newline === -1) return
+        line = Buffer.concat(this.stdoutChunks, this.stdoutBytes).toString("utf8")
       }
-      if (segment.length > 0) {
-        this.stdoutChunks.push(segment)
-        this.stdoutBytes += segment.length
-      }
-      if (newline === -1) return
-
-      const buffered = Buffer.concat(this.stdoutChunks, this.stdoutBytes)
-      const line = buffered.at(-1) === 0x0d ? buffered.subarray(0, -1) : buffered
       this.stdoutChunks = []
       this.stdoutBytes = 0
-      this.handleLine(line.toString("utf8"))
+      this.handleLine(line)
       if (!this.alive) return
       offset = newline + 1
     }
   }
 
   private handleStdoutEnd(): void {
-    if (!this.alive || this.stdoutBytes === 0) return
+    if (!this.alive || (this.stdoutBytes === 0 && !this.largeFrame)) return
     this.failProtocol(
       new Error("[codex-runtime] App Server stdout ended with an unterminated JSON-RPC message."),
     )
@@ -418,6 +450,7 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
     this.alive = false
     this.stdoutChunks = []
     this.stdoutBytes = 0
+    this.largeFrame = null
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout)
       pending.reject(error)

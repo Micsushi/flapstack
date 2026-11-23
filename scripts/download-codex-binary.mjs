@@ -5,7 +5,7 @@
  * Usage:
  *   node scripts/download-codex-binary.mjs              # Download for current platform
  *   node scripts/download-codex-binary.mjs --all        # Download all platforms
- *   node scripts/download-codex-binary.mjs --version=0.153.4
+ *   node scripts/download-codex-binary.mjs --version=0.166.0-alpha.6
  */
 
 import fs from "node:fs"
@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import {
   assertBundledBinary,
+  CODEX_WINDOWS_HELPERS,
   ensureRealDirectory,
   sha256File,
   verifyCachedBinaryDigest,
@@ -66,8 +67,6 @@ const PLATFORMS = {
   "win32-x64": {
     assetName: "codex-x86_64-pc-windows-msvc.exe",
     outputBinaryName: "codex.exe",
-    codeModeHostAssetName: "codex-code-mode-host-x86_64-pc-windows-msvc.exe",
-    codeModeHostOutputName: "codex-code-mode-host.exe",
   },
 }
 
@@ -215,160 +214,114 @@ export async function downloadPlatform(version, platformKey, release, options = 
   const targetPath = path.join(targetDir, platform.outputBinaryName)
   const assetHashMarkerPath = path.join(targetDir, ".codex-asset.sha256")
   const binaryHashMarkerPath = path.join(targetDir, ".codex-binary.sha256")
-  const codeModeHostPath = platform.codeModeHostOutputName
-    ? path.join(targetDir, platform.codeModeHostOutputName)
-    : null
-  const codeModeHostMarkerPath = codeModeHostPath
-    ? path.join(targetDir, ".codex-code-mode-host.sha256")
-    : null
-
   ensureRealDirectory(binDirectory)
   ensureRealDirectory(targetDir)
-  recoverInterruptedFileReplacement(targetPath)
-  if (codeModeHostPath) recoverInterruptedFileReplacement(codeModeHostPath)
 
-  const asset = findAsset(release, platform.assetName)
-  if (!asset) {
-    console.error(`Missing release asset ${platform.assetName}`)
-    return false
-  }
-
-  const expectedHash = parseSha256Digest(asset.digest)
-  const codeModeHostAsset = platform.codeModeHostAssetName
-    ? findAsset(release, platform.codeModeHostAssetName)
-    : null
-  const expectedCodeModeHostHash = codeModeHostAsset
-    ? parseSha256Digest(codeModeHostAsset.digest)
-    : null
-  let downloadUrl
-  let codeModeHostDownloadUrl
-  try {
-    downloadUrl = requireCodexReleaseAssetUrl(
-      version,
-      platform.assetName,
-      asset.browser_download_url,
-    )
-    if (platform.codeModeHostAssetName && codeModeHostAsset) {
-      codeModeHostDownloadUrl = requireCodexReleaseAssetUrl(
-        version,
-        platform.codeModeHostAssetName,
-        codeModeHostAsset.browser_download_url,
-      )
+  const specs = [
+    { ...platform, marker: binaryHashMarkerPath },
+    ...(platformKey === "win32-x64"
+      ? Object.values(CODEX_WINDOWS_HELPERS).map((name) => ({
+          assetName: `${name}-x86_64-pc-windows-msvc.exe`,
+          outputBinaryName: `${name}.exe`,
+          marker: path.join(targetDir, `.${name}.sha256`),
+        }))
+      : []),
+  ]
+  const assets = []
+  for (const spec of specs) {
+    const asset = findAsset(release, spec.assetName)
+    const digest = parseSha256Digest(asset?.digest)
+    if (!asset || !digest) {
+      console.error(`Missing release asset or SHA256 digest for ${spec.assetName}`)
+      return false
     }
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error))
-    return false
+    let url
+    try {
+      url = requireCodexReleaseAssetUrl(version, spec.assetName, asset.browser_download_url)
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error))
+      return false
+    }
+    const target = path.join(targetDir, spec.outputBinaryName)
+    recoverInterruptedFileReplacement(target)
+    assets.push({ ...spec, target, url, digest, size: asset.size })
   }
-
-  if (!expectedHash) {
-    console.error(`Missing SHA256 digest for pinned Codex asset ${platform.assetName}`)
-    return false
-  }
-  if (platform.codeModeHostAssetName && (!codeModeHostAsset || !expectedCodeModeHostHash)) {
-    console.error(`Missing release asset or SHA256 digest for ${platform.codeModeHostAssetName}`)
-    return false
-  }
-
+  const [primary] = assets
   console.log(`\nDownloading Codex for ${platformKey}...`)
-  console.log(`  URL: ${downloadUrl}`)
-  console.log(`  Size: ${(asset.size / 1024 / 1024).toFixed(1)} MB`)
-
+  console.log(`  URL: ${primary.url}`)
+  console.log(`  Size: ${(primary.size / 1024 / 1024).toFixed(1)} MB`)
   try {
-    const assetMarker = fs.readFileSync(assetHashMarkerPath, "utf8").trim()
-    if (
-      assetMarker === expectedHash &&
-      (await verifyCachedBinaryDigest(targetPath, platformKey, binaryHashMarkerPath)) &&
-      (!codeModeHostPath ||
-        (fs.readFileSync(codeModeHostMarkerPath, "utf8").trim() === expectedCodeModeHostHash &&
-          (await verifyCachedBinaryDigest(codeModeHostPath, platformKey, codeModeHostMarkerPath))))
-    ) {
+    let cached = fs.readFileSync(assetHashMarkerPath, "utf8").trim() === primary.digest
+    for (const asset of assets) {
+      if (!cached) break
+      cached =
+        (asset.extractedBinaryName ||
+          fs.readFileSync(asset.marker, "utf8").trim() === asset.digest) &&
+        (await verifyCachedBinaryDigest(asset.target, platformKey, asset.marker))
+    }
+    if (cached) {
       console.log("  Already downloaded and verified")
       return true
     }
-    console.log("  Existing Codex cache failed digest validation, re-downloading...")
   } catch {
-    if (fs.existsSync(targetPath)) {
-      console.log("  Existing Codex cache is missing, non-regular, or invalid; re-downloading...")
-    }
+    // A missing or incomplete cache is repaired from the pinned release.
   }
 
   const stagingDirectory = fs.mkdtempSync(path.join(targetDir, ".codex-download-"))
-  const downloadPath = path.join(stagingDirectory, platform.assetName)
-  const candidatePath = path.join(stagingDirectory, platform.outputBinaryName)
-  const codeModeHostDownloadPath = platform.codeModeHostAssetName
-    ? path.join(stagingDirectory, platform.codeModeHostAssetName)
-    : null
-  const codeModeHostCandidatePath = platform.codeModeHostOutputName
-    ? path.join(stagingDirectory, platform.codeModeHostOutputName)
-    : null
-  const extractDir = path.join(stagingDirectory, "extract")
   try {
-    await (options.downloadFile ?? downloadFileWithRetry)(downloadUrl, downloadPath, {
-      headersForUrl: () => getRequestHeaders(),
-      label: `Codex ${platformKey}`,
-      onRetry: ({ attempt, attempts, error }) =>
-        console.warn(`  ${error.message}; retrying Codex download (${attempt}/${attempts})...`),
-    })
-
-    const actualHash = await sha256File(downloadPath)
-    if (actualHash !== expectedHash) {
-      console.error("  Hash mismatch!")
-      console.error(`    Expected: ${expectedHash}`)
-      console.error(`    Actual:   ${actualHash}`)
-      return false
-    }
-    console.log(`  Verified SHA256: ${actualHash.slice(0, 16)}...`)
-
-    if (codeModeHostDownloadPath && codeModeHostCandidatePath) {
-      await (options.downloadFile ?? downloadFileWithRetry)(
-        codeModeHostDownloadUrl,
-        codeModeHostDownloadPath,
-        {
-          headersForUrl: () => getRequestHeaders(),
-          label: `Codex code-mode host ${platformKey}`,
-          onRetry: ({ attempt, attempts, error }) =>
-            console.warn(
-              `  ${error.message}; retrying Codex code-mode host download (${attempt}/${attempts})...`,
-            ),
-        },
+    for (const asset of assets) {
+      const downloadPath = path.join(stagingDirectory, asset.assetName)
+      const candidate = path.join(stagingDirectory, asset.outputBinaryName)
+      // The Windows release publishes raw PE digests, so a prior prepared binary can be reverified directly.
+      const cachedBinary = path.join(
+        ROOT_DIR,
+        "resources",
+        "bin",
+        platformKey,
+        asset.outputBinaryName,
       )
-      const actualCodeModeHostHash = await sha256File(codeModeHostDownloadPath)
-      if (actualCodeModeHostHash !== expectedCodeModeHostHash) {
-        console.error("  Code-mode host hash mismatch!")
-        console.error(`    Expected: ${expectedCodeModeHostHash}`)
-        console.error(`    Actual:   ${actualCodeModeHostHash}`)
+      let reused = false
+      if (!asset.extractedBinaryName && cachedBinary !== asset.target && !options.downloadFile) {
+        try {
+          assertBundledBinary(cachedBinary, platformKey)
+          if ((await sha256File(cachedBinary)) === asset.digest) {
+            fs.copyFileSync(cachedBinary, downloadPath)
+            reused = true
+          }
+        } catch {
+          /* Fall back to the pinned release. */
+        }
+      }
+      if (!reused) {
+        await (options.downloadFile ?? downloadFileWithRetry)(asset.url, downloadPath, {
+          headersForUrl: () => getRequestHeaders(),
+          label: `Codex ${platformKey} ${asset.assetName}`,
+          onRetry: ({ attempt, attempts, error }) =>
+            console.warn(`  ${error.message}; retrying Codex download (${attempt}/${attempts})...`),
+        })
+      }
+      if ((await sha256File(downloadPath)) !== asset.digest) {
+        console.error(`SHA256 mismatch for pinned Codex asset ${asset.assetName}`)
         return false
       }
-      fs.copyFileSync(codeModeHostDownloadPath, codeModeHostCandidatePath)
-      assertBundledBinary(codeModeHostCandidatePath, platformKey)
-    }
-
-    if (platform.assetName.endsWith(".tar.gz")) {
-      fs.mkdirSync(extractDir)
-
-      extractTarGz(downloadPath, extractDir)
-
-      const extractedPath = path.join(extractDir, platform.extractedBinaryName)
-      if (!fs.existsSync(extractedPath)) {
-        throw new Error(`Extracted binary not found: ${extractedPath}`)
+      if (asset.extractedBinaryName) {
+        const extractDir = path.join(stagingDirectory, "extract")
+        fs.mkdirSync(extractDir)
+        extractTarGz(downloadPath, extractDir)
+        fs.copyFileSync(path.join(extractDir, asset.extractedBinaryName), candidate)
+      } else {
+        fs.renameSync(downloadPath, candidate)
       }
-      fs.copyFileSync(extractedPath, candidatePath)
-    } else {
-      fs.copyFileSync(downloadPath, candidatePath)
+      if (!platformKey.startsWith("win32")) fs.chmodSync(candidate, 0o755)
+      assertBundledBinary(candidate, platformKey)
+      asset.binaryHash = asset.extractedBinaryName ? await sha256File(candidate) : asset.digest
     }
-
-    if (!platformKey.startsWith("win32")) fs.chmodSync(candidatePath, 0o755)
-
-    assertBundledBinary(candidatePath, platformKey)
-    const binaryHash = await sha256File(candidatePath)
-    if (codeModeHostCandidatePath) {
-      replaceFileAtomically(codeModeHostCandidatePath, codeModeHostPath)
-      fs.writeFileSync(codeModeHostMarkerPath, `${expectedCodeModeHostHash}\n`)
+    // Validate every helper before replacing the old CLI. Publish the release marker last.
+    for (const asset of assets.reverse()) {
+      replaceFileAtomically(path.join(stagingDirectory, asset.outputBinaryName), asset.target)
+      fs.writeFileSync(asset.marker, `${asset.binaryHash}\n`)
     }
-    replaceFileAtomically(candidatePath, targetPath)
-    fs.writeFileSync(assetHashMarkerPath, `${expectedHash}\n`)
-    fs.writeFileSync(binaryHashMarkerPath, `${binaryHash}\n`)
-
+    fs.writeFileSync(assetHashMarkerPath, `${primary.digest}\n`)
     console.log(`  Saved to: ${targetPath}`)
     return true
   } finally {

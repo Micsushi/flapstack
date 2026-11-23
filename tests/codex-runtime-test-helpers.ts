@@ -60,7 +60,7 @@ export class FakeCodexProtocolClient implements CodexProtocolClient {
 
   constructor() {
     this.responses.set("initialize", {
-      userAgent: "codex_cli_rs/0.153.4",
+      userAgent: "codex_cli_rs/0.166.0-alpha.6",
       codexHome: "/redacted",
       platformFamily: "unix",
       platformOs: "macos",
@@ -138,7 +138,7 @@ export function runtimeContext(signal = new AbortController().signal): RuntimeAd
       preferenceSource: "chat",
       resolvedRuntime: "codex",
       compatibility: { compatible: true, harness: "codex", runtime: "codex", reason: null },
-      versions: { adapterVersion: "1", protocolVersion: "0.153.4" },
+      versions: { adapterVersion: "1", protocolVersion: "0.166.0-alpha.6" },
       capabilities: {
         schemaVersion: 1,
         status: "available",

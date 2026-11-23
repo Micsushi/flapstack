@@ -1,5 +1,6 @@
 import { toast } from "sonner"
 import { trpcClient } from "./trpc"
+import { isProgressText } from "../features/agents/lib/assistant-text-phase"
 
 export function prepareReplyAudio(
   chatId: string,
@@ -9,7 +10,7 @@ export function prepareReplyAudio(
 ) {
   if (message?.role !== "assistant" || !message.id) return
   const text = message.parts
-    ?.filter((part) => part.type === "text")
+    ?.filter((part) => part.type === "text" && !isProgressText(part, false))
     .map((part) => part.text ?? "")
     .join("\n")
   if (!text?.trim()) return

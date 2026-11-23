@@ -1,5 +1,6 @@
 export const AGENT_HARNESSES = [
   "codex",
+  "antigravity",
   "claude-code",
   "cursor-agent",
   "openrouter",

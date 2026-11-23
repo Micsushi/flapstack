@@ -138,6 +138,8 @@ describe("packaged harness preparation", () => {
       "claude.exe",
       "codex.exe",
       "codex-code-mode-host.exe",
+      "codex-command-runner.exe",
+      "codex-windows-sandbox-setup.exe",
       "flapstack-stt-sidecar.exe",
     ]
     for (const name of binaries) executable(target, name, pe("x64"))
@@ -158,6 +160,8 @@ describe("packaged harness preparation", () => {
     for (const [binary, marker] of [
       ["codex.exe", ".codex-binary.sha256"],
       ["codex-code-mode-host.exe", ".codex-code-mode-host.sha256"],
+      ["codex-command-runner.exe", ".codex-command-runner.sha256"],
+      ["codex-windows-sandbox-setup.exe", ".codex-windows-sandbox-setup.sha256"],
       ["flapstack-stt-sidecar.exe", ".stt-sidecar.sha256"],
     ])
       writeFileSync(join(target, marker), `${await sha256File(join(target, binary))}\n`)

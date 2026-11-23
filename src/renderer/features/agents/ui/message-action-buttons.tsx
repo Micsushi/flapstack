@@ -522,7 +522,7 @@ function formatSpeechTime(seconds: number) {
 export function getMessageTextContent(msg: any): string {
   if (!msg?.parts) return ""
   return msg.parts
-    .filter((p: any) => p.type === "text")
+    .filter((p: any) => p.type === "text" && p.providerMetadata?.runtime?.phase !== "commentary")
     .map((p: any) => p.text || "")
     .join("\n")
 }

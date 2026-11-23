@@ -1,4 +1,7 @@
 import { observable } from "@trpc/server/observable"
+import { recordSubmittedAt } from "../../run-timings"
+import { antigravityModels } from "../../agent-runtime/antigravity/adapter"
+import type { ResolvedAgentRuntime } from "../../../../shared/agent-runtime"
 import { app } from "electron"
 import { join } from "node:path"
 import { z } from "zod"
@@ -9,7 +12,7 @@ import { getDatabasePath } from "../../db"
 import { sleep } from "../../../../shared/sleep"
 import {
   loadInteractiveRuntimeActivity,
-  loadInteractiveRuntimeAssistantText,
+  loadInteractiveRuntimeAssistantParts,
   materializeInteractiveRuntimeRun,
   persistInteractiveRuntimeAssistantFallback,
   prepareInteractiveRuntimeLaunch,
@@ -21,7 +24,7 @@ import { getResolvedWorktreeStatus } from "../../worktree-resolver"
 import { bindVisualCaptureImagesToRun } from "../../visual-capture/run-provenance"
 import { publicProcedure, router } from "../index"
 
-const harnessSchema = z.enum(["codex", "claude-code"])
+const harnessSchema = z.enum(["codex", "claude-code", "antigravity"])
 const effortSchema = z.enum(["minimal", "none", "low", "medium", "high", "xhigh", "max", "ultra"])
 const vaultContextGraphSelectionSchema = z.object({
   nodeIds: z.array(z.string().trim().min(1).max(200)).max(24),
@@ -46,6 +49,8 @@ const resolveInputSchema = z.object({
 })
 
 const launchInputSchema = resolveInputSchema.extend({
+  antigravityNativeApprovals: z.boolean().optional(),
+  submittedAtMs: z.number().int().nonnegative().optional(),
   runId: z.string().trim().min(1).max(512),
   prompt: z.string().min(1).max(2_000_000),
   codexThreadVisibility: z.enum(CODEX_THREAD_VISIBILITIES).default("hidden"),
@@ -67,7 +72,7 @@ const launchInputSchema = resolveInputSchema.extend({
 })
 
 type RuntimeChatEvent =
-  | { type: "started"; runId: string; runtime: "codex" | "claude-code" }
+  | { type: "started"; runId: string; runtime: ResolvedAgentRuntime }
   | {
       type: "assistant-text"
       runId: string
@@ -86,6 +91,7 @@ type RuntimeChatEvent =
   | { type: "finished"; runId: string; durationMs: number }
 
 export const agentRuntimeChatRouter = router({
+  antigravityModels: publicProcedure.query(() => antigravityModels()),
   resolve: publicProcedure.input(resolveInputSchema).query(async ({ input }) => {
     await assertRuntimeCheckoutReady(input.chatId)
     const path = getDatabasePath()
@@ -141,6 +147,7 @@ export const agentRuntimeChatRouter = router({
           run = materializeInteractiveRuntimeRun(database, input, {
             [preliminary.resolvedRuntime]: probe,
           })
+          recordSubmittedAt(database, run.runId, input.submittedAtMs)
           try {
             await bindVisualCaptureImagesToRun({
               database,
@@ -170,7 +177,7 @@ export const agentRuntimeChatRouter = router({
         emit.next({
           type: "started",
           runId: input.runId,
-          runtime: run.runtimeLaunch!.resolvedRuntime as "codex" | "claude-code",
+          runtime: run.runtimeLaunch!.resolvedRuntime,
         })
         let launchSettled = false
         let launchError: unknown = null
@@ -200,6 +207,8 @@ export const agentRuntimeChatRouter = router({
               for (const event of batch.events) {
                 if (
                   event.kind === "agent-text" &&
+                  event.privacyClass !== "private" &&
+                  event.privacyClass !== "encrypted" &&
                   (event.phase === "started" ||
                     event.phase === "delta" ||
                     event.phase === "completed")
@@ -243,8 +252,9 @@ export const agentRuntimeChatRouter = router({
         const resultDatabase = openAppDatabase(path)
         let assistantText = ""
         try {
-          assistantText = loadInteractiveRuntimeAssistantText(resultDatabase, input.runId)
-          persistInteractiveRuntimeAssistantFallback(resultDatabase, input.runId, assistantText)
+          const parts = loadInteractiveRuntimeAssistantParts(resultDatabase, input.runId)
+          assistantText = parts.map((part) => part.text).join("\n")
+          persistInteractiveRuntimeAssistantFallback(resultDatabase, input.runId, parts)
         } finally {
           resultDatabase.close()
         }

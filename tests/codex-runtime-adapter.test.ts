@@ -18,14 +18,14 @@ describe("direct Codex Runtime adapter", () => {
       appendActivity: activity.append,
       resolveThreadParams: () => ({ cwd: "/redacted" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => client,
       now: () => new Date("2026-07-14T00:00:00.000Z"),
     })()
 
     const probe = await adapter.probe("codex")
     expect(probe.available).toBe(true)
-    expect(probe.versions).toEqual({ adapterVersion: "1", protocolVersion: "0.153.4" })
+    expect(probe.versions).toEqual({ adapterVersion: "1", protocolVersion: "0.166.0-alpha.6" })
     expect(probe.capabilities.capturedAt).toBe("2026-07-14T00:00:00.000Z")
     expect(client.requests.map((request) => request.method)).toEqual([
       "initialize",
@@ -43,7 +43,7 @@ describe("direct Codex Runtime adapter", () => {
       appendActivity: activity.append,
       resolveThreadParams: () => ({ cwd: "/redacted" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => authClient,
     })()
     expect(await authAdapter.probe("codex")).toMatchObject({
@@ -72,7 +72,7 @@ describe("direct Codex Runtime adapter", () => {
       appendActivity: activity.append,
       resolveThreadParams: () => ({ cwd: "/redacted" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => modelClient,
     })()
     await expect(modelAdapter.startSession(runtimeContext())).rejects.toThrow(
@@ -91,7 +91,7 @@ describe("direct Codex Runtime adapter", () => {
       appendActivity: collectActivity().append,
       resolveThreadParams: () => ({ cwd: "/redacted" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => client,
       onDiagnostic: (_context, message) => diagnostics.push(message),
     })()
@@ -114,7 +114,7 @@ describe("direct Codex Runtime adapter", () => {
       appendActivity: activity.append,
       resolveThreadParams: () => ({ cwd: "/redacted" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => cycleClient,
     })()
     const cycleProbe = await cycleAdapter.probe("codex")
@@ -134,7 +134,7 @@ describe("direct Codex Runtime adapter", () => {
       appendActivity: activity.append,
       resolveThreadParams: () => ({ cwd: "/redacted" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => capClient,
     })()
     const capProbe = await capAdapter.probe("codex")
@@ -162,7 +162,7 @@ describe("direct Codex Runtime adapter", () => {
       requestPermission: async () => ({ decision: "accept" }),
       onUsage: async (_context, event) => usage.push(event),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => client,
     })()
     const context = runtimeContext()
@@ -236,7 +236,7 @@ describe("direct Codex Runtime adapter", () => {
       appendActivity: activity.append,
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => client,
     })()
     const context = runtimeContext()
@@ -272,7 +272,7 @@ describe("direct Codex Runtime adapter", () => {
       appendActivity: collectActivity().append,
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => client,
     })()
     const context = runtimeContext()
@@ -299,7 +299,7 @@ describe("direct Codex Runtime adapter", () => {
       appendActivity: collectActivity().append,
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => client,
     })()
     const context = runtimeContext()
@@ -320,7 +320,7 @@ describe("direct Codex Runtime adapter", () => {
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolveThreadVisibility: () => "hidden",
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => client,
     })()
     const context = runtimeContext()
@@ -356,7 +356,7 @@ describe("direct Codex Runtime adapter", () => {
       appendActivity: collectActivity().append,
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => client,
     })()
 
@@ -390,7 +390,7 @@ describe("direct Codex Runtime adapter", () => {
       appendActivity: collectActivity().append,
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => client,
     })()
 
@@ -415,7 +415,7 @@ describe("direct Codex Runtime adapter", () => {
       appendActivity: collectActivity().append,
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => client,
     })()
 
@@ -439,7 +439,7 @@ describe("direct Codex Runtime adapter", () => {
       appendActivity: activity.append,
       resolveThreadParams: () => ({ cwd: "/worktree" }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => client,
     })()
     const context = runtimeContext()
@@ -490,7 +490,7 @@ describe("direct Codex Runtime adapter", () => {
         providerThreadId: "thread-1",
       }),
       resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.153.4",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
       createClient: () => client,
     })()
 

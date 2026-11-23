@@ -156,6 +156,8 @@ function formatProvider(provider?: string | null): string {
       return "Anthropic"
     case "codex":
       return "OpenAI"
+    case "antigravity":
+      return "Gemini · Antigravity"
     case "cursor-agent":
       return "Cursor"
     case "openrouter":

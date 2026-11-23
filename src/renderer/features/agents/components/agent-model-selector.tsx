@@ -1,8 +1,8 @@
 "use client"
 
-import { Brain, ChevronDown, ChevronRight, Zap } from "lucide-react"
+import { Brain, ChevronRight, Zap } from "lucide-react"
 import { useSetAtom } from "jotai"
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react"
+import { useCallback, useMemo, useRef, useState, type RefObject } from "react"
 import { agentsLoginModalOpenAtom, codexLoginModalOpenAtom } from "../../../lib/atoms"
 import {
   Dialog,
@@ -19,7 +19,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "../../../components/ui/command"
-import { CheckIcon, IconChevronDown, ReasoningOutputIcon } from "../../../components/ui/icons"
+import { CheckIcon, IconChevronDown } from "../../../components/ui/icons"
 import { Switch } from "../../../components/ui/switch"
 import { Button } from "../../../components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover"
@@ -30,7 +30,7 @@ import { getHarnessChipMeta } from "../constants"
 import { ProviderChipIcon } from "./provider-chip-icon"
 
 export type AgentProviderId =
-  "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt" | "local"
+  "claude-code" | "codex" | "antigravity" | "cursor-agent" | "openrouter" | "nanogpt" | "local"
 
 type ClaudeModelOption = {
   id: string
@@ -107,6 +107,14 @@ interface AgentModelSelectorProps {
     isLoginPending: boolean
     onLogin: () => void
   }
+  antigravity: {
+    models: { id: string; name: string }[]
+    selectedModelId?: string | null
+    onSelectModel: (id: string) => void
+    status: string | null
+    canRetry: boolean
+    retry: () => void
+  }
   opencode?: Record<
     "openrouter" | "nanogpt",
     {
@@ -136,6 +144,7 @@ type FlatModelItem =
   | { type: "claude"; model: ClaudeModelOption }
   | { type: "codex"; model: CodexModelOption }
   | { type: "cursor"; model: CursorModelOption }
+  | { type: "antigravity"; model: { id: string; name: string } }
   | { type: "opencode"; provider: "openrouter" | "nanogpt"; model: OpencodeModelOption }
   | { type: "local"; model: LocalModelOption }
   | { type: "ollama"; modelName: string; isRecommended: boolean }
@@ -148,6 +157,15 @@ type ModelGroup = {
 }
 
 interface AgentModelTuningSelectorProps {
+  showAntigravityApprovals?: boolean
+  antigravity?: {
+    nativeApprovals: boolean
+    setNativeApprovals: (enabled: boolean) => void
+    efforts: { id: string; label: string }[]
+    selectedEffort?: string
+    selectedModelId?: string | null
+    onSelectModel: (modelId: string) => void
+  }
   selectedAgentId: AgentProviderId
   reasoningEnabled: boolean
   onReasoningEnabledChange: (enabled: boolean) => void
@@ -173,15 +191,16 @@ interface AgentModelTuningSelectorProps {
 
 export function AgentModelTuningSelector({
   selectedAgentId,
+  showAntigravityApprovals,
   reasoningEnabled,
   onReasoningEnabledChange,
   claude,
   codex,
+  antigravity,
 }: AgentModelTuningSelectorProps) {
   if (selectedAgentId === "local")
     return <span className="sr-only">Reasoning unavailable for local models.</span>
-  const selectedClaudeModel =
-    claude.models.find((model) => model.id === claude.selectedModelId) || claude.models[0]
+  const selectedClaudeModel = claude.models.find((model) => model.id === claude.selectedModelId)
   const claudeEfforts =
     selectedAgentId === "claude-code" && !claude.isOffline && !claude.hasCustomModelConfig
       ? selectedClaudeModel?.efforts
@@ -192,15 +211,10 @@ export function AgentModelTuningSelector({
       ? "high"
       : claudeEfforts?.[0]
 
-  const selectedCodexModel =
-    codex.models.find((model) => model.id === codex.selectedModelId) || codex.models[0]
+  const selectedCodexModel = codex.models.find((model) => model.id === codex.selectedModelId)
   const codexReasoningLevels =
     selectedAgentId === "codex" ? selectedCodexModel?.reasoningLevels : undefined
-  const selectedCodexReasoning = codexReasoningLevels?.includes(codex.selectedReasoning)
-    ? codex.selectedReasoning
-    : codexReasoningLevels?.includes("high")
-      ? "high"
-      : codexReasoningLevels?.[0]
+  const selectedCodexReasoning = codexReasoningLevels?.length ? codex.selectedReasoning : undefined
   const fastModeAvailable =
     selectedAgentId === "codex" && selectedCodexModel?.supportsFastMode === true
   const fastModeEnabled = fastModeAvailable && codex.fastModeEnabled
@@ -210,7 +224,9 @@ export function AgentModelTuningSelector({
       ? formatClaudeEffortLabel(selectedClaudeEffort)
       : selectedAgentId === "codex" && selectedCodexReasoning
         ? formatCodexReasoningLevelLabel(selectedCodexReasoning)
-        : null
+        : selectedAgentId === "antigravity"
+          ? antigravity?.selectedEffort
+          : null
 
   const options =
     selectedAgentId === "claude-code" && selectedClaudeEffort
@@ -227,7 +243,14 @@ export function AgentModelTuningSelector({
             selected: value === selectedCodexReasoning,
             onSelect: () => codex.onSelectReasoning(value),
           }))
-        : []
+        : selectedAgentId === "antigravity"
+          ? antigravity?.efforts.map((effort) => ({
+              value: effort.id,
+              label: effort.label,
+              selected: effort.id === antigravity.selectedModelId,
+              onSelect: () => antigravity.onSelectModel(effort.id),
+            }))
+          : []
 
   return (
     <Popover>
@@ -278,6 +301,17 @@ export function AgentModelTuningSelector({
             {option.selected && <CheckIcon className="h-3.5 w-3.5" />}
           </button>
         ))}
+        {selectedAgentId === "antigravity" && showAntigravityApprovals && antigravity && (
+          <label className="flex min-h-[32px] items-center justify-between gap-2 border-t border-border px-2 py-1.5 text-sm">
+            Ask when Antigravity requires approval
+            <Switch
+              aria-label="Ask when Antigravity requires approval"
+              checked={antigravity.nativeApprovals}
+              onCheckedChange={antigravity.setNativeApprovals}
+              className="shrink-0 scale-75"
+            />
+          </label>
+        )}
         {fastModeAvailable && (
           <>
             <div className="my-1 h-px bg-border" />
@@ -397,6 +431,7 @@ export function AgentModelSelector({
   claude,
   codex,
   cursor,
+  antigravity,
   opencode = EMPTY_OPENCODE_PROVIDERS,
   local,
 }: AgentModelSelectorProps) {
@@ -410,32 +445,16 @@ export function AgentModelSelector({
     targetModelId: string
     targetModelLabel: string
   } | null>(null)
-  const [expandedGroups, setExpandedGroups] = useState<Record<ModelGroup["id"], boolean>>(() => ({
-    "claude-code": selectedAgentId === "claude-code",
-    codex: selectedAgentId === "codex",
-    "cursor-agent": selectedAgentId === "cursor-agent",
-    openrouter: selectedAgentId === "openrouter",
-    nanogpt: selectedAgentId === "nanogpt",
-    local: selectedAgentId === "local",
-  }))
-
-  // On open: collapse everything except the current provider and scroll its
-  // header to the top of the list (clamped, so short remainders end-align).
-  useEffect(() => {
-    if (!open) return
-    setExpandedGroups({
-      "claude-code": selectedAgentId === "claude-code",
-      codex: selectedAgentId === "codex",
-      "cursor-agent": selectedAgentId === "cursor-agent",
-      openrouter: selectedAgentId === "openrouter",
-      nanogpt: selectedAgentId === "nanogpt",
-      local: selectedAgentId === "local",
-    })
-    const frame = requestAnimationFrame(() => {
-      document.getElementById(`model-group-${selectedAgentId}`)?.scrollIntoView({ block: "start" })
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [open, selectedAgentId])
+  const [providerFilter, setProviderFilter] = useState<
+    "all" | "claude-code" | "codex" | "antigravity" | null
+  >(null)
+  const initialFilter =
+    selectedAgentId === "codex" ||
+    selectedAgentId === "claude-code" ||
+    selectedAgentId === "antigravity"
+      ? selectedAgentId
+      : "all"
+  const currentFilter = search.trim() ? "all" : (providerFilter ?? initialFilter)
 
   const canSelectProvider = (provider: AgentProviderId) =>
     allowProviderSwitch || selectedAgentId === provider
@@ -472,6 +491,11 @@ export function AgentModelSelector({
     const groups: ModelGroup[] = [
       { id: "claude-code", label: "Claude Code", items: claudeItems },
       { id: "codex", label: "Codex", items: codexItems },
+      {
+        id: "antigravity",
+        label: "Gemini · Antigravity",
+        items: antigravity.models.map((model) => ({ type: "antigravity", model })),
+      },
       { id: "cursor-agent", label: "Cursor", items: cursorItems },
     ]
     for (const provider of ["openrouter", "nanogpt"] as const) {
@@ -487,16 +511,18 @@ export function AgentModelSelector({
       items: (local?.models ?? []).map((model) => ({ type: "local", model })),
     })
     return groups
-  }, [claude, codex, cursor, opencode, local?.models])
+  }, [claude, codex, cursor, antigravity.models, opencode, local?.models])
 
   // Filter by search
   const filteredGroups = useMemo(() => {
-    if (!search.trim()) return modelGroups
+    if (!search.trim())
+      return modelGroups.filter((group) => currentFilter === "all" || group.id === currentFilter)
     const q = search.toLowerCase().trim()
     return modelGroups
       .map((group) => ({
         ...group,
         items: group.items.filter((item) => {
+          if (group.label.toLowerCase().includes(q)) return true
           switch (item.type) {
             case "claude":
               return (
@@ -507,6 +533,7 @@ export function AgentModelSelector({
               )
             case "codex":
               return item.model.name.toLowerCase().includes(q) || item.model.id.includes(q)
+            case "antigravity":
             case "cursor":
               return item.model.name.toLowerCase().includes(q) || item.model.id.includes(q)
             case "opencode":
@@ -521,15 +548,14 @@ export function AgentModelSelector({
         }),
       }))
       .filter((group) => group.items.length > 0)
-  }, [modelGroups, search])
-
-  const filteredModelCount = filteredGroups.reduce((count, group) => count + group.items.length, 0)
+  }, [modelGroups, search, currentFilter])
 
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {
       onOpenChange(nextOpen)
       if (!nextOpen) {
         setSearch("")
+        setProviderFilter(null)
       }
     },
     [onOpenChange],
@@ -549,6 +575,8 @@ export function AgentModelSelector({
         return selectedAgentId === "claude-code" && claude.selectedModelId === item.model.id
       case "codex":
         return selectedAgentId === "codex" && codex.selectedModelId === item.model.id
+      case "antigravity":
+        return selectedAgentId === "antigravity" && antigravity.selectedModelId === item.model.id
       case "cursor":
         return selectedAgentId === "cursor-agent" && cursor.selectedModelId === item.model.id
       case "opencode":
@@ -567,6 +595,7 @@ export function AgentModelSelector({
 
   const getItemProvider = (item: FlatModelItem): AgentProviderId | null => {
     if (item.type === "codex") return "codex"
+    if (item.type === "antigravity") return "antigravity"
     if (item.type === "cursor") return "cursor-agent"
     if (item.type === "opencode") return item.provider
     if (item.type === "local") return "local"
@@ -648,6 +677,11 @@ export function AgentModelSelector({
         onSelectedAgentIdChange("cursor-agent")
         cursor.onSelectModel(item.model.id)
         break
+      case "antigravity":
+        if (!canSelectProvider("antigravity")) return
+        onSelectedAgentIdChange("antigravity")
+        antigravity.onSelectModel(item.model.id)
+        break
       case "opencode":
         if (!canSelectProvider(item.provider)) return
         onSelectedAgentIdChange(item.provider)
@@ -677,6 +711,7 @@ export function AgentModelSelector({
         return `${item.model.name} ${item.model.version}`
       case "codex":
         return item.model.name
+      case "antigravity":
       case "cursor":
         return item.model.name
       case "opencode":
@@ -702,6 +737,8 @@ export function AgentModelSelector({
         return `claude-${item.model.id}`
       case "codex":
         return `codex-${item.model.id}`
+      case "antigravity":
+        return `antigravity-${item.model.id}`
       case "cursor":
         return `cursor-${item.model.id}`
       case "opencode":
@@ -734,118 +771,97 @@ export function AgentModelSelector({
       </PopoverTrigger>
       <PopoverContent className={cn("w-64 p-0", contentClassName)} align="start">
         <Command shouldFilter={false}>
-          <CommandInput placeholder="Search models..." value={search} onValueChange={setSearch} />
-
-          {/* Claude reasoning-output toggle */}
-          {selectedAgentId === "claude-code" &&
-            !claude.isOffline &&
-            !claude.hasCustomModelConfig && (
-              <>
-                <div
-                  className="flex items-center justify-between min-h-[32px] py-[5px] px-1.5 mx-1"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="flex items-center gap-1.5">
-                    <ReasoningOutputIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                    <span className="text-sm">Reasoning output</span>
-                  </div>
-                  <Switch
-                    checked={claude.reasoningOutputEnabled}
-                    onCheckedChange={claude.onReasoningOutputChange}
-                    className="scale-75"
-                  />
-                </div>
-                <CommandSeparator />
-              </>
-            )}
-
-          <CommandList className="max-h-[300px] overflow-y-auto">
-            {filteredModelCount > 0 ? (
-              filteredGroups.map((group, index) => {
-                const isExpanded = search.trim() ? true : expandedGroups[group.id]
+          <CommandInput
+            aria-label="Search all models"
+            placeholder="Search models..."
+            value={search}
+            onValueChange={setSearch}
+          />
+          <div
+            role="group"
+            aria-label="Filter by provider"
+            className="mx-1 flex gap-1 border-b pb-1"
+          >
+            {(
+              [
+                ["all", "All"],
+                ["codex", "Codex"],
+                ["claude-code", "Claude"],
+                ["antigravity", "Gemini"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                type="button"
+                key={id}
+                aria-pressed={currentFilter === id}
+                className="flex-1 rounded px-1.5 py-1 text-xs hover:bg-accent aria-pressed:bg-muted aria-pressed:font-semibold focus-visible:outline focus-visible:outline-ring"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") event.stopPropagation()
+                }}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setSearch("")
+                  setProviderFilter(id)
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <CommandList className="max-h-[min(360px,50vh)] overflow-y-auto">
+            {filteredGroups.length > 0 ? (
+              filteredGroups.map((group) => {
                 const groupMeta = getHarnessChipMeta(group.id)
                 return (
-                  <CommandGroup key={group.id}>
-                    {index > 0 && <CommandSeparator />}
-                    <button
-                      type="button"
-                      id={`model-group-${group.id}`}
-                      aria-expanded={isExpanded}
-                      onPointerDown={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                      }}
-                      onMouseDown={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                      }}
-                      onClick={(e) => {
-                        // The popover content is portaled but React events still
-                        // bubble to ancestors (e.g. the chat input's focus-grabbing
-                        // wrapper), which would blur the popover and dismiss it.
-                        e.stopPropagation()
-                        setExpandedGroups((current) => ({
-                          ...current,
-                          [group.id]: !current[group.id],
-                        }))
-                      }}
-                      className={cn(
-                        "mx-1 mt-1 flex w-[calc(100%-8px)] items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-colors hover:brightness-110",
-                        groupMeta.className,
-                      )}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <ProviderChipIcon provider={group.id} className="h-3 w-3 shrink-0" />
-                        <span>{group.label}</span>
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <span className="rounded-sm bg-background/60 px-1.5 py-0.5 text-[10px] font-medium tracking-normal text-current">
-                          {group.items.length}
-                        </span>
-                        <ChevronDown
+                  <CommandGroup
+                    key={group.id}
+                    heading={currentFilter === "all" ? group.label : undefined}
+                  >
+                    {group.items.map((item) => {
+                      const selected = isItemSelected(item)
+                      const disabled = isItemDisabled(item)
+                      const crossProvider = isItemCrossProvider(item)
+                      return (
+                        <CommandItem
+                          key={getItemKey(item)}
+                          value={getItemKey(item)}
+                          onSelect={() => handleItemClick(item)}
+                          disabled={disabled}
                           className={cn(
-                            "h-3.5 w-3.5 transition-transform",
-                            !isExpanded && "-rotate-90",
+                            "gap-2 border border-transparent",
+                            selected && groupMeta.className,
+                            crossProvider && "opacity-60",
                           )}
-                        />
-                      </span>
-                    </button>
-                    {isExpanded &&
-                      group.items.map((item) => {
-                        const selected = isItemSelected(item)
-                        const disabled = isItemDisabled(item)
-                        const crossProvider = isItemCrossProvider(item)
-                        return (
-                          <CommandItem
-                            key={getItemKey(item)}
-                            value={getItemKey(item)}
-                            onSelect={() => handleItemClick(item)}
-                            disabled={disabled}
-                            className={cn(
-                              "gap-2 border border-transparent pl-6",
-                              selected && groupMeta.className,
-                              crossProvider && "opacity-60",
-                            )}
-                          >
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate">{getItemLabel(item)}</span>
-                              {item.type === "local" && (
-                                <span className="block truncate text-[10px] text-muted-foreground">
-                                  Chat {item.model.chat} · Tools {item.model.tools}
-                                </span>
-                              )}
-                            </span>
-                            {crossProvider && (
-                              <span className="text-[10px] text-muted-foreground shrink-0">
-                                New chat
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate">{getItemLabel(item)}</span>
+                            {item.type === "local" && (
+                              <span className="block truncate text-[10px] text-muted-foreground">
+                                Chat {item.model.chat} · Tools {item.model.tools}
                               </span>
                             )}
-                            {selected && <CheckIcon className="h-4 w-4 shrink-0" />}
-                          </CommandItem>
-                        )
-                      })}
+                          </span>
+                          {crossProvider && (
+                            <span className="text-[10px] text-muted-foreground shrink-0">
+                              New chat
+                            </span>
+                          )}
+                          {selected && <CheckIcon className="h-4 w-4 shrink-0" />}
+                        </CommandItem>
+                      )
+                    })}
 
-                    {isExpanded && group.id === "local" && local && (
+                    {group.id === "antigravity" && antigravity.status && (
+                      <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
+                        <span role="status">{antigravity.status}</span>
+                        {antigravity.canRetry && (
+                          <Button size="sm" variant="secondary" onClick={antigravity.retry}>
+                            Retry
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                    {group.id === "local" && local && (
                       <div className="mx-1 my-1 rounded-md border border-green-500/20 bg-green-500/5 px-2 py-2 text-xs">
                         <p className="text-muted-foreground">
                           {local.catalogState === "not-checked"
@@ -929,15 +945,17 @@ export function AgentModelSelector({
         providerName={
           pendingContinuation?.provider === "codex"
             ? "Codex"
-            : pendingContinuation?.provider === "cursor-agent"
-              ? "Cursor"
-              : pendingContinuation?.provider === "openrouter"
-                ? "OpenRouter"
-                : pendingContinuation?.provider === "nanogpt"
-                  ? "NanoGPT"
-                  : pendingContinuation?.provider === "local"
-                    ? "Local"
-                    : "Claude Code"
+            : pendingContinuation?.provider === "antigravity"
+              ? "Gemini"
+              : pendingContinuation?.provider === "cursor-agent"
+                ? "Cursor"
+                : pendingContinuation?.provider === "openrouter"
+                  ? "OpenRouter"
+                  : pendingContinuation?.provider === "nanogpt"
+                    ? "NanoGPT"
+                    : pendingContinuation?.provider === "local"
+                      ? "Local"
+                      : "Claude Code"
         }
         modelName={pendingContinuation?.targetModelLabel ?? "Unavailable"}
         onConfirm={handleConfirmCrossProvider}

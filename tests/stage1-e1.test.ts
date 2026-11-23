@@ -337,6 +337,11 @@ function createTestSchema() {
     )`,
   ]
 
+  statements.push(
+    ...readFileSync(join(process.cwd(), "drizzle/0077_run_timings.sql"), "utf8").split(
+      "--> statement-breakpoint",
+    ),
+  )
   for (const statement of statements) {
     db.run(sql.raw(statement))
   }

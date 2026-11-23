@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import { antigravityPermissions } from "../../../shared/antigravity-permissions"
 import { providerAccountSnapshotFromRow } from "../provider-accounts/snapshot"
 import { randomUUID } from "node:crypto"
 import {
@@ -29,7 +30,7 @@ import {
   type ProjectVaultGraphContextSelection,
 } from "../project-vaults/run-context"
 
-type InteractiveHarness = Extract<AgentHarness, "codex" | "claude-code">
+type InteractiveHarness = Extract<AgentHarness, "codex" | "claude-code" | "antigravity">
 
 export type InteractiveRuntimeInput = {
   runId: string
@@ -45,6 +46,7 @@ export type InteractiveRuntimeInput = {
   reasoningEffort: "minimal" | "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null
   reasoningEnabled: boolean
   codexThreadVisibility?: CodexThreadVisibility
+  antigravityNativeApprovals?: boolean
 }
 
 type ChatRow = {
@@ -93,7 +95,7 @@ export function resolveInteractiveRuntime(
   )
   return {
     resolvedRuntime: snapshot.resolvedRuntime,
-    direct: snapshot.resolvedRuntime !== "flapstack-native",
+    direct: input.harness === "antigravity" || snapshot.resolvedRuntime !== "flapstack-native",
   }
 }
 
@@ -134,7 +136,7 @@ export function prepareInteractiveRuntimeLaunch(
       return {
         resolvedRuntime: snapshot.resolvedRuntime,
         runtimePreference: snapshot.runtimePreference,
-        direct: snapshot.resolvedRuntime !== "flapstack-native",
+        direct: input.harness === "antigravity" || snapshot.resolvedRuntime !== "flapstack-native",
       }
     })
     .immediate()
@@ -155,6 +157,9 @@ export function materializeInteractiveRuntimeRun(
     permission: runtimePermissionSnapshot(permissionMode, context.custom_permissions),
     controls: {
       modelEffort: input.reasoningEffort,
+      ...(input.harness === "antigravity"
+        ? { antigravityNativeApprovals: input.antigravityNativeApprovals === true }
+        : {}),
       modelThinking: input.reasoningEnabled,
       reasoningDisplay: input.reasoningEnabled,
     },
@@ -166,7 +171,7 @@ export function materializeInteractiveRuntimeRun(
     snapshot.resolvedRuntime,
     snapshot.runtimePreference,
   )
-  if (snapshot.resolvedRuntime === "flapstack-native") {
+  if (snapshot.resolvedRuntime === "flapstack-native" && input.harness !== "antigravity") {
     throw new Error("Interactive Runtime bridge received a Flapstack Native launch.")
   }
 
@@ -312,8 +317,24 @@ export function loadInteractiveRuntimeAssistantText(
   database: Database.Database,
   runId: string,
 ): string {
+  return loadInteractiveRuntimeAssistantParts(database, runId)
+    .map((part) => part.text)
+    .join("")
+}
+
+type RuntimeReplyPart = {
+  type: "text"
+  text: string
+  providerMetadata?: { runtime: { phase: string } }
+}
+
+export function loadInteractiveRuntimeAssistantParts(
+  database: Database.Database,
+  runId: string,
+): RuntimeReplyPart[] {
   const store = createAgentActivityStore(database)
-  const text: string[] = []
+  const parts: RuntimeReplyPart[] = []
+  const codexDeltas = new Map<string, string[]>()
   let cursor: number | undefined
   do {
     const page = store.query({
@@ -326,30 +347,49 @@ export function loadInteractiveRuntimeAssistantText(
     })
     for (const event of page.events) {
       if (
-        event.kind === "agent-text" &&
-        event.phase === "completed" &&
-        event.privacyClass !== "private" &&
-        event.privacyClass !== "encrypted"
+        event.kind !== "agent-text" ||
+        event.privacyClass === "private" ||
+        event.privacyClass === "encrypted"
       )
-        text.push(event.payload.text)
+        continue
+      const item = event.harness === "codex" ? event.providerItemId : null
+      if (event.phase === "delta" && item) {
+        const deltas = codexDeltas.get(item) ?? []
+        deltas.push(event.payload.text)
+        codexDeltas.set(item, deltas)
+      }
+      if (event.phase !== "completed") continue
+      const streamed = item ? codexDeltas.get(item)?.join("") : undefined
+      if (item) codexDeltas.delete(item)
+      const text = streamed?.startsWith(event.payload.text) ? streamed : event.payload.text
+      parts.push({
+        type: "text",
+        text,
+        ...(event.sectionBoundary === "commentary" || event.sectionBoundary === "final_answer"
+          ? { providerMetadata: { runtime: { phase: event.sectionBoundary } } }
+          : {}),
+      })
     }
     cursor = page.nextCursor ?? undefined
   } while (cursor)
-  return text.join("")
+  return parts
 }
 
 export function persistInteractiveRuntimeAssistantFallback(
   database: Database.Database,
   runId: string,
-  assistantText: string,
+  assistantText: string | RuntimeReplyPart[],
 ): void {
-  const completedText = assistantText.trim()
-  if (!completedText) return
-  database
+  const parts: RuntimeReplyPart[] =
+    typeof assistantText === "string"
+      ? [{ type: "text", text: assistantText.trim() }]
+      : assistantText
+  if (!parts.some((part) => part.text.trim())) return
+  const reply = database
     .transaction(() => {
       const row = database
         .prepare(
-          `SELECT r.sub_chat_id sub_chat_id, r.resolved_runtime resolved_runtime,
+          `SELECT r.chat_id chat_id, r.sub_chat_id sub_chat_id, r.resolved_runtime resolved_runtime, r.harness harness,
                   r.started_at started_at, r.completed_at completed_at, r.prompt_message_id prompt_message_id,
                   s.messages messages
            FROM agent_runs r
@@ -358,8 +398,10 @@ export function persistInteractiveRuntimeAssistantFallback(
         )
         .get(runId) as
         | {
+            chat_id: string
             sub_chat_id: string
             resolved_runtime: string
+            harness: string
             started_at: number | null
             completed_at: number | null
             prompt_message_id: string | null
@@ -368,35 +410,43 @@ export function persistInteractiveRuntimeAssistantFallback(
         | undefined
       if (!row) return
       const messages = parseMessages(row.messages)
-      if (
-        messages.some((message) => {
-          const metadata = message.metadata
-          return (
-            message.role === "assistant" &&
-            metadata != null &&
-            typeof metadata === "object" &&
-            (metadata as { runId?: unknown }).runId === runId
-          )
-        })
-      ) {
-        return
+      const hotline = resolveAgentHotlineEnabled(messages)
+      const replyParts = parts.map((part) => ({
+        ...part,
+        text: stripInactiveAgentHotlineLabels(part.text, hotline),
+      }))
+      const existing = messages.find((message) => {
+        const metadata = message.metadata
+        return (
+          message.role === "assistant" &&
+          metadata != null &&
+          typeof metadata === "object" &&
+          (metadata as { runId?: unknown }).runId === runId
+        )
+      })
+      const messageId = typeof existing?.id === "string" ? existing.id : `reply-${runId}`
+      const voiceReply = {
+        chatId: row.chat_id,
+        subChatId: row.sub_chat_id,
+        messageId,
+        text: replyParts
+          .filter((part) => part.providerMetadata?.runtime.phase !== "commentary")
+          .map((part) => part.text)
+          .join("\n"),
       }
-      const text = stripInactiveAgentHotlineLabels(
-        completedText,
-        resolveAgentHotlineEnabled(messages),
-      )
+      if (existing) return voiceReply
       const promptIndex = messages.findIndex((message) => message.id === row.prompt_message_id)
       const nextUser =
         promptIndex < 0
           ? -1
           : messages.findIndex((message, index) => index > promptIndex && message.role === "user")
       messages.splice(nextUser < 0 ? messages.length : nextUser, 0, {
-        id: randomUUID(),
+        id: messageId,
         role: "assistant",
-        parts: [{ type: "text", text }],
+        parts: replyParts,
         metadata: {
           runId,
-          transport: `${row.resolved_runtime}-runtime`,
+          transport: `${row.harness === "antigravity" ? row.harness : row.resolved_runtime}-runtime`,
           ...(row.started_at != null && row.completed_at != null
             ? { durationMs: Math.max(0, row.completed_at - row.started_at) * 1_000 }
             : {}),
@@ -405,8 +455,17 @@ export function persistInteractiveRuntimeAssistantFallback(
       database
         .prepare("UPDATE sub_chats SET messages = ?, updated_at = ? WHERE id = ?")
         .run(JSON.stringify(messages), nowEpochSeconds(), row.sub_chat_id)
+      return voiceReply
     })
     .immediate()
+  if (reply?.text.trim() && process.type === "browser") {
+    // The outer lifecycle transaction finishes before this asynchronous read.
+    // Validate durable identity again before preparing audio in the installed profile.
+    const source = database.name
+    void import("../speech/prepare")
+      .then(({ prepareStoredReply }) => prepareStoredReply(source, reply))
+      .catch((error) => console.error("[Speech] Could not prepare completed reply:", error))
+  }
 }
 
 export function loadInteractiveRuntimeActivity(
@@ -482,7 +541,12 @@ function assertRuntimeContinuationCompatible(
 function resolvePermissionMode(context: ChatRow, mode: ChatMode): RunPermissionMode {
   const requested = (context.sub_permission_mode ??
     context.chat_permission_mode) as RunPermissionMode
-  return resolveChatModePermission(normalizeChatMode(mode), requested)
+  const permission = resolveChatModePermission(normalizeChatMode(mode), requested)
+  if ((context.sub_harness ?? context.chat_harness) === "antigravity") {
+    const preview = antigravityPermissions(permission)
+    if (!preview.applied) throw new Error(preview.reason)
+  }
+  return permission
 }
 
 function parseMessages(value: string): Array<Record<string, unknown> & { id?: unknown }> {

@@ -1,4 +1,6 @@
 import { z } from "zod"
+import { AGENT_HARNESSES } from "../../../../shared/harness-types"
+import { antigravityPermissions } from "../../../../shared/antigravity-permissions"
 import { desc, eq } from "drizzle-orm"
 import { chats, getDatabase, projects, subChats, tasks } from "../../db"
 import {
@@ -146,7 +148,7 @@ export const permissionsRouter = router({
   previewHarness: publicProcedure
     .input(
       z.object({
-        harness: z.enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt", "local"]),
+        harness: z.enum(AGENT_HARNESSES),
         mode: permissionModeSchema,
         chatMode: z.enum(CHAT_MODES).default("write"),
         cwd: z.string().nullable().optional(),
@@ -155,6 +157,7 @@ export const permissionsRouter = router({
     )
     .query(({ input }) => {
       const effectivePermissionMode = resolveChatModePermission(input.chatMode, input.mode)
+      if (input.harness === "antigravity") return antigravityPermissions(effectivePermissionMode)
       if (input.harness === "codex") {
         return buildCodexPermissionApplication({
           permissionMode: effectivePermissionMode,

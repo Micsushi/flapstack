@@ -205,6 +205,11 @@ describe("process-wide Runtime launch service", () => {
       expect.objectContaining({ runtime: "codex", harness: "claude-code", enabled: false }),
       expect.objectContaining({ runtime: "claude-code", harness: "codex", enabled: false }),
       expect.objectContaining({ runtime: "codex", harness: "local", enabled: false }),
+      expect.objectContaining({
+        runtime: "flapstack-native",
+        harness: "antigravity",
+        enabled: true,
+      }),
       expect.objectContaining({ runtime: "flapstack-native", harness: null, enabled: true }),
     ])
     expect(() => first.registry.get("codex", "codex")).not.toThrow()
@@ -283,12 +288,20 @@ describe("process-wide Runtime launch service", () => {
       seedDirectRun(runId, testRuntimeSnapshotSqlValues(runtime, runtime), runtime, runtime)
       sqlite.prepare("UPDATE projects SET path = ? WHERE id = 'project'").run(projectRoot)
       sqlite
-        .prepare("UPDATE chats SET worktree_path = ? WHERE id = ?")
+        .prepare(
+          "UPDATE chats SET worktree_path = ?, permission_mode = 'auto-edit-project-only' WHERE id = ?",
+        )
         .run(projectRoot, `chat-${runId}`)
       sqlite
-        .prepare("UPDATE sub_chats SET worktree_path = ? WHERE id = ?")
+        .prepare(
+          "UPDATE sub_chats SET worktree_path = ?, permission_mode = 'auto-edit-project-only' WHERE id = ?",
+        )
         .run(projectRoot, `sub-${runId}`)
-      sqlite.prepare("UPDATE agent_runs SET worktree_path = ? WHERE id = ?").run(projectRoot, runId)
+      sqlite
+        .prepare(
+          "UPDATE agent_runs SET worktree_path = ?, permission_mode = 'auto-edit-project-only' WHERE id = ?",
+        )
+        .run(projectRoot, runId)
 
       const adapter = directAdapter(runtime)
       adapter.startTurn = async (context) => {
@@ -306,6 +319,8 @@ describe("process-wide Runtime launch service", () => {
               enableClaudeCode: true,
             })
       const run = queued(runId, runtime)
+      run.permissionMode = "auto-edit-project-only"
+      run.runtimeLaunch!.permission.mode = "auto-edit-project-only"
       run.worktreePath = projectRoot
       run.projectPath = projectRoot
 

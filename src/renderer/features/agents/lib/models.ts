@@ -1,6 +1,7 @@
 export {
   CLAUDE_MODELS,
   CODEX_MODELS,
+  selectableCodexModels,
   CURSOR_MODELS,
   DEFAULT_CLAUDE_EFFORT,
   DEFAULT_CHATGPT_CODEX_MODEL_ID,
@@ -22,7 +23,24 @@ import type {
   ClaudeEffortLevel,
   CodexReasoningLevel,
   CursorEffortLevel,
+  LiveCodexModel,
 } from "../../../../shared/model-catalog"
+
+export function codexSelectionIssue(
+  live: LiveCodexModel[] | undefined,
+  selection: string,
+  effort: CodexReasoningLevel,
+): string | null {
+  if (!live) return null
+  const [id, savedEffort] = selection.split("/")
+  const model = live.find((entry) => entry.id === id)
+  if (!model) return `Codex model ${id} is unavailable. Choose another model.`
+  const level = savedEffort || effort
+  if (model.reasoningLevels.length && !model.reasoningLevels.some((value) => value === level)) {
+    return `Codex model ${id} does not offer ${level} reasoning. Choose a supported depth.`
+  }
+  return null
+}
 
 export function formatClaudeEffortLabel(effort: ClaudeEffortLevel): string {
   if (effort === "max") return "Max"

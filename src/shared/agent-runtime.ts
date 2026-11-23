@@ -122,6 +122,8 @@ export type RuntimeLaunchControls = {
   modelEffort: string | null
   /** Provider service-tier id. Optional only for legacy schema-v1 snapshots. */
   serviceTier?: string | null
+  /** Keep Antigravity's native approval prompts in an explicitly Full-access run. */
+  antigravityNativeApprovals?: boolean
   modelThinking: boolean | null
   reasoningDisplay: boolean
   subagentActivity: boolean
@@ -148,6 +150,7 @@ export type ResolvedRuntimeLaunch = {
 }
 
 export type RuntimeAdapterProbe = {
+  codexModels?: import("./model-catalog").LiveCodexModel[]
   runtime: ResolvedAgentRuntime
   harness: string
   available: boolean

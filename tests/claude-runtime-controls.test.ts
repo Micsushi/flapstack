@@ -22,13 +22,11 @@ describe("Claude Runtime independent controls", () => {
             expect(result.includeHookEvents).toBe(hookDiagnostics)
             if (modelThinking === false) {
               expect(result.thinking).toEqual({ type: "disabled" })
-            } else if (modelThinking === true || reasoningDisplay === false) {
+            } else {
               expect(result.thinking).toEqual({
                 type: "adaptive",
                 display: reasoningDisplay ? "summarized" : "omitted",
               })
-            } else {
-              expect(result.thinking).toBeUndefined()
             }
           }
         }

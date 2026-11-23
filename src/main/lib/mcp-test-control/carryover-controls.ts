@@ -1,3 +1,4 @@
+import { DEFAULT_CODEX_MODEL_ID } from "../../../shared/model-catalog"
 import { randomUUID } from "node:crypto"
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -285,8 +286,8 @@ export async function createCarryoverRunFixture(input: {
           projectId: project.id,
           scope: "project",
           harness: "codex",
-          model: "gpt-5.5",
-          permissionMode: "read-only",
+          model: DEFAULT_CODEX_MODEL_ID,
+          permissionMode: "auto-edit-project-only",
           worktreePath: root,
           ancestorChatIds: "[]",
         })
@@ -300,8 +301,8 @@ export async function createCarryoverRunFixture(input: {
           name: chat.name,
           mode: "write",
           harness: "codex",
-          model: "gpt-5.5",
-          permissionMode: "read-only",
+          model: DEFAULT_CODEX_MODEL_ID,
+          permissionMode: "auto-edit-project-only",
           worktreePath: root,
           messages: "[]",
           createdAt: primaryCreatedAt,
@@ -316,7 +317,7 @@ export async function createCarryoverRunFixture(input: {
           name: "Background input fixture",
           mode: "write",
           harness: "codex",
-          model: "gpt-5.5",
+          model: DEFAULT_CODEX_MODEL_ID,
           permissionMode: "read-only",
           worktreePath: root,
           messages: "[]",
@@ -331,14 +332,14 @@ export async function createCarryoverRunFixture(input: {
           ...constructRuntimeSnapshot(db, {
             chatId: chat.id,
             harness: "codex",
-            model: "gpt-5.5",
-            permission: runtimePermissionSnapshot("read-only", null),
+            model: DEFAULT_CODEX_MODEL_ID,
+            permission: runtimePermissionSnapshot("auto-edit-project-only", null),
           }),
           chatId: chat.id,
           subChatId: subChat.id,
           harness: "codex",
-          model: "gpt-5.5",
-          permissionMode: "read-only",
+          model: DEFAULT_CODEX_MODEL_ID,
+          permissionMode: "auto-edit-project-only",
           worktreePath: root,
           status: "running",
         })

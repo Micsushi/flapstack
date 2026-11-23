@@ -71,7 +71,7 @@ import { cancelStaleRunningRuns, completeAgentRun } from "../../agent-run-lifecy
 import { assertSubChatNotRewinding } from "../../sub-chat-rewind-guard"
 import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
 import { assertFlapstackNativeProviderRouter } from "../../agent-runtime/provider-router-guard"
-import { createRollbackStash } from "../../git/stash"
+import { legacyRunTimer, recordSubmittedAt } from "../../run-timings"
 import {
   buildHarnessContextBundle,
   getLastHarnessContextFingerprint,
@@ -381,11 +381,18 @@ async function completeClaudeAgentRun(
   runId: string | null,
   subChatId: string,
   resolveStatus: () => RunCompletionStatus,
+  sdkMessageUuid: string | null,
 ) {
   if (!runId) return
 
   const status = resolveStatus()
-  await completeAgentRun(getDatabase(), { runId, subChatId, status, logLabel: "claude" })
+  await completeAgentRun(getDatabase(), {
+    runId,
+    subChatId,
+    status,
+    logLabel: "claude",
+    sdkMessageUuid,
+  })
 }
 
 /**
@@ -961,6 +968,7 @@ export const claudeRouter = router({
   chat: publicProcedure
     .input(
       z.object({
+        submittedAtMs: z.number().int().nonnegative().optional(),
         runId: z.string().optional(),
         promptMessageId: z.string().optional(),
         subChatId: z.string(),
@@ -1021,6 +1029,8 @@ export const claudeRouter = router({
         // A queued launch owns its durable run before any provider preflight starts.
         // Keep that identity even when offline/SDK setup exits before createClaudeAgentRun.
         let agentRunId: string | null = launchRunId
+        let rollbackMessageUuid: string | null = null
+        const timing = legacyRunTimer(getDatabase, () => agentRunId)
         let runCompletionStatus: RunCompletionStatus = "failure"
         let runCompletionPromise: Promise<void> | null = null
         console.log(`[SD] M:START sub=${subId} stream=${streamId.slice(-8)} mode=${input.mode}`)
@@ -1032,6 +1042,7 @@ export const claudeRouter = router({
         const safeEmit = (chunk: UIMessageChunk) => {
           if (!isObservableActive) return false
           try {
+            timing.chunk(chunk)
             emit.next(chunk)
             return true
           } catch {
@@ -1077,15 +1088,20 @@ export const claudeRouter = router({
           runCompletionStatus = status
           if (!agentRunId) return Promise.resolve()
           if (!runCompletionPromise) {
-            runCompletionPromise = completeClaudeAgentRun(agentRunId, input.subChatId, () => {
-              const activeSession = activeSessions.get(input.subChatId)
-              const isCurrentSession = activeSession?.controller === abortController
-              return abortController.signal.aborted ||
-                activeSession?.cancelRequested ||
-                !isCurrentSession
-                ? "cancelled"
-                : runCompletionStatus
-            }).catch((runError) => {
+            runCompletionPromise = completeClaudeAgentRun(
+              agentRunId,
+              input.subChatId,
+              () => {
+                const activeSession = activeSessions.get(input.subChatId)
+                const isCurrentSession = activeSession?.controller === abortController
+                return abortController.signal.aborted ||
+                  activeSession?.cancelRequested ||
+                  !isCurrentSession
+                  ? "cancelled"
+                  : runCompletionStatus
+              },
+              rollbackMessageUuid,
+            ).catch((runError) => {
               console.error("[claude] Failed to complete run:", runError)
             })
           }
@@ -1914,6 +1930,7 @@ export const claudeRouter = router({
               serviceTier: chatProfile?.launch.serviceTier,
             })
             agentRunId = run.id
+            recordSubmittedAt(getSqliteDatabase(), run.id, input.submittedAtMs)
             persistProjectVaultContextManifest(db, {
               runId: run.id,
               manifest: vaultContext.manifest,
@@ -2470,6 +2487,7 @@ ${prompt}
               // 5. Run Claude SDK
               let stream
               try {
+                timing.once("spawn-start")
                 stream = claudeQuery(queryOptions as Parameters<typeof claudeQuery>[0])
               } catch (queryError) {
                 console.error("[CLAUDE] ✗ Failed to create SDK query:", queryError)
@@ -2497,6 +2515,7 @@ ${prompt}
 
               try {
                 for await (const msg of stream) {
+                  timing.once("spawn-end")
                   if (abortController.signal.aborted) {
                     if (isUsingOllama) console.log(`[Ollama] Stream aborted by user`)
                     break
@@ -3024,9 +3043,9 @@ ${prompt}
                       .run()
                   }
 
-                  // Create snapshot stash for rollback support (on error)
+                  // Reuse the run’s completion checkpoint for SDK rewind.
                   if (historyEnabled && metadata.sdkMessageUuid && input.cwd) {
-                    await createRollbackStash(input.cwd, metadata.sdkMessageUuid)
+                    rollbackMessageUuid = metadata.sdkMessageUuid
                   }
                 }
 
@@ -3102,9 +3121,9 @@ ${prompt}
                 .run()
             }
 
-            // Create snapshot stash for rollback support
+            // Reuse the run’s completion checkpoint for SDK rewind.
             if (historyEnabled && metadata.sdkMessageUuid && input.cwd) {
-              await createRollbackStash(input.cwd, metadata.sdkMessageUuid)
+              rollbackMessageUuid = metadata.sdkMessageUuid
             }
 
             const duration = ((Date.now() - streamStart) / 1000).toFixed(1)

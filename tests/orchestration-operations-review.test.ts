@@ -1565,7 +1565,7 @@ describe("direct Codex App Server coordination", () => {
       available: false,
       reason: {
         code: "engine-unavailable",
-        message: expect.stringContaining("pinned to 0.153.4"),
+        message: expect.stringContaining("pinned to 0.166.0-alpha.6"),
       },
     })
     expect(transport.request).not.toHaveBeenCalled()
@@ -2229,7 +2229,7 @@ function fakeCodexProtocol(
 ): CodexAppServerCoordinationTransportPort & { request: ReturnType<typeof vi.fn> } {
   const request = vi.fn(handler)
   return {
-    version: vi.fn(async () => "0.153.4"),
+    version: vi.fn(async () => "0.166.0-alpha.6"),
     request,
   }
 }

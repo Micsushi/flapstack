@@ -1,6 +1,6 @@
 import type { AgentActivityPayloadByKind } from "../../../../shared/agent-activity"
 
-type DirectRuntimeHarness = "codex" | "claude-code"
+type DirectRuntimeHarness = "codex" | "claude-code" | "antigravity"
 export type DirectRuntimeUsage = AgentActivityPayloadByKind["usage"]
 
 export function directRuntimeFinishMetadata(input: {
