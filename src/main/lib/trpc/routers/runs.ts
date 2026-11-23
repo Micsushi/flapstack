@@ -5,7 +5,13 @@ import { runContextHealthInputSchema } from "../../../../shared/run-context-heal
 import { getSqliteDatabase } from "../../db"
 import { and, desc, eq, sql } from "drizzle-orm"
 import { z } from "zod"
-import { captureCheckpoint, captureRunManifest } from "../../checkpoints"
+import {
+  captureCheckpoint,
+  captureRunManifest,
+  prepareCheckpointOriginals,
+} from "../../checkpoints"
+import { releaseCheckpointPreparation } from "../../checkpoint-preparation"
+import { resolveDefaultWorktree } from "../../worktree-resolver"
 import { assertSubChatNotRewinding } from "../../sub-chat-rewind-guard"
 import {
   agentRuns,
@@ -14,6 +20,7 @@ import {
   fileChangeManifests,
   getDatabase,
   projects,
+  subChats,
   tasks,
 } from "../../db"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
@@ -44,6 +51,61 @@ const vaultContextGraphSelectionSchema = z.object({
 })
 
 export const runsRouter = router({
+  prepareSelectedCheckout: publicProcedure
+    .input(
+      z.union([
+        z.object({ scope: z.literal("release"), lease: z.string().uuid() }),
+        z.object({
+          scope: z.enum(["chat", "project", "task"]),
+          id: z.string().min(1),
+          subChatId: z.string().min(1).optional(),
+          path: z.string().min(1),
+          lease: z.string().uuid(),
+          permissionMode: permissionModeSchema,
+        }),
+      ]),
+    )
+    .mutation(({ input }) => {
+      if (input.scope === "release") {
+        releaseCheckpointPreparation(input.lease)
+        return
+      }
+      if (input.permissionMode === "read-only") return
+      const db = getDatabase()
+      let path: string | null | undefined
+      if (input.scope === "chat") {
+        const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
+        if (!chat || chat.archivedAt || chat.permissionMode === "read-only") return
+        if (input.subChatId) {
+          const sub = db
+            .select({
+              chatId: subChats.chatId,
+              mode: subChats.mode,
+              permission: subChats.permissionMode,
+            })
+            .from(subChats)
+            .where(eq(subChats.id, input.subChatId))
+            .get()
+          if (
+            sub?.chatId !== chat.id ||
+            sub.permission === "read-only" ||
+            (sub.mode !== "write" && sub.mode !== "agent")
+          )
+            return
+        }
+        path = chat.worktreePath ?? resolveDefaultWorktree(chat)
+      } else if (input.scope === "project") {
+        const project = db.select().from(projects).where(eq(projects.id, input.id)).get()
+        if (!project?.archivedAt && project?.defaultPermissionMode !== "read-only")
+          path = project?.path
+      } else {
+        const task = db.select().from(tasks).where(eq(tasks.id, input.id)).get()
+        if (!task?.archivedAt && task?.defaultPermissionMode !== "read-only")
+          path = task?.primaryWorktreePath
+      }
+      if (path && path === input.path)
+        prepareCheckpointOriginals(assertRegisteredWorktree(path).canonicalPath, input.lease)
+    }),
   getTimings: publicProcedure
     .input(z.object({ runId: z.string() }))
     .query(({ input }) => readRunTimings(getSqliteDatabase(), input.runId)),

@@ -17,6 +17,7 @@ import { tmpdir } from "node:os"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { promisify } from "node:util"
 import { eq } from "drizzle-orm"
+import { withCheckpointFiles } from "./checkpoint-file-retention"
 import { agentRuns, checkpoints, fileChangeManifests, getDatabase, getDatabasePath } from "./db"
 import {
   captureWorktreeTree,
@@ -459,6 +460,10 @@ export async function getRunChangeReview(runId: string, filePath?: string) {
 }
 
 export async function undoRunChangeSet(runId: string) {
+  return withCheckpointFiles(getDatabase(), () => undoLeasedRunChangeSet(runId))
+}
+
+async function undoLeasedRunChangeSet(runId: string) {
   const changeSet = await getRunChangeSet(runId)
   const worktreePath = changeSet.run.worktreePath
   if (!worktreePath) throw new Error("Run has no worktree")

@@ -1,5 +1,6 @@
 "use client"
 import { parseMessageReply } from "../../../../shared/message-replies"
+import { markStoppedChatTurns } from "../../../../shared/stopped-chat-turn"
 import { textContextMention } from "../lib/queue-utils"
 import { SideQuestionWorkspace } from "./side-question-panel"
 import { MessageReplyContext } from "./message-reply-context"
@@ -7470,8 +7471,18 @@ Make sure to preserve all functionality from both branches when resolving confli
 
   const syncFinishedMessagesToChatCache = useCallback(
     (subChatId: string, chat: Chat<any>) => {
-      const latestMessages = (chat as any)?.messages
+      let latestMessages = (chat as any)?.messages
       if (!Array.isArray(latestMessages)) return
+      if (agentChatStore.wasManuallyAborted(subChatId)) {
+        const prompt = latestMessages.findLast((message: any) => message.role === "user")
+        if (prompt) {
+          const marked = markStoppedChatTurns(latestMessages, new Set([prompt.id]), true)
+          if (marked !== latestMessages) {
+            latestMessages = marked
+            chat.messages = latestMessages
+          }
+        }
+      }
       const latestMessagesJson = JSON.stringify(latestMessages)
       const setTranscriptMessages = (messages: string, updatedAt = new Date()) => {
         trpcUtils.chats.getTranscript.setData({ chatId, subChatId }, (current) => ({

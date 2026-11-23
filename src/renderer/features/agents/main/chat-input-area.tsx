@@ -40,6 +40,7 @@ import {
   selectedOllamaModelAtom,
 } from "../../../lib/atoms"
 import { trpc } from "../../../lib/trpc"
+import { useCheckpointPreparation } from "../hooks/use-checkpoint-preparation"
 import { cn } from "../../../lib/utils"
 import { measurePerformanceNextFrame } from "../../../lib/performance-counters"
 import {
@@ -1420,6 +1421,15 @@ export const ChatInputArea = memo(function ChatInputArea({
   const subChatModeAtom = useMemo(() => subChatModeAtomFamily(subChatId), [subChatId])
   const [subChatMode, setSubChatMode] = useAtom(subChatModeAtom)
   const effectivePermissionMode = resolveChatModePermission(subChatMode, requestedPermissionMode)
+  useCheckpointPreparation(
+    "chat",
+    parentChatId,
+    isActive && !sandboxId && permissionResolution && permissionResolution.mode !== "read-only"
+      ? selectedWorktreePath
+      : null,
+    effectivePermissionMode,
+    subChatId,
+  )
   const antigravityBlockedReason =
     provider === "antigravity"
       ? (antigravityPermissionIssue(provider, effectivePermissionMode) ??

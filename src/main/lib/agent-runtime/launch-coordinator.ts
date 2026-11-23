@@ -112,8 +112,15 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       throw new Error(`Runtime run ${request.runId} is already active.`)
     }
     this.reserved.add(request.runId)
+    let releaseConnection: (() => Promise<void>) | undefined
     try {
-      return await this.launchReserved(request)
+      validateRequest(request)
+      const adapter = this.registry.forNewLaunch(
+        request.launch.resolvedRuntime,
+        request.launch.harness,
+      )
+      releaseConnection = adapter.prepareConnection?.(request.runId)
+      return await this.launchReserved(request, adapter)
     } finally {
       const pending = this.pendingCancellations.get(request.runId)
       if (pending && !pending.settled) {
@@ -122,15 +129,14 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       }
       this.pendingCancellations.delete(request.runId)
       this.reserved.delete(request.runId)
+      await releaseConnection?.()
     }
   }
 
-  private async launchReserved(request: RuntimeLaunchRequest): Promise<RuntimeLaunchResult> {
-    validateRequest(request)
-    const adapter = this.registry.forNewLaunch(
-      request.launch.resolvedRuntime,
-      request.launch.harness,
-    )
+  private async launchReserved(
+    request: RuntimeLaunchRequest,
+    adapter: HarnessAdapter<TActivity>,
+  ): Promise<RuntimeLaunchResult> {
     // The native availability probe does not start a session or submit a turn.
     // Wait for both operations, including on failure, before releasing this run.
     const [readiness, workspace] = await Promise.allSettled([

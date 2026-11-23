@@ -110,8 +110,22 @@ export function createCodexRuntimeAdapterFactory(
 class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
   readonly runtime = "codex" as const
   private readonly states = new Map<string, CodexRunState>()
+  private readonly connections = new Map<string, Promise<CodexProtocolClient>>()
 
   constructor(private readonly options: CodexRuntimeAdapterOptions) {}
+
+  prepareConnection(runId: string) {
+    // The client has no workspace, thread, permissions or prompt until startSession.
+    const connection = this.openConnection()
+    this.connections.set(runId, connection)
+    void connection.catch(() => undefined) // createState receives the original failure on dispatch.
+    return async () => {
+      if (this.connections.get(runId) !== connection) return
+      this.connections.delete(runId)
+      const unused = await connection.catch(() => null)
+      await this.closeForProbe(unused)
+    }
+  }
 
   async probe(harness: string): Promise<RuntimeAdapterProbe> {
     if (harness !== "codex")
@@ -131,7 +145,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
           `Codex ${version} is installed; direct Runtime is pinned to ${PINNED_CODEX_APP_SERVER_VERSION}.`,
         )
       }
-      client = await this.createClient({ cwd: process.cwd() })
+      client = await this.createClient({ cwd: process.cwd() }, command)
       await initialize(client)
       const account = record(await client.request("account/read", { refreshToken: false }))
       if (!account.account) {
@@ -173,9 +187,9 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
 
   async startSession(context: RuntimeAdapterContext): Promise<RuntimeAdapterSession> {
     this.assertContext(context)
-    const state = await this.createState(context)
+    const { state, params } = await this.prepareThread(context, "start")
     try {
-      return await this.startNewThread(context, state)
+      return await this.startNewThread(context, state, params)
     } catch (error) {
       await this.failState(state, error)
       throw error
@@ -188,12 +202,9 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
   ): Promise<RuntimeAdapterSession> {
     this.assertContext(context)
     const threadId = requiredThreadId(session, "resume")
-    const state = await this.createState(context)
+    const { state, params: threadParams } = await this.prepareThread(context, "resume")
     try {
-      const params = withServiceTier(
-        await this.options.resolveThreadParams(context, "resume"),
-        context.launch.controls.serviceTier,
-      )
+      const params = withServiceTier(threadParams, context.launch.controls.serviceTier)
       let response: Record<string, unknown>
       try {
         response = record(
@@ -244,9 +255,8 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
   ): Promise<RuntimeAdapterSession> {
     this.assertContext(context)
     const threadId = requiredThreadId(parent, "fork")
-    const state = await this.createState(context)
+    const { state, params } = await this.prepareThread(context, "fork")
     try {
-      const params = await this.options.resolveThreadParams(context, "fork")
       const response = record(
         await state.client.request("thread/fork", {
           ...params,
@@ -498,10 +508,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     }
   }
 
-  private async createState(context: RuntimeAdapterContext): Promise<CodexRunState> {
-    if (this.states.has(context.runId)) {
-      throw new Error(`[codex-runtime] Run ${context.runId} already owns an App Server process.`)
-    }
+  private async openConnection(): Promise<CodexProtocolClient> {
     const command = await this.resolveCommand()
     const version = await (this.options.getBinaryVersion ?? readCodexVersion)(command)
     if (version !== PINNED_CODEX_APP_SERVER_VERSION) {
@@ -509,7 +516,23 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
         `[codex-runtime] Refusing Codex ${version}; pinned protocol requires ${PINNED_CODEX_APP_SERVER_VERSION}.`,
       )
     }
-    const client = await this.createClient({ cwd: process.cwd() })
+    const client = await this.createClient({ cwd: process.cwd() }, command)
+    try {
+      await initialize(client)
+      return client
+    } catch (error) {
+      await this.closeForProbe(client)
+      throw error
+    }
+  }
+
+  private async createState(context: RuntimeAdapterContext): Promise<CodexRunState> {
+    if (this.states.has(context.runId)) {
+      throw new Error(`[codex-runtime] Run ${context.runId} already owns an App Server process.`)
+    }
+    const connection = this.connections.get(context.runId)
+    this.connections.delete(context.runId)
+    const client = await (connection ?? this.openConnection())
     const state: CodexRunState = {
       effort: normalizeCodexRuntimeEffort(context.launch.controls.modelEffort),
       context,
@@ -531,7 +554,6 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     client.setRequestHandler((request) => this.handleServerRequest(context, request))
     this.states.set(context.runId, state)
     try {
-      await initialize(client)
       const account = record(await client.request("account/read", { refreshToken: false }))
       if (!account.account)
         throw new Error("[codex-runtime] Codex account authentication unavailable.")
@@ -557,12 +579,35 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     }
   }
 
+  private async prepareThread(
+    context: RuntimeAdapterContext,
+    operation: "start" | "resume" | "fork",
+  ) {
+    // Both paths verify the frozen launch. Neither starts or resumes a provider thread.
+    const [connection, authority] = await Promise.allSettled([
+      this.createState(context),
+      Promise.resolve().then(() => this.options.resolveThreadParams(context, operation)),
+    ])
+    if (connection.status === "rejected") throw connection.reason
+    const state = connection.value
+    if (authority.status === "rejected" || context.signal.aborted) {
+      const error =
+        authority.status === "rejected"
+          ? authority.reason
+          : new Error("Codex launch was cancelled.")
+      await this.failState(state, error)
+      throw error
+    }
+    return { state, params: authority.value }
+  }
+
   private async startNewThread(
     context: RuntimeAdapterContext,
     state: CodexRunState,
+    resolvedParams?: Record<string, unknown>,
   ): Promise<RuntimeAdapterSession> {
     const params = withServiceTier(
-      await this.options.resolveThreadParams(context, "start"),
+      resolvedParams ?? (await this.options.resolveThreadParams(context, "start")),
       context.launch.controls.serviceTier,
     )
     const response = record(await state.client.request("thread/start", params))
@@ -693,10 +738,13 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     return await (this.options.resolveCommand?.() ?? resolveCodexRuntimeCommand())
   }
 
-  private async createClient(purpose: ClientPurpose): Promise<CodexProtocolClient> {
+  private async createClient(
+    purpose: ClientPurpose,
+    command?: string,
+  ): Promise<CodexProtocolClient> {
     if (this.options.createClient) return await this.options.createClient(purpose)
     return spawnCodexProtocolClient({
-      command: await this.resolveCommand(),
+      command: command ?? (await this.resolveCommand()),
       cwd: purpose.cwd,
       env: purpose.env,
     })

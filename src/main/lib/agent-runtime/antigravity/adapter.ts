@@ -153,11 +153,17 @@ function connect(context: RuntimeAdapterContext, deps: Dependencies) {
           toolInput: { file_path: path, command: input.CommandLine },
           params: { cwd },
         })
-        if (context.signal.aborted) return cancelled
-        const allowed = (result as { decision?: string } | null)?.decision === "accept"
+        if (context.signal.aborted || !state.collecting || state.sessionId !== request.sessionId)
+          return cancelled
+        const decision = eventRecord(result)
+        const allowed = decision.decision === "accept"
         const selected = allowed
           ? allowOnce
           : options.find((option) => option.kind === "reject_once")
+        state.mapper?.setFileChangeDeclined(
+          toolCall,
+          selected?.kind === "reject_once" && decision.userDeclined === true,
+        )
         return selected
           ? { outcome: { outcome: "selected" as const, optionId: selected.optionId } }
           : cancelled
@@ -317,7 +323,7 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
             result.stopReason === "end_turn"
               ? state.mapper!.completionError()
               : new Error(`Antigravity ended the turn: ${result.stopReason}.`)
-          for (const event of state.mapper!.finish()) state.events.write(event)
+          for (const event of state.mapper!.finishTurn()) state.events.write(event)
           ended = true
         })
         .catch((error) => {

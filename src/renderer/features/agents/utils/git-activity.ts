@@ -1,3 +1,4 @@
+import { getToolOutcome } from "../../../../shared/local-tool-outcome"
 import { runtimePatchStats } from "./runtime-patch-stats"
 
 export interface GitCommitInfo {
@@ -166,15 +167,33 @@ function toRelativePath(filePath: string, projectPath?: string): string {
   return filePath.split("/").pop() || filePath
 }
 
-/**
- * Extract changed files from Edit/Write tool parts in a message.
- * Tracks additions and deletions per file.
- * @param projectPath - project root path for computing relative display paths
- */
-export function extractChangedFiles(parts: any[], projectPath?: string): ChangedFileInfo[] {
+export function fileChangeOutcome(part: any) {
+  const result = part.output ?? part.result
+  // Claude echoes this client's explicit permission response in the matching tool result.
+  if (
+    (part.type === "tool-Write" || part.type === "tool-Edit") &&
+    part.state === "output-error" &&
+    (part.errorText === "Error: User denied the tool request." ||
+      part.errorText === "User denied the tool request.")
+  )
+    return "denied"
+  if (["declined", "denied", "rejected"].includes(result?.state)) return "denied"
+  if (result?.state === "cancelled") return "interrupted"
+  if (result?.state === "failed" || result?.success === false) return "failed"
+  return getToolOutcome(part).state
+}
+
+/** Durable runs display their checkpoint-backed Changed Files card instead. */
+export function extractChangedFiles(
+  parts: any[],
+  projectPath?: string,
+  runId?: string,
+): ChangedFileInfo[] {
+  if (runId) return []
   const fileMap = new Map<string, ChangedFileInfo>()
 
   for (const part of parts) {
+    if (fileChangeOutcome(part) !== "completed") continue
     if (part.type === "tool-ApplyPatch") {
       const changes = part.input?.changes?.length
         ? part.input.changes

@@ -125,7 +125,7 @@ import {
   formatClaudeInputAnswers,
   normalizeClaudeInputQuestions,
 } from "./agent-input/claude-adapter"
-import { resolveClaudeRuntimeToolPermission } from "./permissions"
+import { claudeReadOnlyToolOptions, resolveClaudeRuntimeToolPermission } from "./permissions"
 import {
   buildProjectVaultRunContext,
   emptyProjectVaultRunContext,
@@ -681,7 +681,13 @@ export class MainRuntimeLaunchService {
             behavior: "allow",
             updatedInput: isPlainRecord(record.toolInput) ? record.toolInput : {},
           }
-        : { behavior: "deny", message: "User denied the tool request." }
+        : {
+            behavior: "deny",
+            message:
+              answer === "Deny"
+                ? "User denied the tool request."
+                : "Tool approval was not granted.",
+          }
     }
     if (method === "item/permissions/requestApproval") {
       return {
@@ -694,6 +700,7 @@ export class MainRuntimeLaunchService {
     return {
       decision:
         answer === "Allow for this session" ? "acceptForSession" : allowed ? "accept" : "decline",
+      ...(provider === "antigravity" && answer === "Deny" ? { userDeclined: true } : {}),
     }
   }
 
@@ -882,23 +889,25 @@ export class MainRuntimeLaunchService {
         const authority = await this.resolveExtensionAuthority(context, "claude-code")
         const enhanced = usesFlapstackRuntimeEnhancements(context.launch.requestedPreference)
         const hiddenPreviewVerification = isHiddenPreviewVerification()
+        const readOnly = context.launch.permission.mode === "read-only"
         const sdkOptions = hiddenPreviewVerification
           ? {}
           : getClaudeExtensionSdkOptions(authority.policy)
         const hooks =
-          !hiddenPreviewVerification && enhanced
+          !hiddenPreviewVerification && !readOnly && enhanced
             ? buildManagedClaudeHookOptions(authority.hooks, (record, input, signal) =>
                 this.hookRuntimeExecutor.execute(record, input, signal, authority.cwd),
               )
             : {}
-        const loadedMcpServers = hiddenPreviewVerification
-          ? {}
-          : Object.fromEntries(
-              Object.entries(await loadClaudeMcpServers(authority.cwd)).map(([name, server]) => [
-                name,
-                hydrateMcpServerSecrets(server),
-              ]),
-            )
+        const loadedMcpServers =
+          hiddenPreviewVerification || readOnly
+            ? {}
+            : Object.fromEntries(
+                Object.entries(await loadClaudeMcpServers(authority.cwd)).map(([name, server]) => [
+                  name,
+                  hydrateMcpServerSecrets(server),
+                ]),
+              )
         const mcpServers = hiddenPreviewVerification
           ? {}
           : filterClaudeExtensionMcpServers(loadedMcpServers, authority.policy)
@@ -983,6 +992,7 @@ export class MainRuntimeLaunchService {
           ...sdkOptions,
           ...strictClaudeMcpSdkOptions(mcpServers),
           ...(Object.keys(hooks).length > 0 ? { hooks, includeHookEvents: true } : {}),
+          ...claudeReadOnlyToolOptions(context.launch.permission.mode),
         }
       },
       resolvePrompt: (context, prompt) =>
@@ -2734,10 +2744,10 @@ function codexPermissionOptions(mode: ResolvedRuntimeLaunch["permission"]["mode"
 }
 
 function claudePermissionOptions(mode: ResolvedRuntimeLaunch["permission"]["mode"]): {
-  permissionMode: "plan" | "default" | "acceptEdits" | "bypassPermissions"
+  permissionMode: "plan" | "default" | "dontAsk" | "acceptEdits" | "bypassPermissions"
   allowDangerouslySkipPermissions?: true
 } {
-  if (mode === "read-only") return { permissionMode: "plan" }
+  if (mode === "read-only") return { permissionMode: "dontAsk" }
   if (mode === "full-access") {
     return { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }
   }

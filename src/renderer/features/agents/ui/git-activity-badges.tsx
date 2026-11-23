@@ -26,12 +26,14 @@ import { useFileOpen } from "../mentions"
 
 interface GitActivityBadgesProps {
   parts: any[]
+  runId?: string
   chatId: string
   subChatId: string
 }
 
 export const GitActivityBadges = memo(function GitActivityBadges({
   parts,
+  runId,
   chatId,
   subChatId,
 }: GitActivityBadgesProps) {
@@ -49,8 +51,8 @@ export const GitActivityBadges = memo(function GitActivityBadges({
 
   const activity = useMemo(() => extractGitActivity(parts), [parts])
   const changedFiles = useMemo(
-    () => extractChangedFiles(parts, selectedProject?.path),
-    [parts, selectedProject?.path],
+    () => extractChangedFiles(parts, selectedProject?.path, runId),
+    [runId, parts, selectedProject?.path],
   )
 
   const totals = useMemo(() => {

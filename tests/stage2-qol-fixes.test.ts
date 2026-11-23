@@ -57,7 +57,10 @@ describe("Stage 2 QOL regression contracts", () => {
   it("snapshots the reasoning default for the created conversation", () => {
     const source = readSource("src/renderer/features/agents/main/new-chat-form.tsx")
     expect(source).toContain("subChatReasoningEnabledAtomFamily(firstSubChatId)")
-    expect(source).toContain("pendingReasoningEnabledRef.current = reasoningOutputEnabled")
+    expect(source).toContain("onMutate: () => ({ reasoningOutputEnabled, selectedClaudeEffort })")
+    expect(source).toMatch(
+      /subChatReasoningEnabledAtomFamily\(firstSubChatId\),\s*selection\.reasoningOutputEnabled/,
+    )
   })
 
   it("retains transcription rows when old audio is pruned", () => {

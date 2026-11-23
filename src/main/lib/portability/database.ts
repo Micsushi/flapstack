@@ -1,4 +1,5 @@
 import Database from "better-sqlite3"
+import { protectCheckpointExport } from "../checkpoint-file-retention"
 import { randomUUID } from "node:crypto"
 import { dirname, join, toNamespacedPath } from "node:path"
 import { mkdir, rm } from "node:fs/promises"
@@ -100,7 +101,11 @@ export async function createPortableDatabase(input: {
   })
   source.pragma("busy_timeout = 5000")
   try {
-    await source.backup(sqliteFilesystemPath(snapshotPath))
+    await protectCheckpointExport(
+      input.sourcePath,
+      input.scopes.some((scope) => scope.id === "history"),
+      () => source.backup(sqliteFilesystemPath(snapshotPath)),
+    )
   } finally {
     source.close()
   }

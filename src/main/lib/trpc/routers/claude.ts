@@ -116,6 +116,7 @@ import {
 } from "./claude-settings"
 import {
   buildClaudePermissionApplication,
+  claudeReadOnlyToolOptions,
   getGlobalDefault,
   mapClaudeSdkPermissionMode,
   parsePermissionMode,
@@ -2465,6 +2466,7 @@ ${prompt}
                   forwardSubagentText: input.reasoningEnabled,
                   includeHookEvents: input.reasoningEnabled,
                 }),
+                ...claudeReadOnlyToolOptions(resolvedPermissionMode),
               },
             }
 

@@ -489,7 +489,7 @@ export function mapClaudeSdkPermissionMode(
   appPermissionMode: PermissionMode,
   chatMode: ChatMode,
 ): ClaudeSdkPermissionApplication {
-  if (toProviderChatMode(chatMode) === "plan") {
+  if (appPermissionMode !== "read-only" && toProviderChatMode(chatMode) === "plan") {
     return { sdkPermissionMode: "plan", allowDangerouslySkipPermissions: false }
   }
 
@@ -639,6 +639,19 @@ export function isClaudeMutatingTool(toolName: string): boolean {
 
 export function isClaudeReadOnlyToolAllowed(toolName: string): boolean {
   return CLAUDE_READ_ONLY_TOOLS.has(toolName)
+}
+
+export function claudeReadOnlyToolOptions(mode: PermissionMode) {
+  if (mode !== "read-only") return {}
+  // Plan mode permits writing a native plan file. Restrict the SDK's actual tool inventory.
+  return {
+    permissionMode: "dontAsk" as const,
+    tools: [...CLAUDE_READ_ONLY_TOOLS],
+    mcpServers: {},
+    strictMcpConfig: true as const,
+    hooks: {},
+    settings: { disableAllHooks: true },
+  }
 }
 
 export function customCapabilityForToolName(

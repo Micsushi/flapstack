@@ -184,6 +184,10 @@ function assertNoLiveMaintenanceOwner(databasePath: string): void {
   }
 }
 
+export function hasActiveDatabaseAccess(databasePath: string): boolean {
+  return activeAccessMarkers(canonicalDatabasePath(databasePath)).length > 0
+}
+
 function activeAccessMarkers(databasePath: string): string[] {
   const root = accessRoot(databasePath)
   const live: string[] = []

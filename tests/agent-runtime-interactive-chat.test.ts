@@ -381,8 +381,10 @@ describe("interactive Runtime launch bridge", () => {
             providerItemId: e.providerItemId ?? null,
             providerMessageId: e.providerMessageId ?? null,
             contentIndex: e.contentIndex ?? null,
-            sectionBoundary: null,
+            sectionBoundary: e.sectionBoundary ?? null,
           })) {
+            if (chunk.type === "text-start")
+              expect(chunk.providerMetadata.runtime.phase).toBe("assistant_text")
             if (chunk.type === "text-delta") displayed.push(chunk.delta)
           }
         }
@@ -399,7 +401,15 @@ describe("interactive Runtime launch bridge", () => {
     stream({ type: "content_block_stop", index: 0 })
     // Installed Claude emitted the compact snapshot before the raw stop. Each distinct
     // source block must survive even when the author repeats exactly the same prose.
-    for (const index of [1, 2]) {
+    for (const index of [1, 3]) {
+      if (index === 3) {
+        stream({
+          type: "content_block_start",
+          index: 2,
+          content_block: { type: "tool_use", id: "read-1", name: "Read", input: {} },
+        })
+        stream({ type: "content_block_stop", index: 2 })
+      }
       stream({ type: "content_block_start", index, content_block: { type: "text", text: "" } })
       stream({ type: "content_block_delta", index, delta: { type: "text_delta", text: "Same." } })
       emit({
@@ -410,7 +420,10 @@ describe("interactive Runtime launch bridge", () => {
     }
     const parts = loadInteractiveRuntimeAssistantParts(database, runId)
     expect(displayed).toEqual(["Same.", "Same."])
-    expect(parts).toEqual(displayed.map((text) => ({ type: "text", text })))
+    expect(parts).toEqual([
+      { type: "text", text: "Same.", providerMetadata: { runtime: { phase: "commentary" } } },
+      { type: "text", text: "Same.", providerMetadata: { runtime: { phase: "assistant_text" } } },
+    ])
     persistInteractiveRuntimeAssistantFallback(database, runId, parts)
     const row = database.prepare("SELECT messages FROM sub_chats WHERE id='sub'").get() as {
       messages: string

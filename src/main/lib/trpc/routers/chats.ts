@@ -7,6 +7,7 @@ import { simpleGit } from "simple-git"
 import { TRPCError } from "@trpc/server"
 import { z } from "zod"
 import { AGENT_HARNESSES } from "../../../../shared/harness-types"
+import { markStoppedChatTurns } from "../../../../shared/stopped-chat-turn"
 import { getAuthManager } from "../../../index"
 import {
   trackPRCreated,
@@ -19,6 +20,7 @@ import {
   chats,
   chatTagAssignments,
   chatTags,
+  fileChangeManifests,
   getDatabase,
   getDatabasePath,
   getSqliteDatabase,
@@ -27,6 +29,7 @@ import {
   tasks,
 } from "../../db"
 import { applyAutomaticChatTags, CHAT_TAG_COLORS, CHAT_TAG_ICONS } from "../../chat-tags"
+import { reclaimCheckpointFiles } from "../../checkpoint-file-retention"
 import { applyAutomaticAgentChatLabels, listAgentChatLabels } from "../../chat-agent-labels"
 import {
   getChatAssignment,
@@ -689,8 +692,8 @@ export const chatsRouter = router({
 
   getTranscript: publicProcedure
     .input(z.object({ chatId: z.string(), subChatId: z.string() }))
-    .query(({ input }) =>
-      getDatabase()
+    .query(({ input }) => {
+      const transcript = getDatabase()
         .select({
           id: subChats.id,
           chatId: subChats.chatId,
@@ -699,8 +702,30 @@ export const chatsRouter = router({
         })
         .from(subChats)
         .where(and(eq(subChats.id, input.subChatId), eq(subChats.chatId, input.chatId)))
-        .get(),
-    ),
+        .get()
+      if (!transcript?.messages) return transcript
+      // Older clients could save only the user prompt after an early Stop.
+      const stopped = getSqliteDatabase()
+        .prepare(
+          `SELECT r.prompt_message_id AS prompt FROM agent_runs r
+           WHERE r.chat_id = ? AND r.sub_chat_id = ? AND r.status = 'cancelled'
+             AND r.prompt_message_id IS NOT NULL AND NOT EXISTS (
+               SELECT 1 FROM agent_runs later WHERE later.chat_id = r.chat_id
+                 AND later.sub_chat_id = r.sub_chat_id AND later.prompt_message_id = r.prompt_message_id
+                 AND later.rowid > r.rowid)`,
+        )
+        .all(input.chatId, input.subChatId) as Array<{ prompt: string }>
+      if (!stopped.length) return transcript
+      let messages
+      try {
+        messages = JSON.parse(transcript.messages)
+        if (!Array.isArray(messages) || messages.some((message) => !message?.id)) return transcript
+      } catch {
+        return transcript
+      }
+      const marked = markStoppedChatTurns(messages, new Set(stopped.map((row) => row.prompt)))
+      return marked === messages ? transcript : { ...transcript, messages: JSON.stringify(marked) }
+    }),
 
   listWorktreeOptions: publicProcedure.input(z.object({ id: z.string() })).query(({ input }) => {
     return listWorktreeOptions(input.id)
@@ -1506,7 +1531,9 @@ export const chatsRouter = router({
     }
 
     await deleteVoiceHistoryForChat(input.id)
-    return db.delete(chats).where(eq(chats.id, input.id)).returning().get()
+    const deleted = db.delete(chats).where(eq(chats.id, input.id)).returning().get()
+    if (deleted) await reclaimCheckpointFiles(db)
+    return deleted
   }),
 
   /**
@@ -1576,6 +1603,7 @@ export const chatsRouter = router({
         }
       }
 
+      if (deletedCount) await reclaimCheckpointFiles(db)
       return { deletedCount, failedChatIds }
     }),
 
@@ -2804,7 +2832,8 @@ export const chatsRouter = router({
 
   /**
    * Get file change stats for workspaces
-   * Parses messages from specified sub-chats and aggregates Edit/Write tool calls
+   * Aggregates recorded project changes, including historical changes subsequently undone.
+   * Older replies without checkpoint manifests use their project-scoped Edit/Write calls.
    * Supports two modes:
    * - openSubChatIds: query specific sub-chats (used by main sidebar)
    * - chatIds: query all sub-chats for given chats (used by archive popover)
@@ -2828,18 +2857,23 @@ export const chatsRouter = router({
       }
 
       // Query sub-chats based on input mode
-      let allChats: Array<{ chatId: string | null; subChatId: string; messages: string | null }>
+      const transcriptFields = {
+        chatId: subChats.chatId,
+        subChatId: subChats.id,
+        messages: subChats.messages,
+        checkout: sql<string | null>`coalesce(${chats.worktreePath}, ${projects.path})`,
+      }
+      const transcripts = db
+        .select(transcriptFields)
+        .from(subChats)
+        .innerJoin(chats, eq(chats.id, subChats.chatId))
+        .leftJoin(projects, eq(projects.id, chats.projectId))
+      let allChats
 
       if (input.chatIds && input.chatIds.length > 0) {
         // Archive mode: query all sub-chats for given chat IDs
         // Pre-filter with LIKE to skip sub-chats without file edits (avoids loading/parsing large JSON)
-        allChats = db
-          .select({
-            chatId: subChats.chatId,
-            subChatId: subChats.id,
-            messages: subChats.messages,
-          })
-          .from(subChats)
+        allChats = transcripts
           .where(
             and(
               inArray(subChats.chatId, input.chatIds),
@@ -2849,15 +2883,7 @@ export const chatsRouter = router({
           .all()
       } else {
         // Main sidebar mode: query specific sub-chats
-        allChats = db
-          .select({
-            chatId: subChats.chatId,
-            subChatId: subChats.id,
-            messages: subChats.messages,
-          })
-          .from(subChats)
-          .where(inArray(subChats.id, input.openSubChatIds!))
-          .all()
+        allChats = transcripts.where(inArray(subChats.id, input.openSubChatIds!)).all()
       }
 
       // Aggregate stats per workspace (chatId)
@@ -2865,6 +2891,31 @@ export const chatsRouter = router({
         string,
         { additions: number; deletions: number; fileCount: number }
       >()
+      const recordedRuns = db
+        .select({
+          chatId: agentRuns.chatId,
+          runId: agentRuns.id,
+          additions: sql<number>`sum(${fileChangeManifests.additions})`,
+          deletions: sql<number>`sum(${fileChangeManifests.deletions})`,
+          fileCount: sql<number>`count(*)`,
+        })
+        .from(agentRuns)
+        .innerJoin(fileChangeManifests, eq(fileChangeManifests.runId, agentRuns.id))
+        .where(
+          input.chatIds?.length
+            ? inArray(agentRuns.chatId, input.chatIds)
+            : inArray(agentRuns.subChatId, input.openSubChatIds!),
+        )
+        .groupBy(agentRuns.id)
+        .all()
+      const recordedIds = new Set(recordedRuns.map((row) => row.runId))
+      for (const row of recordedRuns) {
+        const total = statsMap.get(row.chatId) ?? { additions: 0, deletions: 0, fileCount: 0 }
+        total.additions += row.additions
+        total.deletions += row.deletions
+        total.fileCount += row.fileCount
+        statsMap.set(row.chatId, total)
+      }
 
       for (const row of allChats) {
         if (!row.messages || !row.chatId) continue
@@ -2873,6 +2924,7 @@ export const chatsRouter = router({
         try {
           const messages = JSON.parse(row.messages) as Array<{
             role: string
+            metadata?: { runId?: string; transport?: string }
             parts?: Array<{
               type: string
               input?: {
@@ -2892,10 +2944,27 @@ export const chatsRouter = router({
 
           for (const msg of messages) {
             if (msg.role !== "assistant") continue
+            if (
+              msg.metadata?.runId &&
+              (recordedIds.has(msg.metadata.runId) ||
+                ["codex-runtime", "claude-code-runtime", "antigravity-runtime"].includes(
+                  msg.metadata.transport ?? "",
+                ))
+            )
+              continue
             for (const part of msg.parts || []) {
               if (part.type === "tool-Edit" || part.type === "tool-Write") {
                 const filePath = part.input?.file_path
                 if (!filePath) continue
+                if (row.checkout) {
+                  const relative = path.relative(row.checkout, path.resolve(row.checkout, filePath))
+                  if (
+                    relative === ".." ||
+                    relative.startsWith(`..${path.sep}`) ||
+                    path.isAbsolute(relative)
+                  )
+                    continue
+                }
                 // Skip session files
                 if (
                   filePath.includes("claude-sessions") ||

@@ -11,6 +11,34 @@ import {
 } from "./codex-runtime-test-helpers"
 
 describe("direct Codex Runtime adapter", () => {
+  it("releases unused connections and checks current authentication before starting a prepared session", async () => {
+    const unused = new FakeCodexProtocolClient()
+    const launched = new FakeCodexProtocolClient()
+    const createClient = vi.fn().mockReturnValueOnce(unused).mockReturnValueOnce(launched)
+    const adapter = createCodexRuntimeAdapterFactory({
+      appendActivity: collectActivity().append,
+      resolveThreadParams: () => ({ cwd: "/redacted" }),
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
+      createClient,
+    })()
+    await adapter.prepareConnection!("cancelled-before-dispatch")()
+    expect(unused.requests.map((request) => request.method)).toEqual(["initialize"])
+    expect(unused.closed).toBe(true)
+
+    const context = runtimeContext()
+    const release = adapter.prepareConnection!(context.runId)
+    launched.responses.set("account/read", { account: null })
+    await expect(adapter.startSession(context)).rejects.toThrow("authentication unavailable")
+    await release()
+    expect(launched.requests.map((request) => request.method)).toEqual([
+      "initialize",
+      "account/read",
+    ])
+    expect(launched.closed).toBe(true)
+    expect(createClient).toHaveBeenCalledTimes(2)
+  })
+
   it("probes the pinned handshake, account, models, and capabilities", async () => {
     const client = new FakeCodexProtocolClient()
     const activity = collectActivity()

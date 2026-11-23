@@ -3,6 +3,8 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  statSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -10,6 +12,8 @@ import {
   writeFileSync,
 } from "node:fs"
 import { execFileSync } from "node:child_process"
+import Database from "better-sqlite3"
+import { drizzle } from "drizzle-orm/better-sqlite3"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { eq, sql } from "drizzle-orm"
@@ -32,6 +36,15 @@ import {
   restoreCheckpoint,
 } from "../src/main/lib/checkpoints"
 import { chatsRouter } from "../src/main/lib/trpc/routers/chats"
+import { createPortableDatabase } from "../src/main/lib/portability/database"
+import { portableScopeRegistry } from "../src/main/lib/portability/scope-registry"
+import { runsRouter } from "../src/main/lib/trpc/routers/runs"
+import { sweepAbandonedCheckpointPreparations } from "../src/main/lib/checkpoint-preparation"
+import {
+  leaseCheckpointFiles,
+  reclaimCheckpointFiles,
+} from "../src/main/lib/checkpoint-file-retention"
+import * as dbSchema from "../src/main/lib/db/schema"
 import { getRunChangeReview, undoRunChangeSet } from "../src/main/lib/run-change-undo"
 import { permissionsRouter } from "../src/main/lib/trpc/routers/permissions"
 import { searchRouter } from "../src/main/lib/trpc/routers/search"
@@ -1554,6 +1567,293 @@ describe("Stage 1 E1 search archive and scope filters", () => {
 })
 
 describe("Stage 1 E1 checkpoint capture", () => {
+  it("removes only marked abandoned private preparation files", async () => {
+    const profile = join(homeDir, "warm-cleanup")
+    mkdirSync(profile)
+    function directory(suffix: string, marked: boolean, unrelated = false) {
+      const name = "checkpoint-warm-2147483647-" + suffix,
+        dir = join(profile, name)
+      mkdirSync(dir)
+      if (marked)
+        writeFileSync(
+          join(dir, ".flapstack-checkpoint-preparation"),
+          "flapstack-checkpoint-preparation-v1\n" + name,
+        )
+      writeFileSync(join(dir, "a".repeat(64)), "private original")
+      if (unrelated) writeFileSync(join(dir, "personal.txt"), "keep")
+      return dir
+    }
+    const stale = directory("ABC123", true),
+      unnamed = directory("DEF456", false),
+      other = directory("GHI789", true, true)
+    await sweepAbandonedCheckpointPreparations(profile)
+    expect(existsSync(stale)).toBe(false)
+    expect(existsSync(unnamed)).toBe(true)
+    expect(readFileSync(join(other, "personal.txt"), "utf8")).toBe("keep")
+  })
+  it("revalidates prepared private copies against the selected writable checkout and current staged tree", async () => {
+    const caller = runsRouter.createCaller(ctx),
+      db = getDatabase()
+    function workspace(name: string, mode = "full-access") {
+      const root = join(homeDir, name)
+      mkdirSync(root)
+      execFileSync("git", ["init"], { cwd: root })
+      const project = insertProject(name, { path: root, defaultPermissionMode: mode })
+      bindRegisteredFilesystemRoot(root)
+      const chat = insertChat({
+        scope: "project",
+        projectId: project.id,
+        permissionMode: mode,
+        worktreePath: root,
+      })
+      const run = db
+        .insert(agentRuns)
+        .values({ chatId: chat.id, harness: "codex", permissionMode: mode, worktreePath: root })
+        .returning()
+        .get()
+      for (const name of ["kept.txt", "changed.txt", "staged.txt"])
+        writeFileSync(join(root, name), "old\r\n")
+      writeFileSync(join(root, "uncached.txt"), "fall back\r\n")
+      return { root, project, run }
+    }
+    const opened = workspace("opened"),
+      other = workspace("other"),
+      restricted = workspace("restricted", "read-only")
+    const dirs = () =>
+      readdirSync(userDataDir).filter((name) => name.startsWith("checkpoint-warm-"))
+    const lease = () => crypto.randomUUID()
+    const select = (
+      entry: ReturnType<typeof workspace>,
+      key: string,
+      perm: "full-access" | "read-only" = "full-access",
+    ) =>
+      caller.prepareSelectedCheckout({
+        scope: "project",
+        lease: key,
+        id: entry.project.id,
+        path: entry.root,
+        permissionMode: perm,
+      })
+    const waitForPrepared = () =>
+      vi.waitFor(
+        () =>
+          expect(
+            dirs().some(
+              (dir) =>
+                readdirSync(join(userDataDir, dir)).filter((name) => /^[a-f0-9]{64}$/.test(name))
+                  .length === 4,
+            ),
+          ).toBe(true),
+        { timeout: 6000, interval: 50 },
+      )
+    await select(restricted, lease())
+    await select(opened, lease(), "read-only")
+    await new Promise((resolve) => setTimeout(resolve, 220))
+    expect(dirs()).toEqual([])
+    expect(
+      JSON.parse(
+        (await captureCheckpoint(restricted.run.id, restricted.root, "before")).gitStatusJson!,
+      ).skipped,
+    ).toBe(true)
+    const abandoned = lease()
+    await select(other, abandoned)
+    await waitForPrepared()
+    const abandonedDir = dirs()[0]!
+    await caller.prepareSelectedCheckout({ scope: "release", lease: abandoned })
+    await vi.waitFor(() => expect(existsSync(join(userDataDir, abandonedDir))).toBe(false), {
+      timeout: 6000,
+    })
+    const immediateLease = lease()
+    await select(other, immediateLease)
+    const immediate = JSON.parse(
+      (await captureCheckpoint(other.run.id, other.root, "before")).gitStatusJson!,
+    )
+    expect(immediate.fileCapture).toMatchObject({ copied: 4, preparedFiles: 0 })
+    const chosen = lease()
+    await select(opened, chosen)
+    await waitForPrepared()
+    const cachePath = join(userDataDir, dirs()[0]!)
+    const unavailable = readdirSync(cachePath).find(
+      (name) =>
+        /^[0-9a-f]{64}$/.test(name) &&
+        readFileSync(join(cachePath, name), "utf8") === "fall back\r\n",
+    )!
+    rmSync(join(cachePath, unavailable))
+    await caller.prepareSelectedCheckout({ scope: "release", lease: immediateLease })
+    writeFileSync(join(opened.root, "changed.txt"), "new\r\n")
+    execFileSync("git", ["add", "staged.txt"], { cwd: opened.root })
+    writeFileSync(join(opened.root, "staged.txt"), "unstaged\n")
+    const before = JSON.parse(
+      (await captureCheckpoint(opened.run.id, opened.root, "before")).gitStatusJson!,
+    )
+    expect(before.fileCapture).toMatchObject({ preparedFiles: 1, preparedBytes: 5, copied: 3 })
+    const stored = (name: string) =>
+      readFileSync(join(userDataDir, "checkpoint-files", before.originals[name]), "utf8")
+    expect(stored("kept.txt")).toBe("old\r\n")
+    expect(stored("uncached.txt")).toBe("fall back\r\n")
+    expect(stored("changed.txt")).toBe("new\r\n")
+    expect(stored("staged.txt")).toBe("unstaged\n")
+    expect(before.indexTree).toBe(
+      execFileSync("git", ["write-tree"], { cwd: opened.root, encoding: "utf8" }).trim(),
+    )
+    writeFileSync(join(opened.root, "kept.txt"), "later edit\n")
+    expect(stored("kept.txt")).toBe("old\r\n")
+    await vi.waitFor(() => expect(dirs()).toEqual([]), { timeout: 5000 })
+  })
+
+  it("defers cleanup during capture in another connection or when a portability backup may own files", async () => {
+    const db = getDatabase()
+    leaseCheckpointFiles(db)()
+    const store = join(userDataDir, "checkpoint-files")
+    mkdirSync(store)
+    const key = "a".repeat(64)
+    writeFileSync(join(store, key), "not yet published")
+    writeFileSync(join(store, "unrecognized"), "leave alone")
+    const writer = new Database(join(userDataDir, "agents.db"))
+    try {
+      const release = leaseCheckpointFiles(drizzle(writer, { schema: dbSchema }))
+      try {
+        expect(await reclaimCheckpointFiles(db)).toBe(0)
+      } finally {
+        release()
+      }
+      expect(readFileSync(join(store, key), "utf8")).toBe("not yet published")
+    } finally {
+      writer.close()
+    }
+    const backup = join(userDataDir, "portability", "operations")
+    mkdirSync(backup, { recursive: true })
+    expect(await reclaimCheckpointFiles(db)).toBe(0)
+    rmSync(backup, { recursive: true })
+    expect(await reclaimCheckpointFiles(db)).toBe(1)
+    expect(readFileSync(join(store, "unrecognized"), "utf8")).toBe("leave alone")
+  })
+
+  it("preserves pre-upgrade originals and offline portable history while reclaiming later orphans", async () => {
+    const db = getDatabase(),
+      store = join(userDataDir, "checkpoint-files")
+    mkdirSync(store)
+    const legacy = "1".repeat(64),
+      exported = "2".repeat(64),
+      later = "3".repeat(64)
+    writeFileSync(join(store, legacy), "pre-upgrade")
+    leaseCheckpointFiles(db)()
+    writeFileSync(join(store, exported), "exported")
+    await createPortableDatabase({
+      sourcePath: join(userDataDir, "agents.db"),
+      destinationPath: join(homeDir, "offline", "portable.sqlite3"),
+      scopes: portableScopeRegistry.resolveSelection([{ id: "history" }]),
+    })
+    writeFileSync(join(store, later), "new orphan")
+    expect(await reclaimCheckpointFiles(db)).toBe(1)
+    expect(readdirSync(store).sort()).toEqual([legacy, exported])
+  })
+
+  it("bounds each sweep and holds orphaned files while an older run or sibling database may own them", async () => {
+    const db = getDatabase(),
+      store = join(userDataDir, "checkpoint-files")
+    leaseCheckpointFiles(db)()
+    mkdirSync(store)
+    for (let i = 0; i < 130; i++)
+      writeFileSync(join(store, i.toString(16).padStart(64, "0")), "unused")
+    const chat = insertChat({ name: "Running" })
+    const run = db
+      .insert(agentRuns)
+      .values({ chatId: chat.id, harness: "codex", permissionMode: "full-access" })
+      .returning()
+      .get()
+    expect(await reclaimCheckpointFiles(db)).toBe(0)
+    db.update(agentRuns)
+      .set({ completedAt: new Date(), status: "success" })
+      .where(eq(agentRuns.id, run.id))
+      .run()
+    const path = join(userDataDir, "backup.snapshot")
+    const backup = new Database(path)
+    backup.exec("CREATE TABLE previous_checkpoint (key TEXT)")
+    backup.close()
+    expect(await reclaimCheckpointFiles(db)).toBe(0)
+    rmSync(path)
+    expect(await reclaimCheckpointFiles(db)).toBe(128)
+    expect(await reclaimCheckpointFiles(db)).toBe(2)
+  })
+
+  it("retains a key in an older checkpoint shape and skips unreadable checkpoint histories", async () => {
+    const db = getDatabase()
+    leaseCheckpointFiles(db)()
+    const chat = insertChat({ name: "Old snapshot" })
+    const run = db
+      .insert(agentRuns)
+      .values({
+        chatId: chat.id,
+        harness: "codex",
+        permissionMode: "full-access",
+        status: "success",
+        completedAt: new Date(),
+      })
+      .returning()
+      .get()
+    const key = "b".repeat(64),
+      orphan = "c".repeat(64),
+      store = join(userDataDir, "checkpoint-files")
+    mkdirSync(store)
+    writeFileSync(join(store, key), "restorable")
+    writeFileSync(join(store, orphan), "orphan")
+    const snapshot = db
+      .insert(checkpoints)
+      .values({ runId: run.id, kind: "before", gitStatusJson: "incomplete snapshot" })
+      .returning()
+      .get()
+    expect(await reclaimCheckpointFiles(db)).toBe(0)
+    db.update(checkpoints)
+      .set({ gitStatusJson: JSON.stringify({ originals: { untouched: key } }) })
+      .where(eq(checkpoints.id, snapshot.id))
+      .run()
+    expect(await reclaimCheckpointFiles(db)).toBe(1)
+    expect(readFileSync(join(store, key), "utf8")).toBe("restorable")
+  })
+
+  it("reclaims only original versions unreferenced after permanent chat deletion", async () => {
+    const db = getDatabase()
+    const work = join(homeDir, "retention-repo")
+    mkdirSync(work)
+    execFileSync("git", ["init", "-q"], { cwd: work })
+    const project = insertProject("Retention", { path: work })
+    const kept = insertChat({ projectId: project.id, name: "Kept" })
+    const removed = insertChat({ projectId: project.id, name: "Removed" })
+    const run = (chatId: string) =>
+      db
+        .insert(agentRuns)
+        .values({ chatId, harness: "codex", permissionMode: "full-access", worktreePath: work })
+        .returning()
+        .get()
+    const a = run(kept.id),
+      b = run(removed.id)
+    const original = join(work, "binary")
+    const files = join(userDataDir, "checkpoint-files")
+    const stored = () =>
+      readdirSync(files)
+        .map((name) => statSync(join(files, name)).size)
+        .sort((a, b) => a - b)
+    writeFileSync(original, Buffer.alloc(8192, 1))
+    const retained = await captureCheckpoint(a.id, work, "before")
+    await captureCheckpoint(a.id, work, "after")
+    await captureCheckpoint(b.id, work, "before")
+    expect(stored()).toEqual([8192])
+    writeFileSync(original, Buffer.alloc(10240, 2))
+    await captureCheckpoint(b.id, work, "after")
+    expect(stored()).toEqual([8192, 10240])
+    const rewritten = run(removed.id)
+    writeFileSync(original, Buffer.alloc(10240, 2))
+    await captureCheckpoint(rewritten.id, work, "before")
+    expect(stored()).toEqual([8192, 10240, 10240])
+    db.update(agentRuns).set({ completedAt: new Date(), status: "success" }).run()
+    await chatsRouter.createCaller(ctx).delete({ id: removed.id })
+    expect(db.select().from(checkpoints).where(eq(checkpoints.runId, b.id)).all()).toHaveLength(0)
+    expect(stored()).toEqual([8192])
+    await restoreCheckpoint(retained.id)
+    expect(readFileSync(original)).toEqual(Buffer.alloc(8192, 1))
+  })
+
   it("restores the exact pre-run worktree and index", async () => {
     const db = getDatabase()
     const worktreePath = join(homeDir, "editable-repo")

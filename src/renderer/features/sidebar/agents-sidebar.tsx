@@ -1543,10 +1543,13 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 <span className="flex-1 min-w-0" />
                 <div className="flex items-center gap-1.5 flex-shrink-0">
                   {stats && (stats.additions > 0 || stats.deletions > 0) && (
-                    <>
+                    <span
+                      className="inline-flex gap-1"
+                      title="Recorded changes across open chat tabs, including undone changes"
+                    >
                       <span className="text-green-600 dark:text-green-400">+{stats.additions}</span>
                       <span className="text-red-600 dark:text-red-400">-{stats.deletions}</span>
-                    </>
+                    </span>
                   )}
                   <span>
                     {formatTime(chatUpdatedAt?.toISOString() ?? new Date().toISOString())}

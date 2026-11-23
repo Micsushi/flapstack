@@ -1467,6 +1467,11 @@ if (gotTheLock) {
       },
     })
     if (!startupReady) return
+    void import("./lib/checkpoint-preparation")
+      .then(({ sweepAbandonedCheckpointPreparations }) =>
+        sweepAbandonedCheckpointPreparations(dirname(getDatabasePath())),
+      )
+      .catch(() => {})
 
     // Hosted auto-update is disabled for local-first Flapstack builds.
 

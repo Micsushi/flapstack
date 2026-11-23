@@ -96,6 +96,62 @@ afterEach(() => {
   rmSync(container, { recursive: true, force: true })
 })
 
+describe("recorded chat outcomes", () => {
+  it("restores an early Stop on the unanswered prompt after a subsequent turn", async () => {
+    seedRun(null)
+    sqlite.prepare("UPDATE agent_runs SET status='cancelled' WHERE id='run-1'").run()
+    const history = [
+      messages[1],
+      { id: "next", role: "user", parts: [{ type: "text", text: "Continue" }] },
+      { id: "reply", role: "assistant", parts: [{ type: "text", text: "Done" }] },
+    ]
+    sqlite.prepare("UPDATE sub_chats SET messages=? WHERE id='sub-1'").run(JSON.stringify(history))
+    const restored = await caller.getTranscript({ chatId: "chat-1", subChatId: "sub-1" })
+    expect(JSON.parse(restored!.messages!)).toEqual([
+      { ...history[0], metadata: { responseStopped: true } },
+      history[1],
+      history[2],
+    ])
+  })
+
+  it("uses the stored shell edit and excludes a provider's private plan from chat counts", async () => {
+    seedRun(null)
+    sqlite
+      .prepare(
+        `INSERT INTO file_change_manifests
+      (id,run_id,file_path,change_type,additions,deletions)
+      VALUES ('diff','run-1','result.json','added',9,0)`,
+      )
+      .run()
+    const history = [
+      {
+        role: "assistant",
+        metadata: { runId: "run-1", transport: "codex-runtime" },
+        parts: [{ type: "tool-Bash" }],
+      },
+      {
+        role: "assistant",
+        metadata: { runId: "read-only", transport: "claude-code-runtime" },
+        parts: [
+          {
+            type: "tool-Write",
+            input: {
+              file_path: "/provider/plans/notes.md",
+              content: Array(17).fill("plan").join("\n"),
+            },
+          },
+        ],
+      },
+    ]
+    sqlite.prepare("UPDATE sub_chats SET messages=? WHERE id='sub-1'").run(JSON.stringify(history))
+    for (const filter of [{ openSubChatIds: ["sub-1"] }, { chatIds: ["chat-1"] }]) {
+      expect(await caller.getFileStats(filter)).toEqual([
+        { chatId: "chat-1", fileCount: 1, additions: 9, deletions: 0 },
+      ])
+    }
+  })
+})
+
 describe("editLatestUserMessage restoration outcome", () => {
   it("reports a checkpoint restore when the run captured one", async () => {
     seedRun(null)

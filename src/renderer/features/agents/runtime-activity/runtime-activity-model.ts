@@ -416,13 +416,17 @@ export function formatRuntimeActivity(source: RuntimeActivitySource): RuntimeAct
   const runtime = sourceRuntime(source)
   const corrupt = isPersisted(source) && source.redactionState === "corrupt"
   const privateUnavailable = isPrivateOrCorrupt(source)
+  const declined =
+    !privateUnavailable && source.kind === "patch" && payload(source, "patch").state === "declined"
   const label = corrupt
     ? "Corrupt activity unavailable"
     : privateUnavailable
       ? "Private reasoning unavailable"
       : isLocalRun(source)
         ? (LOCAL_RUN_LABELS[source.runStatus] ?? "Unknown local run")
-        : rowLabel(source, runtime)
+        : declined
+          ? "File change declined"
+          : rowLabel(source, runtime)
   const content = privateUnavailable ? null : rowContent(source)
   const timestamp = sourceTimestamp(source)
   const identity = privateUnavailable ? [] : providerIdentity(source)
@@ -445,7 +449,7 @@ export function formatRuntimeActivity(source: RuntimeActivitySource): RuntimeAct
     provenance,
     timestamp,
     durationMs: null,
-    status: isLocalRun(source) ? source.runStatus : source.phase,
+    status: isLocalRun(source) ? source.runStatus : declined ? "declined" : source.phase,
     parentId: isPersisted(source) ? (source.providerParentItemId ?? null) : null,
     identity,
     searchText: [label, content, provenance, ...identity]
@@ -507,7 +511,7 @@ export function projectRuntimeActivityRows(sources: RuntimeActivitySource[]): Ru
       }
       target.phase = row.phase
       target.status = row.status
-      if (row.phase === "failed") target.label = row.label
+      if (row.phase === "failed" || row.status === "declined") target.label = row.label
       target.defaultExpanded = row.defaultExpanded
       target.source = row.source
       if (row.timestamp != null) {

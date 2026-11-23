@@ -1,6 +1,7 @@
 "use client"
 
 import { getLocalToolOutcome } from "../../../../shared/local-tool-outcome"
+import { fileChangeOutcome } from "../utils/git-activity"
 import { LocalToolOutcome } from "../ui/local-tool-outcome"
 import { MessageReplyContext } from "./message-reply-context"
 
@@ -54,7 +55,7 @@ import { formatReasoningStatus, getReasoningStartedAt } from "../lib/reasoning-d
 import { ForkContext } from "./isolated-message-group"
 import { MemoizedTextPart } from "./memoized-text-part"
 import { formatMessageTimestamp } from "../lib/message-timestamp"
-import { findAnswerPartIndex, isProgressText } from "../lib/assistant-text-phase"
+import { findAnswerPartIndex, lastActivityPartIndex } from "../lib/assistant-text-phase"
 
 // Map first word of an ACP tool title to a canonical Claude Code tool type.
 // Codex tool calls arrive with type = "tool-Read README.md", "tool-Run echo ---",
@@ -379,8 +380,14 @@ function summarizeToolActivities(parts: any[], streamState?: unknown): string {
       continue
     }
     const type = String(part.type).toLowerCase()
-    if (type === "tool-edit" || type === "tool-write" || type === "tool-apply_patch") edits++
-    else if (
+    if (["tool-edit", "tool-write", "tool-applypatch", "tool-apply_patch"].includes(type)) {
+      const outcome = fileChangeOutcome(part)
+      if (outcome === "completed") edits++
+      else if (outcome === "denied") localOutcomes.push("File change declined")
+      else if (outcome === "failed") localOutcomes.push("File change failed")
+      else if (outcome === "interrupted") localOutcomes.push("File change interrupted")
+      else localOutcomes.push("File change requested")
+    } else if (
       ["tool-read", "tool-grep", "tool-glob", "tool-websearch", "tool-webfetch"].includes(type)
     )
       reads++
@@ -389,7 +396,7 @@ function summarizeToolActivities(parts: any[], streamState?: unknown): string {
   }
 
   const summary: string[] = [...new Set(localOutcomes)]
-  if (edits) summary.push(edits === 1 ? "Edited a file" : `Edited ${edits} files`)
+  if (edits) summary.push(edits === 1 ? "Completed a file edit" : `Completed ${edits} file edits`)
   if (reads) summary.push(reads === 1 ? "Read a file" : `Read ${reads} files`)
   if (commands) summary.push(commands === 1 ? "Ran a command" : `Ran ${commands} commands`)
   if (tools) summary.push(tools === 1 ? "Used a tool" : `Used ${tools} tools`)
@@ -897,14 +904,9 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
     finalParts,
   } = useMemo(() => {
     const live = isStreaming && isLastMessage
-    const lastTextIndex = findAnswerPartIndex(messageParts, live)
-    let hasActivity = false
-
-    for (let i = 0; i < messageParts.length; i++) {
-      const part = messageParts[i]
-      if (part.type?.startsWith("tool-") || isReasoningPart(part) || isProgressText(part, live))
-        hasActivity = true
-    }
+    const lastActivity = lastActivityPartIndex(messageParts, live)
+    const lastTextIndex = findAnswerPartIndex(messageParts, live, lastActivity)
+    const hasActivity = lastActivity !== -1
 
     const hasFinalText = hasActivity && lastTextIndex !== -1
 
@@ -915,9 +917,10 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
     const stepParts = []
     const finalParts = []
     for (const [index, part] of messageParts.entries()) {
-      const explicitAnswer =
-        part.type === "text" && part.providerMetadata?.runtime?.phase === "final_answer"
-      if (!hasActivity || (shouldCollapse && (explicitAnswer || index === lastTextIndex))) {
+      const phase = part.type === "text" ? part.providerMetadata?.runtime?.phase : undefined
+      const answer =
+        phase === "final_answer" || (phase === "assistant_text" && index > lastActivity)
+      if (!hasActivity || (shouldCollapse && (answer || index === lastTextIndex))) {
         finalParts.push(part)
       } else {
         stepParts.push(part)
@@ -1309,6 +1312,19 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
           </ReasoningTimeline>
         )}
         {!isStreaming && <AgentChangedFilesCard runId={msgMetadata?.runId} />}
+        {!isStreaming &&
+          !shouldCollapse &&
+          !wasStopped &&
+          !wasInterrupted &&
+          messageParts.some(
+            (part: any) =>
+              ["tool-ApplyPatch", "tool-Write", "tool-Edit"].includes(part.type) &&
+              fileChangeOutcome(part) === "denied",
+          ) && (
+            <p role="status" className="mx-2 text-xs text-muted-foreground">
+              File change declined
+            </p>
+          )}
 
         {(() => {
           // Apply both grouping functions: first task tools, then exploring tools
@@ -1464,7 +1480,12 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
 
       {/* Git activity badges - commit/PR pills */}
       {(!isStreaming || !isLastMessage) && (
-        <GitActivityBadges parts={messageParts} chatId={chatId} subChatId={subChatId} />
+        <GitActivityBadges
+          parts={messageParts}
+          runId={msgMetadata?.runId}
+          chatId={chatId}
+          subChatId={subChatId}
+        />
       )}
 
       {isDev && showMessageJson && (

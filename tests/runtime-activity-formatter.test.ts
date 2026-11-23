@@ -8,6 +8,24 @@ import type { AgentActivityEvent } from "../src/shared/agent-activity"
 import { activity } from "./runtime-activity-test-helpers"
 
 describe("Runtime activity formatters", () => {
+  it("shows the actual decline on the merged public patch activity row", () => {
+    for (const phase of ["cancelled", "completed"] as const) {
+      const identity = { providerItemId: "call" }
+      const rows = projectRuntimeActivityRows([
+        activity(
+          "patch",
+          { state: "running", path: "note.txt" },
+          { ...identity, phase: "started" },
+        ),
+        activity(
+          "patch",
+          { state: "declined", path: "note.txt" },
+          { ...identity, phase, storageId: 2 },
+        ),
+      ])
+      expect(rows).toMatchObject([{ label: "File change declined", status: "declined" }])
+    }
+  })
   it("formats every T3 event kind deterministically", () => {
     const events: AgentActivityEvent[] = [
       activity("lifecycle", { state: "completed", detail: "Turn complete" }),

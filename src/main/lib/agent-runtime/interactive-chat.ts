@@ -10,7 +10,7 @@ import {
 import type { AgentHarness, RunPermissionMode } from "../../../shared/harness-types"
 import type { ResolvedAgentRuntime, RuntimeAdapterProbe } from "../../../shared/agent-runtime"
 import type { AgentRuntimePreference } from "../../../shared/agent-runtime"
-import type { AgentActivityEvent } from "../../../shared/agent-activity"
+import { isRuntimeTextBoundary, type AgentActivityEvent } from "../../../shared/agent-activity"
 import type { CodexThreadVisibility } from "../../../shared/codex-thread-visibility"
 import {
   resolveAgentHotlineEnabled,
@@ -353,6 +353,7 @@ export function loadInteractiveRuntimeAssistantParts(
   const store = createAgentActivityStore(database)
   const parts: RuntimeReplyPart[] = []
   const codexDeltas = new Map<string, string[]>()
+  let lastClaudeActivity: number | undefined
   let cursor: number | undefined
   do {
     const page = store.query({
@@ -381,11 +382,24 @@ export function loadInteractiveRuntimeAssistantParts(
       if (item) codexDeltas.delete(item)
       const text = streamed?.startsWith(event.payload.text) ? streamed : event.payload.text
       if (!text) continue
+      let boundary = event.sectionBoundary
+      if (boundary === "assistant_text") {
+        // Background replies store text parts alone. Preserve the same tool boundary as the live UI.
+        lastClaudeActivity ??= database
+          .prepare(
+            `SELECT COALESCE(MAX(sequence), 0) FROM agent_activity_events
+           WHERE run_id = ? AND provider_parent_item_id IS NULL AND phase = 'started'
+             AND kind IN ('tool', 'provider-visible-reasoning')`,
+          )
+          .pluck()
+          .get(runId) as number
+        if (event.sequence < lastClaudeActivity) boundary = "commentary"
+      }
       parts.push({
         type: "text",
         text,
-        ...(event.sectionBoundary === "commentary" || event.sectionBoundary === "final_answer"
-          ? { providerMetadata: { runtime: { phase: event.sectionBoundary } } }
+        ...(isRuntimeTextBoundary(boundary)
+          ? { providerMetadata: { runtime: { phase: boundary } } }
           : {}),
       })
     }

@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   lstat,
+  link,
   open,
   realpath,
   rename,
@@ -20,8 +21,14 @@ import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import { agentRuns, checkpoints, fileChangeManifests, getDatabase, getDatabasePath } from "./db"
 import type * as schema from "./db/schema"
 import { recordRunTimingInterval } from "./run-timings"
+import { withCheckpointFiles } from "./checkpoint-file-retention"
 import { splitUnifiedDiffByFile } from "./git/diff-parser"
 import { createGit } from "./git/git-factory"
+import {
+  selectCheckpointPreparation,
+  withPreparedOriginals,
+  type PreparedOriginals,
+} from "./checkpoint-preparation"
 
 type CheckpointKind = "before" | "after"
 type AppDatabase = BetterSQLite3Database<typeof schema>
@@ -49,6 +56,8 @@ export type CheckpointStatusSnapshot = {
     listed: number
     copied: number
     copiedBytes: number
+    preparedFiles?: number
+    preparedBytes?: number
   }
   reviewTree?: string
   skipped?: boolean
@@ -88,6 +97,7 @@ export async function hashWorktreeFile(
 async function buildStatusSnapshot(
   worktreePath: string | null,
   db: AppDatabase,
+  requireGitPreimage = false,
 ): Promise<{ gitCommit: string | null; snapshot: CheckpointStatusSnapshot }> {
   if (!worktreePath || !existsSync(worktreePath)) {
     return {
@@ -100,6 +110,7 @@ async function buildStatusSnapshot(
     }
   }
 
+  let confirmedGitWorktree = false
   try {
     const git = createGit(worktreePath)
     const isRepo = await git.checkIsRepo()
@@ -114,6 +125,7 @@ async function buildStatusSnapshot(
       }
     }
 
+    confirmedGitWorktree = true
     const profile = checkpointProfile(db)
     const [head, staged, { originals, fileCapture, crlfPaths, eagerTree }] = await Promise.all([
       git.revparse(["--verify", "HEAD"]).catch(() => null),
@@ -137,6 +149,7 @@ async function buildStatusSnapshot(
       },
     }
   } catch (error) {
+    if (requireGitPreimage && confirmedGitWorktree) throw error
     return {
       gitCommit: null,
       snapshot: {
@@ -192,10 +205,14 @@ function safeSnapshotPath(root: string, name: string) {
   return join(root, name)
 }
 
-async function eachFile<T>(items: T[], operation: (item: T, worker: number) => Promise<void>) {
+async function eachFile<T>(
+  items: T[],
+  operation: (item: T, worker: number) => Promise<void>,
+  concurrency = 16,
+) {
   let next = 0
   const results = await Promise.allSettled(
-    Array.from({ length: Math.min(16, items.length) }, async (_, worker) => {
+    Array.from({ length: Math.min(concurrency, items.length) }, async (_, worker) => {
       while (next < items.length) await operation(items[next++]!, worker)
     }),
   )
@@ -328,7 +345,37 @@ async function cleanTrackedEndings(
   return endings
 }
 
+export function prepareCheckpointOriginals(worktree: string, lease: string) {
+  const profile = checkpointProfile(getDatabase())
+  selectCheckpointPreparation(worktree, profile, lease, (job) =>
+    collectOriginals(worktree, createGit(worktree), profile, undefined, job),
+  )
+}
+
+const checkpointFileWrites = new Map<string, Promise<void>>()
+async function serializeOriginalCopy(target: string, operation: () => Promise<void>) {
+  while (checkpointFileWrites.has(target)) await checkpointFileWrites.get(target)!.catch(() => {})
+  const done = operation()
+  checkpointFileWrites.set(target, done)
+  try {
+    await done
+  } finally {
+    checkpointFileWrites.delete(target)
+  }
+}
+
 async function captureOriginals(worktree: string, git: SimpleGit, profile: string) {
+  const root = await realpath(worktree)
+  return withPreparedOriginals(root, profile, (job) => collectOriginals(root, git, profile, job))
+}
+
+async function collectOriginals(
+  worktree: string,
+  git: SimpleGit,
+  profile: string,
+  prepared?: PreparedOriginals,
+  warming?: PreparedOriginals,
+) {
   const files = join(profile, "checkpoint-files")
   const fromRepo = relative(worktree, files)
   if (!fromRepo || (!isAbsolute(fromRepo) && fromRepo !== ".." && !fromRepo.startsWith(".." + sep)))
@@ -336,22 +383,26 @@ async function captureOriginals(worktree: string, git: SimpleGit, profile: strin
   const started = Date.now()
   const [raw, stages, filtered] = await Promise.all([
     git.raw(["ls-files", "-z", "--others", "--modified", "--deleted", "--exclude-standard"]),
-    git.raw(["ls-files", "--cached", "--stage", "-z"]),
-    git.raw([
-      "ls-files",
-      "--cached",
-      "-z",
-      "--",
-      ":(exclude,attr:!filter !working-tree-encoding !ident)",
-    ]),
+    warming ? "" : git.raw(["ls-files", "--cached", "--stage", "-z"]),
+    warming
+      ? ""
+      : git.raw([
+          "ls-files",
+          "--cached",
+          "-z",
+          "--",
+          ":(exclude,attr:!filter !working-tree-encoding !ident)",
+        ]),
   ])
   const mustCopy = new Set([...raw.split("\0"), ...filtered.split("\0")].filter(Boolean))
   const crlfPaths: string[] = []
-  for (const [path, ending] of await cleanTrackedEndings(worktree, git, stages, mustCopy)) {
+  for (const [path, ending] of warming
+    ? []
+    : await cleanTrackedEndings(worktree, git, stages, mustCopy)) {
     if (ending === "crlf" && !mustCopy.has(path)) crlfPaths.push(path)
     else if (ending === "raw") mustCopy.add(path)
   }
-  const names = [...mustCopy]
+  const names = warming ? [...mustCopy].slice(0, 2048) : [...mustCopy]
   const listedAt = Date.now()
   const fileCapture = {
     listMs: listedAt - started,
@@ -359,75 +410,113 @@ async function captureOriginals(worktree: string, git: SimpleGit, profile: strin
     listed: names.length,
     copied: 0,
     copiedBytes: 0,
+    preparedFiles: 0,
+    preparedBytes: 0,
   }
   const originals: Record<string, string | null> = Object.create(null)
   if (!names.length) return { originals, fileCapture, crlfPaths, eagerTree: false }
-  await Promise.all([
-    mkdir(files, { recursive: true, mode: 0o700 }),
-    mkdir(join(profile, "checkpoint-objects"), { recursive: true, mode: 0o700 }),
-  ])
+  if (!warming)
+    await Promise.all([
+      mkdir(files, { recursive: true, mode: 0o700 }),
+      mkdir(join(profile, "checkpoint-objects"), { recursive: true, mode: 0o700 }),
+    ])
   const root = await realpath(worktree)
   const parents = new Map<string, Promise<string | null>>()
   let unsupported = false
   const buffers: Buffer[] = []
-  await eachFile(names, async (name, worker) => {
-    const path = safeSnapshotPath(root, name)
-    const parent = dirname(path)
-    const resolved =
-      parents.get(parent) ??
-      realpath(parent).catch((error: NodeJS.ErrnoException) => {
+  await eachFile(
+    names,
+    async (name, worker) => {
+      if (warming && (warming.stopped || Date.now() > warming.deadline)) return
+      const path = safeSnapshotPath(root, name)
+      const parent = dirname(path)
+      const resolved =
+        parents.get(parent) ??
+        realpath(parent).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT" || error.code === "ENOTDIR") return null
+          throw error
+        })
+      parents.set(parent, resolved)
+      const actual = await resolved
+      if (actual !== null && actual !== parent) {
+        unsupported = true
+        return
+      }
+      const stat = await lstat(path, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
         if (error.code === "ENOENT" || error.code === "ENOTDIR") return null
         throw error
       })
-    parents.set(parent, resolved)
-    const actual = await resolved
-    if (actual !== null && actual !== parent) {
-      unsupported = true
-      return
-    }
-    const stat = await lstat(path, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT" || error.code === "ENOTDIR") return null
-      throw error
-    })
-    if (!stat) {
-      originals[name] = null
-      return
-    }
-    // Let Git preserve submodule and symlink semantics through its normal indexer.
-    if (!stat.isFile()) {
-      unsupported = true
-      return
-    }
-    const identity = stamp(stat)
-    const key = createHash("sha256").update(path).update("\0").update(identity).digest("hex")
-    const target = join(files, key)
-    if (!existsSync(target)) {
-      const temp = join(files, randomUUID() + ".partial")
-      const source = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
-      try {
-        if (stamp(await source.stat({ bigint: true })) !== identity)
-          throw new Error("File changed before checkpoint: " + name)
-        const buffer = (buffers[worker] ??= Buffer.allocUnsafe(256 * 1024))
-        await copyOriginal(source, temp, stat, buffer)
-        const final = await lstat(path, { bigint: true })
-        if (
-          stamp(final) !== identity ||
-          stamp(await source.stat({ bigint: true })) !== identity ||
-          (await realpath(parent)) !== parent
-        )
-          throw new Error("File changed during checkpoint: " + name)
-        await rename(temp, target)
-        fileCapture.copied++
-        fileCapture.copiedBytes += Number(stat.size)
-      } catch (error) {
-        await rm(temp, { force: true })
-        throw error
-      } finally {
-        await source.close()
+      if (!stat) {
+        originals[name] = null
+        return
       }
-    }
-    originals[name] = key
-  })
+      // Let Git preserve submodule and symlink semantics through its normal indexer.
+      if (!stat.isFile()) {
+        unsupported = true
+        return
+      }
+      const identity = stamp(stat)
+      const key = createHash("sha256").update(path).update("\0").update(identity).digest("hex")
+      const durable = join(files, key)
+      if (!existsSync(durable))
+        await serializeOriginalCopy(durable, async () => {
+          if (existsSync(durable)) return
+          if (prepared?.keys.has(key)) {
+            if (
+              (await realpath(parent)) !== parent ||
+              stamp(await lstat(path, { bigint: true })) !== identity
+            )
+              throw new Error("File changed before checkpoint: " + name)
+            const reused = await link(join(prepared.dir, key), durable).then(
+              () => true,
+              () => false,
+            )
+            if (reused) {
+              fileCapture.preparedFiles++
+              fileCapture.preparedBytes += Number(stat.size)
+              originals[name] = key
+              return
+            }
+          }
+          if (warming) {
+            if (
+              warming.stopped ||
+              stat.size > 64n * 1024n * 1024n ||
+              warming.bytes + Number(stat.size) > 1024 ** 3
+            )
+              return
+            warming.bytes += Number(stat.size)
+          }
+          const target = warming ? join(warming.dir, key) : durable
+          const temp = join(warming?.dir ?? files, randomUUID() + ".partial")
+          const source = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+          try {
+            if (stamp(await source.stat({ bigint: true })) !== identity)
+              throw new Error("File changed before checkpoint: " + name)
+            const buffer = (buffers[worker] ??= Buffer.allocUnsafe(256 * 1024))
+            await copyOriginal(source, temp, stat, buffer)
+            const final = await lstat(path, { bigint: true })
+            if (
+              stamp(final) !== identity ||
+              stamp(await source.stat({ bigint: true })) !== identity ||
+              (await realpath(parent)) !== parent
+            )
+              throw new Error("File changed during checkpoint: " + name)
+            await rename(temp, target)
+            warming?.keys.add(key)
+            fileCapture.copied++
+            fileCapture.copiedBytes += Number(stat.size)
+          } catch (error) {
+            await rm(temp, { force: true })
+            throw error
+          } finally {
+            await source.close()
+          }
+        })
+      originals[name] = key
+    },
+    warming ? 6 : 16,
+  )
   fileCapture.validateAndCopyMs = Date.now() - listedAt
   return { originals, fileCapture, crlfPaths, eagerTree: unsupported }
 }
@@ -853,6 +942,15 @@ export async function captureCheckpoint(
   kind: CheckpointKind,
   db: AppDatabase = getDatabase(),
 ) {
+  return withCheckpointFiles(db, () => captureLeasedCheckpoint(runId, worktreePath, kind, db))
+}
+
+async function captureLeasedCheckpoint(
+  runId: string,
+  worktreePath: string | null,
+  kind: CheckpointKind,
+  db: AppDatabase,
+) {
   const started = Date.now()
   const run = db
     .select({ mode: agentRuns.permissionMode })
@@ -865,7 +963,7 @@ export async function captureCheckpoint(
           gitCommit: null,
           snapshot: { available: false, files: {}, skipped: true } as CheckpointStatusSnapshot,
         }
-      : await buildStatusSnapshot(worktreePath, db)
+      : await buildStatusSnapshot(worktreePath, db, kind === "before")
 
   const checkpoint = db
     .insert(checkpoints)
@@ -906,6 +1004,10 @@ export async function captureCheckpoint(
 /** Restore the exact worktree and index captured before a run. */
 export async function restoreCheckpoint(checkpointId: string): Promise<boolean> {
   const db = getDatabase()
+  return withCheckpointFiles(db, () => restoreLeasedCheckpoint(checkpointId, db))
+}
+
+async function restoreLeasedCheckpoint(checkpointId: string, db: AppDatabase): Promise<boolean> {
   const checkpoint = db.select().from(checkpoints).where(eq(checkpoints.id, checkpointId)).get()
   if (!checkpoint) throw new Error("Checkpoint not found")
   if (!checkpoint.worktreePath) return false
@@ -953,6 +1055,10 @@ export async function restoreCheckpoint(checkpointId: string): Promise<boolean> 
 }
 
 export async function captureRunManifest(runId: string, db: AppDatabase = getDatabase()) {
+  return withCheckpointFiles(db, () => captureLeasedManifest(runId, db))
+}
+
+async function captureLeasedManifest(runId: string, db: AppDatabase) {
   const runCheckpoints = db.select().from(checkpoints).where(eq(checkpoints.runId, runId)).all()
 
   const before = runCheckpoints.find((checkpoint) => checkpoint.kind === "before")

@@ -25,6 +25,7 @@ import {
   WriteFileIcon,
 } from "../../../components/ui/icons"
 import { getPlanningStatus } from "./planning-status"
+import { fileChangeOutcome } from "../utils/git-activity"
 
 export type ToolVariant = "simple" | "collapsible"
 
@@ -267,8 +268,11 @@ export const AgentToolRegistry: Record<string, ToolMeta> = {
   "tool-ApplyPatch": {
     icon: IconEditFile,
     title: (part) => {
-      const isPending = part.state !== "output-available" && part.state !== "output-error"
-      return isPending ? "Applying patch" : "Applied patch"
+      const outcome = fileChangeOutcome(part)
+      if (outcome === "denied") return "File change declined"
+      if (outcome === "failed") return "File change failed"
+      if (outcome === "interrupted") return "File change interrupted"
+      return outcome === "completed" ? "Applied patch" : "File change requested"
     },
     subtitle: (part) => {
       const paths = (part.input?.changes ?? [])

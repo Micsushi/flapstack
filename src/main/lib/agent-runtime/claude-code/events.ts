@@ -768,6 +768,8 @@ function activity<K extends AgentActivityAppend["kind"]>(
 ): Extract<AgentActivityAppend, { kind: K }> {
   return {
     ...boundBase(base),
+    // Native text is public assistant prose. A later tool block can still follow it.
+    ...(kind === "agent-text" ? { sectionBoundary: "assistant_text" } : {}),
     kind,
     phase,
     displayClass,

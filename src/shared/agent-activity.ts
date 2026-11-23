@@ -34,6 +34,12 @@ export const AGENT_ACTIVITY_PHASES = [
 ] as const
 export type AgentActivityPhase = (typeof AGENT_ACTIVITY_PHASES)[number]
 
+export function isRuntimeTextBoundary(
+  value: unknown,
+): value is "commentary" | "final_answer" | "assistant_text" {
+  return value === "commentary" || value === "final_answer" || value === "assistant_text"
+}
+
 export const AGENT_ACTIVITY_DISPLAY_CLASSES = [
   "summary",
   "provider-visible",

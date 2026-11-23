@@ -13,6 +13,7 @@ import {
   isClaudeReadOnlyToolAllowed,
   mapCodexAcpModeId,
   mapClaudeSdkPermissionMode,
+  claudeReadOnlyToolOptions,
   resolvePermission,
   resolveClaudeRuntimeToolPermission,
   resolveClaudeRuntimeToolPermissionWithBridge,
@@ -248,6 +249,7 @@ describe("permissions", () => {
     ["full-access", "write", "bypassPermissions", true],
     ["auto-edit-project-only", "write", "acceptEdits", false],
     ["read-only", "write", "dontAsk", false],
+    ["read-only", "plan", "dontAsk", false],
     ["ask-before-edits", "write", "default", false],
     ["custom", "write", "default", false],
     ["full-access", "plan", "plan", false],
@@ -260,6 +262,18 @@ describe("permissions", () => {
       })
     },
   )
+
+  it("removes plan-file writes from the native read-only tool inventory", () => {
+    const options = claudeReadOnlyToolOptions("read-only")
+    expect(options.permissionMode).toBe("dontAsk")
+    expect(options.tools).toEqual(
+      expect.arrayContaining(["Read", "Grep", "Glob", "AskUserQuestion"]),
+    )
+    expect(options.tools).not.toContain("Write")
+    expect(options.tools).not.toContain("Bash")
+    expect(options.tools).not.toContain("ExitPlanMode")
+    expect(claudeReadOnlyToolOptions("full-access")).toEqual({})
+  })
 
   it("recognizes known Claude mutating tools and write-like MCP tools", () => {
     expect(isClaudeMutatingTool("Write")).toBe(true)

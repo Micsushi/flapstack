@@ -551,6 +551,11 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
       </ContextMenu>
 
       {/* Assistant messages - memoized, only re-renders when IDs change */}
+      {userMsg.metadata?.responseStopped && assistantIds.length === 0 && (
+        <div role="status" className="px-2 py-1 text-sm text-muted-foreground">
+          Stopped
+        </div>
+      )}
       {assistantIds.length > 0 && (
         <ForkContext.Provider value={canFork ? onFork : null}>
           <MemoizedAssistantMessages

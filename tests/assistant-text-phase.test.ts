@@ -21,6 +21,21 @@ describe("assistant progress and answer placement", () => {
     expect(findAnswerPartIndex(parts, true)).toBe(1)
     expect(isProgressText(parts[1]!, true)).toBe(false)
   })
+  it("shows Claude public text immediately and keeps it with a later native tool", () => {
+    const greeting = text("Hi!", "assistant_text")
+    expect(findAnswerPartIndex([greeting], true)).toBe(0)
+    const steps = [
+      { type: "reasoning" },
+      text("I'll read the file.", "assistant_text"),
+      { type: "tool-Read" },
+    ]
+    expect(findAnswerPartIndex(steps, true)).toBe(-1)
+    expect(findAnswerPartIndex(steps, false)).toBe(-1)
+    expect(isProgressText(steps[1]!, false, 1, 2)).toBe(true)
+    const answered = [...steps, text("The result is 24.", "assistant_text")]
+    expect(findAnswerPartIndex(answered, true)).toBe(3)
+    expect(findAnswerPartIndex(answered, false)).toBe(3)
+  })
   it("keeps unclassified live text in progress until completion confirms an answer", () => {
     const parts = [
       text("I'll inspect the file."),

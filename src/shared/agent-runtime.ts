@@ -181,6 +181,8 @@ export type RuntimeAdapterContext = {
 export interface HarnessAdapter<TActivity = unknown> {
   readonly runtime: ResolvedAgentRuntime
   probe(harness: string): Promise<RuntimeAdapterProbe>
+  /** May initialize a run-owned connection, without starting a provider session or sending a prompt. */
+  prepareConnection?(runId: string): () => Promise<void>
   startSession(context: RuntimeAdapterContext): Promise<RuntimeAdapterSession>
   resumeSession(
     context: RuntimeAdapterContext,

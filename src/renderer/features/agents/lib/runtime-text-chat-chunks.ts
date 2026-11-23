@@ -1,3 +1,5 @@
+import { isRuntimeTextBoundary } from "../../../../shared/agent-activity"
+
 type RuntimeAssistantTextEvent = {
   phase: "started" | "delta" | "completed"
   text: string
@@ -29,7 +31,7 @@ export class RuntimeTextChatChunkMapper {
       chunks.push({
         type: "text-start",
         id,
-        ...(event.sectionBoundary === "commentary" || event.sectionBoundary === "final_answer"
+        ...(isRuntimeTextBoundary(event.sectionBoundary)
           ? { providerMetadata: { runtime: { phase: event.sectionBoundary } } }
           : {}),
       })
@@ -70,9 +72,7 @@ export class RuntimeTextChatChunkMapper {
       {
         type: "text-end",
         id,
-        ...(phase === "commentary" || phase === "final_answer"
-          ? { providerMetadata: { runtime: { phase } } }
-          : {}),
+        ...(isRuntimeTextBoundary(phase) ? { providerMetadata: { runtime: { phase } } } : {}),
       },
     ]
   }

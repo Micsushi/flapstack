@@ -2,6 +2,7 @@
 
 import { memo, useState, useRef, useCallback, useEffect, useMemo } from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"
+import { isProgressText, lastActivityPartIndex } from "../lib/assistant-text-phase"
 import { toast } from "sonner"
 import {
   CheckIcon,
@@ -521,8 +522,12 @@ function formatSpeechTime(seconds: number) {
 
 export function getMessageTextContent(msg: any): string {
   if (!msg?.parts) return ""
+  const lastActivity = lastActivityPartIndex(msg.parts, false)
   return msg.parts
-    .filter((p: any) => p.type === "text" && p.providerMetadata?.runtime?.phase !== "commentary")
+    .filter(
+      (part: any, index: number) =>
+        part.type === "text" && !isProgressText(part, false, index, lastActivity),
+    )
     .map((p: any) => p.text || "")
     .join("\n")
 }

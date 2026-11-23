@@ -71,6 +71,7 @@ import {
 import { toast } from "sonner"
 import { appStore } from "../../../lib/jotai-store"
 import { trpc } from "../../../lib/trpc"
+import { useCheckpointPreparation } from "../hooks/use-checkpoint-preparation"
 import {
   AgentsSlashCommand,
   COMMAND_PROMPTS,
@@ -445,6 +446,21 @@ export function NewChatForm({
   const profile =
     agentProfileSelection && !("invalid" in agentProfileSelection) ? agentProfileSelection : null
   const newChatHarness = profile?.harness ?? selectedAgent.id
+  useCheckpointPreparation(
+    chatScope === "task" ? "task" : "project",
+    chatScope === "task" ? selectedTask?.id : selectedProjectRecord?.id,
+    chatScope === "task"
+      ? selectedTask?.primaryWorktreePath
+      : chatScope === "project" && workMode === "local"
+        ? selectedProjectRecord?.path
+        : null,
+    resolveChatModePermission(
+      agentMode,
+      agentProfileSelection && !profile
+        ? "read-only"
+        : parseRunPermissionMode(profile?.permissionMode ?? selectedPermissionMode),
+    ),
+  )
   const antigravity = useAntigravityModelPicker(
     isModelDropdownOpen || newChatHarness === "antigravity",
   )

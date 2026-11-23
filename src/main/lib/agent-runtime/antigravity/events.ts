@@ -1,4 +1,4 @@
-import type { SessionUpdate } from "@agentclientprotocol/sdk"
+import type { SessionUpdate, ToolCallUpdate } from "@agentclientprotocol/sdk"
 import { createTwoFilesPatch } from "diff"
 import { eventRecord } from "../event-values"
 import type {
@@ -14,8 +14,9 @@ export class AntigravityEvents {
   private answeredSinceTool = false
   private readonly tools = new Map<
     string,
-    { name: string; kind?: string | null; outcome?: "completed" | "failed" }
+    { name: string; kind?: string | null; outcome?: "completed" | "failed" | "declined" }
   >()
+  private readonly pendingDeclines = new Map<string, string | null>()
 
   constructor(
     private readonly sessionId: string,
@@ -49,12 +50,56 @@ export class AntigravityEvents {
   completionError(): Error | null {
     if (this.answeredSinceTool) return null
     const tools = [...this.tools.values()]
-    if (tools.length && tools.every((tool) => tool.outcome === "completed")) return null
+    if (
+      tools.length &&
+      tools.every((tool) => tool.outcome === "completed" || tool.outcome === "declined")
+    )
+      return null
     const failed = tools.find((tool) => tool.outcome === "failed")
     const reason = failed
       ? `Gemini ended without a reply after a ${failed.kind === "execute" ? "command" : "tool"} failed.`
       : "Gemini ended without a reply or a completed tool action."
     return new Error(`${reason} Review the activity and continue in this chat.`)
+  }
+
+  setFileChangeDeclined(call: ToolCallUpdate, userDeclined: boolean): void {
+    const previous = this.tools.get(call.toolCallId)
+    if (!userDeclined) {
+      this.pendingDeclines.delete(call.toolCallId)
+      if (previous?.outcome === "declined") previous.outcome = undefined
+      return
+    }
+    const kind = call.kind ?? previous?.kind
+    if (kind !== "edit" && kind !== "delete" && kind !== "move") return
+    this.tools.set(call.toolCallId, {
+      name: call.title || previous?.name || "File change",
+      kind,
+      outcome: "declined",
+    })
+    const path = call.locations?.[0]?.path ?? eventRecord(call.rawInput).Path
+    this.pendingDeclines.set(call.toolCallId, typeof path === "string" ? path.slice(0, 1024) : null)
+  }
+
+  private declinedEvent(id: string): AgentActivityAppend {
+    const path = this.pendingDeclines.get(id)
+    this.pendingDeclines.delete(id)
+    return {
+      ...this.identity(),
+      providerItemId: id,
+      providerToolId: id,
+      phase: "cancelled",
+      kind: "patch",
+      displayClass: "tool",
+      privacyClass: "sensitive",
+      payload: { state: "declined", path, summary: "File change declined" },
+    }
+  }
+
+  finishTurn(): AgentActivityAppend[] {
+    return [
+      ...this.finish(),
+      ...Array.from(this.pendingDeclines.keys(), (id) => this.declinedEvent(id)),
+    ]
   }
 
   update(update: SessionUpdate): AgentActivityAppend[] {
@@ -108,6 +153,12 @@ export class AntigravityEvents {
     const exit = eventRecord(update.rawOutput).exit_code
     const failed =
       update.status === "failed" || (kind === "execute" && typeof exit === "number" && exit !== 0)
+    if (failed && previous?.outcome === "declined") {
+      if (this.pendingDeclines.has(update.toolCallId))
+        events.push(this.declinedEvent(update.toolCallId))
+      return events
+    }
+    if (update.status === "completed") this.pendingDeclines.delete(update.toolCallId)
     const outcome = failed
       ? "failed"
       : update.status === "completed"
