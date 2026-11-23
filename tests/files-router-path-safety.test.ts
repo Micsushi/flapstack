@@ -338,7 +338,7 @@ describe("files router mutation path safety", () => {
   it("keeps streamed discovery disabled until explicitly enabled", async () => {
     await expect(
       caller.searchStream({ requestId: randomUUID(), projectPath: state.userDataPath }),
-    ).rejects.toThrow("Enable streamedFileSearch")
+    ).rejects.toThrow("Enable Search while scanning")
   })
 
   it("streams partial results before completion while sharing a legacy query scan", async () => {

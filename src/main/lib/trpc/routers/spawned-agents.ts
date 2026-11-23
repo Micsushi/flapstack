@@ -11,6 +11,7 @@ import {
 } from "../../../../shared/agent-orchestration"
 import { chats, getDatabase, getDatabasePath } from "../../db"
 import { createAgentOrchestrationService } from "../../agent-orchestration/service"
+import { projectRecordsEnabled } from "../../project-records/mode"
 import { AgentProfileWorkflowBindingService } from "../../agent-profiles/workflow-binding"
 import {
   getCascadeControl,
@@ -67,6 +68,7 @@ function publishOrchestrationChange(taskId: string, projectId?: string): void {
 
 export const spawnedAgentsRouter = router({
   getPolicy: publicProcedure.query(() => ({
+    taskAuthority: projectRecordsEnabled() ? ("records" as const) : ("local" as const),
     enabled: true,
     spawnTier: 3,
     maxDepth: 32,

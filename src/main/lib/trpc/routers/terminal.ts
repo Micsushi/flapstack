@@ -32,6 +32,7 @@ export const terminalRouter = router({
         rows: z.number().int().positive().max(MAX_TERMINAL_ROWS).optional(),
         cwd: z.string().optional(),
         initialCommands: z.array(z.string()).optional(),
+        restart: z.boolean().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -45,6 +46,7 @@ export const terminalRouter = router({
           isNew: result.isNew,
           serializedState: result.serializedState,
           replayEnabled: result.replayEnabled ?? false,
+          recoveredOutput: result.recoveredOutput,
         }
       } catch (err) {
         console.error("[TerminalRouter] createOrAttach error:", err)
@@ -124,7 +126,7 @@ export const terminalRouter = router({
    * Clear scrollback buffer for terminal (used by Cmd+K / clear command)
    */
   clearScrollback: publicProcedure
-    .input(z.object({ paneId: z.string().min(1) }))
+    .input(z.object({ paneId: z.string().min(1), scopeKey: z.string().optional() }))
     .mutation(({ input }) => {
       terminalManager.clearScrollback(input)
     }),

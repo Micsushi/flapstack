@@ -8,6 +8,54 @@ import type { RuntimeCapabilitySnapshot, RuntimeLaunchControls } from "../src/sh
 import { activity } from "./runtime-activity-test-helpers"
 
 describe("Runtime activity component", () => {
+  it("keeps diagnostic identities and exact states in closed details while showing readable run labels", () => {
+    const html = renderToStaticMarkup(
+      <RuntimeActivityTimeline
+        events={[
+          activity(
+            "lifecycle",
+            { state: "turn-started" },
+            {
+              phase: "started",
+              providerThreadId: "thread-opaque-identifier",
+              providerTurnId: "turn-opaque-identifier",
+            },
+          ),
+        ]}
+      />,
+    )
+    const details = html.slice(html.indexOf("<details"), html.indexOf("</details>"))
+    expect(details).toContain("thread-opaque-identifier")
+    expect(details).toContain("turn-started")
+    expect(details).toContain("codex-app-server")
+    expect(details).not.toContain(" open")
+    expect(html.slice(0, html.indexOf("<details"))).not.toContain("thread-opaque-identifier")
+    expect(html).toContain("Run started")
+    expect(html).toContain('data-ui="button"')
+  })
+
+  it("preserves meaningful lifecycle failures and unknown lifecycle content", () => {
+    const html = renderToStaticMarkup(
+      <RuntimeActivityTimeline
+        events={[
+          activity(
+            "lifecycle",
+            { state: "turn-error", detail: "Permission denied for project file" },
+            { phase: "failed" },
+          ),
+          activity(
+            "lifecycle",
+            { state: "future-provider-state", detail: "Keep this exact evidence" },
+            { storageId: 2, phase: "started" },
+          ),
+        ]}
+      />,
+    )
+    expect(html.slice(0, html.indexOf("<details"))).toContain("Permission denied for project file")
+    expect(html).toContain("Run failed")
+    expect(html).toContain("future-provider-state: Keep this exact evidence")
+  })
+
   it("renders chat-sized timelines at their measured heights so scrolling stays stable", () => {
     const events = Array.from({ length: 30 }, (_, index) =>
       activity(

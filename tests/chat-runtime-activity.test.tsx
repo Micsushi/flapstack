@@ -10,7 +10,15 @@ import type { AgentActivityPage } from "../src/shared/agent-activity"
 const read = vi.hoisted(() => vi.fn())
 vi.mock("../src/renderer/lib/trpc", async () => {
   const { createTRPCReact } = await import("@trpc/react-query")
-  return { trpc: createTRPCReact(), trpcClient: { agentActivity: { list: { query: read } } } }
+  return {
+    trpc: createTRPCReact(),
+    trpcClient: {
+      agentActivity: {
+        list: { query: read },
+        localRunStatuses: { query: async () => ({ runs: [], hasMore: false }) },
+      },
+    },
+  }
 })
 import { trpc } from "../src/renderer/lib/trpc"
 import { ChatRuntimeActivity } from "../src/renderer/features/agents/runtime-activity/chat-runtime-activity"

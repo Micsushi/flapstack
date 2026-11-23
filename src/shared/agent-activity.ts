@@ -325,3 +325,11 @@ export function parseAgentActivityPayload<K extends AgentActivityKind>(
 ): AgentActivityPayloadByKind[K] {
   return payloadSchemas[kind].parse(value) as AgentActivityPayloadByKind[K]
 }
+
+/** Status-only projection of a persisted local run, without transcript or private metadata. */
+export type LocalRunActivityStatus = {
+  id: string
+  status: string
+  startedAt: number | null
+  completedAt: number | null
+}

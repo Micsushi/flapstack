@@ -55,6 +55,8 @@ export function Terminal({
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [replayView, setReplayView] = useState(0)
   const [replayEnabled, setReplayEnabled] = useState(false)
+  const [recoveredOutput, setRecoveredOutput] = useState(false)
+  const recoveredOutputRef = useRef(false)
   const [replayPane, setReplayPane] = useState<string | null>(null)
   const replayConsumerRef = useRef<ReturnType<typeof createTerminalReplayConsumer> | null>(null)
   const [terminalCwd, setTerminalCwd] = useState<string | null>(initialCwd || cwd)
@@ -265,20 +267,30 @@ export function Terminal({
 
     // Subscribe after PTY creation; the main-owned snapshot includes detached output.
     let usesReplay = false
-    const attachReplay = (result: { replayEnabled?: boolean; serializedState: string }) => {
+    const attachReplay = (result: {
+      replayEnabled?: boolean
+      serializedState: string
+      recoveredOutput?: { cols: number; rows: number }
+    }) => {
       if (!isUnmounted) {
-        setNeedsReconnect(false)
+        recoveredOutputRef.current = !!result.recoveredOutput
+        setRecoveredOutput(!!result.recoveredOutput)
+        isExitedRef.current = !!result.recoveredOutput
+        setNeedsReconnect(!!result.recoveredOutput)
         usesReplay = result.replayEnabled ?? false
         setReplayEnabled(usesReplay)
         setReplayPane(paneId)
         setReplayView((view) => view + 1)
+        if (result.recoveredOutput)
+          xterm.resize(result.recoveredOutput.cols, result.recoveredOutput.rows)
         if (!usesReplay && result.serializedState) xterm.write(result.serializedState)
       }
     }
 
     // Restart terminal after exit
     const restartTerminal = () => {
-      isExitedRef.current = false
+      const dimensions = recoveredOutputRef.current ? fitAddon.proposeDimensions() : undefined
+      isExitedRef.current = true
       xterm.clear()
       createOrAttachRef.current(
         {
@@ -286,9 +298,10 @@ export function Terminal({
           tabId,
           workspaceId,
           scopeKey,
-          cols: xterm.cols,
-          rows: xterm.rows,
+          cols: dimensions?.cols ?? xterm.cols,
+          rows: dimensions?.rows ?? xterm.rows,
           cwd: terminalCwdRef.current || cwd,
+          restart: true,
         },
         {
           onSuccess: attachReplay,
@@ -306,6 +319,7 @@ export function Terminal({
 
     // Input handler
     const handleTerminalInput = (data: string) => {
+      if (recoveredOutputRef.current) return
       if (isExitedRef.current) {
         restartTerminal()
         return
@@ -364,7 +378,7 @@ export function Terminal({
 
     const handleClear = () => {
       xterm.clear()
-      clearScrollbackRef.current({ paneId })
+      clearScrollbackRef.current({ paneId, scopeKey: scopeKey || workspaceId || "" })
     }
 
     const handleWrite = (data: string) => {
@@ -393,7 +407,7 @@ export function Terminal({
       (cols, rows) => {
         resizeRef.current({ paneId, cols, rows })
       },
-      () => usesReplay,
+      () => usesReplay || recoveredOutputRef.current,
     )
 
     const cleanupPaste = setupPasteHandler(xterm, {
@@ -513,17 +527,17 @@ export function Terminal({
   return (
     <div
       role="application"
-      className={`relative h-full w-full ${replayEnabled ? "overflow-x-auto overflow-y-hidden" : "overflow-hidden"}`}
+      className={`relative h-full w-full ${replayEnabled || recoveredOutput ? "overflow-x-auto overflow-y-hidden" : "overflow-hidden"}`}
       style={{ backgroundColor: terminalBg }}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
       {needsReconnect && (
         <div
-          className="beta-surface absolute right-3 top-3 z-10 flex items-center gap-2 rounded border bg-background px-2 py-1 text-sm"
+          className="beta-surface absolute left-3 right-3 top-3 z-10 flex flex-wrap items-center gap-2 rounded border bg-background px-2 py-1 text-sm"
           role="status"
         >
-          Terminal unavailable
+          {recoveredOutput ? "Recovered output. No process is running." : "Terminal unavailable"}
           <Button
             size="sm"
             variant="outline"
@@ -533,7 +547,11 @@ export function Terminal({
               reconnectRef.current?.()
             }}
           >
-            {createOrAttachMutation.isPending ? "Connecting..." : "Reconnect"}
+            {createOrAttachMutation.isPending
+              ? "Connecting..."
+              : recoveredOutput
+                ? "Start new terminal"
+                : "Reconnect"}
           </Button>
         </div>
       )}

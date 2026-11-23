@@ -85,7 +85,7 @@ export const FEATURE_VISIBILITY_REGISTRY: readonly FeatureVisibilityEntry[] = [
   ),
   feature(
     "saved-workspaces",
-    "Saved Workspaces",
+    "Saved layouts",
     "workspace",
     "settings:saved-workspaces",
     ["/saved-workspaces"],

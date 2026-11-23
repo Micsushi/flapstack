@@ -250,7 +250,13 @@ export function assertLinuxPackageDirectoryMode(mode, label) {
   }
 }
 
-export function assertDebPostInstallScript(contents, expected) {
+export function assertDebPostInstallScript(contents, expected, mode) {
+  if (!String(contents).startsWith("#!/bin/sh\n") || String(contents).includes("\r")) {
+    throw new Error("Debian post-install script must use an LF /bin/sh shebang and LF line endings")
+  }
+  if (!(mode & 0o111)) {
+    throw new Error("Debian post-install script must be executable")
+  }
   const productDirectory = expected.channel === "preview" ? "Flapstack-Preview" : "Flapstack"
   const applicationDirectory = `/opt/${productDirectory}`
   const requiredLines = [
@@ -378,6 +384,7 @@ async function inspectDebArtifact(outputRoot, expected, provenanceBytes) {
     assertDebPostInstallScript(
       readRegularFile(postInstallPath, "Debian post-install script").toString("utf8"),
       expected,
+      fs.lstatSync(postInstallPath).mode,
     )
     const executableStat = fs.lstatSync(executablePath)
     if (

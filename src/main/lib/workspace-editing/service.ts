@@ -28,6 +28,7 @@ import {
   renameWorkspaceEditSchema,
   updateWorkspaceDraftSchema,
   releaseWorkspaceDraftSchema,
+  replaceWorkspaceDraftSchema,
   saveWorkspaceDraftSchema,
   pendingWorkspaceDraftSaveSchema,
   readWorkspaceDraftSchema,
@@ -575,6 +576,66 @@ export class WorkspaceEditingService {
           .returning()
           .get()!
       })
+    })
+  }
+
+  async replaceDraft(
+    input: z.infer<typeof replaceWorkspaceDraftSchema>,
+    owner: WorkspaceDraftOwner,
+  ) {
+    const value = replaceWorkspaceDraftSchema.parse(input)
+    const root = this.draftRoot(value)
+    return withRootLock(root.path, async () => {
+      const row = this.draft(value, value.draftId)
+      this.draftLease(row.id, value.leaseToken, owner)
+      if (row.pendingSave)
+        throw new Error("Recover the pending file save before discarding or restoring a draft")
+      const disk = await this.read({ ...value, relativePath: row.relativePath })
+      this.draft(value, row.id)
+      this.draftLease(row.id, value.leaseToken, owner)
+      const replacement = value.replacement
+      const content = replacement.kind === "discard" ? disk.content : replacement.content
+      const baseSha256 =
+        replacement.kind === "discard" ? replacement.reviewedDiskSha256 : replacement.baseSha256
+      if (row.revision !== value.expectedRevision) {
+        const alreadyApplied =
+          row.revision === value.expectedRevision + 1 &&
+          row.baseSha256 === baseSha256 &&
+          (replacement.kind === "discard"
+            ? hash(Buffer.from(row.content)) === baseSha256
+            : row.content === content)
+        if (alreadyApplied) return { draft: row, disk }
+        throw new Error("Draft revision changed; keep the local buffer")
+      }
+      if (replacement.kind === "discard" && disk.sha256 !== replacement.reviewedDiskSha256)
+        throw new WorkspaceEditConflictError(disk.sha256, true)
+      if (text(Buffer.from(content)) !== content) throw new Error("Draft contains invalid Unicode")
+      // Only draft state changes; disk replacement still requires the checked Save operation.
+      const draft = this.db.transaction((tx) => {
+        const usage = tx
+          .select({
+            bytes: sql<number>`coalesce(sum(length(cast(${schema.workspaceDrafts.content} as blob))), 0)`,
+          })
+          .from(schema.workspaceDrafts)
+          .get()!
+        if (
+          usage.bytes - Buffer.byteLength(row.content) + Buffer.byteLength(content) >
+          64 * 1024 * 1024
+        )
+          throw new Error("Draft storage is full; existing buffers were preserved")
+        return tx
+          .update(schema.workspaceDrafts)
+          .set({ content, baseSha256, revision: row.revision + 1, updatedAt: Date.now() })
+          .where(
+            and(
+              eq(schema.workspaceDrafts.id, row.id),
+              eq(schema.workspaceDrafts.revision, row.revision),
+            ),
+          )
+          .returning()
+          .get()!
+      })
+      return { draft, disk }
     })
   }
 

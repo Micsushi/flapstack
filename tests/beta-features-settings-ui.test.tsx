@@ -59,7 +59,7 @@ it("keeps unknown or failed settings disabled, retries loading, and exposes fail
     await act(async () => root.render(<AgentsBetaTab />))
     expect(switches().every((item) => !item.disabled)).toBe(true)
     const editing = switches().find(
-      (item) => item.getAttribute("aria-label") === "Enable Workspace Editing",
+      (item) => item.getAttribute("aria-label") === "Enable File editing",
     )!
     expect(editing.getAttribute("aria-checked")).toBe("true")
     await act(async () => editing.click())

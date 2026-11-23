@@ -14,6 +14,19 @@ export const BETA_FEATURE_IDS = [
 export type BetaFeatureId = (typeof BETA_FEATURE_IDS)[number]
 export type BetaFeatureSettings = Record<BetaFeatureId, boolean>
 
+export const BETA_FEATURE_SEARCH_ALIASES: Record<BetaFeatureId, string[]> = {
+  projectMemory: ["project memory", "vault"],
+  orchestration: ["orchestration", "agent runs & workflows"],
+  savedWorkspaces: ["saved workspaces"],
+  automations: ["scheduled tasks"],
+  planning: ["work board & planning", "task board & plans", "kanban"],
+  branchesAndWorktrees: ["repository overview"],
+  terminalRecovery: ["terminal recovery", "terminal reattachment"],
+  streamedFileSearch: ["streamed file search", "progressive file search"],
+  diffAnnotations: ["diff comments", "diff annotations"],
+  workspaceEditing: ["workspace editing"],
+}
+
 export const DEFAULT_BETA_FEATURE_SETTINGS: BetaFeatureSettings = {
   projectMemory: false,
   orchestration: false,
@@ -34,27 +47,27 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
 }> = [
   {
     id: "workspaceEditing",
-    label: "Workspace Editing",
+    label: "File editing",
     description:
-      "Edit connected chat text files with durable drafts, conflict-checked Save, opt-in autosave, disk review and undo. Full recovery controls remain unfinished.",
+      "Edit connected chat text files with durable drafts, conflict-checked Save, opt-in autosave, disk review and undo. Draft discard and undo preserve the saved file.",
   },
   {
     id: "diffAnnotations",
-    label: "Diff Comments",
+    label: "Code review comments",
     description:
       "Diff-bound comments with editing, reversible deletion, and queued feedback to the selected conversation. Sent batches show status and offer cancellation.",
   },
   {
     id: "streamedFileSearch",
-    label: "Streamed File Search",
+    label: "Search while scanning",
     description:
       "Show partial file discovery results while scanning. Existing search remains available when disabled.",
   },
   {
     id: "terminalRecovery",
-    label: "Terminal Recovery",
+    label: "Restore terminal output",
     description:
-      "Recover detached output for new terminals. Existing terminals keep their mode; app-restart history is not yet supported.",
+      "Reattach terminal views and recover saved output after restart. Restored history is stopped; processes and commands are not replayed.",
   },
   {
     id: "projectMemory",
@@ -63,12 +76,12 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
   },
   {
     id: "orchestration",
-    label: "Agent runs & workflows",
+    label: "Agent workflows",
     description: "Multi-agent workflows, coordination engines, fleet controls, and recovery.",
   },
   {
     id: "savedWorkspaces",
-    label: "Saved Workspaces",
+    label: "Saved layouts",
     description: "Saved layouts, operation workspaces, pane restoration, and pop-out windows.",
   },
   {
@@ -78,12 +91,12 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
   },
   {
     id: "planning",
-    label: "Work board & planning",
+    label: "Work board & plans",
     description: "Plan sources, task proposals, plan promotion, and Kanban controls.",
   },
   {
     id: "branchesAndWorktrees",
-    label: "Branches & Worktrees",
+    label: "Branches & worktrees",
     description: "Read-only repository branch and worktree overview.",
   },
 ]

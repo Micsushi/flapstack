@@ -47,6 +47,7 @@ import {
 } from "../agents/lib/sidebar-width"
 import { QueueProcessor } from "../agents/components/queue-processor"
 import { SettingsSidebar } from "../settings/settings-sidebar"
+import { QuickOpen } from "../search/quick-open"
 import { ProductTour } from "../onboarding/product-tour"
 
 // ============================================================================
@@ -437,6 +438,20 @@ export function AgentsLayout() {
     <TooltipProvider delayDuration={300}>
       {/* Global queue processor - handles message queues for all sub-chats */}
       <QueueProcessor />
+      <QuickOpen
+        actions={{
+          setSelectedChatId,
+          setSelectedDraftId,
+          setShowNewChatForm,
+          setDesktopView,
+          setSidebarOpen,
+          setSettingsActiveTab,
+          toggleChatSearch,
+          selectedChatId,
+          desktopView,
+          hasSelectedProject: Boolean(selectedProject),
+        }}
+      />
       <AppCommandBridge onNavigate={moveInNavigationHistory} />
       <ClaudeLoginModal
         hideCustomModelSettingsLink={claudeLoginModalConfig.hideCustomModelSettingsLink}

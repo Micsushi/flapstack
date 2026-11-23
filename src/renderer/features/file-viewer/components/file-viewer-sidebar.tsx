@@ -1132,6 +1132,35 @@ function CodeViewer({
           <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">
             {binding.state.disk?.content ?? "Saved file unavailable. Your draft is preserved."}
           </pre>
+          {binding.state.disk &&
+            (binding.state.conflict || binding.state.content !== binding.state.disk.content) && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-2"
+                disabled={
+                  !editable ||
+                  binding.state.busy ||
+                  binding.session.needsRetry() ||
+                  !!binding.state.draft?.pendingSave
+                }
+                onClick={async (event) => {
+                  const button = event.currentTarget
+                  const activeEditor = editorRef.current
+                  const discarded = await binding.session?.discard(binding.state.disk!.sha256)
+                  if (
+                    discarded &&
+                    activeEditor === editorRef.current &&
+                    (document.activeElement === button ||
+                      (!button.isConnected && document.activeElement === document.body))
+                  )
+                    activeEditor?.focus()
+                }}
+                title="Use this saved version without changing the file. Undo restores your draft."
+              >
+                Discard draft
+              </Button>
+            )}
           {binding.state.conflict && binding.state.disk && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
               <p className="min-w-0 flex-1 text-muted-foreground">

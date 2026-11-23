@@ -12,7 +12,10 @@ import { evaluateMcpGate } from "../../mcp-control/gate"
 import { getChatMcpExposureStatus, setChatMcpExposure } from "../../mcp-control/exposure"
 import { mcpControlTools } from "../../mcp-control/registry"
 import { publicProcedure, router } from "../index"
-import { decideMcpApproval, listPendingMcpApprovals } from "../../mcp-control/approval-coordinator"
+import {
+  decideApprovalWithLocalWriteContext,
+  listPendingApprovalsWithLocalWriteContext,
+} from "../../mcp-control/local-write-approval-context"
 
 const riskTierSchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)])
 const auditDecisionSchema = z.enum([
@@ -90,7 +93,9 @@ export const appControlRouter = router({
     }),
   ),
 
-  listPendingApprovals: publicProcedure.query(() => listPendingMcpApprovals(getDatabase())),
+  listPendingApprovals: publicProcedure.query(() =>
+    listPendingApprovalsWithLocalWriteContext(getDatabase()),
+  ),
 
   listAuditRecovery: publicProcedure.query(() => {
     recoverMcpDispatchClaims(getDatabase())
@@ -122,5 +127,7 @@ export const appControlRouter = router({
         grantSession: z.boolean().default(false),
       }),
     )
-    .mutation(({ input }) => ({ resolved: decideMcpApproval(getDatabase(), input) })),
+    .mutation(({ input }) => ({
+      resolved: decideApprovalWithLocalWriteContext(getDatabase(), input),
+    })),
 })

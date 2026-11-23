@@ -1078,6 +1078,7 @@ export type CreateWindowOptions = {
   skipPaneId?: string
   stableWindowId?: string
   applyInitialLaunchPresentation?: boolean
+  applyStartupBackgroundPresentation?: boolean
   restoredBounds?: PersistedWorkbenchWindowBounds
   restoredLastFocusedAt?: number
 }
@@ -1254,6 +1255,7 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
         primaryDisplayId: screen.getPrimaryDisplay().id,
       },
       options?.applyInitialLaunchPresentation === true,
+      options?.applyStartupBackgroundPresentation === true,
     )
     const initialBounds = options?.restoredBounds ?? launchPresentation.bounds
     const headlessPerformance = isHeadlessPerformanceProfile(app.isPackaged)
@@ -1603,7 +1605,10 @@ export function createMainWindow(): BrowserWindow {
   return createWindow({ applyInitialLaunchPresentation: true })
 }
 
-function restoredWindowOptions(record: PersistedWorkbenchWindow): CreateWindowOptions {
+function restoredWindowOptions(
+  record: PersistedWorkbenchWindow,
+  startup = false,
+): CreateWindowOptions {
   const restored =
     record.bounds && screen.getAllDisplays().length > 0
       ? clampWorkbenchWindowBounds(
@@ -1620,6 +1625,7 @@ function restoredWindowOptions(record: PersistedWorkbenchWindow): CreateWindowOp
     restoredBounds: restored?.bounds ?? record.bounds,
     restoredLastFocusedAt: record.lastFocusedAt,
     applyInitialLaunchPresentation: record.stableId === "main" && !record.bounds,
+    applyStartupBackgroundPresentation: startup,
   }
 }
 
@@ -1630,16 +1636,31 @@ export function restoreWorkbenchWindows(): TryCreateWindowResult[] {
     console.warn(
       "[Main] Persisted workbench-window state is corrupt; starting one window without replacing it.",
     )
-    return [tryCreateWindow({ applyInitialLaunchPresentation: true })]
+    return [
+      tryCreateWindow({
+        applyInitialLaunchPresentation: true,
+        applyStartupBackgroundPresentation: true,
+      }),
+    ]
   }
   const plan = store.selectForStartup()
   if (plan.active.length === 0) {
-    return [tryCreateWindow({ applyInitialLaunchPresentation: true })]
+    return [
+      tryCreateWindow({
+        applyInitialLaunchPresentation: true,
+        applyStartupBackgroundPresentation: true,
+      }),
+    ]
   }
 
-  const results = plan.active.map((record) => tryCreateWindow(restoredWindowOptions(record)))
+  const results = plan.active.map((record) => tryCreateWindow(restoredWindowOptions(record, true)))
   if (!results.some((result) => result.ok)) {
-    results.push(tryCreateWindow({ applyInitialLaunchPresentation: true }))
+    results.push(
+      tryCreateWindow({
+        applyInitialLaunchPresentation: true,
+        applyStartupBackgroundPresentation: true,
+      }),
+    )
   }
   return results
 }

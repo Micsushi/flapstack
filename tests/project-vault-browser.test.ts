@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { fileSymlinksSupported } from "./helpers/symlink-capability"
 
 import * as schema from "../src/main/lib/db/schema"
+import { addSeedFrontmatter } from "../src/main/lib/project-vaults/seed-identity"
 import { projects } from "../src/main/lib/db/schema"
 import {
   readProjectVaultSectionForPreview,
@@ -75,6 +76,26 @@ describe("project vault browser services", () => {
   afterEach(() => {
     sqlite.close()
     rmSync(directory, { recursive: true, force: true })
+  })
+
+  it("searches authored content without exposing generated seed metadata", async () => {
+    await writeProjectVaultSection(database, {
+      projectId: "project-1",
+      sectionId: "index",
+      expectedVersion: 1,
+      content: addSeedFrontmatter("# Quasar navigation\n\nKeep the review notes.", "index"),
+    })
+    const results = await searchProjectVault(database, { projectId: "project-1", query: "Quasar" })
+    expect(results).toHaveLength(1)
+    expect(results[0]!.snippet).toBe("# Quasar navigation Keep the review notes.")
+    expect(
+      await searchProjectVault(database, { projectId: "project-1", query: "flapstack-kind" }),
+    ).toEqual([])
+    const stored = await readProjectVaultSection(database, {
+      projectId: "project-1",
+      sectionId: "index",
+    })
+    expect(stored.content).toContain("flapstack-kind: seed")
   })
 
   it("searches only the selected project and redacts secret-like snippets", async () => {

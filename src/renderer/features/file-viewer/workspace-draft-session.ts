@@ -7,12 +7,14 @@ type Saved = Awaited<ReturnType<Api["saveDraft"]["mutate"]>>
 type Update = Parameters<Api["updateDraft"]["mutate"]>[0]
 type Save = Parameters<Api["saveDraft"]["mutate"]>[0]
 type Disk = Awaited<ReturnType<Api["read"]["query"]>>
+type Replacement = Parameters<Api["replaceDraft"]["mutate"]>[0]
 type Client = {
   open: Api["openDraft"]["mutate"]
   update: Api["updateDraft"]["mutate"]
   save: Api["saveDraft"]["mutate"]
   release: Api["releaseDraft"]["mutate"]
   read: Api["read"]["query"]
+  replace: Api["replaceDraft"]["mutate"]
 }
 
 export type WorkspaceDraftSessionState = {
@@ -33,6 +35,7 @@ export function createWorkspaceDraftSession(
   target: WorkspaceEditScope & { relativePath: string },
   client: Client,
   onSaved: (operation: Extract<Saved, { ok: true }>["operation"]) => void = () => undefined,
+  onDiscarded: (before: Opened["draft"], after: Opened["draft"]) => void = () => undefined,
 ) {
   let state: WorkspaceDraftSessionState = {
     phase: "opening",
@@ -51,6 +54,17 @@ export function createWorkspaceDraftSession(
   let queue = Promise.resolve()
   let pendingUpdate: Update | null = null
   let pendingSave: Save | null = null
+  let pendingDiscard: {
+    request: Replacement
+    before: Opened["draft"]
+    content: string
+    discardedContent: string
+  } | null = null
+  let pendingRestore: {
+    request: Replacement
+    expected: Opened["draft"]
+    restore: Opened["draft"]
+  } | null = null
   let autosaveTimer: ReturnType<typeof setTimeout> | undefined
   let editGeneration = 0
   const cancelAutosave = () => {
@@ -155,6 +169,31 @@ export function createWorkspaceDraftSession(
     return true
   }
   const flush = () => enqueue(syncBuffer)
+  const applyReplacement = async (request: Replacement, contentBefore: string) => {
+    const result = await client.replace({ ...request, leaseToken })
+    if (!result.ok) {
+      pendingDiscard = null
+      throw new Error("The saved file changed. Review it again before discarding your draft.")
+    }
+    blocked = false
+    publish({
+      draft: result.draft,
+      disk: result.disk,
+      content: state.content === contentBefore ? result.draft.content : state.content,
+      conflict: result.disk.sha256 !== result.draft.baseSha256,
+      error: null,
+      autosave: false,
+    })
+    return result.draft
+  }
+  const finishDiscard = async () => {
+    if (!pendingDiscard) return true
+    const pending = pendingDiscard
+    const after = await applyReplacement(pending.request, pending.content)
+    onDiscarded(pending.before, after)
+    pendingDiscard = null
+    return true
+  }
   const open = () =>
     enqueue(async () => {
       if (state.phase === "ready") return !blocked
@@ -243,6 +282,82 @@ export function createWorkspaceDraftSession(
     },
     flush,
     save,
+    restoreDiscard: async (restore: Opened["draft"], expected: Opened["draft"]) => {
+      let restored: Opened["draft"] | null = null
+      const success = await enqueue(async () => {
+        const refuse = (error: string) => {
+          publish({ error })
+          return false
+        }
+        if (
+          pendingRestore &&
+          (pendingRestore.expected !== expected || pendingRestore.restore !== restore)
+        )
+          return refuse("Retry the pending Undo or Redo before reversing another draft action.")
+        const revision = pendingRestore?.request.expectedRevision ?? state.draft?.revision
+        const alreadyApplied =
+          pendingRestore &&
+          state.draft?.revision === pendingRestore.request.expectedRevision + 1 &&
+          state.content === restore.content &&
+          state.draft.content === restore.content &&
+          state.draft.baseSha256 === restore.baseSha256
+        if (
+          pendingSave ||
+          pendingDiscard ||
+          pendingUpdate ||
+          state.phase !== "ready" ||
+          state.draft?.id !== expected.id ||
+          (!alreadyApplied &&
+            (state.content !== expected.content ||
+              state.draft.content !== expected.content ||
+              state.draft.baseSha256 !== expected.baseSha256 ||
+              state.draft.revision !== revision))
+        )
+          return refuse(
+            "Later draft edits are preserved. Restore the prior text before reversing the discard; changed saved-file bases require a new recovery action.",
+          )
+        if (blocked && !pendingRestore)
+          return refuse("Retry the pending draft operation before reversing the discard.")
+        cancelAutosave()
+        pendingRestore ??= {
+          expected,
+          restore,
+          request: {
+            ...draftTarget(),
+            expectedRevision: state.draft.revision,
+            replacement: {
+              kind: "restore",
+              content: restore.content,
+              baseSha256: restore.baseSha256,
+            },
+          },
+        }
+        restored = await applyReplacement(pendingRestore.request, state.content)
+        pendingRestore = null
+        return true
+      })
+      if (!success || !restored)
+        throw new Error(state.error ?? "Draft reversal failed. Retry Undo or Redo.")
+      return restored
+    },
+    discard: (reviewedDiskSha256: string) => {
+      cancelAutosave()
+      return enqueue(async () => {
+        if (blocked || pendingSave || pendingDiscard || !(await syncBuffer())) return false
+        if (!state.disk || state.disk.sha256 !== reviewedDiskSha256) return false
+        pendingDiscard = {
+          request: {
+            ...draftTarget(),
+            expectedRevision: state.draft!.revision,
+            replacement: { kind: "discard", reviewedDiskSha256 },
+          },
+          before: state.draft!,
+          content: state.content,
+          discardedContent: state.disk.content,
+        }
+        return finishDiscard()
+      })
+    },
     setAutosave: (enabled: boolean) => {
       if (state.phase !== "ready" || (enabled && !state.autosaveAllowed)) return false
       cancelAutosave()
@@ -253,8 +368,13 @@ export function createWorkspaceDraftSession(
     retry: () =>
       enqueue(async () => {
         if (state.phase !== "ready") return false
+        if (pendingRestore) {
+          publish({ error: "Retry Undo or Redo to finish the pending draft reversal." })
+          return false
+        }
         blocked = false
         publish({ error: null })
+        if (pendingDiscard) await finishDiscard()
         const saved = pendingSave ? applySave(await client.save(pendingSave)) : true
         const synced = await syncBuffer()
         return saved && synced
@@ -272,6 +392,12 @@ export function createWorkspaceDraftSession(
                   leaseToken,
                   content: previous.content,
                   ...(pendingUpdate ? { pendingUpdateContent: pendingUpdate.content } : {}),
+                  ...(pendingDiscard
+                    ? { pendingUpdateContent: pendingDiscard.discardedContent }
+                    : {}),
+                  ...(pendingRestore
+                    ? { pendingUpdateContent: pendingRestore.restore.content }
+                    : {}),
                 },
               }
             : {}),
@@ -292,7 +418,13 @@ export function createWorkspaceDraftSession(
           autosave: false,
           autosaveAllowed: opened.autosaveAllowed === true,
         })
+        if (pendingRestore) {
+          blocked = true
+          publish({ error: "Retry Undo or Redo to finish the pending draft reversal." })
+          return false
+        }
         const saved = pendingSave ? applySave(await client.save(pendingSave)) : true
+        if (pendingDiscard) await finishDiscard()
         return (await syncBuffer()) && saved
       })
     },
@@ -342,7 +474,10 @@ export function createWorkspaceDraftSession(
       })
     },
     hasUnpersistedText: () =>
-      !!pendingUpdate || (!!state.draft && state.content !== state.draft.content),
+      !!pendingRestore ||
+      !!pendingDiscard ||
+      !!pendingUpdate ||
+      (!!state.draft && state.content !== state.draft.content),
     needsRetry: () => blocked,
   }
 }

@@ -1,7 +1,7 @@
 import { getRunContextHealth } from "../../project-vaults/context-health"
 import { runContextHealthInputSchema } from "../../../../shared/run-context-health"
 import { getSqliteDatabase } from "../../db"
-import { desc, eq } from "drizzle-orm"
+import { and, desc, eq, sql } from "drizzle-orm"
 import { z } from "zod"
 import { captureCheckpoint, captureRunManifest } from "../../checkpoints"
 import { assertSubChatNotRewinding } from "../../sub-chat-rewind-guard"
@@ -190,6 +190,23 @@ export const runsRouter = router({
       .orderBy(desc(agentRuns.startedAt))
       .all()
   }),
+
+  latestForSubChat: publicProcedure
+    .input(z.object({ chatId: z.string(), subChatId: z.string() }))
+    .query(({ input }) =>
+      getDatabase()
+        .select({
+          id: agentRuns.id,
+          subChatId: agentRuns.subChatId,
+          status: agentRuns.status,
+          promptMessageId: agentRuns.promptMessageId,
+        })
+        .from(agentRuns)
+        .where(and(eq(agentRuns.chatId, input.chatId), eq(agentRuns.subChatId, input.subChatId)))
+        .orderBy(desc(agentRuns.startedAt), desc(sql`${agentRuns}.rowid`))
+        .limit(1)
+        .get(),
+    ),
 
   get: publicProcedure.input(z.object({ runId: z.string() })).query(({ input }) => {
     const db = getDatabase()

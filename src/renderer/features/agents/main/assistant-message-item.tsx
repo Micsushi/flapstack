@@ -1,4 +1,7 @@
 "use client"
+
+import { getLocalToolOutcome } from "../../../../shared/local-tool-outcome"
+import { LocalToolOutcome } from "../ui/local-tool-outcome"
 import { MessageReplyContext } from "./message-reply-context"
 
 import { useAtomValue } from "jotai"
@@ -362,13 +365,19 @@ function groupToolActivities(parts: any[], nestedToolIds: Set<string>): any[] {
   return result
 }
 
-function summarizeToolActivities(parts: any[]): string {
+function summarizeToolActivities(parts: any[], streamState?: unknown): string {
+  const localOutcomes: string[] = []
   let edits = 0
   let reads = 0
   let commands = 0
   let tools = 0
 
   for (const part of parts) {
+    const local = getLocalToolOutcome(part, streamState)
+    if (local) {
+      localOutcomes.push(local.label)
+      continue
+    }
     const type = String(part.type).toLowerCase()
     if (type === "tool-edit" || type === "tool-write" || type === "tool-apply_patch") edits++
     else if (
@@ -379,7 +388,7 @@ function summarizeToolActivities(parts: any[]): string {
     else tools++
   }
 
-  const summary: string[] = []
+  const summary: string[] = [...new Set(localOutcomes)]
   if (edits) summary.push(edits === 1 ? "Edited a file" : `Edited ${edits} files`)
   if (reads) summary.push(reads === 1 ? "Read a file" : `Read ${reads} files`)
   if (commands) summary.push(commands === 1 ? "Ran a command" : `Ran ${commands} commands`)
@@ -388,12 +397,13 @@ function summarizeToolActivities(parts: any[]): string {
 }
 
 interface ToolActivityGroupProps {
+  streamState?: unknown
   parts: any[]
   isStreaming: boolean
   children: React.ReactNode
 }
 
-function ToolActivityGroup({ parts, isStreaming, children }: ToolActivityGroupProps) {
+function ToolActivityGroup({ parts, isStreaming, children, streamState }: ToolActivityGroupProps) {
   const [isExpanded, setIsExpanded] = useState(isStreaming)
   const wasStreamingRef = useRef(isStreaming)
 
@@ -401,6 +411,9 @@ function ToolActivityGroup({ parts, isStreaming, children }: ToolActivityGroupPr
     if (wasStreamingRef.current && !isStreaming) setIsExpanded(false)
     wasStreamingRef.current = isStreaming
   }, [isStreaming])
+
+  const singleOutcome = parts.length === 1 ? getLocalToolOutcome(parts[0], streamState) : null
+  if (singleOutcome && !singleOutcome.reason) return <>{children}</>
 
   return (
     <div className="mx-2 overflow-hidden rounded-md bg-muted/35">
@@ -410,7 +423,9 @@ function ToolActivityGroup({ parts, isStreaming, children }: ToolActivityGroupPr
         aria-expanded={isExpanded}
         className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground"
       >
-        <span className="min-w-0 flex-1 truncate">{summarizeToolActivities(parts)}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {summarizeToolActivities(parts, streamState)}
+        </span>
         <ChevronRight
           className={cn(
             "h-3.5 w-3.5 shrink-0 transition-transform duration-200 ease-out",
@@ -428,6 +443,7 @@ interface ReasoningTimelineProps {
   children: React.ReactNode
   isStreaming: boolean
   wasStopped: boolean
+  wasInterrupted: boolean
   hasDetails: boolean
   durationMs?: number
   startedAt: number
@@ -437,6 +453,7 @@ function ReasoningTimeline({
   children,
   isStreaming,
   wasStopped,
+  wasInterrupted,
   hasDetails,
   durationMs,
   startedAt,
@@ -461,11 +478,10 @@ function ReasoningTimeline({
     return () => clearInterval(interval)
   }, [durationMs, isStreaming, startedAt])
 
-  const label = formatReasoningStatus(
-    isStreaming,
-    isStreaming ? elapsedMs : (durationMs ?? elapsedMs),
-    wasStopped,
-  )
+  const label =
+    !isStreaming && wasInterrupted && !wasStopped
+      ? "Interrupted"
+      : formatReasoningStatus(isStreaming, isStreaming ? elapsedMs : durationMs, wasStopped)
 
   return (
     <div
@@ -951,13 +967,18 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   )
 
   const msgMetadata = message?.metadata as AgentMessageMetadata
-  const wasStopped =
-    Boolean((msgMetadata as AgentMessageMetadata & { stoppedByUser?: boolean })?.stoppedByUser) ||
-    (isLastMessage &&
-      !isStreaming &&
-      messageParts.some((part: any) =>
-        ["call", "input-streaming", "input-available", "pending"].includes(part.state),
-      ))
+  const wasStopped = Boolean(
+    (msgMetadata as AgentMessageMetadata & { stoppedByUser?: boolean })?.stoppedByUser,
+  )
+  const wasInterrupted =
+    !isStreaming &&
+    (msgMetadata?.streamState === "failure" ||
+      msgMetadata?.streamState === "cancelled" ||
+      (isLastMessage &&
+        messageParts.some((part: any) =>
+          ["call", "input-streaming", "input-available", "pending"].includes(part.state),
+        )))
+  const toolStreamState = wasInterrupted ? "failure" : msgMetadata?.streamState
   const timestamp = formatMessageTimestamp(message)
 
   const renderPart = useCallback(
@@ -1151,6 +1172,10 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
         )
       }
 
+      if (getLocalToolOutcome(part, toolStreamState)) {
+        return <LocalToolOutcome key={idx} part={part} streamState={toolStreamState} />
+      }
+
       if (part.type in AgentToolRegistry) {
         const meta = AgentToolRegistry[part.type]
         const { isPending, isError } = getToolStatus(part, status)
@@ -1203,6 +1228,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
       subChatId,
       message.id,
       msgMetadata?.durationMs,
+      toolStreamState,
       planOpsSummary,
       shouldCollapse,
       lastCollapsedPlanOp,
@@ -1216,10 +1242,11 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
       <DiscussionAnnotationAction messageId={message.id} role="assistant" />
       <ProducerChips metadata={msgMetadata} />
       <div className="flex flex-col gap-1.5">
-        {((hasActivity && visibleStepsCount > 0) || wasStopped) && (
+        {((hasActivity && visibleStepsCount > 0) || wasStopped || wasInterrupted) && (
           <ReasoningTimeline
             isStreaming={isStreaming && isLastMessage}
             wasStopped={wasStopped}
+            wasInterrupted={wasInterrupted}
             hasDetails={hasActivity && visibleStepsCount > 0}
             durationMs={msgMetadata?.durationMs}
             startedAt={reasoningStartedAtRef.current}
@@ -1232,6 +1259,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
                 if (part.type === "activity-group") {
                   return (
                     <ToolActivityGroup
+                      streamState={toolStreamState}
                       key={idx}
                       parts={part.parts}
                       isStreaming={isStreaming && isLastMessage}

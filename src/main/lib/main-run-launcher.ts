@@ -1023,7 +1023,25 @@ export class MainRuntimeLaunchService {
               (run.prompt_message_id?.startsWith("mcp-diff-feedback-") &&
                 db
                   .prepare("SELECT id FROM diff_feedback_batches WHERE id = ? AND run_id = ?")
-                  .get(run.prompt_message_id.slice("mcp-diff-feedback-".length), runId)))
+                  .get(run.prompt_message_id.slice("mcp-diff-feedback-".length), runId)) ||
+              db
+                .prepare(
+                  `SELECT e.id FROM automation_executions e
+                   JOIN automation_occurrences o ON o.id = e.occurrence_id
+                   JOIN agent_runs r ON r.id = e.run_id
+                   JOIN sub_chats s ON s.id = r.sub_chat_id AND s.chat_id = r.chat_id
+                   WHERE e.run_id = ? AND e.state = 'running'
+                     AND json_valid(e.authority_snapshot)
+                     AND json_type(e.authority_snapshot, '$.target') = 'object'
+                     AND (json_extract(e.authority_snapshot, '$.target.chatId') IS NULL
+                       OR json_extract(e.authority_snapshot, '$.target.chatId') = r.chat_id)
+                     AND (r.prompt_message_id = 'automation-' || o.id || '-' || e.attempt
+                       OR EXISTS (
+                         SELECT 1 FROM orchestration_agents oa
+                         WHERE oa.id = 'automation-' || o.id
+                           AND oa.run_id = r.id AND oa.chat_id = r.chat_id))`,
+                )
+                .get(runId))
           ) {
             persistInteractiveRuntimeAssistantFallback(
               db,

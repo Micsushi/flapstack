@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { useInfiniteQuery } from "@tanstack/react-query"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { getQueryKey } from "@trpc/react-query"
 import { trpc, trpcClient } from "../../../lib/trpc"
 import { RuntimeActivityTimeline } from "./runtime-activity-timeline"
@@ -15,6 +15,11 @@ export function ChatRuntimeActivity({ chatId, live }: { chatId: string; live: bo
 }
 
 function PersistedRuntimeActivity({ chatId, live }: { chatId: string; live: boolean }) {
+  const localRuns = useQuery({
+    queryKey: getQueryKey(trpc.agentActivity.localRunStatuses, { chatId }, "query"),
+    queryFn: () => trpcClient.agentActivity.localRunStatuses.query({ chatId }),
+    refetchInterval: 5_000,
+  })
   const input = {
     chatId,
     limit: 500,
@@ -33,23 +38,34 @@ function PersistedRuntimeActivity({ chatId, live }: { chatId: string; live: bool
     () => [...(query.data?.pages ?? [])].reverse().flatMap((page) => page.events),
     [query.data],
   )
+  const error = query.error ?? localRuns.error
   return (
     <>
-      {query.hasNextPage && (
+      {(query.hasNextPage || localRuns.data?.hasMore) && (
         <p className="mb-2 text-xs text-muted-foreground">
-          Search and export include loaded activity. Load earlier activity to include more history.
+          Search and export include loaded activity and up to 500 recent local runs.
         </p>
       )}
       <RuntimeActivityTimeline
         events={events}
-        status={query.isError ? "error" : query.isFetching ? "loading" : live ? "live" : "ready"}
-        error={query.error?.message}
+        localRunStatuses={localRuns.data?.runs}
+        status={
+          error
+            ? "error"
+            : query.isFetching || localRuns.isLoading
+              ? "loading"
+              : live
+                ? "live"
+                : "ready"
+        }
+        error={error?.message}
         hasMore={query.hasNextPage}
         onLoadMore={() => {
           void query.fetchNextPage()
         }}
         onRetry={() => {
           void query.refetch()
+          void localRuns.refetch()
         }}
         viewportHeight={400}
       />

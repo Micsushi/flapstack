@@ -25,8 +25,10 @@ type Subscriber = {
   timer?: ReturnType<typeof setTimeout>
 }
 
-/** Owns parsed screen state even when every renderer has detached. No disk log or input indexing. */
+/** Owns parsed screen state even when every renderer has detached. No input indexing. */
 export class TerminalReplay {
+  private retain?: (value: { data: string; cols: number; rows: number }) => void
+  private retainTimer?: ReturnType<typeof setTimeout>
   private terminal: Terminal
   private serializer = new SerializeAddon()
   private jobs: Array<() => Promise<void> | void> = []
@@ -60,6 +62,47 @@ export class TerminalReplay {
     if (!this.disposed && !this.failure && !this.ending) this.batcher.push(data)
   }
 
+  retainOutput(save: NonNullable<TerminalReplay["retain"]>): void {
+    this.retain = save
+    this.scheduleRetention()
+  }
+
+  async flushRetainedOutput(): Promise<void> {
+    if (!this.retain || this.disposed || this.failure) return
+    this.batcher.flush()
+    await new Promise<void>((resolve) => {
+      // Recovery must not hold application shutdown open if parsing has failed.
+      const timeout = setTimeout(resolve, 1000)
+      this.enqueue(() => {
+        this.saveOutput()
+        clearTimeout(timeout)
+        resolve()
+      })
+    })
+  }
+
+  private scheduleRetention(): void {
+    if (!this.retain || this.retainTimer) return
+    this.retainTimer = setTimeout(() => {
+      this.retainTimer = undefined
+      this.enqueue(() => this.saveOutput())
+    }, 1000)
+    this.retainTimer.unref()
+  }
+
+  private saveOutput(): void {
+    if (!this.retain) return
+    try {
+      this.retain({
+        data: this.serializer.serialize({ scrollback: 1000 }),
+        cols: this.terminal.cols,
+        rows: this.terminal.rows,
+      })
+    } catch (error) {
+      console.warn("[Terminal] Could not snapshot retained output:", error)
+    }
+  }
+
   private queueData(data: string): void {
     const bytes = Buffer.byteLength(data)
     if (this.queuedBytes + bytes > MAX_QUEUED_BYTES) {
@@ -86,6 +129,7 @@ export class TerminalReplay {
             this.queuedBytes -= bytes
             if (this.paused && this.queuedBytes < 64 * 1024) this.resume()
             this.broadcast({ type: "data", data })
+            this.scheduleRetention()
             resolve()
           })
         }),
@@ -97,6 +141,7 @@ export class TerminalReplay {
     this.batcher.flush()
     this.enqueue(() => {
       this.terminal.resize(cols, rows)
+      this.scheduleRetention()
       this.invalidateSubscribers()
     })
   }
@@ -105,6 +150,7 @@ export class TerminalReplay {
     this.batcher.flush()
     this.enqueue(() => {
       this.terminal.clear()
+      this.saveOutput()
       this.invalidateSubscribers()
     })
   }
@@ -114,6 +160,7 @@ export class TerminalReplay {
     this.ending = true
     this.enqueue(() => {
       this.exit = { type: "exit", exitCode, signal }
+      this.saveOutput()
       for (const [id, subscriber] of this.subscribers) {
         if (!subscriber.pending && !subscriber.dirty) this.deliver(id, subscriber, this.exit!)
       }
@@ -278,6 +325,8 @@ export class TerminalReplay {
 
   dispose(): void {
     if (this.disposed) return
+    if (this.retainTimer) clearTimeout(this.retainTimer)
+    this.saveOutput()
     this.disposed = true
     this.batcher.dispose()
     this.jobs = []

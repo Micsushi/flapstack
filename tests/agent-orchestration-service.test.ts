@@ -2,10 +2,10 @@ import Database from "better-sqlite3"
 import { execFileSync } from "node:child_process"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
-import { mkdtempSync, realpathSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createAgentOrchestrationService } from "../src/main/lib/agent-orchestration/service"
 import {
   stableOperationOrchestrationId,
@@ -46,11 +46,26 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.unstubAllEnvs()
   sqlite.close()
   rmSync(directory, { recursive: true, force: true })
 })
 
 describe("durable agent task orchestration", () => {
+  it.each([
+    ["FLAPSTACK_PROJECT_RECORDS_MODE", "standalone"],
+    ["FLAPSTACK_PROJECT_RECORDS_URL", "http://127.0.0.1:1"],
+  ])("rejects legacy creation before opening storage when %s is configured", (key, value) => {
+    vi.stubEnv(key, value)
+    const unopenedPath = join(directory, "must-not-open.db")
+    expect(() =>
+      createAgentOrchestrationService(unopenedPath).create(createInput({ count: 1 })),
+    ).toThrow("Project records owns task transitions")
+    expect(existsSync(unopenedPath)).toBe(false)
+    expect(sqlite.prepare("SELECT id FROM tasks").all()).toEqual([])
+    expect(sqlite.prepare("SELECT id FROM agent_runs").all()).toEqual([])
+  })
+
   it.each(["completed", "failed", "stopped"] as const)(
     "records %s once across repeated overview reads while still cleaning stale active work",
     (status) => {

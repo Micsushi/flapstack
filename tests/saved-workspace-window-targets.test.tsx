@@ -166,7 +166,7 @@ describe("saved workspace initial window targets", () => {
 
     expect(workspaceDuplicateButton().disabled).toBe(true)
     expect(workspaceDuplicateButton().title).toBe(
-      "Duplicate workspaces from the main Saved Workspaces view.",
+      "Duplicate layouts from the main Saved layouts view.",
     )
     await act(async () => workspaceDuplicateButton().click())
     expect(mocks.mutateAsync).not.toHaveBeenCalled()

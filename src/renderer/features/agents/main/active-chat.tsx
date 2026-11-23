@@ -57,7 +57,7 @@ import {
 } from "./chat-message-hydration"
 import { createPersistedMessageCache } from "./persisted-message-cache"
 import { normalizePersistedMessages } from "./normalize-persisted-messages"
-import { presentRunError } from "./run-error-presentation"
+import { presentRunError, shouldShowPersistedRunFailure } from "./run-error-presentation"
 import {
   MAX_ATTACHMENT_BYTES,
   normalizeNonImageAttachmentMimeType,
@@ -102,7 +102,6 @@ import {
   unifiedSidebarEnabledAtom,
   widgetVisibilityAtomFamily,
 } from "../../details-sidebar/atoms"
-import { FileSearchDialog } from "../../file-viewer/components/file-search-dialog"
 import {
   terminalBottomHeightAtom,
   terminalDisplayModeAtom,
@@ -127,7 +126,6 @@ import {
   diffSidebarOpenAtomFamily,
   diffViewDisplayModeAtom,
   expiredUserQuestionsAtom,
-  fileSearchDialogOpenAtom,
   fileViewerDisplayModeAtom,
   fileViewerOpenAtomFamily,
   fileViewerSidebarWidthAtom,
@@ -2602,6 +2600,19 @@ const ChatViewInner = memo(function ChatViewInner({
     // A 100-row activity list is not perceptibly staler at 0.4 Hz than at 1 Hz.
     { enabled: isActive, refetchInterval: isStreaming ? 2_500 : false },
   )
+  const { data: latestRun, refetch: refetchLatestRun } = trpc.runs.latestForSubChat.useQuery(
+    { chatId: parentChatId, subChatId },
+    { enabled: isActive },
+  )
+  const retryingPersistedRunId = useRef<string | null>(null)
+  useEffect(() => {
+    if (isActive) void refetchLatestRun()
+  }, [isActive, isStreaming, activityPage, refetchLatestRun])
+  useEffect(() => {
+    if (latestRun && latestRun.id !== retryingPersistedRunId.current) {
+      retryingPersistedRunId.current = null
+    }
+  }, [latestRun])
 
   // Ref for isStreaming to use in callbacks/effects that need fresh value
   const isStreamingRef = useRef(isStreaming)
@@ -5001,9 +5012,21 @@ const ChatViewInner = memo(function ChatViewInner({
   ).length
   const showStreamingCue =
     (isStreaming || isCompacting) && !hasAssistantOutputForLatestTurn(messages)
+  const persistedRunFailed = shouldShowPersistedRunFailure({
+    run: latestRun,
+    subChatId,
+    messages,
+    status,
+    retryingRunId: retryingPersistedRunId.current,
+  })
   const runErrorPresentation = useMemo(
-    () => presentRunError(error?.message, getPlatform()),
-    [error?.message],
+    () =>
+      presentRunError(
+        error?.message ??
+          (persistedRunFailed ? "This run failed. Retry the message to try again." : undefined),
+        getPlatform(),
+      ),
+    [error?.message, persistedRunFailed],
   )
   const jumpToTranscriptMarker = useCallback((marker: TranscriptMarker) => {
     if (
@@ -5330,7 +5353,7 @@ const ChatViewInner = memo(function ChatViewInner({
                       />
                     </MessageReplyContext.Provider>
                     {showStreamingCue && <StreamingCue />}
-                    {status === "error" && (
+                    {(status === "error" || persistedRunFailed) && (
                       <div
                         role="alert"
                         className="mx-1 rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300"
@@ -5345,7 +5368,14 @@ const ChatViewInner = memo(function ChatViewInner({
                           size="sm"
                           className="mt-2 h-7 border-red-500/35 bg-background/60 px-2.5 text-xs hover:bg-red-500/10"
                           aria-label="Retry failed message"
-                          onClick={() => void regenerate()}
+                          onClick={(event) => {
+                            if (persistedRunFailed && latestRun) {
+                              retryingPersistedRunId.current = latestRun.id
+                            }
+                            if (document.activeElement === event.currentTarget)
+                              editorRef.current?.focus()
+                            void regenerate().finally(() => void refetchLatestRun())
+                          }}
                         >
                           Retry
                         </Button>
@@ -5651,7 +5681,6 @@ function ChatViewScoped({
   const [fileViewerDisplayMode] = useAtom(fileViewerDisplayModeAtom)
 
   // File search dialog (Cmd+P)
-  const [fileSearchOpen, setFileSearchOpen] = useAtom(fileSearchDialogOpenAtom)
 
   // Details sidebar state (unified sidebar that combines all right sidebars)
   const isUnifiedSidebarEnabled = useAtomValue(unifiedSidebarEnabledAtom)
@@ -7433,9 +7462,16 @@ Make sure to preserve all functionality from both branches when resolving confli
         }))
       }
 
-      if (latestAssistantUsesDirectRuntime(latestMessages)) {
+      const unansweredUserMessage =
+        latestMessages.at(-1)?.role === "user" ? latestMessages.at(-1) : null
+      if (latestAssistantUsesDirectRuntime(latestMessages) || unansweredUserMessage) {
         void trpcClient.chats.mergeRuntimeSubChatMessages
-          .mutate({ id: subChatId, messages: latestMessagesJson })
+          .mutate({
+            id: subChatId,
+            messages: unansweredUserMessage
+              ? JSON.stringify([unansweredUserMessage])
+              : latestMessagesJson,
+          })
           .then((updated) => {
             if (typeof updated?.messages !== "string") return
             setTranscriptMessages(updated.messages, updated.updatedAt ?? new Date())
@@ -8584,15 +8620,6 @@ Make sure to preserve all functionality from both branches when resolving confli
   return (
     <FileOpenProvider onOpenFile={setFileViewerPath}>
       <TextSelectionProvider>
-        {/* File Search Dialog (Cmd+P) */}
-        {worktreePath && (
-          <FileSearchDialog
-            open={fileSearchOpen}
-            onOpenChange={setFileSearchOpen}
-            projectPath={worktreePath}
-            onSelectFile={setFileViewerPath}
-          />
-        )}
         <div
           className="flex h-full flex-col"
           onPointerDownCapture={() => {

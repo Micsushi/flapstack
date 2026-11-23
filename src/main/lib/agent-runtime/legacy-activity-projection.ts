@@ -1,3 +1,4 @@
+import { getToolOutcome } from "../../../shared/local-tool-outcome"
 import type {
   AgentActivityDisplayClass,
   AgentActivityKind,
@@ -32,9 +33,27 @@ export function projectLegacyActivity(messagesValue: unknown): LegacyActivityPro
     if (!messageValue || typeof messageValue !== "object") continue
     const message = messageValue as Record<string, unknown>
     const role = typeof message.role === "string" ? message.role : "unknown"
+    const metadata = message.metadata as Record<string, unknown> | undefined
+    const streamState = metadata?.streamState
+    const phase: AgentActivityPhase =
+      streamState === "cancelled"
+        ? "cancelled"
+        : streamState === "failure"
+          ? "failed"
+          : streamState === "streaming"
+            ? "delta"
+            : "completed"
     const parts = legacyParts(message)
     for (const [partIndex, partValue] of parts.entries()) {
-      const projection = projectPart(partValue, role, messageIndex, partIndex, output.length + 1)
+      const projection = projectPart(
+        partValue,
+        role,
+        messageIndex,
+        partIndex,
+        output.length + 1,
+        phase,
+        streamState,
+      )
       if (projection) output.push(projection)
     }
   }
@@ -54,6 +73,8 @@ function projectPart(
   messageIndex: number,
   partIndex: number,
   sequence: number,
+  phase: AgentActivityPhase,
+  streamState?: unknown,
 ): LegacyActivityProjection | null {
   if (!value || typeof value !== "object") return null
   const part = value as Record<string, unknown>
@@ -65,7 +86,7 @@ function projectPart(
     messageIndex,
     partIndex,
     role,
-    phase: "completed" as const,
+    phase,
     provenance: "legacy-message-projection" as const,
     providerIdentity: null,
   }
@@ -91,13 +112,15 @@ function projectPart(
     }
   }
   if (type.startsWith("tool-")) {
+    const outcome = getToolOutcome(part, streamState)
     return {
       ...base,
+      phase: outcome.phase,
       kind: "tool",
       displayClass: "tool",
       payload: {
         name: type.slice("tool-".length) || "Legacy tool",
-        state: typeof part.state === "string" ? part.state : "completed",
+        state: outcome.state,
       },
     }
   }

@@ -518,7 +518,12 @@ function AutomationDetailEditor() {
             />
           )}
           <aside className="space-y-4">
-            <ExactConfiguration draft={archived ? record!.draft : draft} />
+            <ExactConfiguration
+              draft={archived ? record!.draft : draft}
+              projects={projects.data ?? []}
+              tasks={tasks.data ?? []}
+              chats={chats.data ?? []}
+            />
             {dryRun && <ResolvedDryRun value={dryRun} />}
             {!isCreate && <History record={record!} requestPreview={requestPreview} />}
           </aside>
@@ -772,10 +777,13 @@ function AutomationEditor({
             }
             options={
               scopeType === "chat"
-                ? ["run-chat"]
+                ? [{ value: "run-chat", label: "Run this chat" }]
                 : scopeType === "project"
-                  ? ["create-chat-run", "create-task-run"]
-                  : ["create-chat-run"]
+                  ? [
+                      { value: "create-chat-run", label: "Create and run a chat" },
+                      { value: "create-task-run", label: "Create and run a task" },
+                    ]
+                  : [{ value: "create-chat-run", label: "Create and run a chat" }]
             }
           />
         </div>
@@ -1135,24 +1143,151 @@ function RunCompleteEditor({
   )
 }
 
-function ExactConfiguration({ draft }: { draft: AutomationDraft }) {
+function ExactConfiguration({
+  draft,
+  projects,
+  tasks,
+  chats,
+}: {
+  draft: AutomationDraft
+  projects: Array<{ id: string; name: string }>
+  tasks: Array<{ id: string; name: string }>
+  chats: Array<{ id: string; name: string | null; projectId: string | null }>
+}) {
+  const referenceName = (kind: "project" | "task" | "chat", id: string) => {
+    const records = kind === "project" ? projects : kind === "task" ? tasks : chats
+    const found = records.find((item) => item.id === id)
+    if (!found) return `Unavailable ${kind}`
+    const name = found.name || `Untitled ${kind}`
+    const chat = kind === "chat" ? chats.find((item) => item.id === id) : undefined
+    const project = projects.find((item) => item.id === chat?.projectId)
+    return project ? `${name} (${project.name})` : name
+  }
+  const seconds = (ms: number) => `${ms / 1000} seconds`
+  const rows: Array<[string, string]> = []
+  rows.push([
+    "Action",
+    draft.action.type === "run-chat"
+      ? "Run this chat"
+      : draft.action.type === "create-chat-run"
+        ? "Create and run a chat"
+        : "Create and run a task",
+  ])
+  const scope = draft.scope
+  rows.push([
+    "Target",
+    scope.type === "global"
+      ? "Global"
+      : scope.type === "project"
+        ? referenceName("project", scope.projectId)
+        : scope.type === "task"
+          ? referenceName("task", scope.taskId)
+          : referenceName("chat", scope.chatId),
+  ])
+  if (draft.action.type === "create-task-run") rows.push(["New task", draft.action.taskName])
+  if (draft.action.type !== "run-chat" && draft.action.chatName)
+    rows.push(["New chat", draft.action.chatName])
+  const trigger = draft.trigger
+  if (trigger.type === "manual") rows.push(["Trigger", "Manual only"])
+  else if (trigger.type === "schedule") {
+    rows.push(
+      ["Schedule", `${trigger.cron} (${trigger.timezone})`],
+      ["Missed runs", trigger.catchUp === "one" ? "Catch up once" : "Do not catch up"],
+    )
+  } else if (trigger.type === "run-complete") {
+    const source = trigger.projectId
+      ? referenceName("project", trigger.projectId)
+      : trigger.taskId
+        ? referenceName("task", trigger.taskId)
+        : referenceName("chat", trigger.chatId ?? "")
+    rows.push(["After a run", source], ["Run outcomes", trigger.statuses.join(", ")])
+  } else {
+    rows.push(
+      ["File changes", trigger.rootPath],
+      ["Include", trigger.includeGlobs.join(", ")],
+      ["Exclude", trigger.excludeGlobs.join(", ") || "None"],
+      ["Wait after changes", seconds(trigger.debounceMs)],
+    )
+  }
+  const permissions = {
+    "read-only": "Read only",
+    "ask-before-edits": "Ask before edits",
+    "auto-edit-project-only": "Automatically edit this project",
+    "full-access": "Full access",
+    custom: "Custom",
+  }
+  const worktrees = {
+    inherit: "Inherit from target",
+    "task-primary": "Task primary worktree",
+    existing: "Existing worktree",
+    none: "No worktree",
+  }
+  rows.push(
+    ["Provider", draft.run.harness],
+    ["Model", draft.run.model ?? "Provider default"],
+    ["Permissions", permissions[draft.run.permissionMode]],
+    ["Worktree", draft.run.worktreePath ?? worktrees[draft.run.worktreeStrategy]],
+  )
+  if (draft.run.permissionMode === "custom") {
+    const labels = {
+      projectWrite: "Write project files",
+      shell: "Run shell commands",
+      network: "Network",
+      git: "Git",
+      browser: "Browser",
+      secrets: "Secrets",
+      subagents: "Subagents",
+      thirdPartyMcp: "Third-party tools",
+      productMcpRead: "Read app data",
+      productMcpWrite: "Write app data",
+      productMcpTier3: "Restricted app operations",
+    }
+    for (const key of customPermissionCapabilityKeys)
+      rows.push([labels[key], draft.run.customPermissions?.[key] ? "Allowed" : "Not allowed"])
+  }
+  rows.push(
+    ["Prompt", draft.run.prompt],
+    [
+      "Time limit",
+      draft.budget.maxDurationMs === null ? "No limit set" : seconds(draft.budget.maxDurationMs),
+    ],
+    [
+      "Token limit",
+      draft.budget.maxTotalTokens === null ? "No limit set" : String(draft.budget.maxTotalTokens),
+    ],
+    [
+      "Cost limit",
+      draft.budget.maxCostUsdMicros === null
+        ? "No limit set"
+        : `${draft.budget.maxCostUsdMicros / 1000000} USD`,
+    ],
+    ["Concurrent runs", String(draft.budget.maxConcurrentRuns)],
+  )
+  rows.push(["Retry", draft.retry.mode === "none" ? "No retries" : "Exponential backoff"])
+  if (draft.retry.mode !== "none")
+    rows.push(
+      ["Maximum attempts", String(draft.retry.maxAttempts)],
+      ["Initial delay", seconds(draft.retry.initialDelayMs)],
+      ["Maximum delay", seconds(draft.retry.maxDelayMs)],
+      ["Retry deadline", seconds(draft.retry.deadlineMs)],
+    )
   return (
     <section className="rounded-lg border bg-card p-4" aria-label="Exact current configuration">
-      <h2 className="text-sm font-semibold">Exact current configuration</h2>
-      <dl className="mt-3 grid grid-cols-[110px_minmax(0,1fr)] gap-x-2 gap-y-2 text-xs">
-        <dt className="text-muted-foreground">Trigger</dt>
-        <dd className="break-all">{JSON.stringify(draft.trigger)}</dd>
-        <dt className="text-muted-foreground">Target</dt>
-        <dd className="break-all">
-          {JSON.stringify({ scope: draft.scope, action: draft.action })}
-        </dd>
-        <dt className="text-muted-foreground">Authority</dt>
-        <dd className="break-all">{JSON.stringify(draft.run)}</dd>
-        <dt className="text-muted-foreground">Budget</dt>
-        <dd className="break-all">{JSON.stringify(draft.budget)}</dd>
-        <dt className="text-muted-foreground">Retry</dt>
-        <dd className="break-all">{JSON.stringify(draft.retry)}</dd>
+      <h2 className="text-sm font-semibold">Current configuration</h2>
+      <dl className="mt-3 grid grid-cols-[minmax(0,110px)_minmax(0,1fr)] gap-x-2 gap-y-2 text-xs">
+        {rows.map(([label, value]) => (
+          <div key={label} className="contents">
+            <dt className="text-muted-foreground">{label}</dt>
+            <dd className="min-w-0 whitespace-pre-wrap break-words">{value}</dd>
+          </div>
+        ))}
       </dl>
+      <details className="mt-3 text-xs">
+        <summary className="cursor-pointer">Configuration details</summary>
+        <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all">
+          {JSON.stringify(draft, null, 2)}
+        </pre>
+      </details>
     </section>
   )
 }

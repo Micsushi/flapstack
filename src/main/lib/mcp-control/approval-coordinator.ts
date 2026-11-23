@@ -107,7 +107,13 @@ export function listPendingMcpApprovals(database: Database) {
       expiresAt: row.expiresAt.toISOString(),
       state: "pending" as const,
       sessionGrantOptions:
-        row.tier < 3 ? (["Approve this tool for this chat session"] as const) : [],
+        row.tier < 3
+          ? [
+              row.callerRunId
+                ? "Approve this tool for this run"
+                : "Approve this tool for this chat session",
+            ]
+          : [],
     }))
 }
 

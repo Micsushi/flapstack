@@ -35,4 +35,15 @@ describe("Settings search targets", () => {
     expect(revealSettingsTarget("missing")).toBe(false)
     expect(revealSettingsTarget('\"] [data-settings-id="credential')).toBe(false)
   })
+
+  it("focuses the visible disclosure before its hidden beta tutorial", () => {
+    document.body.innerHTML =
+      '<div data-settings-id="beta"><details><summary>File editing</summary><button>Tutorial</button></details><button role="switch">Enable File editing</button></div>'
+    const target = document.querySelector<HTMLElement>('[data-settings-id="beta"]')!
+    target.scrollIntoView = vi.fn()
+    target.animate = vi.fn() as unknown as typeof target.animate
+    expect(revealSettingsTarget("beta")).toBe(true)
+    expect(document.activeElement).toBe(target.querySelector("summary"))
+    expect(target.querySelector("details")!.open).toBe(false)
+  })
 })

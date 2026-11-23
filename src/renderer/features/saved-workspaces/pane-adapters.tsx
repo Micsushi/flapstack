@@ -36,12 +36,18 @@ export function WorkspacePaneAdapter({
       chatIds={ownershipChatIds}
       initiallySkipped={initiallySkipped}
     >
-      <WorkspacePaneAdapterContent workspaceId={workspaceId} pane={pane} {...callbacks} />
+      <WorkspacePaneAdapterContent
+        projectId={projectId}
+        workspaceId={workspaceId}
+        pane={pane}
+        {...callbacks}
+      />
     </WorkspacePaneOwnershipBoundary>
   )
 }
 
 type WorkspacePaneAdapterProps = {
+  projectId?: string
   workspaceId: string
   pane: SavedWorkspacePane
   readOnly?: boolean
@@ -53,6 +59,7 @@ type WorkspacePaneAdapterProps = {
 }
 
 function WorkspacePaneAdapterContent({
+  projectId,
   workspaceId,
   pane,
   onReplaceBinding,
@@ -74,6 +81,7 @@ function WorkspacePaneAdapterContent({
     return (
       <div className="h-full overflow-auto p-4">
         <PaneStatus
+          compact
           title={resolution.data?.state === "missing" ? "Pane target missing" : "Pane target stale"}
         >
           {resolution.data?.message ?? "The saved target could not be restored."}
@@ -85,6 +93,7 @@ function WorkspacePaneAdapterContent({
         ) : (
           <>
             <WorkspacePaneBindingForm
+              projectId={projectId}
               initialBinding={pane.binding}
               submitLabel="Repair pane"
               onSubmit={onReplaceBinding}
@@ -119,7 +128,7 @@ function WorkspacePaneAdapterContent({
           <summary className="cursor-pointer select-none font-medium">
             <Pin className="mr-1 inline h-3.5 w-3.5" /> Pin context
           </summary>
-          <PinnedContextForm pane={pane} onSubmit={onPinContext} />
+          <PinnedContextForm projectId={projectId} pane={pane} onSubmit={onPinContext} />
         </details>
       )}
     </div>
@@ -508,9 +517,11 @@ function PinnedContextBar({
 }
 
 function PinnedContextForm({
+  projectId,
   pane,
   onSubmit,
 }: {
+  projectId?: string
   pane: SavedWorkspacePane
   onSubmit: (context: SavedWorkspacePinnedContext) => void
 }) {
@@ -518,8 +529,29 @@ function PinnedContextForm({
   const [first, setFirst] = useState("")
   const [second, setSecond] = useState("")
   const [error, setError] = useState("")
+  const chats = trpc.chats.list.useQuery(projectId ? { projectId } : {}, {
+    enabled: type === "chat-message",
+  })
+  const projects = trpc.projects.list.useQuery(undefined, { enabled: type === "chat-message" })
+  const selectedChatAvailable = chats.data?.some((chat) => chat.id === first) ?? false
+  const chat = trpc.chats.get.useQuery(
+    { id: first },
+    { enabled: type === "chat-message" && selectedChatAvailable },
+  )
+  const messages =
+    chat.data?.id === first
+      ? chat.data.subChats
+          .flatMap((subChat) => parseMessages(subChat.messages))
+          .filter((message) => message.id)
+      : []
+  const messageAvailable =
+    selectedChatAvailable &&
+    !chats.isError &&
+    !chat.isError &&
+    messages.some((message) => message.id === second)
   const submit = (event: FormEvent) => {
     event.preventDefault()
+    if (type === "chat-message" && !messageAvailable) return
     const id = `context-${crypto.randomUUID()}`
     const value =
       type === "file"
@@ -546,34 +578,102 @@ function PinnedContextForm({
       <select
         aria-label="Pinned context type"
         value={type}
-        onChange={(event) => setType(event.target.value as typeof type)}
+        onChange={(event) => {
+          setType(event.target.value as typeof type)
+          setFirst("")
+          setSecond("")
+          setError("")
+        }}
         className="h-8 rounded border border-input bg-background px-2"
       >
         <option value="file">File</option>
         <option value="chat-message">Chat message</option>
         <option value="browser">Web link</option>
       </select>
-      <Input
-        aria-label={
-          type === "file"
-            ? "Pinned file path"
-            : type === "browser"
-              ? "Pinned URL"
-              : "Pinned chat ID"
-        }
-        value={first}
-        onChange={(event) => setFirst(event.target.value)}
-        placeholder={type === "browser" ? "https://…" : type === "file" ? "src/file.ts" : "Chat ID"}
-      />
-      {type !== "browser" && (
+      {type === "chat-message" ? (
+        <>
+          <select
+            aria-label="Pinned chat"
+            value={first}
+            onChange={(event) => {
+              setFirst(event.target.value)
+              setSecond("")
+            }}
+            disabled={chats.isLoading || chats.isError || !chats.data?.length}
+            className="h-8 min-w-0 rounded border border-input bg-background px-2"
+          >
+            <option value="" disabled>
+              {chats.isLoading
+                ? "Loading chats…"
+                : chats.isError
+                  ? "Chats unavailable"
+                  : !chats.data?.length
+                    ? "No available chats"
+                    : "Choose a chat"}
+            </option>
+            {chats.data?.map((item) => (
+              <option key={item.id} value={item.id}>
+                {chatChoiceLabel(item, chats.data, projects.data)}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Pinned message"
+            value={second}
+            onChange={(event) => setSecond(event.target.value)}
+            disabled={!selectedChatAvailable || chat.isLoading || chat.isError || !messages.length}
+            className="h-8 min-w-0 rounded border border-input bg-background px-2"
+          >
+            <option value="" disabled>
+              {!first
+                ? "Choose a chat first"
+                : chat.isLoading
+                  ? "Loading messages…"
+                  : chat.isError
+                    ? "Messages unavailable"
+                    : !messages.length
+                      ? "No saved messages"
+                      : "Choose a message"}
+            </option>
+            {messages.map((message, index) => (
+              <option key={`${message.id}-${index}`} value={message.id}>
+                {index + 1}. {message.role}: {message.text.replace(/\s+/g, " ").slice(0, 100)}
+              </option>
+            ))}
+          </select>
+          {(chats.isError || chat.isError) && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void (chats.isError ? chats.refetch() : chat.refetch())}
+            >
+              Retry loading context
+            </Button>
+          )}
+        </>
+      ) : (
         <Input
-          aria-label={type === "file" ? "Pinned file worktree" : "Pinned message ID"}
-          value={second}
-          onChange={(event) => setSecond(event.target.value)}
-          placeholder={type === "file" ? "Worktree path" : "Message ID"}
+          aria-label={type === "file" ? "Pinned file path" : "Pinned URL"}
+          value={first}
+          onChange={(event) => setFirst(event.target.value)}
+          placeholder={type === "browser" ? "https://…" : "src/file.ts"}
         />
       )}
-      <Button type="submit" size="sm" variant="outline">
+      {type === "file" && (
+        <Input
+          aria-label="Pinned file worktree"
+          value={second}
+          onChange={(event) => setSecond(event.target.value)}
+          placeholder="Worktree path"
+        />
+      )}
+      <Button
+        type="submit"
+        size="sm"
+        variant="outline"
+        disabled={type === "chat-message" && !messageAvailable}
+      >
         Pin
       </Button>
       {error && (
@@ -586,11 +686,13 @@ function PinnedContextForm({
 }
 
 export function WorkspacePaneBindingForm({
+  projectId,
   initialBinding,
   submitLabel,
   onSubmit,
   onCancel,
 }: {
+  projectId?: string
   initialBinding?: SavedWorkspacePaneBinding
   submitLabel: string
   onSubmit: (binding: SavedWorkspacePaneBinding) => void
@@ -602,9 +704,15 @@ export function WorkspacePaneBindingForm({
   const [worktree, setWorktree] = useState(initial.worktree)
   const [error, setError] = useState("")
   const supported = ["chat", "terminal", "file", "diff", "browser"] as const
+  const chats = trpc.chats.list.useQuery(projectId ? { projectId } : {}, {
+    enabled: type === "chat",
+  })
+  const projects = trpc.projects.list.useQuery(undefined, { enabled: type === "chat" })
+  const chatAvailable = chats.data?.some((chat) => chat.id === primary) ?? false
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
+    if (type === "chat" && (!chatAvailable || chats.isLoading || chats.isError)) return
     const value: unknown =
       type === "chat"
         ? { type, chatId: primary }
@@ -644,11 +752,49 @@ export function WorkspacePaneBindingForm({
           <option value="browser">Web link</option>
         </select>
       </label>
-      {type !== "diff" && (
+      {type === "chat" ? (
         <label className="grid gap-1 text-xs font-medium">
-          {primaryLabel(type)}
-          <Input value={primary} onChange={(event) => setPrimary(event.target.value)} />
+          Chat
+          <select
+            aria-label="Chat"
+            value={primary}
+            onChange={(event) => setPrimary(event.target.value)}
+            disabled={chats.isLoading || chats.isError || !chats.data?.length}
+            className="h-9 min-w-0 max-w-full rounded border border-input bg-background px-2 text-sm"
+          >
+            <option value="" disabled>
+              {chats.isLoading
+                ? "Loading chats…"
+                : chats.isError
+                  ? "Chats unavailable"
+                  : !chats.data?.length
+                    ? "No available chats"
+                    : "Choose a chat"}
+            </option>
+            {primary && !chatAvailable && (
+              <option value={primary} disabled>
+                Unavailable chat
+              </option>
+            )}
+            {chats.data?.map((chat) => (
+              <option key={chat.id} value={chat.id}>
+                {chatChoiceLabel(chat, chats.data, projects.data)}
+              </option>
+            ))}
+          </select>
         </label>
+      ) : (
+        type !== "diff" && (
+          <label className="grid gap-1 text-xs font-medium">
+            {primaryLabel(type)}
+            <Input value={primary} onChange={(event) => setPrimary(event.target.value)} />
+          </label>
+        )
+      )}
+      {type === "chat" && chats.isError && (
+        <Button type="button" variant="outline" size="sm" onClick={() => void chats.refetch()}>
+          Retry loading chats
+        </Button>
       )}
       {(type === "terminal" || type === "file" || type === "diff") && (
         <label className="grid gap-1 text-xs font-medium">
@@ -662,7 +808,11 @@ export function WorkspacePaneBindingForm({
         </p>
       )}
       <div className="flex gap-2">
-        <Button type="submit" size="sm">
+        <Button
+          type="submit"
+          size="sm"
+          disabled={type === "chat" && (!chatAvailable || chats.isLoading || chats.isError)}
+        >
           {submitLabel}
         </Button>
         {onCancel && (
@@ -673,6 +823,29 @@ export function WorkspacePaneBindingForm({
       </div>
     </form>
   )
+}
+
+function chatChoiceLabel(
+  chat: {
+    id: string
+    name: string | null
+    projectId: string | null
+    updatedAt?: Date | string | number | null
+  },
+  chats: Array<{ id: string; name: string | null; projectId: string | null }>,
+  projects?: Array<{ id: string; name: string }>,
+) {
+  const name = chat.name || "Untitled chat"
+  const project = projects?.find((item) => item.id === chat.projectId)
+  const matches = chats.filter(
+    (item) => (item.name || "Untitled chat") === name && item.projectId === chat.projectId,
+  )
+  const updated = chat.updatedAt == null ? null : new Date(chat.updatedAt)
+  const distinction =
+    matches.length > 1
+      ? ` · ${updated && Number.isFinite(updated.getTime()) ? updated.toLocaleString() : "Chat"} (${matches.findIndex((item) => item.id === chat.id) + 1})`
+      : ""
+  return `${name}${project ? ` · ${project.name}` : ""}${distinction}`
 }
 
 function bindingFields(binding?: SavedWorkspacePaneBinding) {
@@ -701,10 +874,22 @@ function primaryLabel(type: SavedWorkspacePaneBinding["type"]): string {
   return "Target"
 }
 
-function PaneStatus({ title, children }: { title: string; children: ReactNode }) {
+function PaneStatus({
+  title,
+  children,
+  compact = false,
+}: {
+  title: string
+  children: ReactNode
+  compact?: boolean
+}) {
   return (
     <section
-      className="flex h-full min-h-40 items-center justify-center p-6 text-center"
+      className={
+        compact
+          ? "flex items-center justify-center py-3 text-center"
+          : "flex h-full min-h-40 items-center justify-center p-6 text-center"
+      }
       role="status"
     >
       <div className="max-w-xl">

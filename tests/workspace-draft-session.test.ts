@@ -55,7 +55,9 @@ function fixture() {
   }
   let lease = "",
     disk = "original",
-    writes = 0
+    writes = 0,
+    replacements = 0
+  const discarded = vi.fn()
   const recorded = new Map<string, Awaited<ReturnType<Client["save"]>>>()
   const update: Client["update"] = async (input) => {
     if (input.leaseToken !== lease) throw new Error("Stale lease")
@@ -94,7 +96,15 @@ function fixture() {
     return result
   }
   const client: Client = {
-    open: vi.fn(async () => {
+    open: vi.fn(async (input) => {
+      if (
+        input.recovery &&
+        (input.recovery.draftId !== row.id ||
+          input.recovery.leaseToken !== lease ||
+          (row.content !== input.recovery.content &&
+            row.content !== input.recovery.pendingUpdateContent))
+      )
+        throw new Error("The saved draft changed in another editor")
       lease = crypto.randomUUID()
       return {
         draft: { ...row },
@@ -107,6 +117,33 @@ function fixture() {
     update: vi.fn(update),
     save: vi.fn(save),
     release: vi.fn(async () => ({ released: true })),
+    replace: vi.fn(async (input) => {
+      if (input.draftId !== row.id || input.leaseToken !== lease) throw new Error("Stale lease")
+      const replacement = input.replacement
+      const content = replacement.kind === "discard" ? disk : replacement.content
+      const baseSha256 =
+        replacement.kind === "discard" ? replacement.reviewedDiskSha256 : replacement.baseSha256
+      if (input.expectedRevision !== row.revision) {
+        if (
+          row.revision !== input.expectedRevision + 1 ||
+          row.baseSha256 !== baseSha256 ||
+          (replacement.kind === "discard"
+            ? hash(row.content) !== baseSha256
+            : row.content !== content)
+        )
+          throw new Error("Stale revision")
+      } else {
+        if (replacement.kind === "discard" && hash(disk) !== baseSha256)
+          return { ok: false as const, reason: "conflict" as const }
+        row = { ...row, content, baseSha256, revision: row.revision + 1 }
+        replacements++
+      }
+      return {
+        ok: true as const,
+        draft: { ...row },
+        disk: { content: disk, sha256: hash(disk), byteLength: Buffer.byteLength(disk) },
+      }
+    }),
     read: vi.fn(async () => ({
       content: disk,
       sha256: hash(disk),
@@ -115,17 +152,80 @@ function fixture() {
   }
   return {
     client,
-    session: createWorkspaceDraftSession(target, client),
+    session: createWorkspaceDraftSession(target, client, undefined, discarded),
+    discarded,
     update,
     save,
     getRow: () => row,
     getDisk: () => disk,
     getWrites: () => writes,
+    getReplacements: () => replacements,
+    changeStoredDraft: (content: string) => {
+      row = { ...row, content, revision: row.revision + 1 }
+    },
     changeDisk: (content: string) => {
       disk = content
     },
   }
 }
+
+it.each([null, "newer local typing"])(
+  "reacquires an acknowledged-lost discard once while preserving later text: %s",
+  async (laterText) => {
+    const f = fixture()
+    const replace = vi.mocked(f.client.replace).getMockImplementation()!
+    vi.mocked(f.client.replace).mockImplementationOnce(async (input) => {
+      await replace(input)
+      throw new Error("Acknowledgement lost")
+    })
+    await f.session.open()
+    f.session.setContent("discarded draft")
+    await f.session.refreshDisk()
+    expect(await f.session.discard(hash("original"))).toBe(false)
+    expect(f.getRow().content).toBe("original")
+    expect(f.discarded).not.toHaveBeenCalled()
+    if (laterText) f.session.setContent(laterText)
+    f.changeDisk("later disk edit")
+
+    expect(await f.session.reopen()).toBe(true)
+    expect(f.session.getSnapshot().content).toBe(laterText ?? "original")
+    expect(f.getRow().content).toBe(laterText ?? "original")
+    expect(f.getDisk()).toBe("later disk edit")
+    expect(f.getReplacements()).toBe(1)
+    expect(f.getWrites()).toBe(0)
+    expect(f.discarded).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ content: "discarded draft" }),
+      expect.objectContaining({ content: "original" }),
+    )
+    expect(await f.session.retry()).toBe(true)
+    expect(f.discarded).toHaveBeenCalledTimes(1)
+  },
+)
+
+it("rejects unrelated stored changes while reacquiring an interrupted discard", async () => {
+  const f = fixture()
+  const replace = vi.mocked(f.client.replace).getMockImplementation()!
+  vi.mocked(f.client.replace).mockImplementationOnce(async (input) => {
+    await replace(input)
+    throw new Error("Acknowledgement lost")
+  })
+  await f.session.open()
+  f.session.setContent("discarded draft")
+  await f.session.refreshDisk()
+  expect(await f.session.discard(hash("original"))).toBe(false)
+  f.changeStoredDraft("another editor's text")
+  f.session.setContent("newer local typing")
+
+  expect(await f.session.reopen()).toBe(false)
+  expect(f.session.getSnapshot()).toMatchObject({
+    content: "newer local typing",
+    error: "The saved draft changed in another editor",
+  })
+  expect(f.getRow().content).toBe("another editor's text")
+  expect(f.getReplacements()).toBe(1)
+  expect(f.discarded).not.toHaveBeenCalled()
+  expect(f.getDisk()).toBe("original")
+})
 function gate() {
   let release!: () => void
   const promise = new Promise<void>((resolve) => {

@@ -4,7 +4,9 @@ See [macOS feature readiness](macos-feature-readiness.md) for the current
 feature-by-feature implementation, dependency, hardware, and certification
 status.
 
-Flapstack `0.1.0` is a macOS-only public beta. A `v0.1.0` tag on the current
+The `0.1.0` release recipe targets a macOS-only beta. It does not establish that
+a release is published or that the current source is certified; Flapstack remains
+private, as described in the README. A `v0.1.0` tag on the current
 `main` commit triggers GitHub Actions to build separate Apple Silicon and Intel
 DMGs on matching native GitHub-hosted Macs, run package checks, generate
 SHA-256 checksums, and publish a GitHub release.

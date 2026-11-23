@@ -1,6 +1,7 @@
 import { NativeSelect } from "../../../components/ui/native-select"
 import React, { useState, useEffect, useCallback, useRef, useMemo, useId, memo } from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
+import { toast } from "sonner"
 import { useAtom } from "jotai"
 import { cn } from "../../../lib/utils"
 import { trpc } from "../../../lib/trpc"
@@ -43,11 +44,22 @@ function highlightMatches(
   return segments
 }
 
+export type QuickOpenItem = {
+  id: string
+  label: string
+  context: string
+  kind: "Chat" | "Project" | "Worktree" | "Settings" | "Command"
+  onSelect: () => void | Promise<boolean>
+}
+
 interface FileSearchDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectPath: string
   onSelectFile: (filePath: string) => void
+  getNavigationItems?: (query: string) => QuickOpenItem[]
+  navigationBusy?: boolean
+  providerErrors?: Array<{ label: string; message: string; retry: () => void }>
 }
 
 export const FileSearchDialog = memo(function FileSearchDialog({
@@ -55,15 +67,22 @@ export const FileSearchDialog = memo(function FileSearchDialog({
   onOpenChange,
   projectPath,
   onSelectFile,
+  getNavigationItems,
+  providerErrors = [],
+  navigationBusy = false,
 }: FileSearchDialogProps) {
+  const [scope, setScope] = useState("All")
+  const includeFiles = scope === "All" || scope === "File"
+  const unified = Boolean(getNavigationItems)
   const resultsId = useId()
   const optionId = (path: string) =>
     `${resultsId}-${encodeURIComponent(fileSearchPathKey(projectPath, path))}`
   const [query, setQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
   const [selection, setSelection] = useState<{ scope: string; path: string } | null>(null)
-  const selectionScope = JSON.stringify([projectPath, query])
+  const selectionScope = JSON.stringify([projectPath, query, scope])
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
   const itemRefs = useRef<(HTMLDivElement | null)[]>([])
   const [recentlyOpenedFiles, setRecentlyOpenedFiles] = useAtom(recentlyOpenedFilesAtom)
 
@@ -81,9 +100,7 @@ export const FileSearchDialog = memo(function FileSearchDialog({
       setQuery("")
       setDebouncedQuery("")
       setSelection(null)
-      setTimeout(() => {
-        searchInputRef.current?.focus()
-      }, 0)
+      setScope("All")
     }
   }, [open])
 
@@ -95,23 +112,27 @@ export const FileSearchDialog = memo(function FileSearchDialog({
       limit: 50,
     },
     {
-      enabled: open && !!projectPath && !streamed,
+      enabled: open && !!projectPath && !streamed && includeFiles,
     },
   )
   const streamedSearch = useStreamedFileSearch(
     projectPath,
     debouncedQuery,
-    streamed && open && !!projectPath && query === debouncedQuery,
+    streamed && open && !!projectPath && includeFiles && query === debouncedQuery,
   )
   const { data: results, error, refetch } = streamed ? streamedSearch : legacySearch
-  const isFetching = streamed
-    ? streamedSearch.isFetching || query !== debouncedQuery
-    : legacySearch.isFetching
+  const isFetching =
+    includeFiles &&
+    Boolean(projectPath) &&
+    ((streamed ? streamedSearch.isFetching : legacySearch.isFetching) || query !== debouncedQuery)
 
   // Build recent file items directly from atom (independent of search results)
   const recentItems = useMemo(
-    () => recentFileSearchItems(projectPath, recentlyOpenedFiles, debouncedQuery),
-    [recentlyOpenedFiles, projectPath, debouncedQuery],
+    () =>
+      includeFiles && projectPath
+        ? recentFileSearchItems(projectPath, recentlyOpenedFiles, query)
+        : [],
+    [recentlyOpenedFiles, projectPath, query, includeFiles],
   )
 
   const recentPathsSet = useMemo(
@@ -121,12 +142,33 @@ export const FileSearchDialog = memo(function FileSearchDialog({
 
   // Search results excluding recently opened files
   const otherFiles = useMemo(() => {
+    if (!includeFiles || !projectPath || query !== debouncedQuery) return []
     const allFiles = (results ?? []).filter((item) => item.type === "file")
     return allFiles.filter((file) => !recentPathsSet.has(fileSearchPathKey(projectPath, file.path)))
-  }, [results, recentPathsSet, projectPath])
+  }, [results, recentPathsSet, projectPath, query, debouncedQuery, includeFiles])
 
   // Flat list for keyboard navigation: recent first, then rest
-  const allItems = useMemo(() => [...recentItems, ...otherFiles], [recentItems, otherFiles])
+  const navigationItems = useMemo(
+    () =>
+      (getNavigationItems?.(query) ?? []).filter((item) => scope === "All" || item.kind === scope),
+    [getNavigationItems, query, scope],
+  )
+  const allItems = useMemo(() => {
+    const files = [...recentItems, ...otherFiles].slice(0, 50).map((item) => ({
+      ...item,
+      kind: "File",
+      context: item.path.includes("/") ? item.path.slice(0, item.path.lastIndexOf("/")) : "",
+    }))
+    const items = [
+      ...files,
+      ...navigationItems.map((item) => ({ ...item, path: `quick-open:${item.id}` })),
+    ]
+    if (!unified || !query.trim()) return items.slice(0, 100)
+    const term = query.trim().toLowerCase()
+    const score = (item: (typeof items)[number]) =>
+      item.label.toLowerCase() === term ? 0 : item.label.toLowerCase().startsWith(term) ? 1 : 2
+    return items.sort((a, b) => score(a) - score(b)).slice(0, 100)
+  }, [recentItems, otherFiles, navigationItems, unified, query])
   const matchingIndex =
     selection?.scope === selectionScope
       ? allItems.findIndex((item) => fileSearchPathKey(projectPath, item.path) === selection.path)
@@ -155,11 +197,27 @@ export const FileSearchDialog = memo(function FileSearchDialog({
 
   const handleSelect = useCallback(
     (relativePath: string) => {
+      const navigation = navigationItems.find((item) => `quick-open:${item.id}` === relativePath)
+      if (navigation) {
+        const result = navigation.onSelect()
+        if (result instanceof Promise) {
+          void result
+            .then((opened) => {
+              if (opened) {
+                onOpenChange(false)
+              }
+            })
+            .catch(() => toast.error("This item could not be opened. Try again."))
+        } else {
+          onOpenChange(false)
+        }
+        return
+      }
       const absolutePath = joinFileSearchPath(projectPath, relativePath)
       onSelectFile(absolutePath)
       onOpenChange(false)
     },
-    [projectPath, onSelectFile, onOpenChange],
+    [projectPath, onSelectFile, onOpenChange, navigationItems],
   )
 
   const handleRemoveRecent = useCallback(
@@ -239,8 +297,6 @@ export const FileSearchDialog = memo(function FileSearchDialog({
     itemRefs.current[index] = el
   }, [])
 
-  const recentCount = recentItems.length
-
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
@@ -255,17 +311,32 @@ export const FileSearchDialog = memo(function FileSearchDialog({
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           )}
-          onOpenAutoFocus={(e) => e.preventDefault()}
+          onOpenAutoFocus={(e) => {
+            e.preventDefault()
+            openerRef.current =
+              document.activeElement instanceof HTMLElement ? document.activeElement : null
+            searchInputRef.current?.focus()
+          }}
+          onCloseAutoFocus={(e) => {
+            e.preventDefault()
+            if (
+              openerRef.current?.isConnected &&
+              (document.activeElement === document.body || document.activeElement === null)
+            )
+              openerRef.current.focus()
+          }}
         >
-          <DialogPrimitive.Title className="sr-only">Go to file</DialogPrimitive.Title>
+          <DialogPrimitive.Title className="sr-only">
+            {unified ? "Quick Open" : "Go to file"}
+          </DialogPrimitive.Title>
           {/* Search */}
           <div className="mx-1 my-1">
             <div className="relative flex items-center gap-1.5 h-7 px-1.5 rounded-md bg-muted/50">
               <SearchIcon className="h-4 w-4 text-muted-foreground shrink-0" />
               <Input
                 ref={searchInputRef}
-                placeholder="Go to file..."
-                aria-label="Search workspace files"
+                placeholder={unified ? "Quick Open..." : "Go to file..."}
+                aria-label={unified ? "Quick Open" : "Search workspace files"}
                 role="combobox"
                 aria-autocomplete="list"
                 aria-expanded={true}
@@ -281,69 +352,94 @@ export const FileSearchDialog = memo(function FileSearchDialog({
             </div>
           </div>
 
+          {unified && (
+            <NativeSelect
+              aria-label="Quick Open scope"
+              value={scope}
+              onChange={(event) => {
+                setScope(event.target.value)
+                setSelection(null)
+                searchInputRef.current?.focus()
+              }}
+              className="rounded-none border-x-0"
+            >
+              {["All", "File", "Chat", "Project", "Worktree", "Settings", "Command"].map((kind) => (
+                <option key={kind} value={kind}>
+                  {kind === "All" ? "All sources" : kind}
+                </option>
+              ))}
+            </NativeSelect>
+          )}
           {/* File List */}
-          <div className="flex-1 overflow-y-auto py-1 max-h-[400px] border-t scrollbar-hide">
+          <div className="flex-1 overflow-y-auto py-1 max-h-[min(400px,calc(100dvh-150px))] border-t scrollbar-hide">
             <FileSearchFeedback
-              error={error?.message}
+              error={includeFiles ? error?.message : undefined}
               busy={isFetching}
               onRetry={() => {
                 void refetch()
               }}
             />
-            <div id={resultsId} role="listbox" aria-label="Workspace files" aria-busy={isFetching}>
-              {allItems.length === 0 && debouncedQuery && !error && !isFetching ? (
-                <div className="min-h-[32px] py-[5px] px-1.5 mx-1 flex items-center text-sm text-muted-foreground">
-                  No files found
-                </div>
-              ) : (
-                <>
-                  {/* Recently opened files (shown at top, no section header) */}
-                  {recentItems.map((item, i) => {
-                    const dirPath = item.path.includes("/")
-                      ? item.path.slice(0, item.path.lastIndexOf("/"))
-                      : ""
-                    return (
-                      <FileSearchItem
-                        key={item.id}
-                        optionId={optionId(item.path)}
-                        label={item.label}
-                        dirPath={dirPath}
-                        index={i}
-                        isSelected={i === selectedIndex}
-                        onSelect={() => handleSelect(item.path)}
-                        setRef={handleSetRef}
-                        query={debouncedQuery}
-                        recentLabel="Recent"
-                      />
-                    )
-                  })}
-
-                  {/* Other files section */}
-                  {otherFiles.length > 0 && (
-                    <>
-                      {otherFiles.map((item, i) => {
-                        const flatIndex = recentCount + i
-                        const dirPath = item.path.includes("/")
-                          ? item.path.slice(0, item.path.lastIndexOf("/"))
-                          : ""
-                        return (
-                          <FileSearchItem
-                            key={item.id}
-                            optionId={optionId(item.path)}
-                            label={item.label}
-                            dirPath={dirPath}
-                            index={flatIndex}
-                            isSelected={flatIndex === selectedIndex}
-                            onSelect={() => handleSelect(item.path)}
-                            setRef={handleSetRef}
-                            query={debouncedQuery}
-                          />
-                        )
-                      })}
-                    </>
-                  )}
-                </>
-              )}
+            {navigationBusy && (
+              <p role="status" className="px-3 py-2 text-sm text-muted-foreground">
+                Loading results…
+              </p>
+            )}
+            {providerErrors.map((failure) => (
+              <div
+                key={failure.label}
+                className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+                role="alert"
+              >
+                <span>
+                  {failure.label}: {failure.message}
+                </span>
+                <button type="button" className="underline" onClick={failure.retry}>
+                  Retry
+                </button>
+              </div>
+            ))}
+            <div
+              id={resultsId}
+              role="listbox"
+              aria-label={unified ? "Quick Open results" : "Workspace files"}
+              aria-busy={isFetching || navigationBusy}
+            >
+              {allItems.length === 0 &&
+                !isFetching &&
+                !navigationBusy &&
+                !(includeFiles && error) &&
+                providerErrors.length === 0 && (
+                  <div role="status" className="px-3 py-2 text-sm text-muted-foreground">
+                    {unified && scope === "File" && !projectPath
+                      ? "Open a local chat with a workspace to search files."
+                      : unified
+                        ? "No matching items"
+                        : "No files found"}
+                  </div>
+                )}
+              {allItems.map((item, index) => (
+                <FileSearchItem
+                  key={`${item.kind}:${item.id}`}
+                  optionId={optionId(item.path)}
+                  label={item.label}
+                  dirPath={item.context}
+                  index={index}
+                  isSelected={index === selectedIndex}
+                  onSelect={() => handleSelect(item.path)}
+                  setRef={handleSetRef}
+                  query={query}
+                  navigation={item.kind !== "File"}
+                  recentLabel={
+                    item.kind !== "File"
+                      ? item.kind
+                      : recentPathsSet.has(fileSearchPathKey(projectPath, item.path))
+                        ? "Recent"
+                        : unified
+                          ? "File"
+                          : undefined
+                  }
+                />
+              ))}
             </div>
           </div>
           {recentItems.length > 0 && (
@@ -382,6 +478,7 @@ interface FileSearchItemProps {
   setRef: (index: number, el: HTMLDivElement | null) => void
   query?: string
   recentLabel?: string
+  navigation?: boolean
 }
 
 const FileSearchItem = memo(function FileSearchItem({
@@ -394,6 +491,7 @@ const FileSearchItem = memo(function FileSearchItem({
   setRef,
   query,
   recentLabel,
+  navigation,
 }: FileSearchItemProps) {
   const handleRef = useCallback(
     (el: HTMLDivElement | null) => {
@@ -402,7 +500,7 @@ const FileSearchItem = memo(function FileSearchItem({
     [setRef, index],
   )
 
-  const Icon = getFileIconByExtension(label) ?? UnknownFileIcon
+  const Icon = navigation ? SearchIcon : (getFileIconByExtension(label) ?? UnknownFileIcon)
 
   return (
     <div
@@ -422,7 +520,7 @@ const FileSearchItem = memo(function FileSearchItem({
     >
       <Icon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
       <span className="flex items-center gap-1.5 w-full min-w-0">
-        <span className="shrink-0 whitespace-nowrap">
+        <span className="min-w-0 truncate">
           {query
             ? highlightMatches(label, query).map((seg, i) =>
                 seg.highlight ? (

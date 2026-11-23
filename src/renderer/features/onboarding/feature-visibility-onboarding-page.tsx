@@ -33,7 +33,11 @@ export function FeatureVisibilityOnboardingPage(props: {
 
   useEffect(() => {
     if (session.step === "complete") return
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+    } catch {
+      // Keep the in-memory draft usable when optional persistence is unavailable.
+    }
   }, [session])
 
   useEffect(() => {
@@ -61,7 +65,11 @@ export function FeatureVisibilityOnboardingPage(props: {
         preset: completed.apply.preset,
         visibility: completed.apply.visibility,
       })
-      localStorage.removeItem(SESSION_KEY)
+      try {
+        localStorage.removeItem(SESSION_KEY)
+      } catch {
+        // The authoritative change already succeeded; cleanup cannot undo it.
+      }
       setSession(completed)
     } catch (applyError) {
       setError(messageFor(applyError))
@@ -264,14 +272,14 @@ function restoreSession(
   visibility: Readonly<Record<string, boolean>>,
   revision: number,
 ): OnboardingVisibilitySession {
-  const serialized = localStorage.getItem(SESSION_KEY)
-  if (serialized) {
-    try {
+  try {
+    const serialized = localStorage.getItem(SESSION_KEY)
+    if (serialized) {
       const restored = parseOnboardingVisibilitySession(serialized)
       if (restored.step !== "complete" && restored.baseRevision === revision) return restored
-    } catch {
-      // Replace only the invalid resumable session. Durable visibility is untouched.
     }
+  } catch {
+    // Invalid or unavailable draft storage does not change durable visibility.
   }
   return createOnboardingVisibilitySession(visibility, revision)
 }

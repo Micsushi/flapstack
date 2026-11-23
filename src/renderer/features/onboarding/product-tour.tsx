@@ -40,12 +40,12 @@ const PRODUCT_TOUR_STEPS = [
   {
     selector: '[data-tour="runtime"]',
     title: "Choose a runtime",
-    body: "Automatic uses the best configured runtime. You can select a specific agent runtime here.",
+    body: "Automatic shows the runtime selected for this chat. Choose a specific runtime before sending the first message.",
   },
   {
     selector: '[data-tour="mode"]',
     title: "Set the chat mode",
-    body: "Write can change code. Plan and Review keep the agent read-only.",
+    body: "Choose Write, Plan or Review for the task. Check the chat permissions separately before starting work.",
   },
   {
     selector: '[data-tour="settings"]',
@@ -122,7 +122,11 @@ export function ProductTour() {
   }, [setDesktopView, setSidebarOpen])
 
   const closeTour = useCallback((status: "completed" | "dismissed") => {
-    writeProductTourState(localStorage, status)
+    try {
+      writeProductTourState(localStorage, status)
+    } catch {
+      // Optional persistence must never prevent closing the tour.
+    }
     setIsOpen(false)
     setTargetRect(null)
     restoreTourFocus(restoreFocusRef.current)

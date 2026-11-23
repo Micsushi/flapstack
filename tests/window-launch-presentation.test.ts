@@ -122,4 +122,34 @@ describe("background test window launch presentation", () => {
       startMinimized: false,
     })
   })
+
+  it("keeps every startup-restored window in the background without replacing saved placement", () => {
+    const resolveInitial = createInitialLaunchPresentationResolver()
+    const input = {
+      env: { FLAPSTACK_KEEP_RENDERER_ACTIVE: "1" },
+      argv: ["--no-focus", "--start-minimized", "--secondary-display"],
+      displays,
+      primaryDisplayId: 1,
+    }
+    const background = { showInactive: true, startMinimized: true, keepRendererActive: true }
+    // Restored windows with bounds skip initial placement, but not startup visibility.
+    expect(resolveInitial(input, false, true)).toEqual(background)
+    expect(resolveInitial(input, false, true)).toEqual(background)
+    expect(resolveInitial(input, true, true)).toEqual(background)
+    expect(resolveInitial(input, false)).toEqual({ showInactive: false, startMinimized: false })
+    expect(resolveInitial(input, true)).toEqual({ showInactive: false, startMinimized: false })
+  })
+
+  it("keeps ordinary restored startups interactive when no background flags are requested", () => {
+    const resolveInitial = createInitialLaunchPresentationResolver()
+    const input = { env: {}, argv: [], displays, primaryDisplayId: 1 }
+    expect(resolveInitial(input, false, true)).toEqual({
+      showInactive: false,
+      startMinimized: false,
+    })
+    expect(resolveInitial(input, false, true)).toEqual({
+      showInactive: false,
+      startMinimized: false,
+    })
+  })
 })

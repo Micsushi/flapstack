@@ -1,5 +1,6 @@
 "use client"
 
+import { toast } from "sonner"
 import { useEffect } from "react"
 import { useAtomValue, useSetAtom } from "jotai"
 import { openAgentChatIdsAtom, selectedAgentChatIdAtom } from "../agents/atoms"
@@ -36,8 +37,18 @@ export function McpApprovalBridge() {
         setActiveChatId(chatId)
       }}
       onDecision={async (action) => {
-        const result = await decide.mutateAsync(action)
-        await utils.appControl.listPendingApprovals.invalidate()
+        const result = await decide.mutateAsync(action).catch((error) => {
+          toast.error(
+            "Could not confirm your decision. Check whether the request is still pending before trying again.",
+          )
+          throw error
+        })
+        if (!result.resolved)
+          toast.info(
+            "This request is no longer available. It may have expired or been handled elsewhere.",
+          )
+        // The decision is already settled. A failed refresh must not change its outcome.
+        void utils.appControl.listPendingApprovals.invalidate().catch(() => undefined)
         return result
       }}
     />

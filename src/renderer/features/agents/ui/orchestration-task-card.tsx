@@ -1018,16 +1018,43 @@ function AgentEditorDialog({
   )
 }
 
-export function OrchestrationTaskCard({
+export function OrchestrationTaskCard(props: {
+  taskId?: string | null
+  projectId: string
+  currentChatId: string
+  onNavigate: (chatId: string) => void
+}) {
+  const policy = trpc.spawnedAgents.getPolicy.useQuery()
+  const setDesktopView = useSetAtom(desktopViewAtom)
+
+  if (props.taskId || policy.data?.taskAuthority === "local") {
+    return (
+      <LegacyOrchestrationTaskCard
+        {...props}
+        allowCreate={policy.data?.taskAuthority === "local"}
+      />
+    )
+  }
+
+  return (
+    <Button variant="outline" size="sm" onClick={() => setDesktopView("records-setups")}>
+      Open Agent workflows
+    </Button>
+  )
+}
+
+function LegacyOrchestrationTaskCard({
   taskId,
   projectId,
   currentChatId,
   onNavigate,
+  allowCreate,
 }: {
   taskId?: string | null
   projectId: string
   currentChatId: string
   onNavigate: (chatId: string) => void
+  allowCreate: boolean
 }) {
   const betaFeatures = useBetaFeatures()
   const store = useStore()
@@ -1227,6 +1254,13 @@ export function OrchestrationTaskCard({
   if (taskId && (overviewQuery.isLoading || lineageQuery.isLoading))
     return <div className="p-3 text-[11px] text-muted-foreground">Loading orchestration…</div>
   if (!overview) {
+    if (!allowCreate) {
+      return (
+        <Button variant="outline" size="sm" onClick={() => setDesktopView("records-setups")}>
+          Open Agent workflows
+        </Button>
+      )
+    }
     return (
       <div className="p-3">
         {chatLineageQuery.data && (

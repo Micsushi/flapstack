@@ -1,7 +1,7 @@
 "use client"
 
 import { ChevronRight, FileDiff, RotateCcw } from "lucide-react"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { toast } from "sonner"
 import { Button } from "../../../components/ui/button"
 import {
@@ -13,6 +13,7 @@ import {
 } from "../../../components/ui/dialog"
 import { cn } from "../../../lib/utils"
 import { trpc } from "../../../lib/trpc"
+import { StoredPatchView } from "./stored-patch-view"
 
 interface AgentChangedFilesCardProps {
   runId?: string
@@ -21,31 +22,41 @@ interface AgentChangedFilesCardProps {
 const INITIAL_VISIBLE_FILES = 3
 
 export function AgentChangedFilesCard({ runId }: AgentChangedFilesCardProps) {
+  const reviewButtonRef = useRef<HTMLButtonElement>(null)
+  const reviewDiffRef = useRef<HTMLDivElement>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [showAll, setShowAll] = useState(false)
-  const [isUndone, setIsUndone] = useState(false)
   const [isReviewOpen, setIsReviewOpen] = useState(false)
   const [reviewFilePath, setReviewFilePath] = useState<string | undefined>()
   const [conflicts, setConflicts] = useState<Array<{ filePath: string; reason: string }>>([])
   const utils = trpc.useUtils()
-  const { data } = trpc.runs.getChangeSet.useQuery(
+  const { data, isFetching, isError, refetch } = trpc.runs.getChangeSet.useQuery(
     { runId: runId ?? "" },
-    { enabled: Boolean(runId), staleTime: 5_000 },
+    { enabled: Boolean(runId), refetchOnMount: "always" },
   )
-  const { data: reviewData, isLoading: isReviewLoading } = trpc.runs.getChangeReview.useQuery(
+  const {
+    data: reviewData,
+    isLoading: isReviewLoading,
+    isFetching: isReviewFetching,
+    isError: isReviewError,
+    refetch: refetchReview,
+  } = trpc.runs.getChangeReview.useQuery(
     { runId: runId ?? "", filePath: reviewFilePath },
     { enabled: Boolean(runId && isReviewOpen) },
   )
   const undoMutation = trpc.runs.undoChangeSet.useMutation({
-    onSuccess: async (result) => {
+    onSuccess: async (result, variables) => {
       if (result.success) {
-        setIsUndone(true)
+        utils.runs.getChangeSet.setData({ runId: variables.runId }, (current) =>
+          current ? { ...current, undone: true } : current,
+        )
         toast.success(
           result.alreadyUndone
             ? "These changes were already undone"
             : `Undid changes to ${result.files.length} file${result.files.length === 1 ? "" : "s"}`,
         )
-        await utils.runs.getChangeSet.invalidate({ runId: runId ?? "" })
+        // The files are already restored; a failed refresh cannot undo that success.
+        void utils.runs.getChangeSet.invalidate({ runId: variables.runId }).catch(() => undefined)
         return
       }
       toast.error("Undo needs review", {
@@ -60,6 +71,7 @@ export function AgentChangedFilesCard({ runId }: AgentChangedFilesCardProps) {
   if (!runId || !data || data.fileCount === 0) return null
 
   const changeSetRunId = runId
+  const isUndone = isError ? null : data.undone
   const isRecoverable = data.recoverable
   const hiddenCount = Math.max(0, data.files.length - INITIAL_VISIBLE_FILES)
   const visibleFiles = showAll ? data.files : data.files.slice(0, INITIAL_VISIBLE_FILES)
@@ -71,7 +83,11 @@ export function AgentChangedFilesCard({ runId }: AgentChangedFilesCardProps) {
 
   function undo(event: React.MouseEvent) {
     event.stopPropagation()
-    if (!isRecoverable) return
+    if (isError) {
+      if (!isFetching) void refetch().catch(() => undefined)
+      return
+    }
+    if (!isRecoverable || data?.undone !== false || isFetching) return
     undoMutation.mutate({ runId: changeSetRunId })
   }
 
@@ -93,16 +109,18 @@ export function AgentChangedFilesCard({ runId }: AgentChangedFilesCardProps) {
           aria-expanded={isExpanded}
           onClick={() => setIsExpanded((expanded) => !expanded)}
           onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) return
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault()
               setIsExpanded((expanded) => !expanded)
             }
           }}
-          className="flex min-h-10 cursor-pointer items-center gap-2 px-3 py-2 transition-colors hover:bg-muted/60"
+          className="flex min-h-10 cursor-pointer flex-wrap items-center gap-2 px-3 py-2 transition-colors hover:bg-muted/60"
         >
           <FileDiff className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="text-sm font-medium">
-            {data.fileCount} file{data.fileCount === 1 ? "" : "s"} changed
+            {data.fileCount} file{data.fileCount === 1 ? "" : "s"}
+            {isUndone ? " · changes undone" : " changed"}
           </span>
           <span className="text-sm text-emerald-500">+{data.additions}</span>
           <span className="text-sm text-red-500">-{data.deletions}</span>
@@ -113,16 +131,29 @@ export function AgentChangedFilesCard({ runId }: AgentChangedFilesCardProps) {
               variant="ghost"
               size="sm"
               onClick={undo}
-              disabled={undoMutation.isPending}
+              disabled={undoMutation.isPending || isFetching || (isUndone === null && !isError)}
               className="h-7 gap-1.5 px-2 text-xs"
-              title="Undo this response's file changes"
+              title={
+                isError
+                  ? "Check this run's undo status again"
+                  : isUndone === null
+                    ? "Restore access to this run's worktree to check undo status"
+                    : "Undo this response's file changes"
+              }
               data-dev-carryover-action="undo"
             >
-              {undoMutation.isPending ? "Undoing..." : "Undo"}
+              {isError
+                ? "Check undo status"
+                : isUndone === null
+                  ? "Undo unavailable"
+                  : undoMutation.isPending
+                    ? "Undoing..."
+                    : "Undo"}
               <RotateCcw className="h-3.5 w-3.5" />
             </Button>
           )}
           <Button
+            ref={reviewButtonRef}
             type="button"
             variant="outline"
             size="sm"
@@ -184,7 +215,13 @@ export function AgentChangedFilesCard({ runId }: AgentChangedFilesCardProps) {
           }
         }}
       >
-        <DialogContent className="flex h-[80vh] w-[min(1000px,calc(100%-2rem))] max-w-none flex-col gap-3 overflow-hidden p-4">
+        <DialogContent
+          className="flex h-[80vh] w-[min(1000px,calc(100%-2rem))] max-w-none flex-col gap-3 overflow-hidden p-4"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            if (reviewButtonRef.current?.isConnected) reviewButtonRef.current.focus()
+          }}
+        >
           <DialogHeader>
             <DialogTitle>
               Review {data.fileCount} changed file{data.fileCount === 1 ? "" : "s"}
@@ -201,11 +238,52 @@ export function AgentChangedFilesCard({ runId }: AgentChangedFilesCardProps) {
               {conflicts.map((item) => item.filePath).join(", ")}.
             </div>
           )}
-          <pre className="min-h-0 flex-1 overflow-auto rounded-lg border bg-muted/35 p-3 text-xs leading-5">
-            {isReviewLoading
-              ? "Loading stored diff..."
-              : reviewData?.diff || "Stored historical diff is unavailable for this older run."}
-          </pre>
+          {isReviewError && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <p role="alert" className="min-w-0 flex-1 text-destructive">
+                {reviewData
+                  ? "Could not refresh stored diff. Showing the previous result."
+                  : "Could not load stored diff."}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isReviewFetching}
+                onClick={(event) => {
+                  const button = event.currentTarget
+                  void refetchReview()
+                    .then((result) => {
+                      if (
+                        !result.isError &&
+                        (document.activeElement === button ||
+                          (!button.isConnected && document.activeElement === document.body))
+                      )
+                        reviewDiffRef.current?.focus()
+                    })
+                    .catch(() => undefined)
+                }}
+              >
+                {isReviewFetching ? "Retrying..." : "Retry"}
+              </Button>
+            </div>
+          )}
+          <div
+            ref={reviewDiffRef}
+            tabIndex={0}
+            aria-label="Stored diff"
+            className="min-h-0 flex-1 overflow-auto rounded-lg border bg-muted/35 text-xs leading-5"
+          >
+            {reviewData ? (
+              reviewData.diff != null ? (
+                <StoredPatchView patch={reviewData.diff} />
+              ) : (
+                <p className="p-3">Stored historical diff is unavailable for this older run.</p>
+              )
+            ) : isReviewLoading ? (
+              "Loading stored diff..."
+            ) : null}
+          </div>
         </DialogContent>
       </Dialog>
     </>

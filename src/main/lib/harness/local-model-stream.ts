@@ -8,6 +8,7 @@ import { getDatabase } from "../db"
 import { captureCheckpoint, captureRunManifest } from "../checkpoints"
 import { assertSubChatNotRewinding } from "../sub-chat-rewind-guard"
 import { McpApprovalLifecycle } from "../mcp-control/approval-lifecycle"
+import { registerLocalWriteApprovalSession } from "../mcp-control/local-write-approval-context"
 import { createSqliteMcpApprovalCoordinator } from "../mcp-control/approval-coordinator"
 import { publishProductMcpInvalidation } from "../mcp-control/invalidation-bridge"
 import { appendMcpAuditRecord } from "../mcp-control/audit-storage"
@@ -876,6 +877,7 @@ function createLocalModelWriteApprovalSession(): LocalModelWriteApprovalSession 
     createSqliteMcpApprovalCoordinator(getDatabase, publishApprovalChange),
     publishApprovalChange,
   )
+  const unregister = registerLocalWriteApprovalSession(lifecycle)
   return {
     request: async (input) => {
       const id = randomUUID()
@@ -906,7 +908,10 @@ function createLocalModelWriteApprovalSession(): LocalModelWriteApprovalSession 
         input.signal.removeEventListener("abort", cancel)
       }
     },
-    shutdown: () => lifecycle.shutdown(),
+    shutdown: () => {
+      lifecycle.shutdown()
+      unregister()
+    },
   }
 }
 

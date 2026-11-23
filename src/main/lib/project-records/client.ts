@@ -196,6 +196,18 @@ export class ProjectRecordsClient {
     return projectRecordIndexSchema.parse(response.data)
   }
 
+  async storeIdentity(): Promise<string> {
+    const response = await this.request("/v1/storage")
+    const storage = response.data as { backend?: unknown; storeIdentity?: unknown }
+    if (
+      storage.backend !== "sqlite" ||
+      typeof storage.storeIdentity !== "string" ||
+      !/^[a-f0-9]{64}$/.test(storage.storeIdentity)
+    )
+      throw new Error("Records did not provide a stable SQLite store identity.")
+    return `sqlite:${storage.storeIdentity}`
+  }
+
   async boardRequest(input: { path: string; method: "GET" | "POST"; body?: string }) {
     const url = new URL(input.path, "http://127.0.0.1")
     if (url.origin !== "http://127.0.0.1" || url.hash || !input.path.startsWith("/v1/"))

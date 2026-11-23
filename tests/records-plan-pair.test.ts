@@ -1,4 +1,5 @@
 import Database from "better-sqlite3"
+import { createHash } from "node:crypto"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { mkdtempSync, realpathSync, statSync, rmSync, readdirSync } from "node:fs"
@@ -68,6 +69,7 @@ const snapshot = (): ProjectPlanSnapshot => ({
   ],
 })
 const client = {
+  storeIdentity: vi.fn(async () => `sqlite:${"a".repeat(64)}`),
   endpoint: "http://127.0.0.1:1234",
   list: vi.fn(async () => ({ documents: [{ path: "lanes/vault/tasks.md" }] })),
   readYapProposal: vi.fn(async () => ({
@@ -160,6 +162,10 @@ beforeEach(() => {
   disconnectAfterCommit = false
   archiveAfterCommit = false
   vi.clearAllMocks()
+  Object.assign(client, { endpoint: "http://127.0.0.1:1234" })
+  vi.mocked(client.storeIdentity)
+    .mockReset()
+    .mockResolvedValue(`sqlite:${"a".repeat(64)}`)
   vi.mocked(client.read)
     .mockReset()
     .mockResolvedValue({ revision: "a".repeat(64) } as never)
@@ -373,4 +379,86 @@ it("refuses stale AI proposal versions, changed destinations and unsupported act
   await expect(current.previewProposal(input)).rejects.toThrow("valid proposal sources")
   expect(count("records_plan_pairs")).toBe(0)
   expect(count("chats")).toBe(0)
+})
+
+it("reopens the same task and Chat when the authenticated store moves ports", async () => {
+  const first = await confirm()
+  Object.assign(client, { endpoint: "http://127.0.0.1:5678" })
+  expect(await service().reopen(input)).toEqual(first)
+  expect(await confirm()).toEqual(first)
+  expect(commits).toBe(1)
+  expect(count("chats")).toBe(1)
+})
+
+it("does not reuse a pair when a different store occupies the same endpoint", async () => {
+  await confirm()
+  vi.mocked(client.storeIdentity).mockResolvedValue(`sqlite:${"b".repeat(64)}`)
+  expect(await service().reopen(input)).toBeNull()
+  expect(commits).toBe(1)
+})
+
+it("rejects a destination store change between preview and confirmation", async () => {
+  const preview = await service().preview(snapshot(), input)
+  vi.mocked(client.storeIdentity).mockResolvedValue(`sqlite:${"b".repeat(64)}`)
+  await expect(
+    service().confirm(snapshot(), { ...input, expectedTarget: preview.expectedTarget }),
+  ).rejects.toThrow("changed")
+  expect(commits).toBe(0)
+})
+
+function makeLegacy() {
+  const id = createHash("sha256")
+    .update(
+      JSON.stringify([
+        client.endpoint,
+        input.reference,
+        input.destinationPath,
+        input.projectId,
+        input.localProjectId,
+      ]),
+    )
+    .digest("hex")
+  sqlite.prepare("UPDATE records_plan_pairs SET id=?,endpoint=?").run(id, client.endpoint)
+  return id
+}
+
+it("adopts a legacy URL pair only after the new endpoint proves the exact receipt", async () => {
+  const first = await confirm()
+  makeLegacy()
+  Object.assign(client, { endpoint: "http://127.0.0.1:5678" })
+  expect(await service().reopen(input)).toEqual(first)
+  expect((sqlite.prepare("SELECT endpoint FROM records_plan_pairs").get() as any).endpoint).toBe(
+    `sqlite:${"a".repeat(64)}`,
+  )
+  expect(commits).toBe(1)
+})
+
+it("does not adopt legacy local Chat evidence into a store with no matching receipt", async () => {
+  await confirm()
+  const oldId = makeLegacy()
+  receipt = undefined
+  Object.assign(client, { endpoint: "http://127.0.0.1:5678" })
+  expect(await service().reopen(input)).toBeNull()
+  expect((sqlite.prepare("SELECT id FROM records_plan_pairs").get() as any).id).toBe(oldId)
+})
+
+it("recovers pending work after the same store restarts on a new port", async () => {
+  loseResponse = true
+  disconnectAfterCommit = true
+  await expect(confirm()).rejects.toThrow("recovery is pending")
+  offline = false
+  Object.assign(client, { endpoint: "http://127.0.0.1:5678" })
+  expect((await service().recover())[0]?.recovered).toBe(true)
+  expect(count("chats")).toBe(1)
+  expect(commits).toBe(1)
+})
+
+it("rejects legacy adoption when the canonical receipt points at another Chat", async () => {
+  await confirm()
+  const oldId = makeLegacy()
+  receipt = { ...receipt, chatPair: { ...receipt.chatPair, chatId: "unrelated-chat" } }
+  Object.assign(client, { endpoint: "http://127.0.0.1:5678" })
+  await expect(service().reopen(input)).rejects.toThrow("receipt identity differs")
+  expect((sqlite.prepare("SELECT id FROM records_plan_pairs").get() as any).id).toBe(oldId)
+  expect(commits).toBe(1)
 })

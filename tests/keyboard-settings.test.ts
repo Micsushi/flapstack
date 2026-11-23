@@ -51,7 +51,7 @@ describe("Keyboard Settings", () => {
           window.dispatchEvent(new KeyboardEvent(type, { key: "p", code: "KeyP", ctrlKey: true }))
         })
       }
-      expect(container.textContent).toContain("Go to file already uses this shortcut")
+      expect(container.textContent).toContain("Quick Open already uses this shortcut")
       expect(localStorage.getItem("preferences:custom-hotkeys") ?? "").not.toContain(
         '"toggle-sidebar"',
       )
@@ -79,7 +79,7 @@ describe("Keyboard Settings", () => {
     await dispatch(new KeyboardEvent("keydown", { key: "Control", ctrlKey: true }))
     await dispatch(new KeyboardEvent("keydown", { key: "p", code: "KeyP", ctrlKey: true }))
     await dispatch(new KeyboardEvent("keyup", { key: "p", code: "KeyP", ctrlKey: true }))
-    expect(container.textContent).toContain("Go to file already uses this shortcut")
+    expect(container.textContent).toContain("Quick Open already uses this shortcut")
 
     await act(async () => changeButton?.click())
     await dispatch(new KeyboardEvent("keydown", { key: "Control", ctrlKey: true }))

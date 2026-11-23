@@ -1,5 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import {
   agentsSettingsDialogActiveTabAtom,
   devToolsUnlockedAtom,
@@ -36,11 +36,12 @@ import { revealSettingsTarget } from "./settings-target"
 // Check if we're in development mode
 const isDevelopment = import.meta.env.DEV
 
-export function SettingsContent() {
+export function SettingsContent({ onKeyboardReturn }: { onKeyboardReturn?: () => void }) {
   const storedActiveTab = useAtomValue(agentsSettingsDialogActiveTabAtom)
   const setActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
   const [searchQuery, setSearchQuery] = useAtom(settingsSearchQueryAtom)
   const [searchTarget, setSearchTarget] = useAtom(settingsSearchTargetAtom)
+  const pendingSearchTab = useRef<{ target: string; tab: SettingsTab } | null>(null)
   const devToolsUnlocked = useAtomValue(devToolsUnlockedAtom)
   const showDebugTab = isDevelopment || devToolsUnlocked
   const betaFeatures = useBetaFeatures()
@@ -63,22 +64,42 @@ export function SettingsContent() {
           setSearchQuery("")
           return
         }
+        onKeyboardReturn?.()
         setDesktopView(null)
       }
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [searchQuery, setDesktopView, setSearchQuery])
+  }, [searchQuery, setDesktopView, setSearchQuery, onKeyboardReturn])
 
   useEffect(() => {
-    if (!searchTarget) return
-
-    const frame = requestAnimationFrame(() => {
-      revealSettingsTarget(searchTarget)
+    if (!searchTarget) {
+      pendingSearchTab.current = null
+      return
+    }
+    if (
+      pendingSearchTab.current?.target === searchTarget &&
+      pendingSearchTab.current.tab !== activeTab
+    ) {
       setSearchTarget(null)
-    })
-
-    return () => cancelAnimationFrame(frame)
+      return
+    }
+    pendingSearchTab.current = { target: searchTarget, tab: activeTab }
+    const cancel = () => setSearchTarget((current) => (current === searchTarget ? null : current))
+    const reveal = () => {
+      if (revealSettingsTarget(searchTarget)) cancel()
+    }
+    const observer = new MutationObserver(reveal)
+    observer.observe(document.body, { childList: true, subtree: true })
+    const frame = requestAnimationFrame(reveal)
+    document.addEventListener("pointerdown", cancel, true)
+    document.addEventListener("keydown", cancel, true)
+    return () => {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+      document.removeEventListener("pointerdown", cancel, true)
+      document.removeEventListener("keydown", cancel, true)
+    }
   }, [activeTab, searchTarget, setSearchTarget])
 
   const renderTabContent = () => {
@@ -146,12 +167,18 @@ export function SettingsContent() {
     ...getVisibleSettingsTabs("advanced", { showDevelopment: showDebugTab, betaFeatures }),
   ]
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
       <nav
         aria-label="Settings navigation"
         className="flex shrink-0 flex-wrap items-center gap-2 border-b p-3 min-[600px]:hidden"
       >
-        <Button variant="outline" onClick={() => setDesktopView(null)}>
+        <Button
+          variant="outline"
+          onClick={(event) => {
+            if (event.detail === 0) onKeyboardReturn?.()
+            setDesktopView(null)
+          }}
+        >
           Back to chat
         </Button>
         <label className="min-w-0 flex-1 text-sm">

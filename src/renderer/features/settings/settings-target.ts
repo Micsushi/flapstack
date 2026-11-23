@@ -4,6 +4,7 @@ const FOCUSABLE_SETTINGS_TARGET = [
   "select:not([disabled])",
   "textarea:not([disabled])",
   "a[href]",
+  "summary",
   '[tabindex]:not([tabindex="-1"])',
 ].join(",")
 
@@ -15,10 +16,17 @@ export function revealSettingsTarget(searchTarget: string, root: ParentNode = do
 
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
   target.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" })
-  const focusTarget = target.matches(FOCUSABLE_SETTINGS_TARGET)
-    ? target
-    : target.querySelector<HTMLElement>(FOCUSABLE_SETTINGS_TARGET)
-  ;(focusTarget ?? target).focus({ preventScroll: true })
+  const candidates = target.matches(FOCUSABLE_SETTINGS_TARGET)
+    ? [target]
+    : Array.from(target.querySelectorAll<HTMLElement>(FOCUSABLE_SETTINGS_TARGET))
+  for (const candidate of candidates) {
+    candidate.focus({ preventScroll: true })
+    if (document.activeElement === candidate) break
+  }
+  if (!target.contains(document.activeElement)) {
+    if (!target.hasAttribute("tabindex")) target.tabIndex = -1
+    target.focus({ preventScroll: true })
+  }
   if (!reduceMotion) {
     target.animate(
       [
@@ -29,5 +37,5 @@ export function revealSettingsTarget(searchTarget: string, root: ParentNode = do
       { duration: 180, easing: "ease-out" },
     )
   }
-  return true
+  return target.contains(document.activeElement)
 }

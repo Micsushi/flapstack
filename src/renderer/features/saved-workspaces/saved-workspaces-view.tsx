@@ -888,14 +888,14 @@ export function SavedWorkspacesView({
           ? initialProjectId
             ? `Project ${initialProjectId} is unavailable. This window will not fall back to a previously selected project.`
             : "This saved workspace window has no project target and will not fall back to a previously selected project."
-          : "Select a project before opening saved workspaces."}
+          : "Select a project before opening saved layouts."}
       </WorkspaceNotice>
     )
   }
 
   return (
-    <WorkspacePage className="flex min-h-0 flex-col gap-4 p-5" aria-label="Saved workspaces">
-      {!popoutPaneId && <WorkspaceTitle>Saved workspaces</WorkspaceTitle>}
+    <WorkspacePage className="flex min-h-0 flex-col gap-4 p-5" aria-label="Saved layouts">
+      {!popoutPaneId && <WorkspaceTitle>Saved layouts</WorkspaceTitle>}
       <WorkspaceHeader className="justify-start border-b pb-4">
         {popoutPaneId && (
           <span className="text-sm font-medium">
@@ -929,7 +929,7 @@ export function SavedWorkspacesView({
                 workspaceOptions.length === 0 || dirty || saving || Boolean(initialWorkspaceId)
               }
             >
-              {workspaceOptions.length === 0 && <option value="">No saved workspaces</option>}
+              {workspaceOptions.length === 0 && <option value="">No saved layouts</option>}
               {workspaceOptions.map((workspace) => (
                 <option key={workspace.id} value={workspace.id}>
                   {workspace.name}
@@ -1089,7 +1089,7 @@ export function SavedWorkspacesView({
                 selected.data.owner?.kind === "orchestration"
                   ? "Operation workspaces cannot be duplicated."
                   : initialWorkspaceId
-                    ? "Duplicate workspaces from the main Saved Workspaces view."
+                    ? "Duplicate layouts from the main Saved layouts view."
                     : undefined
               }
             >
@@ -1177,6 +1177,7 @@ export function SavedWorkspacesView({
               >
                 <h2 className="text-sm font-medium">Add pane</h2>
                 <WorkspacePaneBindingForm
+                  projectId={projectId}
                   submitLabel="Add pane"
                   onSubmit={addPane}
                   onCancel={() => setAddPaneGroupId(null)}

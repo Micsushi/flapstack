@@ -5,6 +5,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "../../../componen
 import { cn } from "../../../lib/utils"
 
 export interface AgentMessageMetadata {
+  streamState?: "streaming" | "success" | "failure" | "cancelled"
   runId?: string
   transport?: string
   model?: string

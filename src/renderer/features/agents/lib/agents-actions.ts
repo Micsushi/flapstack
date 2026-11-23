@@ -161,12 +161,11 @@ const openInboxAction: AgentActionDefinition = {
 
 const fileSearchAction: AgentActionDefinition = {
   id: "file-search",
-  label: "Go to file",
-  description: "Search and open a file in the workspace",
+  label: "Quick Open",
+  description: "Open files, chats, projects, settings and commands",
   category: "navigation",
   hotkey: "cmd+p",
-  isAvailable: (context) =>
-    Boolean(context.hasSelectedProject) && context.desktopView !== "settings",
+  isAvailable: (context) => Boolean(context.setFileSearchDialogOpen),
   handler: async (context) => {
     context.setFileSearchDialogOpen?.(true)
     return { success: true }

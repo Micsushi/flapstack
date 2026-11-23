@@ -110,6 +110,7 @@ export class RecordsPlanPairService {
     if (!project || project.archivedAt) throw new Error("Select an available local project.")
     assertRegisteredFilesystemRoot(project.path, this.db)
     const target = {
+      store: await this.client.storeIdentity(),
       proposalId: proposal.proposalId,
       proposalVersion: proposal.version,
       inputId: proposal.inputId,
@@ -156,16 +157,13 @@ export class RecordsPlanPairService {
   confirmProposal(input: z.infer<typeof confirmYapPairSchema>) {
     const result = queue.then(async () => {
       // Proposal identity remains stable across owner approval/version changes.
-      const id = digest([
-        this.client.endpoint,
-        "yap-proposal",
-        input.proposalId,
-        input.localProjectId,
-      ])
-      const existing = this.row(id)
+      const store = await this.client.storeIdentity()
+      const parts = ["yap-proposal", input.proposalId, input.localProjectId]
+      const id = digest([store, ...parts])
+      const existing = await this.findPair(store, parts)
       if (existing && existing.status !== "aborted") return this.finish(existing)
       const preview = await this.previewProposal(input)
-      if (preview.expectedTarget !== input.expectedTarget)
+      if (preview.store !== store || preview.expectedTarget !== input.expectedTarget)
         throw new Error("The reviewed proposal or destination changed. Review the pair again.")
       const pair = {
         receiptId: `pair-${randomUUID()}`,
@@ -173,7 +171,7 @@ export class RecordsPlanPairService {
         subChatId: randomUUID(),
         localProjectId: input.localProjectId,
       }
-      return this.savePrepared(id, {
+      return this.savePrepared(id, store, {
         proposalId: input.proposalId,
         proposalVersion: input.expectedVersion,
         expectedRevision: preview.revision,
@@ -225,6 +223,7 @@ export class RecordsPlanPairService {
     assertRegisteredFilesystemRoot(project.path, this.db)
     const destination = await this.client.read(input.destinationPath)
     const target = {
+      store: await this.client.storeIdentity(),
       localProjectId: project.id,
       projectPath: project.path,
       destinationPath: input.destinationPath,
@@ -246,15 +245,45 @@ export class RecordsPlanPairService {
   }
 
   async reopen(input: Input) {
-    const id = digest([
-      this.client.endpoint,
+    const store = await this.client.storeIdentity()
+    const existing = await this.findPair(store, [
       input.reference,
       input.destinationPath,
       input.projectId,
       input.localProjectId,
     ])
-    const existing = this.row(id)
     return existing && existing.status !== "aborted" ? this.finish(existing) : null
+  }
+
+  private async findPair(store: string, parts: unknown[]) {
+    const id = digest([store, ...parts])
+    const current = this.row(id)
+    if (current && current.status !== "aborted") return current
+    // Old rows used the service URL. Adopt only a matching canonical receipt,
+    // never merely a reused port or an unverified local association.
+    const legacy = this.sqlite
+      .prepare(
+        "SELECT * FROM records_plan_pairs WHERE endpoint LIKE 'http:%' AND status != 'aborted'",
+      )
+      .all() as Row[]
+    for (const row of legacy) {
+      if (row.id !== digest([row.endpoint, ...parts])) continue
+      const receipt = await this.request("read", JSON.parse(row.prepared_chat) as Prepared)
+      if (!["prepared", "committed"].includes(receipt.status)) continue
+      if (row.status === "committed" && receipt.status !== "committed") continue
+      this.sqlite
+        .transaction(() => {
+          this.sqlite
+            .prepare("DELETE FROM records_plan_pairs WHERE id=? AND status='aborted'")
+            .run(id)
+          this.sqlite
+            .prepare("UPDATE records_plan_pairs SET id=?,endpoint=? WHERE id=?")
+            .run(id, store, row.id)
+        })
+        .immediate()
+      return this.row(id)
+    }
+    return current
   }
 
   private row(id: string) {
@@ -266,17 +295,13 @@ export class RecordsPlanPairService {
     snapshot: ProjectPlanSnapshot,
     input: z.infer<typeof confirmPlanPairSchema>,
   ) {
-    const id = digest([
-      this.client.endpoint,
-      input.reference,
-      input.destinationPath,
-      input.projectId,
-      input.localProjectId,
-    ])
-    const existing = this.row(id)
+    const store = await this.client.storeIdentity()
+    const parts = [input.reference, input.destinationPath, input.projectId, input.localProjectId]
+    const id = digest([store, ...parts])
+    const existing = await this.findPair(store, parts)
     if (existing && existing.status !== "aborted") return this.finish(existing)
     const preview = await this.preview(snapshot, input)
-    if (preview.expectedTarget !== input.expectedTarget)
+    if (preview.store !== store || preview.expectedTarget !== input.expectedTarget)
       throw new Error("The reviewed source or destination changed. Review the pair again.")
     const pair = {
       receiptId: `pair-${randomUUID()}`,
@@ -314,21 +339,15 @@ export class RecordsPlanPairService {
           .map((line) => `> ${line}`),
       ].join("\n"),
     }
-    return this.savePrepared(id, prepared)
+    return this.savePrepared(id, store, prepared)
   }
 
-  private savePrepared(id: string, prepared: Prepared) {
+  private savePrepared(id: string, store: string, prepared: Prepared) {
     this.sqlite
       .prepare(
         "INSERT INTO records_plan_pairs (id,endpoint,project_id,status,prepared_chat,updated_at) VALUES (?,?,?,'pending',?,?) ON CONFLICT(id) DO UPDATE SET status='pending',prepared_chat=excluded.prepared_chat,error=NULL,updated_at=excluded.updated_at WHERE records_plan_pairs.status='aborted'",
       )
-      .run(
-        id,
-        this.client.endpoint,
-        prepared.pair.localProjectId,
-        JSON.stringify(prepared),
-        Date.now(),
-      )
+      .run(id, store, prepared.pair.localProjectId, JSON.stringify(prepared), Date.now())
     return this.finish(this.row(id)!)
   }
 
@@ -502,10 +521,22 @@ export class RecordsPlanPairService {
   }
 
   async recover() {
+    const store = await this.client.storeIdentity()
     const rows = this.sqlite
-      .prepare("SELECT * FROM records_plan_pairs WHERE endpoint=? AND status='pending'")
-      .all(this.client.endpoint) as Row[]
-    const results = await Promise.allSettled(rows.map((row) => this.finish(row)))
+      .prepare(
+        "SELECT * FROM records_plan_pairs WHERE (endpoint=? OR endpoint LIKE 'http:%') AND status='pending'",
+      )
+      .all(store) as Row[]
+    const results = await Promise.allSettled(
+      rows.map(async (row) => {
+        if (row.endpoint !== store) {
+          const receipt = await this.request("read", JSON.parse(row.prepared_chat) as Prepared)
+          if (!["prepared", "committed"].includes(receipt.status))
+            throw new Error("Legacy pair does not belong to this Records store.")
+        }
+        return this.finish(row)
+      }),
+    )
     return results.map((result, index) => ({
       id: rows[index]!.id,
       recovered: result.status === "fulfilled",

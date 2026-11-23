@@ -58,36 +58,30 @@ describe("Linux package security report", () => {
     )
   })
 
-  it("repairs restrictive directory modes during Debian installs and upgrades", () => {
-    const previewScript = [
-      "# flapstack-install-mode-v1",
-      'chmod 0755 -- "/opt/Flapstack-Preview"',
-      'chmod 0755 -- "/opt/Flapstack-Preview/resources"',
-      'find "/opt/Flapstack-Preview" -type d -exec chmod 0755 -- {} +',
-      'test -f "/opt/Flapstack-Preview/chrome-sandbox"',
-      'test ! -L "/opt/Flapstack-Preview/chrome-sandbox"',
-      'chown root:root -- "/opt/Flapstack-Preview/chrome-sandbox"',
-      'chmod 4755 -- "/opt/Flapstack-Preview/chrome-sandbox"',
-    ].join("\n")
-    expect(() => assertDebPostInstallScript(previewScript, { channel: "preview" })).not.toThrow()
-    expect(() =>
-      assertDebPostInstallScript(
-        previewScript.replace('find "/opt/Flapstack-Preview" -type d -exec chmod 0755 -- {} +', ""),
-        { channel: "preview" },
-      ),
-    ).toThrow(/find/i)
-    expect(() =>
-      assertDebPostInstallScript(previewScript.replace("chmod 4755", "chmod 0755"), {
-        channel: "preview",
-      }),
-    ).toThrow(/chrome-sandbox/i)
-    expect(() =>
-      assertDebPostInstallScript(
-        '# flapstack-install-mode-v1\nchmod 0755 -- "/opt/Flapstack-Preview"',
-        { channel: "preview" },
-      ),
-    ).toThrow(/resources/i)
-  })
+  it.each(["preview", "release"])(
+    "validates executable LF post-install scripts for %s",
+    (channel) => {
+      const script = readFileSync(`build/linux-after-install-${channel}.sh`, "utf8")
+      const expected = { channel }
+      expect(() => assertDebPostInstallScript(script, expected, 0o755)).not.toThrow()
+      expect(() =>
+        assertDebPostInstallScript(script.replaceAll("\n", "\r\n"), expected, 0o755),
+      ).toThrow(/LF.*shebang/i)
+      expect(() =>
+        assertDebPostInstallScript(script.replace("#!/bin/sh\n", ""), expected, 0o755),
+      ).toThrow(/shebang/i)
+      expect(() => assertDebPostInstallScript(script, expected, 0o644)).toThrow(/executable/i)
+      expect(() =>
+        assertDebPostInstallScript(script.replace(/^find .*$/m, ""), expected, 0o755),
+      ).toThrow(/find/i)
+      expect(() =>
+        assertDebPostInstallScript(script.replace("chmod 4755", "chmod 0755"), expected, 0o755),
+      ).toThrow(/chrome-sandbox/i)
+      expect(() =>
+        assertDebPostInstallScript("#!/bin/sh\n# flapstack-install-mode-v1\n", expected, 0o755),
+      ).toThrow(/chmod 0755/i)
+    },
+  )
 
   it("rejects package collisions, wrong architectures, and missing dependencies", () => {
     const expected = {

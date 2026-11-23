@@ -34,6 +34,7 @@ export interface TerminalExitEvent {
 export type TerminalEvent = TerminalDataEvent | TerminalExitEvent
 
 export interface SessionResult {
+  recoveredOutput?: { cols: number; rows: number }
   replayEnabled?: boolean
   isNew: boolean
   /** Serialized terminal state from xterm's SerializeAddon */
@@ -41,6 +42,7 @@ export interface SessionResult {
 }
 
 export interface CreateSessionParams {
+  restart?: boolean
   paneId: string
   tabId?: string
   workspaceId?: string

@@ -317,7 +317,7 @@ async function writePlan(plans: FilePlan[]): Promise<void> {
   }
 }
 
-export function getRunChangeSet(runId: string) {
+export async function getRunChangeSet(runId: string) {
   const db = getDatabase()
   const run = db.select().from(agentRuns).where(eq(agentRuns.id, runId)).get()
   if (!run) throw new Error("Run not found")
@@ -334,6 +334,24 @@ export function getRunChangeSet(runId: string) {
     .where(eq(fileChangeManifests.runId, runId))
     .all()
     .filter((entry) => entry.changeType !== "none" && entry.filePath)
+  let undone: boolean | null = null
+  if (run.worktreePath) {
+    try {
+      await execFileAsync(
+        "git",
+        ["rev-parse", "--verify", "--quiet", `refs/flapstack/undone/${runId}`],
+        {
+          cwd: run.worktreePath,
+          timeout: GIT_TIMEOUTS.LOCAL,
+          windowsHide: true,
+        },
+      )
+      undone = true
+    } catch (error) {
+      // Missing refs mean not undone; unavailable worktrees leave status unknown.
+      if ((error as { code?: unknown }).code === 1) undone = false
+    }
+  }
   return {
     run,
     files,
@@ -341,11 +359,12 @@ export function getRunChangeSet(runId: string) {
     additions: files.reduce((sum, file) => sum + file.additions, 0),
     deletions: files.reduce((sum, file) => sum + file.deletions, 0),
     recoverable: Boolean(beforeTree && afterTree),
+    undone,
   }
 }
 
 export async function getRunChangeReview(runId: string, filePath?: string) {
-  const changeSet = getRunChangeSet(runId)
+  const changeSet = await getRunChangeSet(runId)
   const worktreePath = changeSet.run.worktreePath
   if (!worktreePath) throw new Error("Run has no worktree")
   if (filePath && !changeSet.files.some((file) => file.filePath === filePath)) {
@@ -374,7 +393,7 @@ export async function getRunChangeReview(runId: string, filePath?: string) {
 }
 
 export async function undoRunChangeSet(runId: string) {
-  const changeSet = getRunChangeSet(runId)
+  const changeSet = await getRunChangeSet(runId)
   const worktreePath = changeSet.run.worktreePath
   if (!worktreePath) throw new Error("Run has no worktree")
   if (changeSet.files.length === 0) throw new Error("Run has no file changes")

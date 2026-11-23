@@ -67,6 +67,7 @@ vi.mock("../src/renderer/lib/trpc", () => ({
       saveDraft: { mutate: backend.save },
       revert: { mutate: backend.revert },
       releaseDraft: { mutate: backend.release },
+      replaceDraft: { mutate: vi.fn() },
       read: { query: async () => ({ content: "original", sha256: "a".repeat(64), byteLength: 8 }) },
     },
   },

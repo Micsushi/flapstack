@@ -5,6 +5,7 @@ import {
   normalizeUnknownAgentActivity,
 } from "../src/main/lib/agent-runtime/activity-store"
 import { projectLegacyActivity } from "../src/main/lib/agent-runtime/legacy-activity-projection"
+import { getLocalToolOutcome } from "../src/shared/local-tool-outcome"
 import { createActivityTestDatabase, seedRuntimeRun } from "./agent-activity-test-db"
 
 const databases: ReturnType<typeof createActivityTestDatabase>[] = []
@@ -21,6 +22,37 @@ afterEach(() => {
 })
 
 describe("Agent activity privacy", () => {
+  it.each([
+    ["output-available", false, "completed", "failed", "failed"],
+    ["output-denied", true, "completed", "denied", "failed"],
+    ["output-error", true, "completed", "failed", "failed"],
+    ["cancelled", true, "completed", "interrupted", "cancelled"],
+    ["input-available", true, "cancelled", "interrupted", "cancelled"],
+    ["input-available", true, "failure", "interrupted", "failed"],
+    ["completed", true, "cancelled", "completed", "completed"],
+    ["completed", true, "failure", "completed", "completed"],
+    ["unrecognized", true, "completed", "unknown", "snapshot"],
+  ])(
+    "keeps %s outcomes truthful and private under %s/%s",
+    (state, ok, streamState, outcome, phase) => {
+      const secret = "PRIVATE_TOOL_CONTENT_SENTINEL"
+      const part = {
+        type: "tool-write_file",
+        state,
+        input: { content: secret },
+        output: { ok, content: secret },
+        errorText: secret,
+      }
+      const local = getLocalToolOutcome(part, streamState)
+      const projected = projectLegacyActivity([
+        { role: "assistant", metadata: { streamState }, parts: [part] },
+      ])
+      expect(local).toMatchObject({ state: outcome, phase })
+      expect(projected).toHaveLength(1)
+      expect(projected[0]).toMatchObject({ phase, payload: { state: outcome } })
+      expect(JSON.stringify([local, projected])).not.toContain(secret)
+    },
+  )
   it("rejects private display text and stores encrypted metadata without plaintext", () => {
     const { database, runId, store } = setup()
     expect(() =>

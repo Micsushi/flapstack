@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events"
+import { readTerminalOutput, retainTerminalOutput } from "./terminal-history/recovery"
 import { randomUUID } from "node:crypto"
 import { win32 as windowsPath } from "node:path"
 import { FALLBACK_SHELL, SHELL_CRASH_THRESHOLD_MS } from "./env"
@@ -141,8 +142,34 @@ export class TerminalManager extends EventEmitter {
       }
     }
 
-    // Create new session
-    const creationPromise = this.doCreateSession(params)
+    if (params.enableReplay && !params.restart && !existing) {
+      const output = readTerminalOutput(params.scopeKey || params.workspaceId || "", paneId)
+      if (output)
+        return {
+          isNew: false,
+          replayEnabled: false,
+          serializedState: output.data,
+          recoveredOutput: { cols: output.cols, rows: output.rows },
+        }
+    }
+
+    // Reattachment must not restart a shell during its exit cleanup grace period.
+    const creationPromise =
+      params.enableReplay && !params.restart && existing
+        ? (async (): Promise<SessionResult> => {
+            await existing.replay?.flushRetainedOutput()
+            const output = readTerminalOutput(params.scopeKey || params.workspaceId || "", paneId)
+            return {
+              isNew: false,
+              replayEnabled: false,
+              serializedState: output?.data ?? existing.serializedState ?? "",
+              recoveredOutput: {
+                cols: output?.cols ?? existing.cols,
+                rows: output?.rows ?? existing.rows,
+              },
+            }
+          })()
+        : this.doCreateSession(params)
     this.pendingSessions.set(paneId, {
       workspaceId: params.workspaceId || "",
       promise: creationPromise,
@@ -187,13 +214,18 @@ export class TerminalManager extends EventEmitter {
     }
 
     // Set up initial commands (only for new sessions)
-    setupInitialCommands(session, initialCommands)
+    setupInitialCommands(session, params.restart ? undefined : initialCommands)
 
     // Set up exit handler with fallback logic
     this.setupExitHandler(session, params)
 
     const previous = this.sessions.get(paneId)
     this.sessions.set(paneId, session)
+    if (!params.performanceOwnershipToken)
+      session.replay?.retainOutput((output) => {
+        if (this.sessions.get(paneId) === session)
+          retainTerminalOutput(params.scopeKey || workspaceId || "", paneId, output)
+      })
     this.emit(`replay:${paneId}`, session)
     previous?.replay?.dispose()
 
@@ -410,11 +442,13 @@ export class TerminalManager extends EventEmitter {
     session.lastActive = Date.now()
   }
 
-  clearScrollback(params: { paneId: string }): void {
+  clearScrollback(params: { paneId: string; scopeKey?: string }): void {
     const { paneId } = params
     const session = this.sessions.get(paneId)
 
     if (!session) {
+      if (params.scopeKey !== undefined && readTerminalOutput(params.scopeKey, paneId))
+        retainTerminalOutput(params.scopeKey, paneId, { data: "", cols: 80, rows: 24 })
       console.warn(`Cannot clear scrollback for terminal ${paneId}: session not found`)
       return
     }
@@ -658,6 +692,9 @@ export class TerminalManager extends EventEmitter {
   }
 
   private async performCleanup(): Promise<TerminalCleanupResult> {
+    await Promise.all(
+      Array.from(this.sessions.values(), (session) => session.replay?.flushRetainedOutput()),
+    )
     if (this.usesLinuxOwnership) {
       return this.performLinuxCleanup()
     }
@@ -703,6 +740,9 @@ export class TerminalManager extends EventEmitter {
       Array.from(this.sessions.values(), (session) =>
         releaseTerminalPtyResources(session.pty, this.cleanupOptions?.platform ?? process.platform),
       ),
+    )
+    await Promise.all(
+      Array.from(this.sessions.values(), (session) => session.replay?.flushRetainedOutput()),
     )
     for (const session of this.sessions.values()) session.replay?.dispose()
     this.sessions.clear()

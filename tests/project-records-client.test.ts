@@ -15,6 +15,32 @@ const response = (status = 200, data: unknown = snapshot) =>
   new Response(JSON.stringify(data), { status })
 
 describe("canonical records client", () => {
+  it("binds durable associations to authenticated SQLite identity, never the transport port", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(response(200, { backend: "sqlite", storeIdentity: "a".repeat(64) }))
+    const client = new ProjectRecordsClient({
+      endpoint: "http://127.0.0.1:47831",
+      token: "private-token",
+      fetch,
+    })
+    expect(await client.storeIdentity()).toBe(`sqlite:${"a".repeat(64)}`)
+    expect(fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:47831/v1/storage",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer private-token" },
+        redirect: "error",
+      }),
+    )
+    for (const storage of [
+      { backend: "files", storeIdentity: "a".repeat(64) },
+      { backend: "sqlite" },
+      { backend: "sqlite", storeIdentity: "short" },
+    ]) {
+      fetch.mockResolvedValue(response(200, storage))
+      await expect(client.storeIdentity()).rejects.toThrow("stable SQLite")
+    }
+  })
   it("confines credentials to the configured loopback service", async () => {
     for (const endpoint of [
       "https://example.com",

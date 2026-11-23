@@ -425,6 +425,22 @@ function AgentsContentInner() {
     (desktopView === "saved-workspaces" && !betaFeatures.savedWorkspaces)
       ? null
       : desktopView
+  const chatReturnRegionRef = useRef<HTMLDivElement>(null)
+  const settingsKeyboardReturnRef = useRef(false)
+  const requestSettingsKeyboardReturn = useCallback(() => {
+    settingsKeyboardReturnRef.current = true
+  }, [])
+  useEffect(() => {
+    if (effectiveDesktopView !== null || !settingsKeyboardReturnRef.current) return
+    settingsKeyboardReturnRef.current = false
+    const frame = requestAnimationFrame(() => {
+      // Mobile chat inputs intentionally avoid autofocus and the software keyboard.
+      if (!document.activeElement || document.activeElement === document.body) {
+        chatReturnRegionRef.current?.focus({ preventScroll: true })
+      }
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [effectiveDesktopView])
   const [selectedChatIsRemote, setSelectedChatIsRemote] = useAtom(selectedChatIsRemoteAtom)
   const [selectedChatScope, setSelectedChatScope] = useAtom(selectedChatScopeAtom)
   const [selectedProject, setSelectedProject] = useAtom(selectedProjectAtom)
@@ -2936,7 +2952,7 @@ function AgentsContentInner() {
         ) : effectiveDesktopView === "inbox" ? (
           <InboxView />
         ) : effectiveDesktopView === "settings" ? (
-          <SettingsContent />
+          <SettingsContent onKeyboardReturn={requestSettingsKeyboardReturn} />
         ) : effectiveDesktopView === "usage" ? (
           <div className="h-full overflow-y-auto select-text">
             <AgentsUsageTab />
@@ -3009,6 +3025,10 @@ function AgentsContentInner() {
           <div
             className="h-full w-full flex flex-col overflow-hidden select-text"
             data-mobile-chat-mode
+            ref={chatReturnRegionRef}
+            tabIndex={-1}
+            role="region"
+            aria-label="Chat"
           >
             {selectedChatId ? (
               <ChatView
@@ -3085,7 +3105,14 @@ function AgentsContentInner() {
         )}
 
         {/* Main content */}
-        <div className="flex-1 min-w-0 overflow-hidden" style={{ minWidth: "350px" }}>
+        <div
+          className="flex-1 min-w-0 overflow-hidden"
+          style={{ minWidth: "350px" }}
+          ref={chatReturnRegionRef}
+          tabIndex={-1}
+          role={effectiveDesktopView === null ? "region" : undefined}
+          aria-label={effectiveDesktopView === null ? "Chat" : undefined}
+        >
           {effectiveDesktopView === "orchestration-fleet" ? (
             <OrchestrationFleetView />
           ) : effectiveDesktopView === "automations" ? (
@@ -3095,7 +3122,7 @@ function AgentsContentInner() {
           ) : effectiveDesktopView === "inbox" ? (
             <InboxView />
           ) : effectiveDesktopView === "settings" ? (
-            <SettingsContent />
+            <SettingsContent onKeyboardReturn={requestSettingsKeyboardReturn} />
           ) : effectiveDesktopView === "usage" ? (
             <div className="h-full overflow-y-auto select-text">
               <AgentsUsageTab />

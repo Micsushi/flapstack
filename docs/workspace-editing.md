@@ -3,8 +3,8 @@
 The Workspace Editing beta is off by default. Its desktop API currently supports
 UTF-8 text files in a connected chat worktree: read, compare-and-save,
 save-as to a new path, same-directory rename, history and reversal. Connected
-chat text viewers now support durable drafts, explicit Save, disk review and
-shared file undo/redo. Unbound viewers, Markdown/image previews and beta-disabled
+chat text viewers now support durable drafts, explicit Save, disk review,
+reviewed draft discard and shared file undo/redo. Unbound viewers, Markdown/image previews and beta-disabled
 viewers remain read-only. Autosave is opt-in per editor; full conflict recovery
 UI remains unfinished.
 The compare-and-save authority subtask (S7-F4-T1) is accepted independently of
@@ -23,7 +23,9 @@ Recovery also offers **Save As new file** with an explicit relative destination
 in an existing worktree folder. It calls the scoped `workspaceEditing.saveAs`
 authority; existing destinations are never overwritten and the original draft
 is not removed. A successful creation joins shared undo/redo without changing
-the draft. Draft discard remains unavailable.
+the draft. Missing-file recovery does not offer discard: it has no readable saved
+version to replace the draft. The connected editor's reviewed discard is described
+below.
 
 Before dispatch, recovery stores the exact Save As UUID, path and text in the
 desktop profile's local storage, keyed by project, chat, root, draft and request.
@@ -148,8 +150,17 @@ Closing after a verified copy releases the editable lease without dropping the
 retained buffer. If that lease is still saving, release waits until the operation
 finishes; another editor cannot acquire it mid-write.
 
-The surface does not yet offer reload/rebase, general Save As for a healthy
-editor, or draft discard. Save As recovery is available when reopening a source
+**Discard draft** is available in the connected editor's **Saved file** review
+when a readable saved version differs from the draft or there is a conflict.
+It replaces the durable buffer with that reviewed version without writing the
+file. It checks the current lease, draft revision and reviewed disk digest;
+changed disk content or pending/uncertain operations block the replacement.
+App Undo/Redo can reverse the discard without changing disk, while preserving
+later edits and rejecting stale reversals. Discard cancels pending autosave.
+
+The surface does not yet offer general conflict rebase/merge or general Save As
+for a healthy editor. Reviewed discard reloads the saved text, but does not merge
+it with local edits. Save As recovery is available when reopening a source
 file fails or an active editor reports an error. Shared file undo/redo
 uses the audited reversal API and refreshes disk evidence; it never discards a draft.
 Repeated Save As acknowledgements add one history entry per window. The backend

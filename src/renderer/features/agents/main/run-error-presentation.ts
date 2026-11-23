@@ -10,6 +10,29 @@ const LOCAL_LAUNCH_PERMISSION_PATTERN =
   /(?:spawn\b[^\r\n]{0,512}\b(?:eperm|eacces)\b|access is denied)/i
 const AUTH_PATTERN = /(?:\b401\b|unauthori[sz]ed|authentication failed|sign[- ]?in required)/i
 
+export function shouldShowPersistedRunFailure(input: {
+  run?: {
+    id: string
+    subChatId: string | null
+    status: string
+    promptMessageId: string | null
+  } | null
+  subChatId: string
+  messages: readonly { id?: string; role?: string }[]
+  status: string
+  retryingRunId: string | null
+}): boolean {
+  if (input.status === "submitted" || input.status === "streaming") return false
+  const latestUser = input.messages.findLast((message) => message.role === "user")
+  return Boolean(
+    input.run?.status === "failure" &&
+    input.run.subChatId === input.subChatId &&
+    input.run.promptMessageId &&
+    input.run.promptMessageId === latestUser?.id &&
+    input.run.id !== input.retryingRunId,
+  )
+}
+
 export function presentRunError(
   rawMessage: string | null | undefined,
   platform: "darwin" | "win32" | "linux" | "unknown" = "unknown",

@@ -1,1 +1,4 @@
 docs/stage6-performance-budget-review.json text eol=lf
+resources/cli/flapstack text eol=lf
+build/linux-after-install-preview.sh text eol=lf
+build/linux-after-install-release.sh text eol=lf

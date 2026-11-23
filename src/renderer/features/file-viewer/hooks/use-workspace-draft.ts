@@ -50,6 +50,7 @@ export function acquireWorkspaceDraft(target: Target) {
         save: trpcClient.workspaceEditing.saveDraft.mutate,
         release: trpcClient.workspaceEditing.releaseDraft.mutate,
         read: trpcClient.workspaceEditing.read.query,
+        replace: trpcClient.workspaceEditing.replaceDraft.mutate,
       },
       (operation) => {
         let operationId = operation.id,
@@ -73,6 +74,22 @@ export function acquireWorkspaceDraft(target: Target) {
           await sessions.get(key)?.session.refreshDisk()
         }
         recordAppAction({ label: `Save ${target.relativePath}`, undo: reverse, redo: reverse })
+      },
+      (before, after) => {
+        let restore = before,
+          expected = after
+        const reverse = async () => {
+          const active = sessions.get(key)?.session
+          if (!active) throw new Error("Reopen this file to undo or redo its discarded draft.")
+          const previous = expected
+          expected = await active.restoreDiscard(restore, expected)
+          restore = previous
+        }
+        recordAppAction({
+          label: `Discard draft ${target.relativePath}`,
+          undo: reverse,
+          redo: reverse,
+        })
       },
     )
     entry = { users: 0, session }

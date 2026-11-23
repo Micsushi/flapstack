@@ -359,7 +359,7 @@ export function AgentsPreferencesTab() {
           />
         </div>
         <div
-          className="flex items-center justify-between gap-6 border-t border-border p-4 outline-none"
+          className="flex flex-col items-stretch justify-between gap-3 border-t border-border p-4 outline-none sm:flex-row sm:items-center sm:gap-6"
           data-settings-id="preferences-chat-tag-confidence"
           tabIndex={-1}
         >
@@ -369,7 +369,7 @@ export function AgentsPreferencesTab() {
               Higher values create fewer, more certain tags and agent labels.
             </span>
           </div>
-          <div className="flex w-44 shrink-0 items-center gap-3">
+          <div className="flex w-full shrink-0 items-center gap-3 sm:w-44">
             <input
               type="range"
               min={50}

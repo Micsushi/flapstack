@@ -6,7 +6,13 @@ import {
   previewVisibilityPreset,
   type FeatureVisibilityPreset,
 } from "../../../../shared/feature-visibility"
-import { featureVisibilityGuideRerunAtom } from "../../../lib/atoms"
+import {
+  agentsSettingsDialogActiveTabAtom,
+  featureVisibilityGuideRerunAtom,
+  settingsSearchTargetAtom,
+} from "../../../lib/atoms"
+import { useBetaFeatures } from "../../../features/settings/use-beta-features"
+import type { BetaFeatureId } from "../../../../shared/beta-features"
 import { trpc } from "../../../lib/trpc"
 import { Button } from "../../ui/button"
 import { Switch } from "../../ui/switch"
@@ -16,6 +22,16 @@ export function AgentsFeatureVisibilityTab() {
   const applyChanges = trpc.featureVisibility.applyChanges.useMutation()
   const utils = trpc.useUtils()
   const rerunGuide = useSetAtom(featureVisibilityGuideRerunAtom)
+  const setSettingsTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
+  const setSearchTarget = useSetAtom(settingsSearchTargetAtom)
+  const beta = useBetaFeatures()
+  const prerequisites: Partial<Record<string, BetaFeatureId>> = {
+    plan: "planning",
+    "saved-workspaces": "savedWorkspaces",
+    automations: "automations",
+    orchestration: beta.planning ? "planning" : "orchestration",
+    "knowledge-graph": "projectMemory",
+  }
   const [draft, setDraft] = useState<NonNullable<typeof query.data> | null>(null)
   const saving = useRef(false)
   const visibility = draft?.visibility ?? query.data?.visibility
@@ -78,7 +94,7 @@ export function AgentsFeatureVisibilityTab() {
       <div className="p-6">
         <h1 className="text-lg font-semibold">Feature Visibility</h1>
         <p role="alert" className="mt-2 text-sm text-muted-foreground">
-          Preferences could not be read. Every feature remains visible and the original file was
+          Preferences could not be read. Available features remain visible and the original file was
           left untouched.
         </p>
         <Button className="mt-4" variant="outline" onClick={() => void query.refetch()}>
@@ -147,7 +163,7 @@ export function AgentsFeatureVisibilityTab() {
                   ? "Core work with advanced surfaces tucked away."
                   : option === "standard"
                     ? "Balanced access for everyday multi-agent work."
-                    : "Every optional surface visible from the start."}
+                    : "All available optional surfaces. Beta switches remain separate."}
               </span>
             </button>
           ))}
@@ -180,7 +196,21 @@ export function AgentsFeatureVisibilityTab() {
                 </div>
                 <div>
                   <dt className="inline font-medium text-foreground/80">Requires: </dt>
-                  <dd className="inline">{feature.explanation.prerequisites}</dd>
+                  <dd className="inline">
+                    {feature.explanation.prerequisites}
+                    {prerequisites[feature.id] && !beta[prerequisites[feature.id]!] && (
+                      <button
+                        type="button"
+                        className="ml-1 underline underline-offset-2"
+                        onClick={() => {
+                          setSettingsTab("beta")
+                          setSearchTarget(`beta-feature-${prerequisites[feature.id]}`)
+                        }}
+                      >
+                        Enable in Beta features
+                      </button>
+                    )}
+                  </dd>
                 </div>
                 <div>
                   <dt className="inline font-medium text-foreground/80">Authority: </dt>

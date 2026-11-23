@@ -114,7 +114,10 @@ import {
   registerActiveProductMcpSession,
   setChatMcpExposure,
 } from "../mcp-control/exposure"
-import { decideMcpApproval, listPendingMcpApprovals } from "../mcp-control/approval-coordinator"
+import {
+  decideApprovalWithLocalWriteContext,
+  listPendingApprovalsWithLocalWriteContext,
+} from "../mcp-control/local-write-approval-context"
 import { buildMcpStdioRegistration, type McpStdioRegistration } from "../mcp-control/registration"
 import { getPermissionPreferences } from "../permissions"
 import { ensureOperationWorkspace } from "../saved-workspaces/operations"
@@ -1600,13 +1603,13 @@ export function replyProductMcpApproval(input: {
   decision: "approve" | "deny"
   grantSession?: boolean
 }) {
-  const approval = listPendingMcpApprovals(getDatabase()).find(
+  const approval = listPendingApprovalsWithLocalWriteContext(getDatabase()).find(
     (candidate) => candidate.id === input.approvalId,
   )
   if (!approval) throw new Error("Pending product MCP test approval not found.")
   requireProductMcpTestCaller(approval.chatId)
   return {
-    resolved: decideMcpApproval(getDatabase(), {
+    resolved: decideApprovalWithLocalWriteContext(getDatabase(), {
       id: input.approvalId,
       decision: input.decision,
       grantSession: input.grantSession === true,
@@ -1668,7 +1671,7 @@ export function getProductMcpState(input: {
     },
     exposure: getChatMcpExposureStatus(input.chatId),
     runs: runs.map(compactRun),
-    pendingApprovals: listPendingMcpApprovals(db).filter(
+    pendingApprovals: listPendingApprovalsWithLocalWriteContext(db).filter(
       (approval) => approval.chatId === input.chatId,
     ),
     audit: listMcpAuditRecords(db, {

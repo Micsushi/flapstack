@@ -1,4 +1,5 @@
 import Database from "better-sqlite3"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -11,6 +12,7 @@ import {
 import type { LeasedAutomationOccurrence } from "../src/main/lib/automation/scheduler"
 import { migrateDatabase } from "../src/main/lib/db/migrate"
 import * as schema from "../src/main/lib/db/schema"
+import { createUsageBudget } from "../src/main/lib/usage/budgets"
 import type { QueuedAgentRun } from "../src/main/lib/run-launch-service"
 
 const migrations = resolve(process.cwd(), "drizzle")
@@ -58,6 +60,32 @@ describe("bounded automation execution", () => {
     const fixture = database("success")
     const occurrence = seedRunnable(fixture.sqlite, fixture.directory)
     const launch = vi.fn(async (run: QueuedAgentRun) => {
+      expect(run.runtimeLaunch).toMatchObject({
+        harness: "codex",
+        permission: { mode: "read-only" },
+      })
+      expect(run.runtimeLaunch?.resolvedRuntime).toBe(
+        (
+          fixture.sqlite
+            .prepare("SELECT resolved_runtime FROM agent_runs WHERE id = ?")
+            .get(run.runId) as { resolved_runtime: string }
+        ).resolved_runtime,
+      )
+
+      expect(
+        fixture.sqlite.prepare("SELECT status FROM agent_runs WHERE id = ?").get(run.runId),
+      ).toEqual({ status: "running" })
+      const conversation = fixture.sqlite
+        .prepare("SELECT run_status, messages FROM sub_chats WHERE id = ?")
+        .get(run.subChatId) as { run_status: string; messages: string }
+      expect(conversation.run_status).toBe("running")
+      expect(JSON.parse(conversation.messages)).toEqual([
+        {
+          id: "automation-occurrence-1-1",
+          role: "user",
+          parts: [{ type: "text", text: run.prompt }],
+        },
+      ])
       fixture.sqlite
         .prepare("UPDATE agent_runs SET status = 'success', completed_at = 1100 WHERE id = ?")
         .run(run.runId)
@@ -183,7 +211,16 @@ describe("bounded automation execution", () => {
         .run(harness, model)
 
       const result = await execution(fixture.path, {
-        launch: vi.fn(async () => undefined),
+        launch: vi.fn(async (run: QueuedAgentRun) => {
+          expect(run.runtimeLaunch).toMatchObject({ harness, permission: { mode: "read-only" } })
+          expect(run.runtimeLaunch?.requestedPreference).toBe(
+            (
+              fixture.sqlite
+                .prepare("SELECT runtime_preference FROM agent_runs WHERE id = ?")
+                .get(run.runId) as { runtime_preference: string }
+            ).runtime_preference,
+          )
+        }),
         now: () => 1_000,
       }).execute(occurrence)
 
@@ -492,6 +529,98 @@ describe("bounded automation execution", () => {
     ).toEqual({
       count: 0,
     })
+  })
+
+  it("does not launch over an active conversation or replace its messages", async () => {
+    const fixture = database("active-conversation")
+    const occurrence = seedRunnable(fixture.sqlite, fixture.directory)
+    fixture.sqlite
+      .prepare(
+        `INSERT INTO agent_runs (id,chat_id,sub_chat_id,harness,permission_mode,status,started_at,
+        runtime_snapshot_version,runtime_preference,runtime_preference_source,resolved_runtime,
+        runtime_adapter_version,runtime_protocol_version,runtime_capability_snapshot,runtime_control_snapshot)
+      VALUES ('active','chat-1','sub-chat-1','codex','read-only','running',1,?,?,?,?,?,?,?,?)`,
+      )
+      .run(...testRuntimeSnapshotSqlValues())
+    fixture.sqlite
+      .prepare(
+        'UPDATE sub_chats SET run_status=\'running\',messages=\'[{"id":"existing","role":"user","parts":[]}]\'',
+      )
+      .run()
+    const before = fixture.sqlite.prepare("SELECT messages FROM sub_chats").get()
+    const launch = vi.fn()
+    const result = await execution(fixture.path, { launch }).execute(occurrence)
+    expect(result).toMatchObject({ state: "denied", stopReason: "concurrency-limit" })
+    expect(launch).not.toHaveBeenCalled()
+    expect(fixture.sqlite.prepare("SELECT messages FROM sub_chats").get()).toEqual(before)
+    expect(fixture.sqlite.prepare("SELECT run_status FROM sub_chats").get()).toEqual({
+      run_status: "running",
+    })
+    expect(fixture.sqlite.prepare("SELECT status FROM agent_runs WHERE id='active'").get()).toEqual(
+      { status: "running" },
+    )
+  })
+
+  it("rechecks scoped budgets after preflight before claiming the run", async () => {
+    const fixture = database("claim-budget")
+    const occurrence = seedRunnable(fixture.sqlite, fixture.directory)
+    const launch = vi.fn()
+    const result = await execution(fixture.path, {
+      launch,
+      beforeConcurrencyClaim: async () => {
+        createUsageBudget(
+          drizzle(fixture.sqlite, { schema }),
+          {
+            name: "New hard stop",
+            enabled: true,
+            scope: { type: "global" },
+            threshold: { type: "total-tokens", value: 1 },
+            action: "hard-stop",
+            reset: { type: "none" },
+          },
+          { id: "late-budget", nowMs: 1000 },
+        )
+        fixture.sqlite
+          .prepare(
+            `INSERT INTO usage_samples (id,provider_id,account_tag,source,cost_quality,captured_at,total_tokens,attribution_state,source_class,dedupe_strategy,dedupe_key)
+        VALUES ('prior','codex','','flapstack-run','exact',1000,2,'unknown','flapstack-run','exact-fact','prior')`,
+          )
+          .run()
+      },
+    }).execute(occurrence)
+    expect(result).toMatchObject({ state: "denied", stopReason: "usage-budget-exhausted" })
+    expect(launch).not.toHaveBeenCalled()
+  })
+
+  it("reconciles an orchestration whose materialized run cannot be claimed", async () => {
+    const fixture = database("orchestration-denied-claim")
+    const occurrence = seedRunnable(fixture.sqlite, fixture.directory)
+    fixture.sqlite
+      .prepare(
+        `UPDATE automations SET scope_type='project',project_id='project-1',chat_id=NULL,
+      action_type='create-task-run',action_config='{"type":"create-task-run","taskName":"Automated task"}',worktree_strategy='none'`,
+      )
+      .run()
+    fixture.sqlite.exec(`CREATE TRIGGER cancel_materialized_run AFTER INSERT ON agent_runs
+      BEGIN UPDATE agent_runs SET status='cancelled' WHERE id=NEW.id; END`)
+    const launch = vi.fn()
+    const result = await execution(fixture.path, { launch, now: () => 1000 }).execute(occurrence)
+    expect(result).toMatchObject({ state: "denied", stopReason: "concurrency-limit" })
+    expect(launch).not.toHaveBeenCalled()
+    expect(
+      fixture.sqlite
+        .prepare(
+          "SELECT COUNT(*) count FROM orchestration_agents WHERE status IN ('pending','running')",
+        )
+        .get(),
+    ).toEqual({ count: 0 })
+    expect(
+      fixture.sqlite
+        .prepare(
+          "SELECT COUNT(*) count FROM task_orchestrations WHERE status IN ('pending','running')",
+        )
+        .get(),
+    ).toEqual({ count: 0 })
   })
 
   it("pauses and resumes only approved automations", () => {

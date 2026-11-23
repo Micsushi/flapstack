@@ -3,6 +3,7 @@ import { BETA_FEATURE_REGISTRY } from "../../../../shared/beta-features"
 import { trpc } from "../../../lib/trpc"
 import { Switch } from "../../ui/switch"
 import { Button } from "../../ui/button"
+import { BetaFeatureTutorial } from "../../../features/onboarding/beta-feature-tutorial"
 
 export function AgentsBetaTab() {
   const utils = trpc.useUtils()
@@ -44,6 +45,7 @@ export function AgentsBetaTab() {
                 {feature.label}
               </summary>
               <p className="mt-2 text-xs text-muted-foreground">{feature.description}</p>
+              <BetaFeatureTutorial feature={feature.id} label={feature.label} />
             </details>
             <Switch
               checked={settings.data?.[feature.id] ?? false}

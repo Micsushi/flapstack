@@ -17,6 +17,7 @@ import {
   renameWorkspaceEditSchema,
   updateWorkspaceDraftSchema,
   releaseWorkspaceDraftSchema,
+  replaceWorkspaceDraftSchema,
   saveWorkspaceDraftSchema,
   readWorkspaceDraftSchema,
 } from "../../../../shared/workspace-edits"
@@ -86,6 +87,15 @@ export const workspaceEditingRouter = router({
   releaseDraft: procedure
     .input(releaseWorkspaceDraftSchema)
     .mutation(({ input, ctx }) => service().releaseDraft(input, draftOwner(ctx))),
+  replaceDraft: procedure.input(replaceWorkspaceDraftSchema).mutation(async ({ input, ctx }) => {
+    try {
+      return { ok: true as const, ...(await service().replaceDraft(input, draftOwner(ctx))) }
+    } catch (error) {
+      if (error instanceof WorkspaceEditConflictError && error.notApplied)
+        return { ok: false as const, reason: "conflict" as const }
+      throw error
+    }
+  }),
   read: procedure.input(workspaceEditTargetSchema).query(({ input }) => service().read(input)),
   history: procedure.input(workspaceEditScopeSchema).query(({ input }) => service().history(input)),
   save: procedure

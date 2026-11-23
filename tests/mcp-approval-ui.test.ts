@@ -64,9 +64,7 @@ describe("MCP approval UI", () => {
     expect(dialog?.textContent).toContain("Tier 2")
     expect(dialog?.textContent).toContain("Chat: Fix parser")
     expect(dialog?.textContent).toContain("Archive the selected chat")
-    expect(
-      dialog?.querySelector('[aria-label="Approve this tool for the current chat session"]'),
-    ).not.toBeNull()
+    expect(dialog?.querySelector('[aria-label="This chat session"]')).not.toBeNull()
 
     const sessionGrant = dialog?.querySelector('[role="checkbox"]') as HTMLElement
     const approve = dialog?.querySelector(

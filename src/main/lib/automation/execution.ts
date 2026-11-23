@@ -29,6 +29,7 @@ import * as dbSchema from "../db/schema"
 import {
   UsageBudgetExceededError,
   assertUsageBudgetAllowsLaunch,
+  claimPendingRunWithinUsageBudget,
   providerForHarness,
   resolveUsageBudgetContextForRun,
   resolveUsageBudgets,
@@ -41,6 +42,7 @@ import {
 import type { LeasedAutomationOccurrence } from "./scheduler"
 import {
   constructRuntimeSnapshot,
+  resolvedLaunchFromSnapshotRow,
   runtimePermissionSnapshot,
   runtimeSnapshotSqlValues,
 } from "../agent-runtime/snapshot"
@@ -216,23 +218,34 @@ export class AutomationExecutionService {
     )
     if (claim.kind === "deferred") return claim.outcome
     const started = claim
-    let materialized: MaterializedRun
+    let materialized: MaterializedRun | null = null
     try {
       materialized = this.materializeRun(occurrence, started.attempt, prepared)
+      const runId = materialized.run.runId
       this.withDatabase((database) => {
         database
           .prepare("UPDATE automation_executions SET run_id = ? WHERE id = ? AND state = 'running'")
-          .run(materialized.run.runId, started.executionId)
+          .run(runId, started.executionId)
       })
+      this.claimRun(occurrence, materialized.run)
     } catch (error) {
       const failure = materializationError(error)
+      if (materialized) {
+        this.markRunTerminal(
+          materialized.run,
+          failure.code === "usage-budget-exhausted" ? "cancelled" : "failure",
+        )
+        this.reconcileOrchestration(materialized)
+      }
       return this.finalize(
         occurrence,
         started.executionId,
         started.attempt,
-        null,
+        materialized,
         prepared,
-        failure.code === "permission-denied" ? "denied" : "failed",
+        ["permission-denied", "usage-budget-exhausted", "concurrency-limit"].includes(failure.code)
+          ? "denied"
+          : "failed",
         failure.code,
         failure.message,
       )
@@ -761,6 +774,59 @@ export class AutomationExecutionService {
         orchestrationTaskId: overview.orchestration.taskId,
       }
     })
+  }
+
+  private claimRun(occurrence: LeasedAutomationOccurrence, run: QueuedAgentRun): void {
+    const claimed = this.withDatabase((database) =>
+      database
+        .transaction(() => {
+          const lease = database
+            .prepare(
+              `SELECT 1 ok FROM automation_occurrences o JOIN automation_leases l ON l.occurrence_id = o.id
+         WHERE o.id = ? AND o.state = 'running' AND l.owner = ? AND l.token = ?`,
+            )
+            .get(occurrence.id, occurrence.lease.owner, occurrence.lease.token)
+          if (!lease) fail("invalid-lease", "Automation occurrence lease is no longer owned.")
+          const result = claimPendingRunWithinUsageBudget(database, run.runId, {
+            nowMs: this.now(),
+          })
+          if (!result.claimed) return result
+          const row = database
+            .prepare("SELECT messages FROM sub_chats WHERE id = ?")
+            .get(run.subChatId) as Row
+          const messages: unknown = JSON.parse(String(row.messages))
+          if (
+            !Array.isArray(messages) ||
+            messages.some((message) => !message || typeof message !== "object")
+          ) {
+            throw new Error("Conversation history is invalid.")
+          }
+          const promptId = database
+            .prepare("SELECT prompt_message_id FROM agent_runs WHERE id = ?")
+            .get(run.runId) as Row
+          if (!messages.some((message) => message.id === promptId.prompt_message_id)) {
+            messages.push({
+              id: promptId.prompt_message_id,
+              role: "user",
+              parts: [{ type: "text", text: run.prompt }],
+            })
+          }
+          database
+            .prepare(
+              "UPDATE sub_chats SET messages = ?, run_status = 'running', updated_at = ? WHERE id = ?",
+            )
+            .run(JSON.stringify(messages), this.now(), run.subChatId)
+          return result
+        })
+        .immediate(),
+    )
+    if (claimed.blocked)
+      fail("usage-budget-exhausted", "Automation launch blocked by its scoped usage budget.")
+    if (!claimed.claimed)
+      fail(
+        "concurrency-limit",
+        "The conversation already has an active run or this run is no longer pending.",
+      )
   }
 
   private async monitorLaunch(
@@ -1297,6 +1363,7 @@ function queuedRunById(database: Sqlite, runId: string): QueuedAgentRun | null {
   if (!row) return null
   return {
     runId: String(row.id),
+    runtimeLaunch: resolvedLaunchFromSnapshotRow(row),
     providerAccount: providerAccountSnapshotFromRow(row),
     chatId: String(row.chat_id),
     subChatId: String(row.sub_chat_id),

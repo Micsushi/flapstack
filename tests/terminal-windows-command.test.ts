@@ -6,6 +6,7 @@ import {
   captureTerminalPtyOwnedProcesses,
   isTerminalProcessAlive,
   formatInitialCommands,
+  setupInitialCommands,
   releaseTerminalPtyResources,
   releaseUnixPtyResources,
   releaseWindowsPtyConoutWorker,
@@ -31,13 +32,54 @@ describe("terminal initial command formatting", () => {
         "second",
         "third",
       ]),
-    ).toBe("first; if ($?) { second; if ($?) { third } }\n")
+    ).toBe("first; if ($?) { second; if ($?) { third } }\r")
   })
 
   it("retains command-shell conditional sequencing", () => {
     expect(formatInitialCommands("C:\\Windows\\System32\\cmd.exe", ["first", "second"])).toBe(
-      "first && second\n",
+      "first && second\r",
     )
+  })
+
+  it("preserves embedded command lines and Unix shell submission", () => {
+    const multiline = 'Write-Output @"\nfirst\nsecond\n"@'
+    expect(formatInitialCommands("C:/Program Files/PowerShell/7/pwsh.exe", [multiline])).toBe(
+      `${multiline}\r`,
+    )
+    for (const shell of ["/bin/bash", "/bin/zsh", "/bin/sh"])
+      expect(formatInitialCommands(shell, ["printf 'first\\nsecond'", "echo done"])).toBe(
+        "printf 'first\\nsecond' && echo done\n",
+      )
+  })
+
+  it("dispatches startup input once with the same CR as terminal Enter", async () => {
+    vi.useFakeTimers()
+    const write = vi.fn(),
+      dispose = vi.fn()
+    let outputReady!: () => void
+    const session = {
+      shell: "powershell.exe",
+      isAlive: true,
+      pty: {
+        onData: vi.fn((listener: () => void) => {
+          outputReady = listener
+          return { dispose }
+        }),
+        write,
+      },
+    } as unknown as TerminalSession
+    try {
+      setupInitialCommands(session, ["Write-Output 'startup'"])
+      expect(write).not.toHaveBeenCalled()
+      outputReady()
+      expect(dispose).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(100)
+      expect(write).toHaveBeenCalledExactlyOnceWith("Write-Output 'startup'\r")
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(write).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("uses the bundled winpty cancellation path under Windows Electron", () => {

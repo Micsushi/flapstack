@@ -518,7 +518,7 @@ body[data-open-chat-tab-pointer-dragging="true"] * {
   border-bottom: 1.5px solid currentColor;
   transform: rotate(45deg);
   vertical-align: 0.15em;
-  opacity: 0;
+  opacity: 0.6;
 }
 .beta-disclosure[open] > summary::after {
   transform: rotate(225deg);

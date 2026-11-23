@@ -1,5 +1,6 @@
 import type {
   AgentActivityEvent,
+  LocalRunActivityStatus,
   AgentActivityKind,
   AgentActivityPayloadByKind,
   AgentActivityPhase,
@@ -14,7 +15,67 @@ import {
   type LegacyActivityProjection,
 } from "../../../../main/lib/agent-runtime/legacy-activity-projection"
 
-export type RuntimeActivitySource = AgentActivityEvent | LegacyActivityProjection
+type LocalRunProjection = Omit<LegacyActivityProjection, "provenance"> & {
+  provenance: "persisted-run-projection"
+  runId: string
+  timestamp: number | null
+  runStatus: string
+}
+export type RuntimeActivitySource =
+  AgentActivityEvent | LegacyActivityProjection | LocalRunProjection
+
+export function projectLocalRunStatuses(
+  runs: LocalRunActivityStatus[],
+  events: AgentActivityEvent[],
+): LocalRunProjection[] {
+  const phases: Record<string, AgentActivityPhase> = {
+    pending: "queued",
+    running: "started",
+    success: "completed",
+    failure: "failed",
+    cancelled: "cancelled",
+  }
+  return runs.flatMap((run, index) => {
+    const phase = Object.hasOwn(phases, run.status) ? phases[run.status]! : "snapshot"
+    if (
+      events.some(
+        (event) =>
+          event.runId === run.id &&
+          event.kind === "lifecycle" &&
+          event.phase === phase &&
+          event.privacyClass !== "private" &&
+          event.privacyClass !== "encrypted" &&
+          event.displayClass !== "private" &&
+          event.redactionState === "none",
+      )
+    )
+      return []
+    const status = Object.hasOwn(phases, run.status) ? run.status : "unknown"
+    return [
+      {
+        persisted: false as const,
+        projectionId: `local-run:${run.id}`,
+        sequence: index + 1,
+        messageIndex: -1,
+        partIndex: -1,
+        role: "assistant",
+        kind: "status" as const,
+        phase,
+        displayClass: "status" as const,
+        provenance: "persisted-run-projection" as const,
+        providerIdentity: null,
+        runId: run.id,
+        timestamp: run.completedAt ?? run.startedAt,
+        runStatus: status === "success" ? "completed" : status,
+        payload: {
+          message:
+            status === "success" ? "Local run completed; work not verified" : `Local run ${status}`,
+          code: status,
+        },
+      },
+    ]
+  })
+}
 
 export type RuntimeActivityStatus = "loading" | "live" | "ready" | "stale" | "error"
 
@@ -97,6 +158,19 @@ function isPersisted(source: RuntimeActivitySource): source is AgentActivityEven
   return "eventId" in source
 }
 
+const LOCAL_RUN_LABELS: Record<string, string> = {
+  pending: "Queued local run",
+  running: "Running local run",
+  completed: "Completed local run",
+  failure: "Failed local run",
+  cancelled: "Cancelled local run",
+  unknown: "Unknown local run",
+}
+
+function isLocalRun(source: RuntimeActivitySource): source is LocalRunProjection {
+  return !isPersisted(source) && source.provenance === "persisted-run-projection"
+}
+
 export function runtimeActivityKey(source: RuntimeActivitySource): string {
   return isPersisted(source) ? `event:${source.eventId}` : source.projectionId
 }
@@ -176,7 +250,11 @@ function sourceProvider(source: RuntimeActivitySource): string {
 }
 
 function sourceTimestamp(source: RuntimeActivitySource): number | null {
-  return isPersisted(source) ? (source.providerTimestamp ?? source.receivedAt) : null
+  return isPersisted(source)
+    ? (source.providerTimestamp ?? source.receivedAt)
+    : isLocalRun(source)
+      ? source.timestamp
+      : null
 }
 
 function payload<K extends AgentActivityKind>(
@@ -342,7 +420,9 @@ export function formatRuntimeActivity(source: RuntimeActivitySource): RuntimeAct
     ? "Corrupt activity unavailable"
     : privateUnavailable
       ? "Private reasoning unavailable"
-      : rowLabel(source, runtime)
+      : isLocalRun(source)
+        ? (LOCAL_RUN_LABELS[source.runStatus] ?? "Unknown local run")
+        : rowLabel(source, runtime)
   const content = privateUnavailable ? null : rowContent(source)
   const timestamp = sourceTimestamp(source)
   const identity = privateUnavailable ? [] : providerIdentity(source)
@@ -351,7 +431,9 @@ export function formatRuntimeActivity(source: RuntimeActivitySource): RuntimeAct
     Boolean(content) && (REASONING_KINDS.has(source.kind) || source.kind !== "agent-text")
   const provenance = isPersisted(source)
     ? `${runtime} · ${source.provider}`
-    : "Flapstack Native · legacy message projection"
+    : isLocalRun(source)
+      ? "Flapstack Native · persisted run status"
+      : "Flapstack Native · legacy message projection"
   return {
     key: runtimeActivityKey(source),
     runtime,
@@ -363,7 +445,7 @@ export function formatRuntimeActivity(source: RuntimeActivitySource): RuntimeAct
     provenance,
     timestamp,
     durationMs: null,
-    status: source.phase,
+    status: isLocalRun(source) ? source.runStatus : source.phase,
     parentId: isPersisted(source) ? (source.providerParentItemId ?? null) : null,
     identity,
     searchText: [label, content, provenance, ...identity]

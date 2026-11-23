@@ -419,11 +419,7 @@ export function DetailsSidebar({
               case "orchestration":
                 if (!betaFeatures.orchestration || !projectId) return null
                 return (
-                  <WidgetCard
-                    key="orchestration"
-                    widgetId="orchestration"
-                    title="Agent orchestration"
-                  >
+                  <WidgetCard key="orchestration" widgetId="orchestration" title="Agent workflows">
                     <OrchestrationTaskCard
                       taskId={taskId}
                       projectId={projectId}

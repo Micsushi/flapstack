@@ -26,6 +26,15 @@ export class RuntimeActivityChatChunkMapper {
   }
 
   private mapEvent(event: AgentActivityEvent): UIMessageChunk[] {
+    // Cumulative turn diffs describe observed changes, not another tool execution.
+    // They remain in Runtime activity and the historical change review.
+    if (
+      event.kind === "patch" &&
+      event.provider === "codex-app-server" &&
+      event.phase === "snapshot" &&
+      event.payload.state === "turn-diff-snapshot"
+    )
+      return []
     if (event.kind === "reasoning-summary" || event.kind === "provider-visible-reasoning") {
       return this.mapReasoning(event)
     }

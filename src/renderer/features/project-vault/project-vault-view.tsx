@@ -1,4 +1,5 @@
 "use client"
+import { projectVaultReadableContent } from "../../../shared/project-vault-presentation"
 
 import { WorkspaceRow } from "../../components/ui/workspace"
 
@@ -240,7 +241,11 @@ export function ProjectVaultView() {
     sectionId: SectionId,
     options: { submittedRevision?: number } = {},
   ) => {
-    const result = await utils.projectVaults.readSection.fetch({ projectId, sectionId })
+    await utils.projectVaults.readSection.cancel({ projectId, sectionId })
+    const result = await utils.projectVaults.readSection.fetch(
+      { projectId, sectionId },
+      { staleTime: 0 },
+    )
     const snapshot = toSnapshot(result)
     setEditors((current) => {
       const existing = current[sectionId]
@@ -329,10 +334,11 @@ export function ProjectVaultView() {
     } catch (error) {
       let changedSinceLoad = false
       try {
-        const current = await utils.projectVaults.readSection.fetch({
-          projectId,
-          sectionId: selectedSectionId,
-        })
+        await utils.projectVaults.readSection.cancel({ projectId, sectionId: selectedSectionId })
+        const current = await utils.projectVaults.readSection.fetch(
+          { projectId, sectionId: selectedSectionId },
+          { staleTime: 0 },
+        )
         const snapshot = toSnapshot(current)
         changedSinceLoad =
           snapshot.version !== editor.base.version ||
@@ -882,7 +888,10 @@ export function ProjectVaultView() {
                   />
                 ) : (
                   <article className="mx-auto max-w-4xl p-6">
-                    <ChatMarkdownRenderer content={editor.draft} size="md" />
+                    <ChatMarkdownRenderer
+                      content={projectVaultReadableContent(editor.draft, selectedSection.sectionId)}
+                      size="md"
+                    />
                   </article>
                 )}
               </div>

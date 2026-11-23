@@ -1,6 +1,6 @@
 import type { MessageReply } from "../../../shared/message-replies"
 import { createHash, randomBytes, randomUUID } from "node:crypto"
-import { count } from "drizzle-orm"
+import { count, eq } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import {
   MobileReplayWindow,
@@ -20,7 +20,12 @@ import { AutomationExecutionService } from "../automation/execution"
 import * as schema from "../db/schema"
 import { mobileDeviceAuditRecords } from "../db/schema"
 import { openAppDatabase } from "../db/access"
-import { decideMcpApproval } from "../mcp-control/approval-coordinator"
+import {
+  decideApprovalWithLocalWriteContext,
+  isLocalWriteApprovalTool,
+} from "../mcp-control/local-write-approval-context"
+
+class DesktopApprovalRequiredError extends Error {}
 import type { MobilePairingService } from "../mobile-pairing"
 
 type Database = BetterSQLite3Database<typeof schema>
@@ -142,6 +147,15 @@ export class MobileActionService {
       this.audit(device.deviceId, command, result)
       return result
     } catch (error) {
+      if (error instanceof DesktopApprovalRequiredError) {
+        const result = actionResult(
+          command,
+          "denied",
+          "Review this file change in Flapstack on your computer.",
+        )
+        this.audit(device.deviceId, command, result)
+        return result
+      }
       const status = isStaleDispatchFailure(error) ? "stale" : "failed"
       const result = actionResult(command, status, status === "stale" ? "target-stale" : "failed")
       this.audit(device.deviceId, command, result)
@@ -401,7 +415,14 @@ export function createProductionMobileActionDispatchers(
       return paused || stopped.some((result) => result.status === "fulfilled" && result.value)
     },
     decideApproval(approvalId, decision) {
-      return decideMcpApproval(database, {
+      const approval = database
+        .select()
+        .from(schema.mcpApprovalRequests)
+        .where(eq(schema.mcpApprovalRequests.id, approvalId))
+        .get()
+      if (decision === "approve" && approval && isLocalWriteApprovalTool(approval.toolName))
+        throw new DesktopApprovalRequiredError()
+      return decideApprovalWithLocalWriteContext(database, {
         id: approvalId,
         decision,
         grantSession: false,

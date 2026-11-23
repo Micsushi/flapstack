@@ -43,6 +43,12 @@ export function isShortcutFocusAllowed(
   action: ShortcutAction,
   target: EventTarget | null,
 ): boolean {
+  if (
+    action.id === "file-search" &&
+    target instanceof Element &&
+    target.closest('.xterm, [role="dialog"], [aria-modal="true"]')
+  )
+    return false
   if (action.focusPolicy === "global") return true
   if (!(target instanceof Element)) return true
   return !target.closest(
@@ -62,6 +68,20 @@ export function resolveRendererShortcut(
     if (options.availableActionIds && !options.availableActionIds.has(action.actionId)) continue
     if (conflicts.has(action.id)) continue
     if (!isShortcutFocusAllowed(action, event.target)) continue
+    // Global Quick Open may run in a composer/editor, but a custom binding must
+    // not take ordinary typing, editing, navigation or AltGr input from it.
+    if (
+      action.id === "file-search" &&
+      event.target instanceof Element &&
+      event.target.closest(
+        'input, textarea, select, [contenteditable]:not([contenteditable="false"]), .monaco-editor',
+      ) &&
+      ((!event.ctrlKey && !event.metaKey) ||
+        event.altKey ||
+        event.key.length !== 1 ||
+        /^[acvxyzbiufhsk]$/i.test(event.key))
+    )
+      continue
     const hotkey = getResolvedHotkey(action.id, config)
     if (hotkey && matchesHotkey(event, hotkey)) return action
   }

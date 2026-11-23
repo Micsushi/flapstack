@@ -35,9 +35,10 @@ export function formatInitialCommands(shell: string, commands: string[]): string
     for (let index = commands.length - 2; index >= 0; index -= 1) {
       chain = `${commands[index]}; if ($?) { ${chain} }`
     }
-    return `${chain}\n`
+    // Windows console line editors submit on CR; LF only inserts another input line.
+    return `${chain}\r`
   }
-  return `${commands.join(" && ")}\n`
+  return `${commands.join(" && ")}${shellName === "cmd.exe" ? "\r" : "\n"}`
 }
 
 export function terminalPtyPlatformOptions(

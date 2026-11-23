@@ -212,8 +212,8 @@ export function mapCodexNotification(
       return [
         patch(
           base,
-          "updated",
-          "running",
+          "snapshot",
+          "turn-diff-snapshot",
           null,
           string(params.diff),
           undefined,

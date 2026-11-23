@@ -3,7 +3,7 @@ import { BrowserWindow } from "electron"
 import superjson from "superjson"
 import { acquireConfiguredAppDatabaseOperation } from "../db/access"
 import { betaFeatureForTrpcPath, isBetaFeatureEnabled } from "../beta-features/settings"
-import type { BetaFeatureId } from "../../../shared/beta-features"
+import { BETA_FEATURE_REGISTRY, type BetaFeatureId } from "../../../shared/beta-features"
 
 /**
  * Context passed to all tRPC procedures
@@ -40,7 +40,7 @@ const databaseOperationMiddleware = middleware(async ({ path, next }) => {
   if (betaFeature && !isBetaFeatureEnabled(betaFeature)) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: `Enable ${betaFeature} in Settings > Beta Features to use this feature.`,
+      message: `Enable ${BETA_FEATURE_REGISTRY.find((feature) => feature.id === betaFeature)!.label} in Settings > Beta features to use this feature.`,
     })
   }
   const release = acquireConfiguredAppDatabaseOperation()
@@ -58,7 +58,7 @@ export const betaProcedure = (feature: BetaFeatureId) =>
     if (!isBetaFeatureEnabled(feature)) {
       throw new TRPCError({
         code: "PRECONDITION_FAILED",
-        message: `Enable ${feature} in Settings > Beta Features to use this feature.`,
+        message: `Enable ${BETA_FEATURE_REGISTRY.find((entry) => entry.id === feature)!.label} in Settings > Beta features to use this feature.`,
       })
     }
     return next()

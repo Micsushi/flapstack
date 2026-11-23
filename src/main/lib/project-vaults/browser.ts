@@ -2,6 +2,7 @@ import type { getDatabase } from "../db"
 import type { ProjectVaultSectionId } from "./registry"
 import { assertProjectVaultContentSafe, redactProjectVaultSecrets } from "./content-safety"
 import { listProjectVaultSections, readProjectVaultSection } from "./storage"
+import { projectVaultReadableContent } from "../../../shared/project-vault-presentation"
 
 type Database = ReturnType<typeof getDatabase>
 
@@ -42,7 +43,9 @@ export async function searchProjectVault(
       projectId: input.projectId,
       sectionId: metadata.sectionId as ProjectVaultSectionId,
     })
-    const safeContent = redactProjectVaultSecrets(section.content)
+    const safeContent = redactProjectVaultSecrets(
+      projectVaultReadableContent(section.content, metadata.sectionId),
+    )
     const index = safeContent.toLocaleLowerCase().indexOf(normalizedQuery)
     if (index < 0) continue
     results.push({

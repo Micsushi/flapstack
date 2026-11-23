@@ -90,25 +90,30 @@ export function AgentsRuntimesTab() {
     () => buildRuntimeSettingsRows({ scope, defaults, releases }),
     [defaults, releases, scope.type, projectId],
   )
+  async function reloadAfterError(value: { message: string }) {
+    setAnnouncement(value.message)
+    try {
+      const result = await refetchDefaults()
+      setAnnouncement(
+        `${value.message} ${result.isError ? "Current Runtime defaults could not reload. Retry below." : "Reloaded current Runtime defaults."}`,
+      )
+    } catch {
+      setAnnouncement(`${value.message} Current Runtime defaults could not reload. Retry below.`)
+    }
+  }
   const write = trpc.agentRuntimeDefaults.write.useMutation({
     async onSuccess(value) {
       await utils.agentRuntimeDefaults.list.invalidate()
       setAnnouncement(`${value.harness} Runtime default saved.`)
     },
-    onError(value) {
-      setAnnouncement(`${value.message} Reloaded current Runtime defaults.`)
-      void utils.agentRuntimeDefaults.list.invalidate()
-    },
+    onError: reloadAfterError,
   })
   const remove = trpc.agentRuntimeDefaults.delete.useMutation({
     async onSuccess() {
       await utils.agentRuntimeDefaults.list.invalidate()
       setAnnouncement("Project Runtime override reset.")
     },
-    onError(value) {
-      setAnnouncement(`${value.message} Reloaded current Runtime defaults.`)
-      void utils.agentRuntimeDefaults.list.invalidate()
-    },
+    onError: reloadAfterError,
   })
 
   return (

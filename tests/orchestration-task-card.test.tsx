@@ -2,6 +2,8 @@
 
 import React, { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
+import { createStore, Provider } from "jotai"
+import { desktopViewAtom } from "../src/renderer/features/agents/atoms"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type {
   OrchestrationLineageDto,
@@ -13,15 +15,46 @@ import {
   formatOrchestrationCost,
   getLineageNavigation,
   OrchestrationOverviewCard,
+  OrchestrationTaskCard,
 } from "../src/renderer/features/agents/ui/orchestration-task-card"
 import { readRendererOrchestrationCard } from "../src/renderer/features/agents/lib/orchestration-test-state"
 
+const policyQuery = vi.hoisted(() => ({
+  data: undefined as { taskAuthority: "records" | "local" } | undefined,
+}))
+const legacyQueries = vi.hoisted(() => ({
+  overview: null as OrchestrationTaskOverviewDto | null,
+  lineage: null as OrchestrationLineageDto | null,
+  control: vi.fn(),
+}))
+
+vi.mock("../src/renderer/features/agents/ui/orchestration-review-panel", () => ({
+  OrchestrationReviewPanel: () => null,
+}))
+vi.mock("../src/renderer/features/agents/ui/orchestration-workflow-panel", () => ({
+  OrchestrationWorkflowPanel: () => null,
+}))
+
 vi.mock("../src/renderer/lib/trpc", () => ({
   trpc: {
+    betaFeatures: { get: { useQuery: () => ({ data: { orchestration: true } }) } },
+    spawnedAgents: {
+      getPolicy: { useQuery: () => policyQuery },
+      getTaskOverview: { useQuery: () => ({ data: legacyQueries.overview }) },
+      getLineage: { useQuery: () => ({ data: legacyQueries.lineage }) },
+      previewLineage: { useQuery: () => ({ data: null }) },
+      control: { useMutation: () => ({ mutate: legacyQueries.control }) },
+      retryAgent: { useMutation: () => ({}) },
+      replaceAgent: { useMutation: () => ({}) },
+      addAgent: { useMutation: () => ({}) },
+      createOrchestration: { useMutation: () => ({}) },
+      executeSwarmControl: { useMutation: () => ({}) },
+    },
     useUtils: () => ({
       orchestrationOperations: { listActivity: { invalidate: vi.fn() } },
     }),
     orchestrationOperations: {
+      executeCoordinationAction: { useMutation: () => ({}) },
       listActivity: {
         useQuery: () => ({ isLoading: false, error: null, data: [] }),
       },
@@ -144,6 +177,9 @@ describe("orchestration task card", () => {
   let root: Root
 
   beforeEach(() => {
+    legacyQueries.overview = null
+    legacyQueries.lineage = null
+    legacyQueries.control.mockClear()
     container = document.createElement("div")
     document.body.appendChild(container)
     root = createRoot(container)
@@ -152,6 +188,65 @@ describe("orchestration task card", () => {
   afterEach(() => {
     act(() => root.unmount())
     container.remove()
+  })
+
+  it.each([undefined, { taskAuthority: "records" as const }])(
+    "opens canonical Agent workflows without exposing local task creation (policy %j)",
+    async (policy) => {
+      policyQuery.data = policy
+      const store = createStore()
+      await act(async () =>
+        root.render(
+          <Provider store={store}>
+            <OrchestrationTaskCard
+              projectId="project-1"
+              currentChatId="chat-parent"
+              onNavigate={vi.fn()}
+            />
+          </Provider>,
+        ),
+      )
+      const button = container.querySelector("button")!
+      expect(button.textContent).toBe("Open Agent workflows")
+      expect(container.querySelectorAll("button")).toHaveLength(1)
+      await act(async () => button.click())
+      expect(store.get(desktopViewAtom)).toBe("records-setups")
+    },
+  )
+
+  it("preserves local creation only with explicit local authority", async () => {
+    policyQuery.data = { taskAuthority: "local" }
+    await act(async () =>
+      root.render(
+        <OrchestrationTaskCard
+          projectId="project-1"
+          currentChatId="chat-parent"
+          onNavigate={vi.fn()}
+        />,
+      ),
+    )
+    expect(container.textContent).toContain("Start orchestration")
+    expect(container.textContent).not.toContain("Open Agent workflows")
+  })
+
+  it("keeps historical task stop controls available under Records authority", async () => {
+    policyQuery.data = { taskAuthority: "records" }
+    legacyQueries.overview = overview
+    legacyQueries.lineage = lineage
+    await act(async () =>
+      root.render(
+        <OrchestrationTaskCard
+          taskId="task-1"
+          projectId="project-1"
+          currentChatId="chat-parent"
+          onNavigate={vi.fn()}
+        />,
+      ),
+    )
+    const stop = container.querySelector<HTMLButtonElement>('[aria-label="Stop orchestration"]')!
+    expect(stop).not.toBeNull()
+    await act(async () => stop.click())
+    expect(legacyQueries.control).toHaveBeenCalledWith({ taskId: "task-1", action: "stop" })
   })
 
   it("labels estimated and provider-reported cost honestly", () => {

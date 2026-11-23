@@ -23,10 +23,18 @@ export function createInitialLaunchPresentationResolver() {
   return (
     input: Parameters<typeof resolveLaunchPresentation>[0],
     useInitialPresentation: boolean,
+    startupBackgroundPresentation = false,
   ): LaunchPresentation => {
-    if (!useInitialPresentation || consumed) return { ...DEFAULT_PRESENTATION }
+    const useInitialPlacement = useInitialPresentation && !consumed
+    if (!useInitialPlacement && !startupBackgroundPresentation) return { ...DEFAULT_PRESENTATION }
     consumed = true
-    return resolveLaunchPresentation(input)
+    const presentation = resolveLaunchPresentation(input)
+    if (useInitialPlacement) return presentation
+    return {
+      showInactive: presentation.showInactive,
+      startMinimized: presentation.startMinimized,
+      ...(presentation.keepRendererActive ? { keepRendererActive: true } : {}),
+    }
   }
 }
 

@@ -1251,7 +1251,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 )}
                 <span
                   ref={(el) => nameRefCallback(chatId, el)}
-                  className="truncate block text-sm leading-5 flex-1 text-white"
+                  className="truncate block text-sm leading-5 flex-1 text-foreground"
                 >
                   <TypewriterText
                     text={chatName || ""}
@@ -2129,19 +2129,19 @@ const ChatListSection = React.memo(function ChatListSection({
     sectionId && (isTopLevelScopedSection || isTaskSection || isReferenceSection),
   )
   const headerIcon = isProjectSection ? (
-    <FolderGit2 className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
+    <FolderGit2 className="h-3.5 w-3.5 flex-shrink-0 text-foreground/90" />
   ) : isGlobalSection ? (
-    <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
+    <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-foreground/90" />
   ) : isTaskSection ? (
-    <ClipboardList className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
+    <ClipboardList className="h-3.5 w-3.5 flex-shrink-0 text-foreground/90" />
   ) : kind === "remote" ? (
     <CloudIcon className="h-3.5 w-3.5 flex-shrink-0 text-violet-400" />
   ) : kind === "pinned" ? (
-    <Pin className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
+    <Pin className="h-3.5 w-3.5 flex-shrink-0 text-foreground/90" />
   ) : kind === "starred" ? (
-    <Star className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
+    <Star className="h-3.5 w-3.5 flex-shrink-0 text-foreground/90" />
   ) : kind === "tagged" ? (
-    <Tag className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
+    <Tag className="h-3.5 w-3.5 flex-shrink-0 text-foreground/90" />
   ) : (
     <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
   )
@@ -2620,7 +2620,7 @@ const ChatListSection = React.memo(function ChatListSection({
                       "min-w-0 truncate whitespace-nowrap",
                       isTopLevelScopedSection || isTaskSection || isReferenceSection
                         ? cn(
-                            "text-[11px] font-semibold tracking-wide text-white",
+                            "text-[11px] font-semibold tracking-wide text-foreground",
                             !isProjectSection && "uppercase",
                           )
                         : "text-xs font-medium text-muted-foreground",
@@ -2629,14 +2629,14 @@ const ChatListSection = React.memo(function ChatListSection({
                     {title}
                   </h3>
                   {isTaskSection && (
-                    <span className="shrink-0 text-[11px] text-white/90">Read-only</span>
+                    <span className="shrink-0 text-[11px] text-foreground/90">Read-only</span>
                   )}
                   {canCollapse && (
                     <SidebarDisclosure
                       isCollapsed={isCollapsed}
                       className={cn(
                         isTopLevelScopedSection || isTaskSection || isReferenceSection
-                          ? "text-white/80"
+                          ? "text-foreground/80"
                           : "text-muted-foreground",
                       )}
                     />
@@ -2673,7 +2673,7 @@ const ChatListSection = React.memo(function ChatListSection({
                       "absolute top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 focus-visible:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
                       "right-1",
                       isTopLevelScopedSection || isTaskSection
-                        ? "text-white/75 hover:bg-white/10 hover:text-white"
+                        ? "text-foreground/75 hover:bg-foreground/10 hover:text-foreground"
                         : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
                       isAnyDragActive && "!opacity-0 pointer-events-none",
                       "group-data-[pointer-drag-source=true]/section:!opacity-0",
@@ -2710,7 +2710,7 @@ const ChatListSection = React.memo(function ChatListSection({
                           "absolute top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 data-[state=open]:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
                           lifecycleTarget ? "right-6" : "right-1",
                           isTopLevelScopedSection || isTaskSection
-                            ? "text-white/75 hover:bg-white/10 hover:text-white"
+                            ? "text-foreground/75 hover:bg-foreground/10 hover:text-foreground"
                             : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
                           isAnyDragActive && "!opacity-0 pointer-events-none",
                           "group-data-[pointer-drag-source=true]/section:!opacity-0",
@@ -6239,7 +6239,7 @@ function AgentsSidebarInner({
     if (!betaFeatures.planning) {
       setSettingsActiveTab("beta")
       setDesktopView("settings")
-      toast.info("Enable Work board & planning in Beta features to use Work board.")
+      toast.info("Enable Work board & plans in Beta features to use Work board.")
     } else {
       setRecordsNavigation({ view: "board" })
       setDesktopView("tasks")
@@ -7260,7 +7260,7 @@ function AgentsSidebarInner({
     "Plan",
     "Topics",
     "Project knowledge",
-    "Saved workspaces",
+    "Saved layouts",
     "Automations",
     "Inbox",
   ]
@@ -7285,7 +7285,7 @@ function AgentsSidebarInner({
     ...(selectedProject &&
     betaFeatures.savedWorkspaces &&
     featureVisibility.isVisible("saved-workspaces")
-      ? ["Saved workspaces"]
+      ? ["Saved layouts"]
       : []),
     ...(betaFeatures.planning ? ["Work board", "Yap", "Agent workflows"] : []),
   ].sort((a, b) => navigationOrder.indexOf(a) - navigationOrder.indexOf(b))
@@ -7554,7 +7554,7 @@ function AgentsSidebarInner({
                     featureVisibility.isVisible("saved-workspaces")
                       ? [
                           {
-                            label: "Saved workspaces",
+                            label: "Saved layouts",
                             Icon: LayoutGrid,
                             isActive: desktopView === "saved-workspaces",
                             onClick: () => {
@@ -7804,13 +7804,13 @@ function AgentsSidebarInner({
                   }}
                 >
                   <div className="pointer-events-none flex min-w-0 flex-1 items-center gap-1.5 text-left">
-                    <FilePenLine className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
-                    <h3 className="min-w-0 truncate whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-white">
+                    <FilePenLine className="h-3.5 w-3.5 flex-shrink-0 text-foreground/90" />
+                    <h3 className="min-w-0 truncate whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-foreground">
                       Drafts
                     </h3>
                     <SidebarDisclosure
                       isCollapsed={collapsedSectionIds.has("drafts")}
-                      className="text-white/80"
+                      className="text-foreground/80"
                     />
                   </div>
                 </div>

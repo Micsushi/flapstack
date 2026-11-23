@@ -104,15 +104,41 @@ afterEach(() => {
   container.remove()
   vi.unstubAllGlobals()
 })
-async function render() {
+async function render(onKeyboardReturn?: () => void) {
   await act(async () =>
     root.render(
       <Provider store={store}>
-        <SettingsContent />
+        <SettingsContent onKeyboardReturn={onKeyboardReturn} />
       </Provider>,
     ),
   )
 }
+it("requests keyboard return focus for keyboard activation but not pointer navigation", async () => {
+  const onKeyboardReturn = vi.fn()
+  await render(onKeyboardReturn)
+  const back = [...container.querySelectorAll("button")].find(
+    (b) => b.textContent === "Back to chat",
+  )!
+  await act(async () => back.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })))
+  expect(onKeyboardReturn).not.toHaveBeenCalled()
+  await act(async () => back.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })))
+  expect(onKeyboardReturn).toHaveBeenCalledTimes(1)
+})
+it("clears search before requesting keyboard return on Escape", async () => {
+  const onKeyboardReturn = vi.fn()
+  store.set(settingsSearchQueryAtom, "draft")
+  await render(onKeyboardReturn)
+  await act(async () =>
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+  )
+  expect(onKeyboardReturn).not.toHaveBeenCalled()
+  expect(store.get(settingsSearchQueryAtom)).toBe("")
+  await act(async () =>
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+  )
+  expect(onKeyboardReturn).toHaveBeenCalledTimes(1)
+  expect(store.get(desktopViewAtom)).toBeNull()
+})
 it("selects a visible section and returns through existing chat navigation", async () => {
   store.set(agentsSettingsDialogActiveTabAtom, "preferences")
   await render()

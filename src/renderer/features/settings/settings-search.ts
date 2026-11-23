@@ -1,5 +1,9 @@
 import type { SettingsTab } from "../../lib/atoms"
-import type { BetaFeatureSettings } from "../../../shared/beta-features"
+import {
+  BETA_FEATURE_REGISTRY,
+  BETA_FEATURE_SEARCH_ALIASES,
+  type BetaFeatureSettings,
+} from "../../../shared/beta-features"
 import {
   isVisibleSettingsControl,
   isVisibleSettingsTab,
@@ -21,6 +25,14 @@ export type SettingsSearchEntry = {
 }
 
 export const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  ...BETA_FEATURE_REGISTRY.map((feature) => ({
+    id: `beta-feature-${feature.id}`,
+    tab: "beta" as const,
+    label: feature.label,
+    description: feature.description,
+    keywords: ["tutorial", ...BETA_FEATURE_SEARCH_ALIASES[feature.id]],
+    targetId: `beta-feature-${feature.id}`,
+  })),
   ...SETTINGS_TAB_REGISTRY.filter((entry) => entry.section !== "hidden").map((entry) => ({
     id: `settings-page-${entry.id}`,
     tab: entry.id,

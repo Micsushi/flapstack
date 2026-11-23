@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3"
 import { openAppDatabase } from "../db/access"
+import { assertLegacyTaskTransitionAllowed } from "../project-records/legacy-task-boundary"
 import { createHash, randomUUID } from "node:crypto"
 import { execFileSync } from "node:child_process"
 import { existsSync, realpathSync } from "node:fs"
@@ -101,6 +102,7 @@ export function createAgentOrchestrationService(databasePath: string) {
         coordinationEngineProbes?: Partial<Record<CoordinationEngine, CoordinationEngineProbe>>
       } = {},
     ): OrchestrationTaskOverviewDto {
+      assertLegacyTaskTransitionAllowed()
       const parsed = createOrchestrationInputSchema.safeParse(inputValue)
       if (!parsed.success) invalid(parsed.error.issues[0]?.message)
       const input = parsed.data

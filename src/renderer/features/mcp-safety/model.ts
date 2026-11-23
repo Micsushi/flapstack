@@ -22,6 +22,7 @@ export type McpPendingApprovalView = {
   risk: McpApprovalRisk
   targetLabel: string
   inputSummary: string
+  contextHash?: string
   requestedAt: string
   expiresAt: string
   state: McpApprovalState

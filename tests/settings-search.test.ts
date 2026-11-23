@@ -13,6 +13,20 @@ import {
 import { FEATURE_VISIBILITY_REGISTRY } from "../src/shared/feature-visibility"
 
 describe("Settings search", () => {
+  it("finds renamed beta controls by their current and former names", () => {
+    for (const [query, feature] of [
+      ["Restore terminal output", "terminalRecovery"],
+      ["Terminal reattachment", "terminalRecovery"],
+      ["Search while scanning", "streamedFileSearch"],
+      ["Progressive file search", "streamedFileSearch"],
+    ]) {
+      expect(searchSettings(query, { showDevelopment: false })[0]).toMatchObject({
+        tab: "beta",
+        targetId: `beta-feature-${feature}`,
+      })
+    }
+  })
+
   it("matches from the first typed character", () => {
     const results = searchSettings("p", { showDevelopment: false })
     expect(results.length).toBeGreaterThan(0)

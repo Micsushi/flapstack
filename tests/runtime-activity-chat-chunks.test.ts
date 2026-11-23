@@ -1,8 +1,67 @@
 import { describe, expect, it } from "vitest"
 import { RuntimeActivityChatChunkMapper } from "../src/renderer/features/agents/lib/runtime-activity-chat-chunks"
 import { activity } from "./runtime-activity-test-helpers"
+import { mapCodexNotification } from "../src/main/lib/agent-runtime/codex/events"
 
 describe("Runtime activity normal chat projection", () => {
+  it("keeps cumulative Codex diffs in activity without inventing unfinished patch tools", () => {
+    const notifications = [
+      {
+        method: "item/completed",
+        params: {
+          threadId: "thread",
+          turnId: "turn",
+          item: {
+            id: "write",
+            type: "fileChange",
+            status: "completed",
+            changes: [
+              { path: "beta-proof.txt", kind: { type: "update" }, diff: "-BEFORE\n+AFTER\n" },
+            ],
+          },
+        },
+      },
+      ...Array.from({ length: 4 }, () => ({
+        method: "turn/diff/updated",
+        params: { threadId: "thread", turnId: "turn", diff: "-BEFORE\n+AFTER\n" },
+      })),
+    ]
+    const events = notifications
+      .flatMap(mapCodexNotification)
+      .map((event, index) =>
+        activity(event.kind, event.payload, {
+          ...event,
+          sequence: index + 1,
+          eventId: `event-${index}`,
+        }),
+      )
+    expect(events.filter((event) => event.phase === "snapshot")).toHaveLength(4)
+    expect(events.filter((event) => event.kind === "patch")).toHaveLength(5)
+    const mapper = new RuntimeActivityChatChunkMapper("run")
+    const chunks = [...mapper.map(events), ...mapper.finish()]
+    expect(chunks.map((chunk) => chunk.type)).toEqual([
+      "tool-input-available",
+      "tool-output-available",
+    ])
+    expect(chunks[0]).toMatchObject({ toolCallId: "runtime-run-patch-write" })
+  })
+
+  it("does not hide incomplete item patches or another provider's patch snapshots", () => {
+    const mapper = new RuntimeActivityChatChunkMapper("run")
+    const chunks = mapper.map([
+      activity(
+        "patch",
+        { state: "running", diff: "+pending" },
+        { phase: "updated", providerItemId: "pending" },
+      ),
+      activity(
+        "patch",
+        { state: "turn-diff-snapshot", diff: "+other" },
+        { phase: "snapshot", provider: "other", providerItemId: "other" },
+      ),
+    ])
+    expect(chunks.filter((chunk) => chunk.type === "tool-input-available")).toHaveLength(2)
+  })
   it("projects provider-visible reasoning without duplicating the completed snapshot", () => {
     const mapper = new RuntimeActivityChatChunkMapper("run")
     const chunks = mapper.map([

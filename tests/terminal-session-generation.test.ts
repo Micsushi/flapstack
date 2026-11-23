@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest"
 import { TerminalManager } from "../src/main/lib/terminal/manager"
 import { portManager } from "../src/main/lib/terminal/port-manager"
 import { TerminalReplay } from "../src/main/lib/terminal/replay"
+import * as recovery from "../src/main/lib/terminal/terminal-history/recovery"
 import type {
   TerminalSession,
   InternalCreateSessionParams,
@@ -125,4 +126,75 @@ it("shares an in-flight fallback with a concurrent renderer restart", async () =
   resolveFallback({ isNew: true, serializedState: "fallback" })
   await expect(attached).resolves.toEqual({ isNew: true, serializedState: "fallback" })
   await exited
+})
+
+it("keeps an exited terminal stopped across remount and delayed cleanup until explicit restart", async () => {
+  vi.useFakeTimers()
+  const { manager, internals, session } = fixture()
+  session.isAlive = false
+  session.cols = 80
+  session.rows = 24
+  const flush = vi.fn(async () => undefined)
+  session.replay = {
+    finish: vi.fn(),
+    flushRetainedOutput: flush,
+    dispose: vi.fn(),
+  } as unknown as TerminalReplay
+  const output = { data: "final shell output", cols: 100, rows: 30 }
+  vi.spyOn(recovery, "readTerminalOutput").mockReturnValue(output)
+  const create = vi.spyOn(internals, "createSessionImplementation").mockResolvedValue({
+    isNew: true,
+    serializedState: "",
+    replayEnabled: true,
+  })
+  internals.finishSessionExit(session, 0)
+  const input = { paneId: session.paneId, initialCommands: ["must not run again"] }
+  const expected = {
+    isNew: false,
+    replayEnabled: false,
+    serializedState: output.data,
+    recoveredOutput: { cols: 100, rows: 30 },
+  }
+  await expect(manager.createOrAttach(input, true)).resolves.toEqual(expected)
+  expect(flush).toHaveBeenCalledOnce()
+  expect(create).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(internals.sessions.has(session.paneId)).toBe(false)
+  await expect(manager.createOrAttach(input, true)).resolves.toEqual(expected)
+  expect(create).not.toHaveBeenCalled()
+  await expect(manager.createOrAttach({ ...input, restart: true }, true)).resolves.toMatchObject({
+    isNew: true,
+  })
+  expect(create).toHaveBeenCalledOnce()
+})
+
+it("deduplicates concurrent stopped-terminal reattachments while output is being flushed", async () => {
+  const { manager, internals, session } = fixture()
+  session.isAlive = false
+  session.cols = 80
+  session.rows = 24
+  let finishFlush!: () => void
+  const flush = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finishFlush = resolve
+      }),
+  )
+  session.replay = { flushRetainedOutput: flush } as unknown as TerminalReplay
+  vi.spyOn(recovery, "readTerminalOutput").mockReturnValue(null)
+  const create = vi.spyOn(internals, "createSessionImplementation")
+  const first = manager.createOrAttach({ paneId: session.paneId }, true)
+  const second = manager.createOrAttach({ paneId: session.paneId }, true)
+  expect(flush).toHaveBeenCalledOnce()
+  expect(create).not.toHaveBeenCalled()
+  finishFlush()
+  const expected = {
+    isNew: false,
+    replayEnabled: false,
+    serializedState: "old screen",
+    recoveredOutput: { cols: 80, rows: 24 },
+  }
+  await expect(first).resolves.toEqual(expected)
+  await expect(second).resolves.toEqual(expected)
+  expect(create).not.toHaveBeenCalled()
 })

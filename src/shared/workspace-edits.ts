@@ -61,6 +61,20 @@ export const releaseWorkspaceDraftSchema = workspaceEditScopeSchema.extend({
   draftId: z.string().uuid(),
   leaseToken: z.string().uuid(),
 })
+export const replaceWorkspaceDraftSchema = releaseWorkspaceDraftSchema.extend({
+  expectedRevision: z.number().int().nonnegative(),
+  replacement: z.discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("discard"),
+      reviewedDiskSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    }),
+    z.object({
+      kind: z.literal("restore"),
+      content: z.string().max(workspaceEditMaxBytes),
+      baseSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    }),
+  ]),
+})
 export const pendingWorkspaceDraftSaveSchema = z.object({
   id: z.string().uuid(),
   revision: z.number().int().nonnegative(),

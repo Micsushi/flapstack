@@ -104,7 +104,7 @@ describe("shortcut registry", () => {
         { operation: "set", actionId: "toggle-sidebar", hotkey: "ctrl+p" },
         "linux",
       ),
-    ).toMatchObject({ ok: false, error: "Go to file already uses this shortcut" })
+    ).toMatchObject({ ok: false, error: "Quick Open already uses this shortcut" })
     const state = buildShortcutState({ ...changed.config, secret: "do-not-return" }, "linux")
     expect(state).not.toHaveProperty("secret")
     expect(state.actions.find((action) => action.id === "toggle-sidebar")).toMatchObject({
@@ -182,7 +182,7 @@ describe("shortcut registry", () => {
         bubbles: true,
       }),
     )
-    expect(inputAction).toBeNull()
+    expect(inputAction).toBe("file-search")
 
     input.dispatchEvent(
       new KeyboardEvent("keydown", {
@@ -193,6 +193,29 @@ describe("shortcut registry", () => {
       }),
     )
     expect(inputAction).toBe("toggle-sidebar")
+    for (const key of ["c", "v", "x", "z", "y", "a", "s", "ArrowLeft", "Backspace", "Enter"]) {
+      const binding = `ctrl+${key.toLowerCase()}`
+      const nativeConfig = { version: 2 as const, bindings: { "file-search": binding } }
+      const listener = (event: Event) =>
+        expect(resolveRendererShortcut(event as KeyboardEvent, nativeConfig)).toBeNull()
+      input.addEventListener("keydown", listener)
+      input.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey: true, bubbles: true }))
+      input.removeEventListener("keydown", listener)
+    }
+    for (const className of ["monaco-editor", "composer"]) {
+      const editor = document.createElement("div")
+      editor.className = className
+      editor.setAttribute("contenteditable", "true")
+      const child = document.createElement("span")
+      editor.append(child)
+      child.addEventListener("keydown", (event) =>
+        expect(resolveRendererShortcut(event as KeyboardEvent, config)?.id).toBe("file-search"),
+      )
+      child.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "p", metaKey: true, shiftKey: true, bubbles: true }),
+      )
+    }
+    workspace.remove()
   })
 
   it.each(["", "true", "plaintext-only"])("protects inherited contenteditable=%s", (value) => {
@@ -229,14 +252,15 @@ describe("shortcut registry", () => {
     }
   })
 
-  it("protects terminals, Monaco, and dialogs and leaves native accelerators to Electron", () => {
+  it("protects terminals and dialogs and leaves native accelerators to Electron", () => {
     const config = { version: 2 as const, bindings: {} }
     for (const target of [
       Object.assign(document.createElement("div"), { className: "xterm" }),
-      Object.assign(document.createElement("div"), { className: "monaco-editor" }),
+      Object.assign(document.createElement("div"), { ariaModal: "true" }),
       Object.assign(document.createElement("div"), { role: "dialog" }),
     ]) {
       if (target.role) target.setAttribute("role", target.role)
+      if (target.ariaModal) target.setAttribute("aria-modal", target.ariaModal)
       let action: string | null = "unset"
       target.addEventListener("keydown", (event) => {
         action = resolveRendererShortcut(event as KeyboardEvent, config)?.id ?? null

@@ -74,7 +74,7 @@ describe("beta service gates", () => {
       projectMemory: false,
     })
     expect(BETA_FEATURE_REGISTRY).toContainEqual(
-      expect.objectContaining({ id: "branchesAndWorktrees", label: "Branches & Worktrees" }),
+      expect.objectContaining({ id: "branchesAndWorktrees", label: "Branches & worktrees" }),
     )
   })
 

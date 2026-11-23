@@ -87,3 +87,70 @@ it("removes Windows recent aliases without opening the file and supports shared 
     clearAppActionHistory()
   }
 })
+
+it.each([false, true])(
+  "preserves useful focus after a command (destination focus: %s)",
+  async (moveFocus) => {
+    const container = document.createElement("div")
+    document.body.append(container)
+    const root = createRoot(container)
+    const scroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView")
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    })
+    function Harness() {
+      const [open, setOpen] = React.useState(false)
+      const destination = React.useRef<HTMLInputElement>(null)
+      return (
+        <Provider store={createStore()}>
+          <button id="command-opener" onClick={() => setOpen(true)}>
+            Open commands
+          </button>
+          <input ref={destination} id="command-destination" aria-label="Destination" />
+          <FileSearchDialog
+            open={open}
+            onOpenChange={setOpen}
+            projectPath=""
+            onSelectFile={() => {}}
+            getNavigationItems={() => [
+              {
+                id: "command",
+                label: "Run command",
+                kind: "Command",
+                context: "",
+                onSelect: () => {
+                  if (moveFocus) setTimeout(() => destination.current?.focus(), 0)
+                },
+              },
+            ]}
+          />
+        </Provider>
+      )
+    }
+    try {
+      await act(async () => root.render(<Harness />))
+      const opener = document.querySelector<HTMLButtonElement>("#command-opener")!
+      opener.focus()
+      await act(async () => opener.click())
+      const input = document.querySelector<HTMLInputElement>('[role="combobox"]')!
+      expect(document.activeElement).toBe(input)
+      await act(async () => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      })
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      })
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+      expect(document.activeElement).toBe(
+        moveFocus ? document.querySelector("#command-destination") : opener,
+      )
+    } finally {
+      await act(async () => root.unmount())
+      container.remove()
+      if (scroll) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", scroll)
+      else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView")
+    }
+  },
+)

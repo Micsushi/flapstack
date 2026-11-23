@@ -7,7 +7,6 @@ import {
   AlertDialogBody,
   AlertDialogCancel,
   AlertDialogContent,
-  AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
@@ -107,6 +106,11 @@ export function McpApprovalDialog({
   const [submitting, setSubmitting] = useState(false)
   const [closedId, setClosedId] = useState<string | null>(null)
   const canGrant = canOfferSessionGrant(approval)
+  const isFileChange = [
+    "local_model.write_file",
+    "local_model.edit_file",
+    "local_model.apply_patch",
+  ].includes(approval.toolName)
 
   useEffect(() => {
     setGrantSession(false)
@@ -126,6 +130,8 @@ export function McpApprovalDialog({
       // timed out or resolved elsewhere. Either way, close instead of leaving
       // controls visible for a request that cannot accept another decision.
       setClosedId(approval.id)
+    } catch {
+      // The bridge reports transport failures; leave this request available to retry.
     } finally {
       setSubmitting(false)
     }
@@ -140,28 +146,33 @@ export function McpApprovalDialog({
         data-mcp-caller-chat-id={approval.chatId}
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>Approve MCP action</AlertDialogTitle>
-          <AlertDialogDescription id={`mcp-approval-${approval.id}-description`}>
-            {approval.callerLabel} requests permission before {formatTime(approval.expiresAt)}.
-          </AlertDialogDescription>
+          <AlertDialogTitle>
+            {isFileChange ? "Approve file change" : "Approve MCP action"}
+          </AlertDialogTitle>
         </AlertDialogHeader>
         <AlertDialogBody>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm">
             <dt className="text-muted-foreground">Caller</dt>
             <dd>{approval.callerLabel}</dd>
-            <dt className="text-muted-foreground">Tool</dt>
-            <dd className="font-mono break-all">{approval.toolName}</dd>
-            <dt className="text-muted-foreground">Risk</dt>
-            <dd>Tier {approval.risk}</dd>
+            <dt className="text-muted-foreground">Expires</dt>
+            <dd id={`mcp-approval-${approval.id}-description`}>{formatTime(approval.expiresAt)}</dd>
+            {!isFileChange && (
+              <>
+                <dt className="text-muted-foreground">Tool</dt>
+                <dd className="font-mono break-all">{approval.toolName}</dd>
+                <dt className="text-muted-foreground">Risk</dt>
+                <dd>Tier {approval.risk}</dd>
+              </>
+            )}
             <dt className="text-muted-foreground">Target</dt>
             <dd className="break-words">{approval.targetLabel}</dd>
-            <dt className="text-muted-foreground">Input</dt>
+            <dt className="text-muted-foreground">{isFileChange ? "Action" : "Input"}</dt>
             <dd className="break-words">{approval.inputSummary}</dd>
           </dl>
           {canGrant && (
             <label className="mt-4 flex items-center gap-2 text-sm">
               <Checkbox
-                aria-label="Approve this tool for the current chat session"
+                aria-label={approval.sessionGrantOptions[0]}
                 checked={grantSession}
                 disabled={submitting}
                 onCheckedChange={(checked) => setGrantSession(checked === true)}
@@ -198,7 +209,5 @@ export function McpApprovalDialog({
 
 function formatTime(value: string): string {
   const time = new Date(value)
-  return Number.isNaN(time.getTime())
-    ? "the request expires"
-    : `it expires at ${time.toLocaleTimeString()}`
+  return Number.isNaN(time.getTime()) ? "Unavailable" : time.toLocaleTimeString()
 }

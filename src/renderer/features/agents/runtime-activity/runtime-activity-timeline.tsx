@@ -11,18 +11,24 @@ import {
   useState,
   type KeyboardEvent,
 } from "react"
-import type { AgentActivityEvent, AgentActivityKind } from "../../../../shared/agent-activity"
+import type {
+  AgentActivityEvent,
+  AgentActivityKind,
+  LocalRunActivityStatus,
+} from "../../../../shared/agent-activity"
 import { AGENT_ACTIVITY_KINDS } from "../../../../shared/agent-activity"
 import type {
   RuntimeCapabilitySnapshot,
   RuntimeLaunchControls,
 } from "../../../../shared/agent-runtime"
 import { cn } from "../../../lib/utils"
+import { Button } from "../../../components/ui/button"
 import {
   DEFAULT_RUNTIME_ACTIVITY_FILTERS,
   filterRuntimeActivityRows,
   nextRuntimeActivityFocusIndex,
   projectRuntimeActivityRows,
+  projectLocalRunStatuses,
   selectRuntimeActivitySource,
   serializeRuntimeActivity,
   updateRuntimeLaunchControl,
@@ -36,6 +42,7 @@ import {
 export type RuntimeActivityTimelineProps = {
   events?: AgentActivityEvent[]
   legacyMessages?: unknown
+  localRunStatuses?: LocalRunActivityStatus[]
   status?: RuntimeActivityStatus
   error?: string | null
   hasMore?: boolean
@@ -51,7 +58,12 @@ export type RuntimeActivityTimelineProps = {
 
 function formatTimestamp(timestamp: number | null): string | null {
   if (timestamp == null || !Number.isFinite(timestamp)) return null
-  return new Date(timestamp).toISOString()
+  return new Date(timestamp).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  })
 }
 
 function formatDuration(durationMs: number | null): string | null {
@@ -102,6 +114,44 @@ function RuntimeActivityRowView({
 }) {
   const timestamp = formatTimestamp(row.timestamp)
   const duration = formatDuration(row.durationMs)
+  const lifecycle =
+    row.kind === "lifecycle" && !row.privateUnavailable
+      ? (row.source.payload as { state: string; detail?: string | null })
+      : null
+  const lifecycleLabels: Record<string, string> = {
+    "session-started": "Session started",
+    streaming: "Receiving response",
+    started: "Run started",
+    completed: "Run completed",
+    failed: "Run failed",
+    cancelled: "Run cancelled",
+    "turn-started": "Run started",
+    "turn-completed": "Run completed",
+    "turn-failed": "Run failed",
+    "turn-error": "Run failed",
+    "turn-interrupted": "Run interrupted",
+    "turn-cancelled": "Run cancelled",
+    "thread-started": "Conversation started",
+    "thread-archived": "Conversation archived",
+    "thread-unarchived": "Conversation restored",
+    "thread-closed": "Conversation closed",
+    "thread-deleted": "Conversation deleted",
+  }
+  const label = lifecycle
+    ? (lifecycleLabels[lifecycle.state] ?? row.label)
+    : row.kind === "opaque-metadata" && !row.privateUnavailable
+      ? "Provider event"
+      : row.label
+  const sections =
+    lifecycle && lifecycleLabels[lifecycle.state]
+      ? lifecycle.detail
+        ? [lifecycle.detail === "user-cancelled" ? "Stopped by you" : lifecycle.detail]
+        : []
+      : row.sections
+  const statusLabel =
+    row.status === "snapshot"
+      ? "Recorded"
+      : row.status.charAt(0).toUpperCase() + row.status.slice(1)
   return (
     <article
       ref={onElement}
@@ -109,7 +159,7 @@ function RuntimeActivityRowView({
       role="article"
       aria-posinset={index + 1}
       aria-setsize={total}
-      aria-label={`${row.label}. ${row.status}. ${row.provenance}`}
+      aria-label={`${label}. ${statusLabel}`}
       data-runtime-activity-key={row.key}
       data-runtime={row.runtime}
       data-kind={row.kind}
@@ -126,36 +176,36 @@ function RuntimeActivityRowView({
       <div className="flex min-w-0 items-start gap-2">
         <button
           type="button"
-          aria-label={`${expanded ? "Collapse" : "Expand"} ${row.label}`}
+          aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
           aria-expanded={row.expandable ? expanded : undefined}
           disabled={!row.expandable}
           onClick={onToggle}
           className="min-w-0 flex-1 text-left disabled:cursor-default"
         >
-          <span className="block truncate text-sm font-medium">{row.label}</span>
+          <span className="block truncate text-sm font-medium">{label}</span>
           <span className="block truncate text-xs text-muted-foreground">
-            {row.provenance} · {row.status}
+            {statusLabel}
             {duration ? ` · ${duration}` : ""}
           </span>
         </button>
-        {timestamp && <time className="shrink-0 text-xs text-muted-foreground">{timestamp}</time>}
+        {timestamp && (
+          <time
+            dateTime={new Date(row.timestamp!).toISOString()}
+            title={new Date(row.timestamp!).toISOString()}
+            className="shrink-0 text-xs text-muted-foreground"
+          >
+            {timestamp}
+          </time>
+        )}
       </div>
-      {row.parentId && (
-        <div className="mt-1 text-xs text-muted-foreground">Child of {row.parentId}</div>
-      )}
-      {row.identity.length > 0 && (
-        <div className="mt-1 truncate text-xs text-muted-foreground" aria-label="Provider identity">
-          {row.identity.join(" · ")}
-        </div>
-      )}
       {row.privateUnavailable && (
         <p className="mt-2 text-sm text-muted-foreground">
           Provider-private content is not stored or displayed.
         </p>
       )}
-      {row.content && (!row.expandable || expanded) && (
+      {sections.length > 0 && (!row.expandable || expanded || row.phase === "failed") && (
         <div className="mt-2 whitespace-pre-wrap break-words text-sm">
-          {row.sections.map((section, sectionIndex) => (
+          {sections.map((section, sectionIndex) => (
             <section
               key={`${row.key}:section:${sectionIndex}`}
               aria-label={`${row.label} section ${sectionIndex + 1}`}
@@ -166,6 +216,22 @@ function RuntimeActivityRowView({
           ))}
         </div>
       )}
+      <details className="mt-2 text-xs text-muted-foreground">
+        <summary className="cursor-pointer rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
+          Technical details
+        </summary>
+        <div className="mt-2 space-y-1 whitespace-pre-wrap break-all">
+          <div>
+            {row.provenance} / {row.label} / {row.kind} / {row.status}
+          </div>
+          {timestamp && <div>{new Date(row.timestamp!).toISOString()}</div>}
+          {row.parentId && <div>Child of {row.parentId}</div>}
+          {row.identity.map((identity) => (
+            <div key={identity}>{identity}</div>
+          ))}
+          {lifecycle && <div>{row.content}</div>}
+        </div>
+      </details>
     </article>
   )
 }
@@ -173,6 +239,7 @@ function RuntimeActivityRowView({
 export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
   events = [],
   legacyMessages,
+  localRunStatuses,
   status = "ready",
   error = null,
   hasMore = false,
@@ -200,8 +267,12 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
   const selectedIndexRef = useRef(0)
 
   const allRows = useMemo(
-    () => projectRuntimeActivityRows(selectRuntimeActivitySource(events, legacyMessages)),
-    [events, legacyMessages],
+    () =>
+      projectRuntimeActivityRows([
+        ...selectRuntimeActivitySource(events, legacyMessages),
+        ...projectLocalRunStatuses(localRunStatuses ?? [], events),
+      ]),
+    [events, legacyMessages, localRunStatuses],
   )
   const filteredRows = useMemo(() => {
     const rows = filterRuntimeActivityRows(allRows, filters)
@@ -379,26 +450,34 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
           <option value="all">All activity</option>
           {AGENT_ACTIVITY_KINDS.map((kind) => (
             <option key={kind} value={kind}>
-              {kind}
+              {kind.replaceAll("-", " ").replace(/^./, (letter) => letter.toUpperCase())}
             </option>
           ))}
         </select>
-        <button
+        <Button
+          variant="outline"
+          size="sm"
           type="button"
           onClick={() => setTranscriptMode((current) => !current)}
           aria-pressed={transcriptMode}
         >
           {transcriptMode ? "Activity mode" : "Transcript mode"}
-        </button>
-        <button type="button" onClick={copy} disabled={filteredRows.every((row) => !row.copyable)}>
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          type="button"
+          onClick={copy}
+          disabled={filteredRows.every((row) => !row.copyable)}
+        >
           Copy visible
-        </button>
-        <button type="button" onClick={() => exportRows("markdown")}>
+        </Button>
+        <Button variant="outline" size="sm" type="button" onClick={() => exportRows("markdown")}>
           Export Markdown
-        </button>
-        <button type="button" onClick={() => exportRows("json")}>
+        </Button>
+        <Button variant="outline" size="sm" type="button" onClick={() => exportRows("json")}>
           Export JSON
-        </button>
+        </Button>
         {diagnosticsHref && <a href={diagnosticsHref}>Runtime diagnostics</a>}
       </div>
 
@@ -415,7 +494,11 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
       {status === "error" && (
         <div role="alert">
           <p>Runtime activity could not be loaded. {error || "Unknown error."}</p>
-          {onRetry && <button onClick={onRetry}>Retry</button>}
+          {onRetry && (
+            <Button variant="outline" onClick={onRetry}>
+              Retry
+            </Button>
+          )}
         </div>
       )}
       {status !== "error" && filteredRows.length === 0 && status !== "loading" && (
@@ -502,9 +585,14 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
         </div>
       )}
       {hasMore && onLoadMore && (
-        <button type="button" onClick={onLoadMore} disabled={status === "loading"}>
+        <Button
+          variant="outline"
+          type="button"
+          onClick={onLoadMore}
+          disabled={status === "loading"}
+        >
           Load earlier activity
-        </button>
+        </Button>
       )}
     </section>
   )
