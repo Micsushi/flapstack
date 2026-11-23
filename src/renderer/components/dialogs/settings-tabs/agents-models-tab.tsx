@@ -9,9 +9,11 @@ import {
   codexLoginModalMethodAtom,
   codexLoginModalOpenAtom,
   hiddenModelsAtom,
+  showLegacyModelsAtom,
 } from "../../../lib/atoms"
 import { enabledCursorModelsAtom } from "../../../features/agents/atoms"
 import { ClaudeCodeIcon, CodexIcon, CursorIcon, SearchIcon } from "../../ui/icons"
+import { isLegacyPickerModel } from "../../../../shared/model-catalog"
 import { CLAUDE_MODELS, CODEX_MODELS, CURSOR_MODELS } from "../../../features/agents/lib/models"
 import { trpc } from "../../../lib/trpc"
 import { Badge } from "../../ui/badge"
@@ -370,6 +372,7 @@ export function AgentsModelsTab() {
   const codexCredentialStatusUnavailable = isCodexCredentialLoading || Boolean(codexCredentialError)
   const isCodexSubscriptionConnected = codexIntegration?.state === "connected_chatgpt"
   const isCodexSubscriptionActive = isCodexSubscriptionConnected && !hasAppCodexApiKey
+  const [showLegacyModels, setShowLegacyModels] = useAtom(showLegacyModelsAtom)
   const [hiddenModels, setHiddenModels] = useAtom(hiddenModelsAtom)
   const [enabledCursorModels, setEnabledCursorModels] = useAtom(enabledCursorModelsAtom)
   const {
@@ -435,10 +438,11 @@ export function AgentsModelsTab() {
 
   const [modelSearch, setModelSearch] = useState("")
   const filteredModels = useMemo(() => {
-    if (!modelSearch.trim()) return allModels
     const q = modelSearch.toLowerCase().trim()
-    return allModels.filter((m) => m.name.toLowerCase().includes(q))
-  }, [allModels, modelSearch])
+    return allModels.filter(
+      (m) => (showLegacyModels || !isLegacyPickerModel(m.id)) && m.name.toLowerCase().includes(q),
+    )
+  }, [allModels, modelSearch, showLegacyModels])
 
   return (
     <div className="p-6 space-y-6">
@@ -465,6 +469,14 @@ export function AgentsModelsTab() {
             </div>
           </div>
 
+          <label className="flex items-center justify-between border-b px-4 py-2 text-sm">
+            Show legacy models
+            <Switch
+              aria-label="Show legacy models"
+              checked={showLegacyModels}
+              onCheckedChange={setShowLegacyModels}
+            />
+          </label>
           {/* Model list */}
           {cursorModelsError && (
             <div className="flex items-center justify-between gap-3 border-b border-red-500/30 bg-red-500/5 px-4 py-2">

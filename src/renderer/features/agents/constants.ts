@@ -60,12 +60,12 @@ export const HARNESS_CHIP_META: Record<HarnessChipKind, HarnessChipMeta> = {
     className: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
   },
   codex: {
-    name: "OpenAI",
+    name: "Codex",
     color: "blue",
     className: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
   },
   "claude-code": {
-    name: "Anthropic",
+    name: "Claude",
     color: "orange",
     className: "border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300",
   },

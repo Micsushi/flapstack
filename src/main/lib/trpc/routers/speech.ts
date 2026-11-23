@@ -1,3 +1,5 @@
+import { observable } from "@trpc/server/observable"
+import type { SpeechAudioChunk } from "../../speech/types"
 import { z } from "zod"
 import {
   getNativeTtsAvailability,
@@ -11,6 +13,7 @@ import {
 } from "../../speech/registry"
 import { getVoiceSettings, setVoiceSettings } from "../../speech/settings"
 import { createFallbackSpokenSummary } from "../../speech/spoken-summary"
+import { warmCachedKokoro } from "../../speech/tts-kokoro"
 import { prepareSpeech } from "../../speech/prepare"
 import { SpeechRequestOwnership } from "../../speech/request-ownership"
 import { ensureModel, getSttModelStatus, listWhisperModels } from "../../speech/stt-whisper-cpp"
@@ -51,7 +54,9 @@ async function stopTtsAdapters(requestScopeId: string) {
 
 export const speechRouter = router({
   getSettings: publicProcedure.query(() => {
-    return getVoiceSettings()
+    const settings = getVoiceSettings()
+    if (settings.ttsAdapterId === "kokoro" && settings.prepareReplyAudio) warmCachedKokoro()
+    return settings
   }),
 
   updateSettings: publicProcedure
@@ -70,6 +75,7 @@ export const speechRouter = router({
         voiceByTtsAdapterId: z.record(z.string(), z.string().nullable()).optional(),
         rate: z.number().min(0.5).max(2).optional(),
         preferOffline: z.boolean().optional(),
+        replyReadMode: z.enum(["whole", "summary"]).optional(),
         prepareReplyAudio: z.boolean().optional(),
         unplayedAudioRetentionDays: z
           .union([z.literal(0), z.literal(1), z.literal(7), z.literal(30)])
@@ -141,6 +147,61 @@ export const speechRouter = router({
   }),
 
   listSttModels: publicProcedure.query(() => [PARAKEET_MODEL, ...listWhisperModels()]),
+
+  streamReply: publicProcedure
+    .input(
+      z.object({
+        text: z.string(),
+        voiceId: z.string().nullable().optional(),
+        chatId: z.string().optional(),
+        subChatId: z.string().nullable().optional(),
+        messageId: z.string().nullable().optional(),
+      }),
+    )
+    .subscription(({ input, ctx }) =>
+      observable<
+        | ({ type: "chunk"; spokenText?: string } & SpeechAudioChunk)
+        | {
+            type: "complete"
+            artifactId: string | null
+            historyError: string | null
+            spokenText?: string
+            audioBase64?: string
+            mimeType?: string
+          }
+      >((emit) => {
+        const windowId = ctx.getWindow()?.id ?? 0
+        const requestId = beginSpeechRequest(windowId)
+        const controller = new AbortController()
+        let streamed = false
+        const active = () =>
+          !controller.signal.aborted && isSpeechRequestActive(windowId, requestId)
+        void prepareSpeech(
+          input,
+          (chunk) => {
+            if (!active()) return
+            streamed = true
+            emit.next({ type: "chunk", ...chunk })
+          },
+          controller.signal,
+        ).then(
+          (result) => {
+            if (active())
+              emit.next({
+                type: "complete",
+                artifactId: result.artifactId,
+                historyError: result.historyError,
+                ...(!result.skipped && { spokenText: result.spokenText }),
+                ...(!result.skipped &&
+                  !streamed && { audioBase64: result.audioBase64, mimeType: result.mimeType }),
+              })
+            emit.complete()
+          },
+          (error) => emit.error(error),
+        )
+        return () => controller.abort()
+      }),
+    ),
 
   speak: publicProcedure
     .input(

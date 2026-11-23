@@ -11,7 +11,16 @@ export function assertSpeechTextWithinLimit(text: string): void {
   }
 }
 
-export function resolveSpeechText(input: string, storedText?: string | null): string | null {
+export function resolveSpeechText(
+  input: string,
+  storedText?: string | null,
+  mode: "whole" | "summary" = "summary",
+): string | null {
+  if (mode === "whole") {
+    const text = input.trim()
+    assertSpeechTextWithinLimit(text)
+    return text || null
+  }
   if (storedText?.trim()) {
     assertSpeechTextWithinLimit(storedText)
     return storedText

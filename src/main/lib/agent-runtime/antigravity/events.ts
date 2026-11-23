@@ -151,8 +151,9 @@ export class AntigravityEvents {
     const name = (update.title || previous?.name || "Tool").slice(0, 512)
     const kind = update.kind || previous?.kind
     const exit = eventRecord(update.rawOutput).exit_code
-    const failed =
-      update.status === "failed" || (kind === "execute" && typeof exit === "number" && exit !== 0)
+    // A completed command can return a nonzero status as normal data (e.g. a search).
+    // Its exit code remains visible while the native ACP result determines turn completion.
+    const failed = update.status === "failed"
     if (failed && previous?.outcome === "declined") {
       if (this.pendingDeclines.has(update.toolCallId))
         events.push(this.declinedEvent(update.toolCallId))

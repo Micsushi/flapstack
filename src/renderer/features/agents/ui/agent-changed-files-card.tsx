@@ -50,6 +50,14 @@ export function AgentChangedFilesCard({ runId }: AgentChangedFilesCardProps) {
         utils.runs.getChangeSet.setData({ runId: variables.runId }, (current) =>
           current ? { ...current, undone: true } : current,
         )
+        const subChatId = data?.run.subChatId
+        if (subChatId) {
+          utils.runs.undoneForSubChat.setData({ subChatId }, (ids) => [
+            ...new Set([...(ids ?? []), variables.runId]),
+          ])
+          void utils.runs.undoneForSubChat.invalidate({ subChatId })
+        }
+        void utils.chats.getFileStats.invalidate()
         toast.success(
           result.alreadyUndone
             ? "These changes were already undone"
@@ -122,8 +130,12 @@ export function AgentChangedFilesCard({ runId }: AgentChangedFilesCardProps) {
             {data.fileCount} file{data.fileCount === 1 ? "" : "s"}
             {isUndone ? " · changes undone" : " changed"}
           </span>
-          <span className="text-sm text-emerald-500">+{data.additions}</span>
-          <span className="text-sm text-red-500">-{data.deletions}</span>
+          {!isUndone && (
+            <>
+              <span className="text-sm text-emerald-500">+{data.additions}</span>
+              <span className="text-sm text-red-500">-{data.deletions}</span>
+            </>
+          )}
           <div className="flex-1" />
           {isRecoverable && !isUndone && (
             <Button

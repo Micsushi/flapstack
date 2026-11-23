@@ -1,16 +1,48 @@
-import { useMemo, useState } from "react"
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "../../../components/ui/dialog"
+import { Button } from "../../../components/ui/button"
+import { useMemo } from "react"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { getQueryKey } from "@trpc/react-query"
 import { trpc, trpcClient } from "../../../lib/trpc"
 import { RuntimeActivityTimeline } from "./runtime-activity-timeline"
 
-export function ChatRuntimeActivity({ chatId, live }: { chatId: string; live: boolean }) {
-  const [open, setOpen] = useState(false)
+export function ChatRuntimeActivity({
+  chatId,
+  live,
+  open,
+  onOpenChange,
+  returnFocus,
+}: {
+  chatId: string
+  live: boolean
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  returnFocus?: () => void
+}) {
   return (
-    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="cursor-pointer py-2 text-sm font-medium">Runtime activity</summary>
-      {open && <PersistedRuntimeActivity chatId={chatId} live={live} />}
-    </details>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {open === undefined && (
+        <DialogTrigger asChild>
+          <Button size="sm" variant="ghost">
+            Activity transcript
+          </Button>
+        </DialogTrigger>
+      )}
+      <DialogContent
+        onCloseAutoFocus={
+          returnFocus
+            ? (event) => {
+                event.preventDefault()
+                returnFocus()
+              }
+            : undefined
+        }
+        className="w-[min(52rem,95vw)] max-w-none max-h-[85vh] overflow-y-auto"
+      >
+        <DialogTitle>Activity transcript</DialogTitle>
+        <PersistedRuntimeActivity chatId={chatId} live={live} />
+      </DialogContent>
+    </Dialog>
   )
 }
 

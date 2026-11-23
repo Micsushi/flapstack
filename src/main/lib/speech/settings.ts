@@ -68,6 +68,7 @@ export function normalizeVoiceSettings(raw: Partial<VoiceSettings>): VoiceSettin
         ? clamp(raw.rate, 0.5, 2)
         : defaultVoiceSettings.rate,
     preferOffline: raw.preferOffline ?? defaultVoiceSettings.preferOffline,
+    replyReadMode: raw.replyReadMode === "whole" ? "whole" : "summary",
     prepareReplyAudio: raw.prepareReplyAudio !== false,
     unplayedAudioRetentionDays: [0, 1, 7, 30].includes(raw.unplayedAudioRetentionDays ?? -1)
       ? raw.unplayedAudioRetentionDays!

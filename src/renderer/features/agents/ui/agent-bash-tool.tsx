@@ -16,6 +16,7 @@ interface AgentBashToolProps {
   messageId?: string
   partIndex?: number
   chatStatus?: string
+  inline?: boolean
 }
 
 // Extract command summary - first word of each command in a pipeline
@@ -45,6 +46,7 @@ export const AgentBashTool = memo(function AgentBashTool({
   messageId,
   partIndex,
   chatStatus,
+  inline = false,
 }: AgentBashToolProps) {
   const [isOutputExpanded, setIsOutputExpanded] = useState(false)
   const { isPending } = getToolStatus(part, chatStatus)
@@ -53,8 +55,11 @@ export const AgentBashTool = memo(function AgentBashTool({
 
   const rawCommand = part.input?.command
   const command = typeof rawCommand === "string" ? rawCommand : rawCommand ? String(rawCommand) : ""
-  const stdout = part.output?.stdout || part.output?.output || ""
-  const stderr = part.output?.stderr || ""
+  const stdout =
+    typeof part.output === "string"
+      ? part.output
+      : part.output?.stdout || part.output?.output || part.output?.summary || ""
+  const stderr = part.output?.stderr || part.errorText || ""
   const exitCode = part.output?.exitCode ?? part.output?.exit_code
 
   // For bash tools, success/error is determined by exitCode, not by state
@@ -98,6 +103,33 @@ export const AgentBashTool = memo(function AgentBashTool({
   // If no command and not streaming, tool was interrupted
   if (!command) {
     return <AgentToolInterrupted toolName="Command" />
+  }
+
+  if (inline) {
+    return (
+      <div
+        data-message-id={messageId}
+        data-part-index={partIndex}
+        data-part-type="tool-Bash"
+        className="mx-2 min-w-0 py-1 text-xs"
+      >
+        <div className="flex items-baseline gap-2">
+          <span className="shrink-0 text-muted-foreground">
+            {isPending ? "Running" : "Command"}
+          </span>
+          <code className="min-w-0 whitespace-pre-wrap break-all">{command}</code>
+        </div>
+        {(stdout || stderr) && (
+          <pre
+            data-command-details
+            className="mt-1 whitespace-pre-wrap break-all text-muted-foreground"
+          >
+            {[stdout, stderr].filter(Boolean).join("\n")}
+          </pre>
+        )}
+        {isError && <span className="text-destructive">Exit code {exitCode}</span>}
+      </div>
+    )
   }
 
   return (

@@ -54,6 +54,7 @@ type CodexRunState = {
   archived: boolean
   recoveredPromptPrefix?: string
   fileChangeApprovals: CodexFileChangeApprovals
+  acceptedTurnSettings?: AgentActivityAppend
   pendingNotifications: CodexProtocolNotification[]
 }
 
@@ -111,6 +112,7 @@ export function createCodexRuntimeAdapterFactory(
 
 class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
   readonly runtime = "codex" as const
+  readonly preparesSessionBeforeWorkspace = true
   private readonly states = new Map<string, CodexRunState>()
   private readonly connections = new Map<string, Promise<CodexProtocolClient>>()
 
@@ -345,14 +347,17 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
         if (!Array.isArray(input) || input.length === 0) {
           throw new Error("[codex-runtime] Flapstack launch authority returned no turn input.")
         }
+        const settings = {
+          model: context.launch.model,
+          effort: state.effort,
+          summary: context.launch.controls.reasoningDisplay ? "detailed" : "none",
+        }
         const response = record(
           await state.client.request("turn/start", {
             threadId,
             clientUserMessageId: context.runId,
             input,
-            model: context.launch.model,
-            effort: state.effort,
-            summary: context.launch.controls.reasoningDisplay ? "detailed" : "none",
+            ...settings,
             ...(context.outputSchema ? { outputSchema: context.outputSchema } : {}),
             ...(context.launch.controls.serviceTier
               ? { serviceTier: context.launch.controls.serviceTier }
@@ -361,6 +366,17 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
         )
         const turn = record(response.turn)
         state.turnId = requiredString(turn.id, "turn/start did not return turn.id")
+        // Keep only these public request fields. Never copy the input, instructions or response.
+        state.acceptedTurnSettings = {
+          provider: "flapstack",
+          providerThreadId: threadId,
+          providerTurnId: state.turnId,
+          kind: "opaque-metadata",
+          displayClass: "metadata",
+          privacyClass: "public",
+          phase: "snapshot",
+          payload: { eventType: "turn/start.settings-sent", metadata: settings },
+        }
       }
     } catch (error) {
       if (dispatched) state.uncertain = true
@@ -392,6 +408,10 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       for await (const notification of notificationsForState(state)) {
         state.fileChangeApprovals.observe(notification)
         const events = mapCodexNotification(notification)
+        if (state.acceptedTurnSettings) {
+          events.unshift(state.acceptedTurnSettings)
+          delete state.acceptedTurnSettings
+        }
         await this.append(context, events)
         for (const event of events) yield event
         if (
@@ -444,6 +464,21 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       cancelled,
       context.signal,
     )
+  }
+
+  async steer(context: RuntimeAdapterContext, text: string): Promise<void> {
+    const state = this.states.get(context.runId)
+    if (!state?.threadId || !state.turnId || state.cancelled || state.terminal || state.uncertain)
+      throw new Error("This Codex turn is no longer accepting steering.")
+    const turnId = state.turnId
+    const reply = record(
+      await state.client.request("turn/steer", {
+        threadId: state.threadId,
+        expectedTurnId: turnId,
+        input: [{ type: "text", text, text_elements: [] }],
+      }),
+    )
+    if (reply.turnId !== turnId) throw new Error("Codex did not confirm steering the active turn.")
   }
 
   async cancel(context: RuntimeAdapterContext, _reason: string): Promise<void> {
@@ -628,6 +663,8 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       await this.failState(state, error)
       throw error
     }
+    // Native thread creation/resume can run configured hooks before the first tool event.
+    await context.waitForWorkspace?.()
     return { state, params: authority.value }
   }
 
@@ -856,7 +893,12 @@ async function discoverModels(client: CodexProtocolClient): Promise<LiveCodexMod
             level && ["none", "low", "medium", "high", "xhigh", "max", "ultra"].includes(level),
           ),
         )
-      models.set(id, { id, name: string(model.displayName) ?? id, reasoningLevels })
+      models.set(id, {
+        id,
+        name: string(model.displayName) ?? id,
+        reasoningLevels,
+        ...(model.isDefault === true && { isDefault: true }),
+      })
     }
     const nextCursor = string(response.nextCursor)
     if (!nextCursor) return [...models.values()]

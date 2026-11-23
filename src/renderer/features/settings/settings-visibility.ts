@@ -655,6 +655,46 @@ export function getVisibleSettingsTabs(
   return tabs.sort(compareSettingsLabels)
 }
 
+const settingsGroups: { label: string; tabs: SettingsTab[] }[] = [
+  { label: "General", tabs: ["preferences", "appearance", "keyboard", "debug"] },
+  {
+    label: "Providers & Models",
+    tabs: ["models", "runtimes", "api-providers", "local-models", "usage"],
+  },
+  { label: "Safety & Permissions", tabs: ["permissions"] },
+  { label: "Voice & Audio", tabs: ["voice"] },
+  {
+    label: "Workspace & Extensions",
+    tabs: [
+      "projects",
+      "plugins",
+      "agents",
+      "agent-profiles",
+      "coordination",
+      "mobile-companion",
+      "portability",
+    ],
+  },
+  { label: "Beta Features", tabs: ["beta", "feature-visibility"] },
+]
+
+export function getSettingsGroups(options: Parameters<typeof getVisibleSettingsTabs>[1]) {
+  const visible = [
+    ...getVisibleSettingsTabs("main", options),
+    ...getVisibleSettingsTabs("advanced", options),
+  ]
+  return settingsGroups
+    .map((group) => ({
+      label: group.label,
+      tabs: group.tabs.flatMap((id) => visible.filter((tab) => tab.id === id)),
+    }))
+    .filter((group) => group.tabs.length)
+}
+
+export function settingsGroupTab(tab: SettingsTab): SettingsTab {
+  return tab === "skills" || tab === "mcp" ? "plugins" : tab
+}
+
 export function compareSettingsProviders(
   left: SettingsProviderScope,
   right: SettingsProviderScope,

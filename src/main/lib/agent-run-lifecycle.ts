@@ -23,11 +23,11 @@ export function cancelStaleRunningRuns(
     .run()
 }
 
-export async function captureAgentRunBefore(db: AppDatabase, runId: string) {
+export async function captureAgentRunBefore(db: AppDatabase, runId: string, index?: string) {
   const run = db.select().from(agentRuns).where(eq(agentRuns.id, runId)).get()
   if (!run || run.completedAt || run.beforeCheckpointId) return run?.beforeCheckpointId ?? null
 
-  const before = await captureCheckpoint(run.id, run.worktreePath, "before", db)
+  const before = await captureCheckpoint(run.id, run.worktreePath, "before", db, index)
   db.update(agentRuns)
     .set({ beforeCheckpointId: before.id })
     .where(

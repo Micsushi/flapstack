@@ -70,6 +70,17 @@ export const CLAUDE_MODELS = [
   { id: "claude-haiku-4-5", name: "Haiku", version: "4.5", contextWindow: CLAUDE_CONTEXT_WINDOW },
 ] as const
 
+const legacyClaudeIds = new Set([
+  "claude-fable-5",
+  "claude-opus-5",
+  "claude-sonnet-5",
+  "claude-opus-4-8",
+  "claude-haiku-4-5",
+])
+export function isLegacyPickerModel(id: string) {
+  return legacyClaudeIds.has(id.replace(/-\d{8}$/, "")) || /^gpt-[1-5](?:\.|-|$)/i.test(id)
+}
+
 export const CLAUDE_MODEL_ID_MAP: Record<string, string> = {
   best: "best",
   fable: "fable",
@@ -327,6 +338,15 @@ export function formatModelDisplayName(model?: string | null): string | null {
   const codexModel = CODEX_MODELS.find((m) => m.id === base)
   if (codexModel) return codexModel.name + suffix
 
+  if (/^gpt-\d/i.test(base)) {
+    return (
+      base
+        .split("-")
+        .map((word, index) => (index === 0 ? "GPT" : word.charAt(0).toUpperCase() + word.slice(1)))
+        .join("-") + suffix
+    )
+  }
+
   // Full Claude ids, with optional trailing date: claude-opus-4-8[-YYYYMMDD]
   const withoutDate = base.replace(/-\d{8}$/, "")
   let match = withoutDate.match(/^claude-([a-z]+)-(\d+(?:-\d+)*)$/)
@@ -362,6 +382,7 @@ export const DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING = `${DEFAULT_CHATGPT_COD
 export const DEFAULT_CURSOR_MODEL_ID = "auto"
 
 export type LiveCodexModel = {
+  isDefault?: boolean
   id: string
   name: string
   reasoningLevels: CodexReasoningLevel[]

@@ -1,4 +1,5 @@
 import { atom } from "jotai"
+import { recordAppAction } from "../app-action-history"
 import { atomWithStorage } from "jotai/utils"
 import { desktopViewAtom as _desktopViewAtom } from "../../features/agents/atoms"
 import type { ChatTitleStyle } from "../../../shared/chat-metadata"
@@ -885,6 +886,23 @@ export function normalizeCodexApiKey(apiKey: string): string | null {
 
 // Set of model IDs that are hidden from the model selector dropdown
 // Models are shown by default; only hidden models are stored
+const storedShowLegacyModels = atomWithStorage("preferences:show-legacy-models", false, undefined, {
+  getOnInit: true,
+})
+export const showLegacyModelsAtom = atom(
+  (get) => get(storedShowLegacyModels),
+  (get, set, enabled: boolean) => {
+    const previous = get(storedShowLegacyModels)
+    if (enabled === previous) return
+    set(storedShowLegacyModels, enabled)
+    recordAppAction({
+      label: enabled ? "Show legacy models" : "Hide legacy models",
+      undo: () => set(storedShowLegacyModels, previous),
+      redo: () => set(storedShowLegacyModels, enabled),
+    })
+  },
+)
+
 export const hiddenModelsAtom = atomWithStorage<string[]>(
   "preferences:hidden-models-v4",
   [],

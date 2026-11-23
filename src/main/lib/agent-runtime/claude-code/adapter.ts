@@ -25,6 +25,7 @@ import type {
   ClaudeRuntimeResumeState,
 } from "./types"
 import { isMissingClaudeSessionError } from "../../claude/session-recovery"
+import { ClaudeStreamingSession, claudeWarmOptionsKey } from "./streaming-session"
 
 type RunState = {
   context: RuntimeAdapterContext
@@ -37,6 +38,7 @@ type RunState = {
   turnStarted: boolean
   terminal: boolean
   failed: boolean
+  failureDetail?: string
   cancelled: boolean
   deliveredProviderMessages: number
   retryUsed: boolean
@@ -45,6 +47,8 @@ type RunState = {
   uncertain: boolean
   abortListener: () => void
   cancellationPromise: Promise<void> | null
+  live?: ClaudeStreamingSession
+  warmKey?: string | null
 }
 
 export class ClaudeRuntimeUncertainError extends Error {
@@ -67,7 +71,14 @@ export class ClaudeRuntimeFailedError extends Error {
 
 export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityAppend> {
   readonly runtime = "claude-code" as const
+  readonly preparesSessionBeforeWorkspace = true
   private readonly runs = new Map<string, RunState>()
+  private readonly chatOwners = new Map<string, string>()
+  private shuttingDown = false
+  private readonly idle = new Map<
+    string,
+    { session: ClaudeStreamingSession; sessionId: string; key: string; timer: NodeJS.Timeout }
+  >()
 
   constructor(private readonly dependencies: ClaudeRuntimeDependencies) {}
 
@@ -222,7 +233,11 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
       while (true) {
         let retryFresh = false
         try {
-          const stream = this.dependencies.query(state.queryInput)
+          await context.waitForWorkspace?.()
+          if (context.signal.aborted || state.cancelled) return
+          const stream = this.dependencies.streamingInput
+            ? await this.openTurnStream(state, state.queryInput)
+            : this.dependencies.query(state.queryInput)
           for await (const message of stream) {
             if (state.abortController.signal.aborted) break
             if (this.isStaleMessage(message, state)) {
@@ -234,6 +249,10 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
             state.deliveredProviderMessages += 1
             await this.captureIdentity(state, message)
             const batch = state.mapper.map(message)
+            for (const event of batch) {
+              if (event.kind === "warning" && event.payload.code === "monthly-spend-limit")
+                state.failureDetail = event.payload.message
+            }
             await this.dependencies.appendActivity(context, batch)
             const terminal = (message as { type?: string }).type === "result"
             if (terminal) {
@@ -321,6 +340,90 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
     return this.dependencies.requestInput(context, request)
   }
 
+  async steer(context: RuntimeAdapterContext, text: string): Promise<void> {
+    const state = this.requireState(context)
+    if (!state.live || !state.streaming || state.terminal || state.cancelled || state.uncertain)
+      throw new Error("This Claude turn is no longer accepting steering.")
+    await state.live.steer(text)
+  }
+
+  private async openTurnStream(
+    state: RunState,
+    input: ClaudeRuntimeQueryInput,
+  ): Promise<AsyncIterable<SDKMessage>> {
+    const chat = state.context.subChatId
+    if (chat) {
+      const owner = this.chatOwners.get(chat)
+      if (owner && owner !== state.context.runId)
+        throw new Error("This Claude chat already has an active turn.")
+      this.chatOwners.set(chat, state.context.runId)
+    }
+    const key = chat ? await claudeWarmOptionsKey(input.options) : null
+    if (state.cancelled || state.context.signal.aborted) throw new Error("Claude turn was stopped.")
+    state.warmKey = key
+    const idle = chat ? this.idle.get(chat) : null
+    if (idle && chat) {
+      this.idle.delete(chat)
+      clearTimeout(idle.timer)
+      if (key && idle.key === key && idle.sessionId === state.session.providerSessionId)
+        state.live = idle.session
+      else idle.session.close()
+    }
+    state.live ??= new ClaudeStreamingSession(this.dependencies.query, input.options)
+    return state.live.turn(input)
+  }
+
+  closeIdleSessions(): void {
+    this.shuttingDown = true
+    for (const entry of this.idle.values()) {
+      clearTimeout(entry.timer)
+      entry.session.close()
+    }
+    this.idle.clear()
+  }
+
+  private releaseSession(state: RunState): void {
+    const chat = state.context.subChatId
+    if (chat && this.chatOwners.get(chat) === state.context.runId) this.chatOwners.delete(chat)
+    const session = state.live
+    if (!session) return
+    state.live = undefined
+    const sessionId = state.session.providerSessionId
+    if (
+      this.shuttingDown ||
+      !session.reusable ||
+      !chat ||
+      !sessionId ||
+      !state.warmKey ||
+      !state.terminal ||
+      state.failed ||
+      state.failureDetail ||
+      state.cancelled ||
+      state.uncertain
+    ) {
+      session.close()
+      return
+    }
+    const existing = this.idle.get(chat)
+    if (existing) {
+      clearTimeout(existing.timer)
+      existing.session.close()
+      this.idle.delete(chat)
+    }
+    const timer = setTimeout(() => {
+      this.idle.delete(chat)
+      session.close()
+    }, 120_000)
+    timer.unref()
+    this.idle.set(chat, { session, sessionId, key: state.warmKey, timer })
+    if (this.idle.size > 4) {
+      const oldest = this.idle.entries().next().value!
+      this.idle.delete(oldest[0])
+      clearTimeout(oldest[1].timer)
+      oldest[1].session.close()
+    }
+  }
+
   async cancel(context: RuntimeAdapterContext, reason: string): Promise<void> {
     const state = this.requireState(context)
     if (state.terminal) return
@@ -335,7 +438,7 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
         "Claude runtime cannot complete without an authoritative terminal result",
       )
     }
-    if (state.failed) throw new ClaudeRuntimeFailedError()
+    if (state.failed || state.failureDetail) throw new ClaudeRuntimeFailedError(state.failureDetail)
     await this.dependencies.complete?.(context)
   }
 
@@ -381,6 +484,7 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
         primaryError ??= error
       }
     } finally {
+      this.releaseSession(state)
       this.runs.delete(context.runId)
     }
     if (primaryError) {
@@ -448,10 +552,20 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
     const staleSessionId = state.resume?.sessionId
     if (!staleSessionId) return
     state.retryUsed = true
+    state.live?.close()
+    state.live = undefined
     await this.dependencies.clearStaleSession(state.context, staleSessionId)
     state.resume = null
     state.session = { providerSessionId: null, providerThreadId: null }
-    if (state.queryInput) applyClaudeRuntimeResumeOptions(state.queryInput.options, null)
+    if (state.queryInput) {
+      applyClaudeRuntimeResumeOptions(state.queryInput.options, null)
+      if (
+        typeof state.queryInput.prompt !== "string" &&
+        state.prompt !== null &&
+        this.dependencies.resolvePrompt
+      )
+        state.queryInput.prompt = await this.dependencies.resolvePrompt(state.context, state.prompt)
+    }
   }
 
   private requireState(context: RuntimeAdapterContext): RunState {
@@ -486,6 +600,7 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
     if (state.terminal) return Promise.resolve()
     if (state.cancellationPromise) return state.cancellationPromise
     state.cancelled = true
+    state.live?.close()
     state.abortController.abort(reason)
     state.cancellationPromise = (async () => {
       let cancelError: unknown = null

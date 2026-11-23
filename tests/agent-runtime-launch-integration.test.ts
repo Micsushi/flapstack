@@ -83,11 +83,54 @@ describe("Runtime launch coordinator", () => {
       prompt: "Inspect the working tree.",
     })
     await Promise.resolve()
-    expect(order).toEqual(["probe", "checkpoint"])
+    expect(order).toEqual(["checkpoint", "probe"])
     rejectSnapshot(new Error("Could not save checkpoint"))
     await expect(running).rejects.toThrow("Could not save checkpoint")
-    expect(order).toEqual(["probe", "checkpoint"])
+    expect(order).toEqual(["checkpoint", "probe"])
     expect(coordinator.runState("failed-checkpoint")).toBeNull()
+  })
+
+  it("overlaps inert session setup and still rejects dispatch when a required preimage fails", async () => {
+    let reject!: (error: Error) => void
+    let ready!: () => void
+    const entered = new Promise<void>((resolve) => {
+      ready = resolve
+    })
+    const workspace = new Promise<void>((_, decline) => {
+      reject = decline
+    })
+    const value = adapter("codex", [])
+    const dispatch = vi.fn()
+    const coordinator = new RuntimeLaunchCoordinator(
+      createAgentRuntimeRegistry([
+        {
+          runtime: "codex",
+          factory: () => ({
+            ...value,
+            preparesSessionBeforeWorkspace: true,
+            async startSession(context) {
+              ready()
+              await context.waitForWorkspace!()
+              dispatch()
+              return value.startSession(context)
+            },
+          }),
+        },
+      ]),
+      { prepareWorkspace: () => workspace, persistIntent: () => {} },
+    )
+    const running = coordinator.launch({
+      runId: "overlap",
+      chatId: "chat",
+      subChatId: "sub",
+      launch: launch("codex", "codex"),
+      prompt: "Use the project.",
+    })
+    await entered
+    expect(dispatch).not.toHaveBeenCalled()
+    reject(new Error("Invalid preimage"))
+    await expect(running).rejects.toThrow("Invalid preimage")
+    expect(dispatch).not.toHaveBeenCalled()
   })
 
   it("fails unavailable choices before provider intent with no fallback", async () => {

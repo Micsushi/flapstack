@@ -5,6 +5,7 @@ import { fileChangeOutcome } from "../utils/git-activity"
 import { LocalToolOutcome } from "../ui/local-tool-outcome"
 import { MessageReplyContext } from "./message-reply-context"
 
+import { chatSearchCurrentMatchAtom } from "../search/chat-search-atoms"
 import { useAtomValue } from "jotai"
 import { DiscussionAnnotationAction } from "../../discussions"
 import { ChevronRight, MoreHorizontal } from "lucide-react"
@@ -335,116 +336,6 @@ function groupTaskTools(parts: any[], nestedToolIds: Set<string>): any[] {
   return result
 }
 
-function isGroupableToolActivity(part: any, nestedToolIds: Set<string>): boolean {
-  return (
-    part?.type?.startsWith("tool-") &&
-    part.type !== "tool-ExitPlanMode" &&
-    !isReasoningPart(part) &&
-    !(part.toolCallId && nestedToolIds.has(part.toolCallId))
-  )
-}
-
-function groupToolActivities(parts: any[], nestedToolIds: Set<string>): any[] {
-  const result: any[] = []
-  let current: any[] = []
-
-  const flush = () => {
-    if (current.length >= 1) result.push({ type: "activity-group", parts: current })
-    else result.push(...current)
-    current = []
-  }
-
-  for (const part of parts) {
-    if (part?.type === "step-start" || part?.type === "tool-TaskOutput") continue
-    if (isGroupableToolActivity(part, nestedToolIds)) current.push(part)
-    else {
-      flush()
-      result.push(part)
-    }
-  }
-  flush()
-  return result
-}
-
-function summarizeToolActivities(parts: any[], streamState?: unknown): string {
-  const localOutcomes: string[] = []
-  let edits = 0
-  let reads = 0
-  let commands = 0
-  let tools = 0
-
-  for (const part of parts) {
-    const local = getLocalToolOutcome(part, streamState)
-    if (local) {
-      localOutcomes.push(local.label)
-      continue
-    }
-    const type = String(part.type).toLowerCase()
-    if (["tool-edit", "tool-write", "tool-applypatch", "tool-apply_patch"].includes(type)) {
-      const outcome = fileChangeOutcome(part)
-      if (outcome === "completed") edits++
-      else if (outcome === "denied") localOutcomes.push("File change declined")
-      else if (outcome === "failed") localOutcomes.push("File change failed")
-      else if (outcome === "interrupted") localOutcomes.push("File change interrupted")
-      else localOutcomes.push("File change requested")
-    } else if (
-      ["tool-read", "tool-grep", "tool-glob", "tool-websearch", "tool-webfetch"].includes(type)
-    )
-      reads++
-    else if (type === "tool-bash") commands++
-    else tools++
-  }
-
-  const summary: string[] = [...new Set(localOutcomes)]
-  if (edits) summary.push(edits === 1 ? "Completed a file edit" : `Completed ${edits} file edits`)
-  if (reads) summary.push(reads === 1 ? "Read a file" : `Read ${reads} files`)
-  if (commands) summary.push(commands === 1 ? "Ran a command" : `Ran ${commands} commands`)
-  if (tools) summary.push(tools === 1 ? "Used a tool" : `Used ${tools} tools`)
-  return summary.join(", ")
-}
-
-interface ToolActivityGroupProps {
-  streamState?: unknown
-  parts: any[]
-  isStreaming: boolean
-  children: React.ReactNode
-}
-
-function ToolActivityGroup({ parts, isStreaming, children, streamState }: ToolActivityGroupProps) {
-  const [isExpanded, setIsExpanded] = useState(isStreaming)
-  const wasStreamingRef = useRef(isStreaming)
-
-  useEffect(() => {
-    if (wasStreamingRef.current && !isStreaming) setIsExpanded(false)
-    wasStreamingRef.current = isStreaming
-  }, [isStreaming])
-
-  const singleOutcome = parts.length === 1 ? getLocalToolOutcome(parts[0], streamState) : null
-  if (singleOutcome && !singleOutcome.reason) return <>{children}</>
-
-  return (
-    <div className="mx-2 overflow-hidden rounded-md bg-muted/35">
-      <button
-        type="button"
-        onClick={() => setIsExpanded((expanded) => !expanded)}
-        aria-expanded={isExpanded}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground"
-      >
-        <span className="min-w-0 flex-1 truncate">
-          {summarizeToolActivities(parts, streamState)}
-        </span>
-        <ChevronRight
-          className={cn(
-            "h-3.5 w-3.5 shrink-0 transition-transform duration-200 ease-out",
-            isExpanded && "rotate-90",
-          )}
-        />
-      </button>
-      {isExpanded && <div className="space-y-1.5 border-t border-border/60 py-2">{children}</div>}
-    </div>
-  )
-}
-
 // Collapsible steps component
 interface ReasoningTimelineProps {
   children: React.ReactNode
@@ -452,6 +343,7 @@ interface ReasoningTimelineProps {
   wasStopped: boolean
   wasInterrupted: boolean
   hasDetails: boolean
+  searchPart?: number
   durationMs?: number
   startedAt: number
 }
@@ -462,12 +354,17 @@ function ReasoningTimeline({
   wasStopped,
   wasInterrupted,
   hasDetails,
+  searchPart,
   durationMs,
   startedAt,
 }: ReasoningTimelineProps) {
   const [isExpanded, setIsExpanded] = useState(isStreaming)
   const [elapsedMs, setElapsedMs] = useState(durationMs ?? 0)
   const wasStreamingRef = useRef(isStreaming)
+
+  useEffect(() => {
+    if (searchPart !== undefined) setIsExpanded(true)
+  }, [searchPart])
 
   useEffect(() => {
     if (wasStreamingRef.current && !isStreaming) setIsExpanded(false)
@@ -492,11 +389,7 @@ function ReasoningTimeline({
 
   return (
     <div
-      className={cn(
-        "mb-2",
-        isExpanded &&
-          "overflow-hidden rounded-lg border border-border bg-muted/30 shadow-[0_0_0_1px_hsl(var(--border)/0.2)]",
-      )}
+      className={cn("mb-2", isExpanded && "min-w-0 rounded-lg bg-muted/35")}
       data-reasoning-timeline="true"
       data-dev-carryover-surface="reasoning"
       data-expanded={isExpanded ? "true" : "false"}
@@ -778,8 +671,8 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   isMobile,
   subChatId,
   chatId,
-  sandboxSetupStatus = "ready",
 }: AssistantMessageItemProps) {
+  const searchMatch = useAtomValue(chatSearchCurrentMatchAtom)
   const showMessageJson = useAtomValue(showMessageJsonAtom)
   const selectedProject = useAtomValue(selectedProjectAtom)
   const projectPath = selectedProject?.path
@@ -795,14 +688,13 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   // doesn't change and useMemo would return stale results.
   const messageParts = dedupeVisibleReasoningParts(
     normalizeAcpParts(
-      (message?.parts || []).map((part: any) => normalizeCodexToolPart(part) as any),
+      (message?.parts || []).map((part: any, sourceIndex: number) => ({
+        ...(normalizeCodexToolPart(part) as any),
+        sourceIndex,
+      })),
     ),
     isReasoningPart,
   )
-
-  const hasReasoningOutput = messageParts.some(isReasoningPart)
-  const shouldShowWorkingTimer =
-    sandboxSetupStatus === "ready" && isStreaming && isLastMessage && !hasReasoningOutput
 
   const {
     nestedToolsMap,
@@ -1020,6 +912,19 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
       if (part.toolCallId && nestedToolIds.has(part.toolCallId)) return null
       if (part.type === "exploring-group") return null
 
+      if (part.type === "data-user-steer" && typeof part.data === "string") {
+        return (
+          <div
+            key={idx}
+            data-part-index={part.sourceIndex}
+            data-message-id={message.id}
+            className="mx-2 rounded bg-muted px-2 py-1 text-xs"
+          >
+            <span className="font-medium">You steered</span>
+            <p className="whitespace-pre-wrap break-words">{part.data}</p>
+          </div>
+        )
+      }
       if (part.type === "text") {
         if (!part.text?.trim()) return null
         const isFinalText = isFinal && idx === collapseBeforeIndex
@@ -1029,7 +934,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             key={idx}
             text={part.text}
             messageId={message.id}
-            partIndex={idx}
+            partIndex={part.sourceIndex ?? idx}
             isFinalText={isFinalText}
             visibleStepsCount={visibleStepsCount}
             isStreaming={isTextStreaming}
@@ -1048,20 +953,22 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             key={idx}
             part={part}
             messageId={message.id}
-            partIndex={idx}
+            partIndex={part.sourceIndex ?? idx}
             chatStatus={status}
+            inline
           />
         )
       if (isReasoningPart(part)) {
         return (
-          <AgentReasoningOutput
-            key={idx}
-            part={toReasoningOutputPart(part, message?.id, idx)}
-            chatStatus={status}
-            durationMs={msgMetadata?.durationMs}
-            startedAt={reasoningStartedAtRef.current}
-            hideHeader
-          />
+          <div key={idx} data-message-id={message.id} data-part-index={part.sourceIndex ?? idx}>
+            <AgentReasoningOutput
+              part={toReasoningOutputPart(part, message?.id, idx)}
+              chatStatus={status}
+              durationMs={msgMetadata?.durationMs}
+              startedAt={reasoningStartedAtRef.current}
+              hideHeader
+            />
+          </div>
         )
       }
 
@@ -1136,7 +1043,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             key={idx}
             part={part}
             messageId={message.id}
-            partIndex={idx}
+            partIndex={part.sourceIndex ?? idx}
             chatStatus={status}
           />
         )
@@ -1147,7 +1054,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             key={idx}
             part={part}
             messageId={message.id}
-            partIndex={idx}
+            partIndex={part.sourceIndex ?? idx}
             chatStatus={status}
           />
         )
@@ -1259,56 +1166,17 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             wasStopped={wasStopped}
             wasInterrupted={wasInterrupted}
             hasDetails={hasActivity && visibleStepsCount > 0}
+            searchPart={
+              searchMatch &&
+              searchMatch.messageId === message.id &&
+              stepParts.some((part) => part.sourceIndex === searchMatch.partIndex)
+                ? searchMatch.partIndex
+                : undefined
+            }
             durationMs={msgMetadata?.durationMs}
             startedAt={reasoningStartedAtRef.current}
           >
-            {(() => {
-              const activityGrouped = groupToolActivities(stepParts, nestedToolIds)
-              const taskGrouped = groupTaskTools(activityGrouped, nestedToolIds)
-              const grouped = groupExploringTools(taskGrouped, nestedToolIds)
-              return grouped.map((part: any, idx: number) => {
-                if (part.type === "activity-group") {
-                  return (
-                    <ToolActivityGroup
-                      streamState={toolStreamState}
-                      key={idx}
-                      parts={part.parts}
-                      isStreaming={isStreaming && isLastMessage}
-                    >
-                      {part.parts.map((toolPart: any, toolIdx: number) =>
-                        renderPart(toolPart, idx * 1000 + toolIdx, false),
-                      )}
-                    </ToolActivityGroup>
-                  )
-                }
-                if (part.type === "exploring-group") {
-                  const isLast = idx === grouped.length - 1
-                  const isGroupStreaming = isStreaming && isLastMessage && isLast
-                  return (
-                    <AgentExploringGroup
-                      key={idx}
-                      parts={part.parts}
-                      chatStatus={status}
-                      isStreaming={isGroupStreaming}
-                    />
-                  )
-                }
-                if (part.type === "task-group") {
-                  const isLast = idx === grouped.length - 1
-                  const isGroupStreaming = isStreaming && isLastMessage && isLast
-                  return (
-                    <AgentTaskToolsGroup
-                      key={idx}
-                      parts={part.parts}
-                      chatStatus={status}
-                      isStreaming={isGroupStreaming}
-                      subChatId={subChatId}
-                    />
-                  )
-                }
-                return renderPart(part, idx, false)
-              })
-            })()}
+            {stepParts.map((part, index) => renderPart(part, index, false))}
           </ReasoningTimeline>
         )}
         {!isStreaming && <AgentChangedFilesCard runId={msgMetadata?.runId} />}
@@ -1371,18 +1239,6 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             chatStatus={status}
             subChatId={subChatId}
             isEdit={lastCollapsedPlanOp.type === "edit"}
-          />
-        )}
-
-        {shouldShowWorkingTimer && visibleStepsCount === 0 && (
-          <AgentReasoningOutput
-            part={{
-              type: "tool-ReasoningOutput",
-              state: "input-streaming",
-              input: { text: "" },
-            }}
-            chatStatus={status}
-            startedAt={reasoningStartedAtRef.current}
           />
         )}
       </div>

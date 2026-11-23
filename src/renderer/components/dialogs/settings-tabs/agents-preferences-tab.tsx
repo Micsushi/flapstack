@@ -263,122 +263,8 @@ export function AgentsPreferencesTab() {
       {/* Header - hidden on narrow screens since it's in the navigation bar */}
       {!isNarrowScreen && <h3 className="text-lg font-semibold text-foreground">Preferences</h3>}
 
-      <SleepPreventionSetting />
-
-      {/* Agent Behavior */}
-      <div className="bg-background rounded-lg border border-border overflow-hidden">
-        <div
-          className="flex items-center justify-between p-4 outline-none"
-          data-settings-id="preferences-unsent-draft-reminders"
-          tabIndex={-1}
-        >
-          <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Unsent draft reminders</span>
-            <span className="text-xs text-muted-foreground">
-              Show the number of saved drafts when starting another chat for the same project.
-            </span>
-          </div>
-          <Switch
-            aria-label="Unsent draft reminders"
-            checked={newChatDraftReminderEnabled}
-            onCheckedChange={setNewChatDraftReminderEnabled}
-          />
-        </div>
-        <div
-          className="flex items-center justify-between border-t border-border p-4 outline-none"
-          data-settings-id="preferences-chat-titles"
-          tabIndex={-1}
-        >
-          <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Automatic chat titles</span>
-            <span className="text-xs text-muted-foreground">
-              Summarize the first message instead of using it verbatim.
-            </span>
-          </div>
-          <Switch
-            aria-label="Automatic chat titles"
-            checked={chatTitleGenerationEnabled}
-            onCheckedChange={setChatTitleGenerationEnabled}
-          />
-        </div>
-        <div
-          className="flex items-center justify-between border-t border-border p-4 outline-none"
-          data-settings-id="preferences-chat-title-detail"
-          tabIndex={-1}
-        >
-          <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Chat title detail</span>
-            <span className="text-xs text-muted-foreground">
-              Choose how much context automatic titles include.
-            </span>
-          </div>
-          <Select
-            value={chatTitleStyle}
-            onValueChange={(value: ChatTitleStyle) => setChatTitleStyle(value)}
-            disabled={!chatTitleGenerationEnabled}
-          >
-            <SelectTrigger aria-label="Chat title detail" className="w-auto min-w-28 px-2">
-              <span className="text-xs">
-                {chatTitleStyle === "concise"
-                  ? "Concise"
-                  : chatTitleStyle === "balanced"
-                    ? "Balanced"
-                    : "Descriptive"}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="concise">Concise, up to 5 words</SelectItem>
-              <SelectItem value="balanced">Balanced, up to 8 words</SelectItem>
-              <SelectItem value="descriptive">Descriptive, up to 12 words</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div
-          className="flex items-center justify-between border-t border-border p-4 outline-none"
-          data-settings-id="preferences-chat-auto-tags"
-          tabIndex={-1}
-        >
-          <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Automatic chat tags</span>
-            <span className="text-xs text-muted-foreground">
-              Add short user tags and separate agent-only role labels when the first message is
-              clear.
-            </span>
-          </div>
-          <Switch
-            aria-label="Automatic chat tags"
-            checked={chatAutoTaggingEnabled}
-            onCheckedChange={setChatAutoTaggingEnabled}
-          />
-        </div>
-        <div
-          className="flex flex-col items-stretch justify-between gap-3 border-t border-border p-4 outline-none sm:flex-row sm:items-center sm:gap-6"
-          data-settings-id="preferences-chat-tag-confidence"
-          tabIndex={-1}
-        >
-          <div className="flex min-w-0 flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Automatic tag confidence</span>
-            <span className="text-xs text-muted-foreground">
-              Higher values create fewer, more certain tags and agent labels.
-            </span>
-          </div>
-          <div className="flex w-full shrink-0 items-center gap-3 sm:w-44">
-            <input
-              type="range"
-              min={50}
-              max={100}
-              step={1}
-              value={chatAutoTaggingConfidence}
-              onChange={(event) => setChatAutoTaggingConfidence(Number(event.target.value))}
-              disabled={!chatAutoTaggingEnabled}
-              aria-label="Automatic tag confidence"
-              className="min-w-0 flex-1 accent-primary disabled:opacity-50"
-            />
-            <span className="w-9 text-right text-xs tabular-nums text-foreground">
-              {chatAutoTaggingConfidence}%
-            </span>
-          </div>
-        </div>
+      <div className="divide-y rounded-lg border">
+        {" "}
         <div
           className="flex items-center justify-between border-t border-border p-4 outline-none"
           data-settings-id="preferences-reasoning"
@@ -417,86 +303,7 @@ export function AgentsPreferencesTab() {
             </SelectContent>
           </Select>
         </div>
-        <div
-          className="flex items-center justify-between p-4 border-t border-border outline-none"
-          data-settings-id="preferences-coauthor"
-          tabIndex={-1}
-        >
-          <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Claude commit attribution</span>
-            <span className="text-xs text-muted-foreground">
-              Add a Claude Co-authored-by trailer to commits made by Claude Code
-            </span>
-            {coAuthoredByError && (
-              <div className="flex items-center gap-2 pt-1">
-                <span className="text-xs text-destructive" role="alert">
-                  Attribution setting unavailable: {coAuthoredByError.message}
-                </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={isCoAuthoredByFetching}
-                  onClick={() => void refetchCoAuthoredBy()}
-                >
-                  <RefreshCw
-                    className={
-                      isCoAuthoredByFetching ? "mr-2 h-3.5 w-3.5 animate-spin" : "mr-2 h-3.5 w-3.5"
-                    }
-                    aria-hidden="true"
-                  />{" "}
-                  Retry
-                </Button>
-              </div>
-            )}
-            {isCoAuthoredByLoading && (
-              <span className="text-xs text-muted-foreground" role="status">
-                Loading attribution setting…
-              </span>
-            )}
-          </div>
-          <Switch
-            aria-label="Claude commit attribution"
-            checked={includeCoAuthoredBy ?? false}
-            onCheckedChange={handleCoAuthoredByToggle}
-            disabled={
-              isCoAuthoredByLoading ||
-              Boolean(coAuthoredByError) ||
-              setCoAuthoredByMutation.isPending
-            }
-          />
-        </div>
-        <div
-          className="flex items-center justify-between gap-6 border-t border-border p-4 outline-none"
-          data-settings-id="preferences-codex-task-visibility"
-          tabIndex={-1}
-        >
-          <div className="flex min-w-0 flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Codex task visibility</span>
-            <span className="text-xs text-muted-foreground">
-              Hide completed Flapstack tasks from active Codex lists, or keep them under their
-              project.
-            </span>
-          </div>
-          <Select
-            value={codexThreadVisibility}
-            onValueChange={(value: CodexThreadVisibility) => setCodexThreadVisibility(value)}
-          >
-            <SelectTrigger
-              aria-label="Codex task visibility"
-              className="w-auto min-w-36 shrink-0 px-2"
-            >
-              <span className="text-xs">
-                {codexThreadVisibility === "hidden" ? "Hidden while idle" : "Show under project"}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="hidden">Hidden while idle</SelectItem>
-              <SelectItem value="project">Show under project</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
       </div>
-
       {/* Notifications */}
       <div className="bg-background rounded-lg border border-border overflow-hidden">
         <div
@@ -553,317 +360,531 @@ export function AgentsPreferencesTab() {
         </div>
       </div>
 
-      {/* Navigation */}
-      <div className="bg-background rounded-lg border border-border overflow-hidden">
-        <div
-          className="flex items-center justify-between gap-6 p-4 outline-none"
-          data-settings-id="preferences-group-close"
-          tabIndex={-1}
-        >
-          <div className="flex min-w-0 flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">When closing a group</span>
-            <span className="text-xs text-muted-foreground">
-              Ask first, keep its Chats on the main bar, or close every Chat in the group.
-            </span>
-          </div>
-          <Select
-            value={groupCloseBehavior}
-            onValueChange={(value: GroupCloseBehavior) => setGroupCloseBehavior(value)}
-          >
-            <SelectTrigger
-              aria-label="When closing a group"
-              className="w-auto min-w-40 shrink-0 px-2"
+      <details>
+        <summary className="cursor-pointer rounded py-2 text-sm font-medium">
+          Advanced preferences
+        </summary>
+        <div className="space-y-4 pt-2">
+          <SleepPreventionSetting />
+
+          {/* Agent Behavior */}
+          <div className="bg-background rounded-lg border border-border overflow-hidden">
+            <div
+              className="flex items-center justify-between p-4 outline-none"
+              data-settings-id="preferences-unsent-draft-reminders"
+              tabIndex={-1}
             >
-              <span className="text-xs">
-                {groupCloseBehavior === "ask"
-                  ? "Ask every time"
-                  : groupCloseBehavior === "keep-chats"
-                    ? "Keep Chats on main bar"
-                    : "Close all Chats"}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ask">Ask every time</SelectItem>
-              <SelectItem value="keep-chats">Keep Chats on main bar</SelectItem>
-              <SelectItem value="close-chats">Close all Chats</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div
-          className="flex items-center justify-between border-t border-border p-4 outline-none"
-          data-settings-id="preferences-drag-chats"
-          tabIndex={-1}
-        >
-          <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Drag chats between sections</span>
-            <span className="text-xs text-muted-foreground">
-              Allow dragging chats between Global, project, and task sections.
-            </span>
-          </div>
-          <Switch
-            aria-label="Drag chats between sections"
-            checked={crossScopeMoveEnabled}
-            onCheckedChange={setCrossScopeMoveEnabled}
-          />
-        </div>
-        <div
-          className="flex items-center justify-between p-4 border-t border-border outline-none"
-          data-settings-id="preferences-auto-advance"
-          tabIndex={-1}
-        >
-          <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Auto-advance</span>
-            <span className="text-xs text-muted-foreground">
-              Where to go after archiving a chat
-            </span>
-          </div>
-          <Select
-            value={autoAdvanceTarget}
-            onValueChange={(value: AutoAdvanceTarget) => setAutoAdvanceTarget(value)}
-          >
-            <SelectTrigger aria-label="Auto-advance" className="w-auto px-2">
-              <span className="text-xs">
-                {autoAdvanceTarget === "next"
-                  ? "Go to next chat"
-                  : autoAdvanceTarget === "previous"
-                    ? "Go to previous chat"
-                    : "Close chat"}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="next">Go to next chat</SelectItem>
-              <SelectItem value="previous">Go to previous chat</SelectItem>
-              <SelectItem value="close">Close chat</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div
-          className="flex items-center justify-between p-4 border-t border-border outline-none"
-          data-settings-id="preferences-editor"
-          tabIndex={-1}
-        >
-          <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Preferred Editor</span>
-            {availableAppsError && (
-              <div className="flex items-center gap-2 pt-1">
-                <span className="text-xs text-destructive" role="alert">
-                  Installed app discovery unavailable: {availableAppsError.message}
+              <div className="flex flex-col space-y-1">
+                <span className="text-sm font-medium text-foreground">Unsent draft reminders</span>
+                <span className="text-xs text-muted-foreground">
+                  Count saved drafts when starting a chat in this project.
                 </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={isAvailableAppsFetching}
-                  onClick={() => void refetchAvailableApps()}
-                >
-                  <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
-                </Button>
               </div>
-            )}
-            {isAvailableAppsLoading && (
-              <span className="text-xs text-muted-foreground" role="status">
-                Checking installed apps…
-              </span>
-            )}
+              <Switch
+                aria-label="Unsent draft reminders"
+                checked={newChatDraftReminderEnabled}
+                onCheckedChange={setNewChatDraftReminderEnabled}
+              />
+            </div>
+            <div
+              className="flex items-center justify-between border-t border-border p-4 outline-none"
+              data-settings-id="preferences-chat-titles"
+              tabIndex={-1}
+            >
+              <div className="flex flex-col space-y-1">
+                <span className="text-sm font-medium text-foreground">Automatic chat titles</span>
+                <span className="text-xs text-muted-foreground">
+                  Summarize the first message instead of using it verbatim.
+                </span>
+              </div>
+              <Switch
+                aria-label="Automatic chat titles"
+                checked={chatTitleGenerationEnabled}
+                onCheckedChange={setChatTitleGenerationEnabled}
+              />
+            </div>
+            <div
+              className="flex items-center justify-between border-t border-border p-4 outline-none"
+              data-settings-id="preferences-chat-title-detail"
+              tabIndex={-1}
+            >
+              <div className="flex flex-col space-y-1">
+                <span className="text-sm font-medium text-foreground">Chat title detail</span>
+                <span className="text-xs text-muted-foreground">
+                  Choose how much context automatic titles include.
+                </span>
+              </div>
+              <Select
+                value={chatTitleStyle}
+                onValueChange={(value: ChatTitleStyle) => setChatTitleStyle(value)}
+                disabled={!chatTitleGenerationEnabled}
+              >
+                <SelectTrigger aria-label="Chat title detail" className="w-auto min-w-28 px-2">
+                  <span className="text-xs">
+                    {chatTitleStyle === "concise"
+                      ? "Concise"
+                      : chatTitleStyle === "balanced"
+                        ? "Balanced"
+                        : "Descriptive"}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="concise">Concise, up to 5 words</SelectItem>
+                  <SelectItem value="balanced">Balanced, up to 8 words</SelectItem>
+                  <SelectItem value="descriptive">Descriptive, up to 12 words</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div
+              className="flex items-center justify-between border-t border-border p-4 outline-none"
+              data-settings-id="preferences-chat-auto-tags"
+              tabIndex={-1}
+            >
+              <div className="flex flex-col space-y-1">
+                <span className="text-sm font-medium text-foreground">Automatic chat tags</span>
+                <span className="text-xs text-muted-foreground">
+                  Add short user tags and separate agent-only role labels when the first message is
+                  clear.
+                </span>
+              </div>
+              <Switch
+                aria-label="Automatic chat tags"
+                checked={chatAutoTaggingEnabled}
+                onCheckedChange={setChatAutoTaggingEnabled}
+              />
+            </div>
+            <div
+              className="flex flex-col items-stretch justify-between gap-3 border-t border-border p-4 outline-none sm:flex-row sm:items-center sm:gap-6"
+              data-settings-id="preferences-chat-tag-confidence"
+              tabIndex={-1}
+            >
+              <div className="flex min-w-0 flex-col space-y-1">
+                <span className="text-sm font-medium text-foreground">
+                  Automatic tag confidence
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Higher values create fewer, more certain tags and agent labels.
+                </span>
+              </div>
+              <div className="flex w-full shrink-0 items-center gap-3 sm:w-44">
+                <input
+                  type="range"
+                  min={50}
+                  max={100}
+                  step={1}
+                  value={chatAutoTaggingConfidence}
+                  onChange={(event) => setChatAutoTaggingConfidence(Number(event.target.value))}
+                  disabled={!chatAutoTaggingEnabled}
+                  aria-label="Automatic tag confidence"
+                  className="min-w-0 flex-1 accent-primary disabled:opacity-50"
+                />
+                <span className="w-9 text-right text-xs tabular-nums text-foreground">
+                  {chatAutoTaggingConfidence}%
+                </span>
+              </div>
+            </div>
+            <div
+              className="flex items-center justify-between p-4 border-t border-border outline-none"
+              data-settings-id="preferences-coauthor"
+              tabIndex={-1}
+            >
+              <div className="flex flex-col space-y-1">
+                <span className="text-sm font-medium text-foreground">
+                  Claude commit attribution
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Add a Claude Co-authored-by trailer to commits made by Claude Code
+                </span>
+                {coAuthoredByError && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <span className="text-xs text-destructive" role="alert">
+                      Attribution setting unavailable: {coAuthoredByError.message}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={isCoAuthoredByFetching}
+                      onClick={() => void refetchCoAuthoredBy()}
+                    >
+                      <RefreshCw
+                        className={
+                          isCoAuthoredByFetching
+                            ? "mr-2 h-3.5 w-3.5 animate-spin"
+                            : "mr-2 h-3.5 w-3.5"
+                        }
+                        aria-hidden="true"
+                      />{" "}
+                      Retry
+                    </Button>
+                  </div>
+                )}
+                {isCoAuthoredByLoading && (
+                  <span className="text-xs text-muted-foreground" role="status">
+                    Loading attribution setting…
+                  </span>
+                )}
+              </div>
+              <Switch
+                aria-label="Claude commit attribution"
+                checked={includeCoAuthoredBy ?? false}
+                onCheckedChange={handleCoAuthoredByToggle}
+                disabled={
+                  isCoAuthoredByLoading ||
+                  Boolean(coAuthoredByError) ||
+                  setCoAuthoredByMutation.isPending
+                }
+              />
+            </div>
+            <div
+              className="flex items-center justify-between gap-6 border-t border-border p-4 outline-none"
+              data-settings-id="preferences-codex-task-visibility"
+              tabIndex={-1}
+            >
+              <div className="flex min-w-0 flex-col space-y-1">
+                <span className="text-sm font-medium text-foreground">Codex task visibility</span>
+                <span className="text-xs text-muted-foreground">
+                  Hide completed Flapstack tasks from active Codex lists, or keep them under their
+                  project.
+                </span>
+              </div>
+              <Select
+                value={codexThreadVisibility}
+                onValueChange={(value: CodexThreadVisibility) => setCodexThreadVisibility(value)}
+              >
+                <SelectTrigger
+                  aria-label="Codex task visibility"
+                  className="w-auto min-w-36 shrink-0 px-2"
+                >
+                  <span className="text-xs">
+                    {codexThreadVisibility === "hidden"
+                      ? "Hidden while idle"
+                      : "Show under project"}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="hidden">Hidden while idle</SelectItem>
+                  <SelectItem value="project">Show under project</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+
+          {/* Navigation */}
+          <div className="bg-background rounded-lg border border-border overflow-hidden">
+            <div
+              className="flex items-center justify-between gap-6 p-4 outline-none"
+              data-settings-id="preferences-group-close"
+              tabIndex={-1}
+            >
+              <div className="flex min-w-0 flex-col space-y-1">
+                <span className="text-sm font-medium text-foreground">When closing a group</span>
+                <span className="text-xs text-muted-foreground">
+                  Ask first, keep its Chats on the main bar, or close every Chat in the group.
+                </span>
+              </div>
+              <Select
+                value={groupCloseBehavior}
+                onValueChange={(value: GroupCloseBehavior) => setGroupCloseBehavior(value)}
+              >
+                <SelectTrigger
+                  aria-label="When closing a group"
+                  className="w-auto min-w-40 shrink-0 px-2"
+                >
+                  <span className="text-xs">
+                    {groupCloseBehavior === "ask"
+                      ? "Ask every time"
+                      : groupCloseBehavior === "keep-chats"
+                        ? "Keep Chats on main bar"
+                        : "Close all Chats"}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ask">Ask every time</SelectItem>
+                  <SelectItem value="keep-chats">Keep Chats on main bar</SelectItem>
+                  <SelectItem value="close-chats">Close all Chats</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div
+              className="flex items-center justify-between border-t border-border p-4 outline-none"
+              data-settings-id="preferences-drag-chats"
+              tabIndex={-1}
+            >
+              <div className="flex flex-col space-y-1">
+                <span className="text-sm font-medium text-foreground">
+                  Drag chats between sections
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Allow dragging chats between Global, project, and task sections.
+                </span>
+              </div>
+              <Switch
+                aria-label="Drag chats between sections"
+                checked={crossScopeMoveEnabled}
+                onCheckedChange={setCrossScopeMoveEnabled}
+              />
+            </div>
+            <div
+              className="flex items-center justify-between p-4 border-t border-border outline-none"
+              data-settings-id="preferences-auto-advance"
+              tabIndex={-1}
+            >
+              <div className="flex flex-col space-y-1">
+                <span className="text-sm font-medium text-foreground">Auto-advance</span>
+                <span className="text-xs text-muted-foreground">
+                  Where to go after archiving a chat
+                </span>
+              </div>
+              <Select
+                value={autoAdvanceTarget}
+                onValueChange={(value: AutoAdvanceTarget) => setAutoAdvanceTarget(value)}
+              >
+                <SelectTrigger aria-label="Auto-advance" className="w-auto px-2">
+                  <span className="text-xs">
+                    {autoAdvanceTarget === "next"
+                      ? "Go to next chat"
+                      : autoAdvanceTarget === "previous"
+                        ? "Go to previous chat"
+                        : "Close chat"}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="next">Go to next chat</SelectItem>
+                  <SelectItem value="previous">Go to previous chat</SelectItem>
+                  <SelectItem value="close">Close chat</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div
+              className="flex items-center justify-between p-4 border-t border-border outline-none"
+              data-settings-id="preferences-editor"
+              tabIndex={-1}
+            >
+              <div className="flex flex-col space-y-1">
+                <span className="text-sm font-medium text-foreground">Preferred Editor</span>
+                {availableAppsError && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <span className="text-xs text-destructive" role="alert">
+                      Installed app discovery unavailable: {availableAppsError.message}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={isAvailableAppsFetching}
+                      onClick={() => void refetchAvailableApps()}
+                    >
+                      <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+                    </Button>
+                  </div>
+                )}
+                {isAvailableAppsLoading && (
+                  <span className="text-xs text-muted-foreground" role="status">
+                    Checking installed apps…
+                  </span>
+                )}
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={!effectivePreferredEditor}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1.5 text-xs hover:bg-accent hover:text-accent-foreground transition-colors"
+                  >
+                    {effectivePreferredEditor && EDITOR_ICONS[effectivePreferredEditor] && (
+                      <img
+                        src={EDITOR_ICONS[effectivePreferredEditor]}
+                        alt=""
+                        className="h-4 w-4 flex-shrink-0"
+                      />
+                    )}
+                    <span className="truncate">
+                      {effectivePreferredEditor
+                        ? APP_META[effectivePreferredEditor].label
+                        : "No editor detected"}
+                    </span>
+                    <ChevronDown className="h-3 w-3 opacity-50" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  {availableEditors.map((editor) => (
+                    <DropdownMenuItem
+                      key={editor.id}
+                      onClick={() => setPreferredEditor(editor.id)}
+                      className="flex items-center gap-2"
+                    >
+                      {EDITOR_ICONS[editor.id] ? (
+                        <img
+                          src={EDITOR_ICONS[editor.id]}
+                          alt=""
+                          className="h-4 w-4 flex-shrink-0 object-contain"
+                        />
+                      ) : (
+                        <div className="h-4 w-4 flex-shrink-0" />
+                      )}
+                      <span>{editor.label}</span>
+                    </DropdownMenuItem>
+                  ))}
+                  {availableTerminals.map((app) => (
+                    <DropdownMenuItem
+                      key={app.id}
+                      onClick={() => setPreferredEditor(app.id)}
+                      className="flex items-center gap-2"
+                    >
+                      {EDITOR_ICONS[app.id] ? (
+                        <img
+                          src={EDITOR_ICONS[app.id]}
+                          alt=""
+                          className="h-4 w-4 flex-shrink-0 object-contain"
+                        />
+                      ) : (
+                        <div className="h-4 w-4 flex-shrink-0" />
+                      )}
+                      <span>{app.label}</span>
+                    </DropdownMenuItem>
+                  ))}
+                  {availableVsCode.length > 0 && (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger className="flex items-center gap-2">
+                        <img
+                          src={vscodeBaseIcon}
+                          alt=""
+                          className="h-4 w-4 flex-shrink-0 object-contain"
+                        />
+                        <span>VS Code</span>
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="w-48" sideOffset={6} alignOffset={-4}>
+                        {availableVsCode.map((app) => (
+                          <DropdownMenuItem
+                            key={app.id}
+                            onClick={() => setPreferredEditor(app.id)}
+                            className="flex items-center gap-2"
+                          >
+                            {EDITOR_ICONS[app.id] ? (
+                              <img
+                                src={EDITOR_ICONS[app.id]}
+                                alt=""
+                                className="h-4 w-4 flex-shrink-0 object-contain"
+                              />
+                            ) : (
+                              <div className="h-4 w-4 flex-shrink-0" />
+                            )}
+                            <span>{app.label}</span>
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  )}
+                  {availableJetBrains.length > 0 && (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger className="flex items-center gap-2">
+                        <img
+                          src={jetbrainsBaseIcon}
+                          alt=""
+                          className="h-4 w-4 flex-shrink-0 object-contain"
+                        />
+                        <span>JetBrains</span>
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent
+                        className="w-48 max-h-[300px] overflow-y-auto"
+                        sideOffset={6}
+                        alignOffset={-4}
+                      >
+                        {availableJetBrains.map((app) => (
+                          <DropdownMenuItem
+                            key={app.id}
+                            onClick={() => setPreferredEditor(app.id)}
+                            className="flex items-center gap-2"
+                          >
+                            {EDITOR_ICONS[app.id] ? (
+                              <img
+                                src={EDITOR_ICONS[app.id]}
+                                alt=""
+                                className="h-4 w-4 flex-shrink-0 object-contain"
+                              />
+                            ) : (
+                              <div className="h-4 w-4 flex-shrink-0" />
+                            )}
+                            <span>{app.label}</span>
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+
+          {/* Help */}
+          <div className="overflow-hidden rounded-lg border border-border bg-background">
+            <div
+              className="flex items-center justify-between gap-6 p-4 outline-none"
+              data-settings-id="preferences-product-tour"
+              tabIndex={-1}
+            >
+              <div className="flex flex-col space-y-1">
+                <span className="text-sm font-medium text-foreground">Main-page tutorial</span>
+                <span className="text-xs text-muted-foreground">
+                  Revisit the workspace walkthrough.
+                </span>
+              </div>
               <button
                 type="button"
-                disabled={!effectivePreferredEditor}
-                className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1.5 text-xs hover:bg-accent hover:text-accent-foreground transition-colors"
+                onClick={() => startProductTour()}
+                className="h-8 shrink-0 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
               >
-                {effectivePreferredEditor && EDITOR_ICONS[effectivePreferredEditor] && (
-                  <img
-                    src={EDITOR_ICONS[effectivePreferredEditor]}
-                    alt=""
-                    className="h-4 w-4 flex-shrink-0"
-                  />
-                )}
-                <span className="truncate">
-                  {effectivePreferredEditor
-                    ? APP_META[effectivePreferredEditor].label
-                    : "No editor detected"}
-                </span>
-                <ChevronDown className="h-3 w-3 opacity-50" />
+                Run tutorial
               </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              {availableEditors.map((editor) => (
-                <DropdownMenuItem
-                  key={editor.id}
-                  onClick={() => setPreferredEditor(editor.id)}
-                  className="flex items-center gap-2"
-                >
-                  {EDITOR_ICONS[editor.id] ? (
-                    <img
-                      src={EDITOR_ICONS[editor.id]}
-                      alt=""
-                      className="h-4 w-4 flex-shrink-0 object-contain"
-                    />
-                  ) : (
-                    <div className="h-4 w-4 flex-shrink-0" />
-                  )}
-                  <span>{editor.label}</span>
-                </DropdownMenuItem>
-              ))}
-              {availableTerminals.map((app) => (
-                <DropdownMenuItem
-                  key={app.id}
-                  onClick={() => setPreferredEditor(app.id)}
-                  className="flex items-center gap-2"
-                >
-                  {EDITOR_ICONS[app.id] ? (
-                    <img
-                      src={EDITOR_ICONS[app.id]}
-                      alt=""
-                      className="h-4 w-4 flex-shrink-0 object-contain"
-                    />
-                  ) : (
-                    <div className="h-4 w-4 flex-shrink-0" />
-                  )}
-                  <span>{app.label}</span>
-                </DropdownMenuItem>
-              ))}
-              {availableVsCode.length > 0 && (
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger className="flex items-center gap-2">
-                    <img
-                      src={vscodeBaseIcon}
-                      alt=""
-                      className="h-4 w-4 flex-shrink-0 object-contain"
-                    />
-                    <span>VS Code</span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="w-48" sideOffset={6} alignOffset={-4}>
-                    {availableVsCode.map((app) => (
-                      <DropdownMenuItem
-                        key={app.id}
-                        onClick={() => setPreferredEditor(app.id)}
-                        className="flex items-center gap-2"
-                      >
-                        {EDITOR_ICONS[app.id] ? (
-                          <img
-                            src={EDITOR_ICONS[app.id]}
-                            alt=""
-                            className="h-4 w-4 flex-shrink-0 object-contain"
-                          />
-                        ) : (
-                          <div className="h-4 w-4 flex-shrink-0" />
-                        )}
-                        <span>{app.label}</span>
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              )}
-              {availableJetBrains.length > 0 && (
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger className="flex items-center gap-2">
-                    <img
-                      src={jetbrainsBaseIcon}
-                      alt=""
-                      className="h-4 w-4 flex-shrink-0 object-contain"
-                    />
-                    <span>JetBrains</span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent
-                    className="w-48 max-h-[300px] overflow-y-auto"
-                    sideOffset={6}
-                    alignOffset={-4}
-                  >
-                    {availableJetBrains.map((app) => (
-                      <DropdownMenuItem
-                        key={app.id}
-                        onClick={() => setPreferredEditor(app.id)}
-                        className="flex items-center gap-2"
-                      >
-                        {EDITOR_ICONS[app.id] ? (
-                          <img
-                            src={EDITOR_ICONS[app.id]}
-                            alt=""
-                            className="h-4 w-4 flex-shrink-0 object-contain"
-                          />
-                        ) : (
-                          <div className="h-4 w-4 flex-shrink-0" />
-                        )}
-                        <span>{app.label}</span>
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-
-      {/* Help */}
-      <div className="overflow-hidden rounded-lg border border-border bg-background">
-        <div
-          className="flex items-center justify-between gap-6 p-4 outline-none"
-          data-settings-id="preferences-product-tour"
-          tabIndex={-1}
-        >
-          <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Main-page tutorial</span>
-            <span className="text-xs text-muted-foreground">
-              Review the projects, chats, models, runtimes, modes, and settings controls.
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => startProductTour()}
-            className="h-8 shrink-0 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-          >
-            Run tutorial
-          </button>
-        </div>
-      </div>
-
-      {/* Developer testing */}
-      {runtimeActivityError && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/5 p-4">
-          <p className="text-xs text-destructive" role="alert">
-            Runtime activity test controls unavailable: {runtimeActivityError.message}
-          </p>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={isRuntimeActivityFetching}
-            onClick={() => void refetchRuntimeActivity()}
-          >
-            <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
-          </Button>
-        </div>
-      )}
-      {runtimeActivityFixtureSettings?.available && (
-        <div className="bg-background rounded-lg border border-border overflow-hidden">
-          <div
-            className="flex items-center justify-between gap-6 p-4 outline-none"
-            data-settings-id="preferences-runtime-activity-fixtures"
-            tabIndex={-1}
-          >
-            <div className="flex flex-col space-y-1">
-              <span className="text-sm font-medium text-foreground">
-                Runtime activity test controls
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Show controls that create provider-free test runs in project chats.
-              </span>
             </div>
-            <Switch
-              aria-label="Runtime activity test controls"
-              checked={runtimeActivityFixtureSettings?.enabled ?? false}
-              onCheckedChange={(enabled) => setRuntimeActivityFixtureSettings.mutate({ enabled })}
-              disabled={
-                runtimeActivityFixtureSettings === undefined ||
-                setRuntimeActivityFixtureSettings.isPending
-              }
-            />
           </div>
-        </div>
-      )}
 
+          {/* Developer testing */}
+          {runtimeActivityError && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/5 p-4">
+              <p className="text-xs text-destructive" role="alert">
+                Runtime activity test controls unavailable: {runtimeActivityError.message}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isRuntimeActivityFetching}
+                onClick={() => void refetchRuntimeActivity()}
+              >
+                <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" /> Retry
+              </Button>
+            </div>
+          )}
+          {runtimeActivityFixtureSettings?.available && (
+            <div className="bg-background rounded-lg border border-border overflow-hidden">
+              <div
+                className="flex items-center justify-between gap-6 p-4 outline-none"
+                data-settings-id="preferences-runtime-activity-fixtures"
+                tabIndex={-1}
+              >
+                <div className="flex flex-col space-y-1">
+                  <span className="text-sm font-medium text-foreground">
+                    Runtime activity test controls
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Show controls that create provider-free test runs in project chats.
+                  </span>
+                </div>
+                <Switch
+                  aria-label="Runtime activity test controls"
+                  checked={runtimeActivityFixtureSettings?.enabled ?? false}
+                  onCheckedChange={(enabled) =>
+                    setRuntimeActivityFixtureSettings.mutate({ enabled })
+                  }
+                  disabled={
+                    runtimeActivityFixtureSettings === undefined ||
+                    setRuntimeActivityFixtureSettings.isPending
+                  }
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </details>
       {/* Privacy */}
       <div className="bg-background rounded-lg border border-border overflow-hidden">
         <div

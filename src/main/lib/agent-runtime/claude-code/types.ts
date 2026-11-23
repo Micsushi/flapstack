@@ -42,6 +42,7 @@ export type ClaudeRuntimeProbeInput = {
 export type ClaudeRuntimeRecoveryStatus = "running" | "completed" | "uncertain"
 
 export type ClaudeRuntimeDependencies = {
+  streamingInput?: boolean
   query(input: ClaudeRuntimeQueryInput): AsyncIterable<SDKMessage>
   probe(): Promise<ClaudeRuntimeProbeInput>
   buildQueryOptions(

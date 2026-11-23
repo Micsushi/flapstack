@@ -143,11 +143,23 @@ it("selects a visible section and returns through existing chat navigation", asy
   store.set(agentsSettingsDialogActiveTabAtom, "preferences")
   await render()
   const select = container.querySelector('[aria-label="Settings section"]') as HTMLSelectElement
-  expect([...select.options].some((o) => o.value === "mobile-companion")).toBe(true)
+  expect([...select.options].map((o) => o.textContent)).toEqual([
+    "General",
+    "Providers & Models",
+    "Safety & Permissions",
+    "Voice & Audio",
+    "Workspace & Extensions",
+    "Beta Features",
+  ])
   await act(async () => {
-    select.value = "mobile-companion"
+    select.value = "projects"
     select.dispatchEvent(new Event("change", { bubbles: true }))
   })
+  await act(async () =>
+    [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Mobile Companion")!
+      .click(),
+  )
   expect(store.get(agentsSettingsDialogActiveTabAtom)).toBe("mobile-companion")
   expect(container.querySelector('[aria-label="AgentsMobileCompanionTab draft"]')).not.toBeNull()
   await act(async () => {

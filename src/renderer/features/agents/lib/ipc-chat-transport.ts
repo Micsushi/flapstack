@@ -214,7 +214,8 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
             for (const chunk of batch) controller.enqueue(chunk)
           },
         })
-        const sub = trpcClient.claude.chat.subscribe(
+        // Only an explicit compatibility selection can reach this path. Direct failures propagate.
+        const sub = trpcClient.claude.compatibilityChat.subscribe(
           {
             submittedAtMs,
             subChatId: this.config.subChatId,

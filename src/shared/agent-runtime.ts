@@ -175,11 +175,15 @@ export type RuntimeAdapterContext = {
   launch: ResolvedRuntimeLaunch
   instructions?: string | null
   outputSchema?: Record<string, unknown> | null
+  /** Resolves once this run owns its exact workspace preimage. Throws on cancellation. */
+  waitForWorkspace?: () => Promise<void>
   signal: AbortSignal
 }
 
 export interface HarnessAdapter<TActivity = unknown> {
   readonly runtime: ResolvedAgentRuntime
+  /** Inert setup may overlap capture. The adapter must await waitForWorkspace before any workspace authority. */
+  readonly preparesSessionBeforeWorkspace?: true
   probe(harness: string): Promise<RuntimeAdapterProbe>
   /** May initialize a run-owned connection, without starting a provider session or sending a prompt. */
   prepareConnection?(runId: string): () => Promise<void>
@@ -199,11 +203,13 @@ export interface HarnessAdapter<TActivity = unknown> {
     turn: RuntimeAdapterTurn,
   ): AsyncIterable<TActivity>
   requestPermission(context: RuntimeAdapterContext, request: unknown): Promise<unknown>
+  steer?(context: RuntimeAdapterContext, text: string): Promise<void>
   requestInput(context: RuntimeAdapterContext, request: unknown): Promise<unknown>
   cancel(context: RuntimeAdapterContext, reason: string): Promise<void>
   complete(context: RuntimeAdapterContext): Promise<void>
   reconcile(context: RuntimeAdapterContext): Promise<"running" | "completed" | "uncertain">
   cleanup(context: RuntimeAdapterContext): Promise<void>
+  closeIdleSessions?(): void
 }
 
 export type HarnessAdapterFactory<TActivity = unknown> = () => HarnessAdapter<TActivity>

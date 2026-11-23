@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react"
 import { MessageCircleQuestion, X } from "lucide-react"
+import { DropdownMenuItem } from "../../../components/ui/dropdown-menu"
 import { Button } from "../../../components/ui/button"
 import { Textarea } from "../../../components/ui/textarea"
 import { ChatMarkdownRenderer } from "../../../components/chat-markdown-renderer"
@@ -28,6 +29,36 @@ export function sideQuestionSnapshot(
   return snapshot
 }
 
+const SideQuestionControls = createContext<{
+  open: boolean
+  toggle: () => void
+  trigger: React.RefObject<HTMLButtonElement | null>
+} | null>(null)
+
+export function SideQuestionTrigger({ inMenu = false }: { inMenu?: boolean }) {
+  const controls = useContext(SideQuestionControls)
+  if (!controls) return null
+  if (inMenu)
+    return (
+      <DropdownMenuItem onSelect={() => requestAnimationFrame(controls.toggle)}>
+        <MessageCircleQuestion className="size-4" /> Side question
+      </DropdownMenuItem>
+    )
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      aria-expanded={controls.open}
+      onClick={(event) => {
+        controls.trigger.current = event.currentTarget
+        controls.toggle()
+      }}
+    >
+      <MessageCircleQuestion className="size-4" /> Side question
+    </Button>
+  )
+}
+
 export function SideQuestionWorkspace({
   subChatId,
   messages,
@@ -39,22 +70,13 @@ export function SideQuestionWorkspace({
 }) {
   const [open, setOpen] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
+  const workspace = useRef<HTMLDivElement>(null)
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1">
+    <div ref={workspace} className="relative flex min-h-0 min-w-0 flex-1">
       <div className={`${open ? "hidden md:flex" : "flex"} min-h-0 min-w-0 flex-1 flex-col`}>
-        <div className="flex shrink-0 justify-end px-3 py-1">
-          <Button
-            ref={trigger}
-            variant="ghost"
-            size="sm"
-            aria-expanded={open}
-            onClick={() => setOpen(!open)}
-          >
-            <MessageCircleQuestion className="mr-2 size-4" />
-            Side question
-          </Button>
-        </div>
-        {children}
+        <SideQuestionControls.Provider value={{ open, toggle: () => setOpen(!open), trigger }}>
+          {children}
+        </SideQuestionControls.Provider>
       </div>
       {open && (
         <SideQuestionPanel
@@ -63,7 +85,14 @@ export function SideQuestionWorkspace({
           messages={messages}
           onClose={() => {
             setOpen(false)
-            requestAnimationFrame(() => trigger.current?.focus())
+            requestAnimationFrame(() => {
+              const target = trigger.current?.isConnected
+                ? trigger.current
+                : workspace.current?.querySelector<HTMLButtonElement>(
+                    'button[aria-label="More chat actions"]',
+                  )
+              target?.focus()
+            })
           }}
         />
       )}

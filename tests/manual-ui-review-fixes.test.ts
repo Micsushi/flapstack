@@ -20,7 +20,8 @@ describe("manual UI review fixes", () => {
 
   it("shows lightweight in-transcript startup feedback and a real load state", () => {
     const activeChat = read("src/renderer/features/agents/main/active-chat.tsx")
-    expect(activeChat).toContain('const STREAMING_WORDS = ["Thinking", "Working", "Cooking"]')
+    expect(activeChat).toContain("Starting…")
+    expect(activeChat).toContain("!hasAssistantOutputForLatestTurn(messages)")
     expect(activeChat).toContain("Loading chat…")
     expect(activeChat).toContain("refetchOnMount: false")
     expect(activeChat).not.toContain('refetchOnMount: "always"')

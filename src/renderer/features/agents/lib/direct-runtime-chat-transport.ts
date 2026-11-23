@@ -15,6 +15,12 @@ import { appStore } from "../../../lib/jotai-store"
 import { createStreamChunkBatcher } from "../../../lib/stream-chunk-batcher"
 import { antigravityNativeApprovalsAtom, pendingAuthRetryMessageAtom } from "../atoms"
 
+const steerableRuns = new Map<string, string>()
+
+export function getSteerableRun(subChatId: string) {
+  return steerableRuns.get(subChatId)
+}
+
 type DirectRuntimeHarness = "codex" | "claude-code" | "antigravity"
 type RuntimeEffort = "minimal" | "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
 
@@ -83,7 +89,11 @@ export async function createDirectRuntimeStream(input: {
       let startedAtMs = Date.now()
       let latestUsage: DirectRuntimeUsage | undefined
       let subscription: { unsubscribe(): void } | null = null
+      const clearSteering = () => {
+        if (steerableRuns.get(input.subChatId) === runId) steerableRuns.delete(input.subChatId)
+      }
       const close = () => {
+        clearSteering()
         if (closed) return
         closed = true
         input.abortSignal?.removeEventListener("abort", abort)
@@ -95,6 +105,7 @@ export async function createDirectRuntimeStream(input: {
         }
       }
       const failClaudeAuthentication = async () => {
+        clearSteering()
         if (closed) return
         closed = true
         input.abortSignal?.removeEventListener("abort", abort)
@@ -159,6 +170,7 @@ export async function createDirectRuntimeStream(input: {
           onData(event) {
             if (closed) return
             if (event.type === "started") {
+              if (input.harness !== "antigravity") steerableRuns.set(input.subChatId, runId)
               chunks.push({ type: "start", messageId: `reply-${runId}` })
               refreshPinnedRuntimeSelection(input.chatId)
               startedAtMs = Date.now()
@@ -215,6 +227,7 @@ export async function createDirectRuntimeStream(input: {
             }
           },
           onError(error) {
+            clearSteering()
             if (closed) return
             if (input.harness === "claude-code" && isClaudeRuntimeAuthenticationError(error)) {
               void failClaudeAuthentication()

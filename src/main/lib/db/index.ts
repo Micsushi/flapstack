@@ -96,7 +96,7 @@ function initializeDatabase(maintenanceLease?: string) {
     const nextDb = drizzle(nextSqlite, { schema })
     // The Electron app owns migrations. Headless MCP children receive its already
     // migrated database explicitly and must not depend on Electron runtime state.
-    if (process.env.FLAPSTACK_DB_PATH) {
+    if (process.env.FLAPSTACK_DB_PATH && process.type !== "browser") {
       recoverPendingAllChatPermissionChange(nextSqlite)
     } else {
       const migrationsPath = getMigrationsPath()

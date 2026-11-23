@@ -29,6 +29,7 @@ import {
   tasks,
 } from "../../db"
 import { applyAutomaticChatTags, CHAT_TAG_COLORS, CHAT_TAG_ICONS } from "../../chat-tags"
+import { listUndoneRunIds } from "../../run-change-undo"
 import { reclaimCheckpointFiles } from "../../checkpoint-file-retention"
 import { applyAutomaticAgentChatLabels, listAgentChatLabels } from "../../chat-agent-labels"
 import {
@@ -1641,6 +1642,7 @@ export const chatsRouter = router({
         preference: agentRuntimePreferenceSchema,
         requestId: z.string().trim().min(8).max(200),
         name: z.string().trim().min(1).max(200).optional(),
+        compactSourceSubChatId: z.string().trim().min(1).max(200).optional(),
         selectedMessageIds: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
         selectedFileRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
         selectedArtifactRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
@@ -1660,6 +1662,7 @@ export const chatsRouter = router({
         preference: agentRuntimePreferenceSchema,
         requestId: z.string().trim().min(8).max(200),
         name: z.string().trim().min(1).max(200).optional(),
+        compactSourceSubChatId: z.string().trim().min(1).max(200).optional(),
         selectedMessageIds: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
         selectedFileRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
         selectedArtifactRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
@@ -2832,7 +2835,7 @@ export const chatsRouter = router({
 
   /**
    * Get file change stats for workspaces
-   * Aggregates recorded project changes, including historical changes subsequently undone.
+   * Aggregates recorded project changes, excluding changes subsequently undone.
    * Older replies without checkpoint manifests use their project-scoped Edit/Write calls.
    * Supports two modes:
    * - openSubChatIds: query specific sub-chats (used by main sidebar)
@@ -2845,7 +2848,7 @@ export const chatsRouter = router({
         chatIds: z.array(z.string()).optional(),
       }),
     )
-    .query(({ input }) => {
+    .query(async ({ input }) => {
       const db = getDatabase()
 
       // Early return if nothing to check
@@ -2895,6 +2898,7 @@ export const chatsRouter = router({
         .select({
           chatId: agentRuns.chatId,
           runId: agentRuns.id,
+          worktreePath: agentRuns.worktreePath,
           additions: sql<number>`sum(${fileChangeManifests.additions})`,
           deletions: sql<number>`sum(${fileChangeManifests.deletions})`,
           fileCount: sql<number>`count(*)`,
@@ -2916,7 +2920,9 @@ export const chatsRouter = router({
         .groupBy(agentRuns.id)
         .all()
       const recordedIds = new Set(recordedRuns.map((row) => row.runId))
+      const undone = await listUndoneRunIds(recordedRuns)
       for (const row of recordedRuns) {
+        if (undone.has(row.runId)) continue
         const total = statsMap.get(row.chatId) ?? { additions: 0, deletions: 0, fileCount: 0 }
         total.additions += row.additions
         total.deletions += row.deletions

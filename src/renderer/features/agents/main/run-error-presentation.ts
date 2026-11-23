@@ -1,4 +1,8 @@
-import { classifyProviderLimitError } from "../../../../shared/provider-limit-error"
+import {
+  classifyProviderLimitError,
+  monthlySpendLimit,
+  MONTHLY_SPEND_LIMIT_MESSAGE,
+} from "../../../../shared/provider-limit-error"
 
 export type RunErrorPresentation = {
   title: string
@@ -36,7 +40,7 @@ export function shouldShowPersistedRunFailure(input: {
 export function presentRunError(
   rawMessage: string | null | undefined,
   platform: "darwin" | "win32" | "linux" | "unknown" = "unknown",
-  persistedLimit?: "rate" | "quota" | null,
+  persistedLimit?: "rate" | "quota" | "monthly-spend" | null,
 ): RunErrorPresentation {
   const detail = rawMessage?.trim()
   if (detail && LOCAL_LAUNCH_PERMISSION_PATTERN.test(detail)) {
@@ -53,6 +57,12 @@ export function presentRunError(
     }
   }
 
+  if (persistedLimit === "monthly-spend" || (detail && monthlySpendLimit(detail)))
+    return {
+      title: "Monthly spend limit reached",
+      message: MONTHLY_SPEND_LIMIT_MESSAGE,
+      technicalDetail: null,
+    }
   const limitKind = (detail ? classifyProviderLimitError(detail) : null) ?? persistedLimit
   if (limitKind) {
     return {

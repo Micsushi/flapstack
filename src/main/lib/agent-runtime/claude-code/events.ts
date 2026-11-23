@@ -9,6 +9,10 @@ import { MAX_AGENT_ACTIVITY_PAYLOAD_BYTES } from "../../../../shared/agent-activ
 import type { RuntimeLaunchControls } from "../../../../shared/agent-runtime"
 import { sanitizeRuntimeText } from "../sanitizer"
 import {
+  monthlySpendLimit,
+  MONTHLY_SPEND_LIMIT_MESSAGE,
+} from "../../../../shared/provider-limit-error"
+import {
   eventArray as array,
   eventNonEmptyString as string,
   eventNonNegativeFiniteNumber as finite,
@@ -36,6 +40,7 @@ const CRITICAL_UNKNOWN =
   /(permission|session|control|interrupt|execution|tool[_-]?use|result|init)/i
 const KNOWN_METADATA_TYPES = new Set([
   "auth_status",
+  "command_lifecycle",
   "control_request_progress",
   "files_persisted",
   "local_command_output",
@@ -247,6 +252,9 @@ export class ClaudeRuntimeEventMapper {
     const output: AgentActivityAppend[] = []
 
     if (string(message.error)) {
+      const spendLimited = blocks.some((block) =>
+        monthlySpendLimit(string(record(block).text) || ""),
+      )
       output.push(
         activity(
           childIdentity(messageBase, "warning"),
@@ -255,8 +263,10 @@ export class ClaudeRuntimeEventMapper {
           "status",
           "sensitive",
           {
-            message: sanitizeClaudeDiagnostic(string(message.error) || "Claude assistant error"),
-            code: string(message.error),
+            message: spendLimited
+              ? MONTHLY_SPEND_LIMIT_MESSAGE
+              : sanitizeClaudeDiagnostic(string(message.error) || "Claude assistant error"),
+            code: spendLimited ? "monthly-spend-limit" : string(message.error),
           },
         ),
       )
@@ -409,6 +419,26 @@ export class ClaudeRuntimeEventMapper {
       ),
     ]
 
+    if (
+      failed &&
+      [message.result, ...array(message.errors)].some(
+        (value) => typeof value === "string" && monthlySpendLimit(value),
+      )
+    ) {
+      output.push(
+        activity(
+          childIdentity(base, "monthly-spend-limit"),
+          "warning",
+          "failed",
+          "status",
+          "public",
+          {
+            message: MONTHLY_SPEND_LIMIT_MESSAGE,
+            code: "monthly-spend-limit",
+          },
+        ),
+      )
+    }
     for (const [index, error] of array(message.errors).slice(0, 100).entries()) {
       output.push(
         activity(

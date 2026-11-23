@@ -57,6 +57,10 @@ export function extractVisibleMessageParts(message: unknown): VisibleMessagePart
     const type = nonEmptyString(part.type)
     if (!type) return []
 
+    if (type === "data-user-steer") {
+      const text = nonEmptyString(part.data)
+      return text ? [{ partIndex, partType: type, text }] : []
+    }
     if (type === "text" || type === "reasoning") {
       const text = nonEmptyString(part.text)
       return text ? [{ partIndex, partType: type, text }] : []
@@ -79,6 +83,10 @@ export function formatVisiblePartForHandoff(partValue: unknown): string[] {
   const type = nonEmptyString(part.type)
   if (!type) return []
 
+  if (type === "data-user-steer") {
+    const text = nonEmptyString(part.data)
+    return text ? ["> You steered: " + text] : []
+  }
   if (type === "text") {
     const text = nonEmptyString(part.text)
     return text ? [text] : []

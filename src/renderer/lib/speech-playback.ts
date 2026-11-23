@@ -12,10 +12,22 @@ export type SpeechPlaybackPosition = {
 type ActiveSpeech = {
   audio: HTMLAudioElement
   url: string
+  streamOwner?: () => void
   onStopped?: () => void
 }
 
 let activeSpeech: ActiveSpeech | null = null
+let stopStream: (() => void) | undefined
+
+/** Own the audio output between streamed sentences as well as during playback. */
+export function claimSpeechStream(stop: () => void) {
+  stopManagedSpeech()
+  stopStream = stop
+  return () => {
+    if (stopStream === stop) stopStream = undefined
+    if (activeSpeech?.streamOwner === stop) stopManagedSpeech(activeSpeech.audio)
+  }
+}
 const listeners = new Set<() => void>()
 const playbackPositions = new Map<string, SpeechPlaybackPosition>()
 
@@ -59,18 +71,25 @@ export async function playManagedSpeech(
   result: SpeechAudioResult,
   options: {
     rate?: number
+    streamOwner?: () => void
     startTime?: number
     onEnded?: () => void
     onError?: () => void
     onStopped?: () => void
   } = {},
 ) {
-  stopManagedSpeech()
+  if (options.streamOwner && stopStream !== options.streamOwner)
+    throw new DOMException("Playback was replaced", "AbortError")
+  if (options.streamOwner) {
+    if (activeSpeech) stopManagedSpeech(activeSpeech.audio)
+  } else {
+    stopManagedSpeech()
+  }
 
   const url = URL.createObjectURL(base64ToBlob(result.audioBase64, result.mimeType))
   const audio = new Audio(url)
   audio.preservesPitch = true
-  const current = { audio, url, onStopped: options.onStopped }
+  const current = { audio, url, streamOwner: options.streamOwner, onStopped: options.onStopped }
   activeSpeech = current
   notifyManagedSpeechChanged()
 
@@ -98,6 +117,11 @@ export async function playManagedSpeech(
 }
 
 export function stopManagedSpeech(audio?: HTMLAudioElement | null) {
+  if (!audio && stopStream) {
+    const stop = stopStream
+    stopStream = undefined
+    stop()
+  }
   if (!activeSpeech || (audio && activeSpeech.audio !== audio)) return
   const current = activeSpeech
   current.audio.onended = null

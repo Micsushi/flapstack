@@ -1,4 +1,5 @@
 import Database from "better-sqlite3"
+import { waitForCheckpointFinalization } from "../run-checkpoint-boundary"
 import { createHash } from "node:crypto"
 import {
   runtimeAdapterForPreference,
@@ -698,6 +699,7 @@ export class CrossProviderDelegationService {
     const before = this.requireAttempt(attemptId)
     if (isTerminal(String(before.status))) return referenceFromRow(before, false)
     const runId = String(before.run_id)
+    await waitForCheckpointFinalization(this.databasePath, runId)
     const taskEnvelope = crossProviderTaskEnvelopeSchema.parse(
       JSON.parse(String(before.task_envelope)),
     )

@@ -119,6 +119,34 @@ describe("speakable filter", () => {
   })
 })
 
+describe("whole reply and streamed Kokoro read-back", () => {
+  it("reads every sentence in whole mode even when an older summary was saved", () => {
+    const whole = Array.from({ length: 80 }, (_, i) => "Sentence " + i + ".").join(" ")
+    expect(resolveSpeechText(whole, "An older summary.", "whole")).toBe(whole)
+    expect(resolveSpeechText(whole, "An older summary.", "summary")).toBe("An older summary.")
+    expect(normalizeVoiceSettings({ replyReadMode: "whole" }).replyReadMode).toBe("whole")
+  })
+
+  it("publishes the first playable WAV before the next sentence is synthesized", async () => {
+    const calls: string[] = []
+    const model = {
+      async generate(text: string) {
+        calls.push(text)
+        return { audio: new Float32Array(240), sampling_rate: 24000 }
+      },
+    }
+    await synthesizeKokoroChunks(model, ["First.", "Second."], "af_heart", 1, {
+      onChunk(chunk) {
+        const wav = Buffer.from(chunk.audioBase64, "base64")
+        expect(wav.toString("ascii", 0, 4)).toBe("RIFF")
+        expect(wav.readUInt32LE(40)).toBe(wav.length - 44)
+        calls.push("wav")
+      },
+    })
+    expect(calls).toEqual(["First.", "wav", "Second.", "wav"])
+  })
+})
+
 describe("spoken fallback summary", () => {
   it("strips code and markdown from the fallback", () => {
     const summary = createFallbackSpokenSummary("Here is `code` and **bold** text.")

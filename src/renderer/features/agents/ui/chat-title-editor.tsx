@@ -408,7 +408,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
             "min-w-0 h-full bg-transparent border-0 outline-none",
             isMobile ? "flex-1" : "w-[40%] max-w-[40%] flex-none",
             isMobile ? "text-base" : "text-lg",
-            "font-medium leading-none text-foreground",
+            "font-medium leading-normal text-foreground",
           )}
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         />
@@ -426,7 +426,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
         >
           <span
             className={cn(
-              "block truncate leading-none",
+              "block truncate leading-normal",
               !hasRealName && hasMessages && "text-muted-foreground/50",
             )}
             title={name}
@@ -448,7 +448,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
             contentClassName="justify-end"
             gap={8}
             collapseOrder={headerCollapseOrder}
-            forceOverflow={tagLayout.mode === "compact"}
+            forceOverflow
             pinnedStart={
               hasHeaderTags ? (
                 <div className="flex shrink-0 items-center gap-2">

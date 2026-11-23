@@ -19,7 +19,10 @@ export function isProgressText(
 export function lastActivityPartIndex(parts: TextPart[], live: boolean): number {
   return parts.findLastIndex(
     (part) =>
-      part.type?.startsWith("tool-") || part.type === "reasoning" || isProgressText(part, live),
+      part.type?.startsWith("tool-") ||
+      part.type === "reasoning" ||
+      part.type === "data-user-steer" ||
+      isProgressText(part, live),
   )
 }
 

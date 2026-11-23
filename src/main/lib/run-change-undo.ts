@@ -16,8 +16,13 @@ import {
 import { tmpdir } from "node:os"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { promisify } from "node:util"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { withCheckpointFiles } from "./checkpoint-file-retention"
+import {
+  acquireCheckpointCheckout,
+  checkpointGitPaths,
+  waitForCheckpointFinalization,
+} from "./run-checkpoint-boundary"
 import { agentRuns, checkpoints, fileChangeManifests, getDatabase, getDatabasePath } from "./db"
 import {
   captureWorktreeTree,
@@ -27,7 +32,6 @@ import {
 import { createGit, GIT_TIMEOUTS } from "./git/git-factory"
 
 const execFileAsync = promisify(execFile)
-const worktreeLocks = new Map<string, Promise<void>>()
 
 export type UndoFileState = {
   content: Buffer
@@ -54,19 +58,12 @@ function parseSnapshot(value: string | null): CheckpointStatusSnapshot {
 }
 
 async function withWorktreeLock<T>(worktreePath: string, task: () => Promise<T>): Promise<T> {
-  const previous = worktreeLocks.get(worktreePath) ?? Promise.resolve()
-  let release!: () => void
-  const current = new Promise<void>((resolvePromise) => {
-    release = resolvePromise
-  })
-  const queued = previous.then(() => current)
-  worktreeLocks.set(worktreePath, queued)
-  await previous
+  const git = await checkpointGitPaths(worktreePath)
+  const release = await acquireCheckpointCheckout(git?.root ?? worktreePath)
   try {
     return await task()
   } finally {
     release()
-    if (worktreeLocks.get(worktreePath) === queued) worktreeLocks.delete(worktreePath)
   }
 }
 
@@ -364,10 +361,45 @@ async function writePlan(plans: FilePlan[]): Promise<void> {
   }
 }
 
+// Undo refs survive restart and may be packed. Read once per checkout, not once per turn.
+export async function listUndoneRunIds(runs: { runId: string; worktreePath: string | null }[]) {
+  const byCheckout = new Map<string, Set<string>>()
+  for (const { runId, worktreePath } of runs) {
+    if (!worktreePath) continue
+    const ids = byCheckout.get(worktreePath) ?? new Set<string>()
+    ids.add(runId)
+    byCheckout.set(worktreePath, ids)
+  }
+  const undone = new Set<string>()
+  for (const [cwd, ids] of byCheckout) {
+    try {
+      const { stdout } = await execFileAsync(
+        "git",
+        ["for-each-ref", "--format=%(refname:strip=3)", "refs/flapstack/undone/"],
+        { cwd, windowsHide: true, timeout: GIT_TIMEOUTS.LOCAL },
+      )
+      for (const id of stdout.split(/\r?\n/)) if (ids.has(id)) undone.add(id)
+    } catch {
+      // An unavailable checkout cannot establish that these changes were undone.
+    }
+  }
+  return undone
+}
+
 export async function getRunChangeSet(runId: string) {
+  await waitForCheckpointFinalization(getDatabasePath(), runId)
   const db = getDatabase()
   const run = db.select().from(agentRuns).where(eq(agentRuns.id, runId)).get()
   if (!run) throw new Error("Run not found")
+  if (
+    run.completedAt &&
+    !run.afterCheckpointId &&
+    db.get(
+      sql`SELECT 1 FROM agent_run_timing_marks WHERE run_id=${runId} AND phase='undo-requested'`,
+    )
+  ) {
+    throw new Error("Undo is unavailable because the checkout's final state could not be verified.")
+  }
   const runCheckpoints = db.select().from(checkpoints).where(eq(checkpoints.runId, runId)).all()
   const beforeTree = parseSnapshot(
     runCheckpoints.find((checkpoint) => checkpoint.kind === "before")?.gitStatusJson ?? null,

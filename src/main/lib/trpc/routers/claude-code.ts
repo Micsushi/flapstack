@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm"
-import { safeStorage } from "electron"
+import { app, safeStorage } from "electron"
 import { openExternalSafe } from "../../open-external"
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -289,6 +289,47 @@ function startLocalClaudeAuthSession(): LocalClaudeAuthStatus {
  * Uses server only for sandbox creation, stores token locally
  */
 export const claudeCodeRouter = router({
+  listModels: publicProcedure.query(async () => {
+    const { query } = await import("@anthropic-ai/claude-agent-sdk")
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 12_000)
+    async function* idle(): AsyncGenerator<never> {
+      if (!controller.signal.aborted)
+        await new Promise<void>((done) =>
+          controller.signal.addEventListener("abort", () => done(), { once: true }),
+        )
+    }
+    try {
+      const discovery = query({
+        prompt: idle(),
+        options: {
+          cwd: app.getPath("userData"),
+          pathToClaudeCodeExecutable: getBundledClaudeBinaryPath(),
+          abortController: controller,
+          tools: [],
+          mcpServers: {},
+          strictMcpConfig: true,
+          settings: { disableAllHooks: true },
+          settingSources: [],
+          persistSession: false,
+          permissionMode: "dontAsk",
+        },
+      })
+      try {
+        return (await discovery.supportedModels()).map((row) => ({
+          id: row.resolvedModel || row.value,
+          alias: row.value,
+          label: row.displayName,
+          efforts: row.supportedEffortLevels ?? [],
+        }))
+      } finally {
+        controller.abort()
+        discovery.close()
+      }
+    } finally {
+      clearTimeout(timer)
+    }
+  }),
   /**
    * Check if user has existing CLI config (API key or proxy)
    * If true, user can skip OAuth onboarding

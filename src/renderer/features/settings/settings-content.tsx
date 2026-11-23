@@ -29,7 +29,11 @@ import { AgentsPortabilityTab } from "../../components/dialogs/settings-tabs/age
 import { AgentsBetaTab } from "../../components/dialogs/settings-tabs/agents-beta-tab"
 import { AgentsFeatureVisibilityTab } from "../../components/dialogs/settings-tabs/agents-feature-visibility-tab"
 import { Button } from "../../components/ui/button"
-import { getVisibleSettingsTabs, normalizeVisibleSettingsTab } from "./settings-visibility"
+import {
+  getSettingsGroups,
+  settingsGroupTab,
+  normalizeVisibleSettingsTab,
+} from "./settings-visibility"
 import { useBetaFeatures } from "./use-beta-features"
 import { revealSettingsTarget } from "./settings-target"
 
@@ -162,10 +166,10 @@ export function SettingsContent({ onKeyboardReturn }: { onKeyboardReturn?: () =>
     activeTab === "projects" ||
     activeTab === "plugins"
 
-  const visibleTabs = [
-    ...getVisibleSettingsTabs("main", { showDevelopment: showDebugTab, betaFeatures }),
-    ...getVisibleSettingsTabs("advanced", { showDevelopment: showDebugTab, betaFeatures }),
-  ]
+  const groups = getSettingsGroups({ showDevelopment: showDebugTab, betaFeatures })
+  const group = groups.find((group) =>
+    group.tabs.some((tab) => tab.id === settingsGroupTab(activeTab)),
+  )
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
       <nav
@@ -185,7 +189,7 @@ export function SettingsContent({ onKeyboardReturn }: { onKeyboardReturn?: () =>
           <span className="sr-only">Settings section</span>
           <select
             aria-label="Settings section"
-            value={activeTab}
+            value={group?.tabs[0]?.id ?? ""}
             className="h-9 w-full min-w-0 rounded-md border border-input bg-background px-2"
             onChange={(event) => {
               setSearchQuery("")
@@ -193,14 +197,32 @@ export function SettingsContent({ onKeyboardReturn }: { onKeyboardReturn?: () =>
               setActiveTab(event.target.value as SettingsTab)
             }}
           >
-            {visibleTabs.map((tab) => (
+            {groups.map(({ label, tabs: [tab] }) => (
               <option key={tab.id} value={tab.id}>
-                {tab.label}
+                {label}
               </option>
             ))}
           </select>
         </label>
       </nav>
+      {group && group.tabs.length > 1 && (
+        <nav
+          aria-label={group.label}
+          className="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2"
+        >
+          {group.tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              aria-current={settingsGroupTab(activeTab) === tab.id ? "page" : undefined}
+              className="shrink-0 rounded-md px-2.5 py-1 text-sm text-muted-foreground hover:bg-accent aria-[current=page]:bg-muted aria-[current=page]:font-medium aria-[current=page]:text-foreground"
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      )}
       <div
         className={
           isTwoPanelTab

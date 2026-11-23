@@ -4,6 +4,7 @@ import type { ResolvedAgentRuntime, RuntimeAdapterProbe } from "../../../shared/
 export type RuntimeLaunchAuthority = {
   launch: AgentRunLauncher
   cancel(runId: string, reason: string): Promise<boolean>
+  steer(runId: string, subChatId: string, text: string): Promise<void>
   probe(runtime: ResolvedAgentRuntime, harness: string): Promise<RuntimeAdapterProbe>
 }
 

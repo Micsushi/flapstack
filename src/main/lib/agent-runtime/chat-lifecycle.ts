@@ -1,3 +1,5 @@
+import { normalizeChatMode, resolveChatModePermission } from "../../../shared/chat-mode"
+import { antigravityPermissions } from "../../../shared/antigravity-permissions"
 import Database from "better-sqlite3"
 import { createHash } from "node:crypto"
 import {
@@ -78,6 +80,7 @@ export type RuntimeContinuationInput = {
   requestId: string
   name?: string | null
   selectedMessageIds?: string[]
+  compactSourceSubChatId?: string
   selectedFileRefs?: string[]
   selectedArtifactRefs?: string[]
   confirmedPreviewDigest?: string
@@ -189,7 +192,7 @@ export class RuntimeChatLifecycleService {
   }
 
   previewContinuation(input: RuntimeContinuationInput): RuntimeContinuationPreview {
-    const source = this.requireChat(input.sourceChatId)
+    const source = this.continuationSource(input)
     this.assertNoActiveRun(input.sourceChatId)
     if (!this.hasProviderIntent(input.sourceChatId)) {
       throw new RuntimeChatLifecycleError(
@@ -206,11 +209,12 @@ export class RuntimeChatLifecycleService {
     const targetModel =
       input.targetModel?.trim() ||
       (targetHarness === sourceHarness ? stringOrNull(source.model) : null)
-    const conversations = this.sourceConversations(input.sourceChatId)
+    const conversations = this.sourceConversations(input.sourceChatId, input.compactSourceSubChatId)
     const exported = buildVisibleContextManifest({
       sourceChatId: input.sourceChatId,
-      sourceRunId: latestRunId(this.sqlite, input.sourceChatId),
+      sourceRunId: latestRunId(this.sqlite, input.sourceChatId, input.compactSourceSubChatId),
       conversations,
+      compact: Boolean(input.compactSourceSubChatId),
       selection: {
         messageIds: input.selectedMessageIds,
         fileRefs: input.selectedFileRefs,
@@ -237,10 +241,16 @@ export class RuntimeChatLifecycleService {
     const missing = requiredCapabilities.filter(
       (capability) => targetSnapshot.capabilities.capabilities[capability] !== "available",
     )
-    const unavailableReason =
-      targetProbe && !targetProbe.available
-        ? (targetProbe.reason ?? targetProbe.capabilities.unavailableReason)
+    const geminiPermission =
+      input.compactSourceSubChatId && targetHarness === "antigravity"
+        ? antigravityPermissions(targetSnapshot.permission.mode)
         : null
+    const unavailableReason =
+      geminiPermission && !geminiPermission.applied
+        ? { message: geminiPermission.reason, repair: "Select another provider." }
+        : targetProbe && !targetProbe.available
+          ? (targetProbe.reason ?? targetProbe.capabilities.unavailableReason)
+          : null
     const availability = unavailableReason
       ? {
           state: "blocked" as const,
@@ -275,7 +285,7 @@ export class RuntimeChatLifecycleService {
   continueWithRuntime(input: RuntimeContinuationInput): RuntimeContinuationResult {
     return this.sqlite
       .transaction(() => {
-        const source = this.requireChat(input.sourceChatId)
+        const source = this.continuationSource(input)
         this.assertNoActiveRun(input.sourceChatId)
         if (!this.hasProviderIntent(input.sourceChatId)) {
           throw new RuntimeChatLifecycleError(
@@ -341,7 +351,9 @@ export class RuntimeChatLifecycleService {
         const sourceConversations = this.sqlite
           .prepare("SELECT * FROM sub_chats WHERE chat_id = ? ORDER BY created_at, id")
           .all(input.sourceChatId) as Row[]
-        const sourceConversation = sourceConversations[0]
+        const sourceConversation = input.compactSourceSubChatId
+          ? sourceConversations.find((row) => row.id === input.compactSourceSubChatId)
+          : sourceConversations[0]
         if (!sourceConversation) {
           throw new RuntimeChatLifecycleError("chat-empty", "Source conversation is missing.")
         }
@@ -359,8 +371,19 @@ export class RuntimeChatLifecycleService {
           )
         }
         const now = millisecondsToEpochSeconds(Date.now())
+        const compactLabel =
+          targetHarness === "antigravity"
+            ? "Gemini"
+            : targetHarness === "codex"
+              ? "Codex"
+              : targetHarness === "claude-code"
+                ? "Claude"
+                : targetHarness
         const name =
           input.name?.trim() ||
+          (input.compactSourceSubChatId
+            ? String(sourceConversation.name || source.name || "Chat") + " · " + compactLabel
+            : null) ||
           `${String(source.name ?? "Chat")} · ${runtimeLabel(input.preference)}`
         this.sqlite
           .prepare(
@@ -385,7 +408,7 @@ export class RuntimeChatLifecycleService {
             input.preference,
             input.sourceChatId,
             source.initiator_chat_id ?? input.sourceChatId,
-            latestRunId(this.sqlite, input.sourceChatId),
+            latestRunId(this.sqlite, input.sourceChatId, input.compactSourceSubChatId),
             JSON.stringify([...ancestorIds, input.sourceChatId]),
             source.worktree_path ?? null,
             source.branch ?? null,
@@ -404,6 +427,9 @@ export class RuntimeChatLifecycleService {
           ],
           metadata: {
             kind: "runtime-continuation-context",
+            ...(input.compactSourceSubChatId
+              ? { sourceSubChatId: input.compactSourceSubChatId, contextFormat: "summary" }
+              : {}),
             sourceChatId: input.sourceChatId,
             targetHarness,
             runtimePreference: input.preference,
@@ -426,7 +452,9 @@ export class RuntimeChatLifecycleService {
             sourceConversation.mode ?? "write",
             targetHarness,
             targetModel,
-            sourceConversation.permission_mode ?? source.permission_mode,
+            input.compactSourceSubChatId
+              ? source.permission_mode
+              : (sourceConversation.permission_mode ?? source.permission_mode),
             sourceConversation.worktree_path ?? source.worktree_path ?? null,
             JSON.stringify([contextMessage]),
             now,
@@ -580,10 +608,38 @@ export class RuntimeChatLifecycleService {
     )
   }
 
-  private sourceConversations(chatId: string) {
-    const rows = this.sqlite
-      .prepare("SELECT * FROM sub_chats WHERE chat_id = ? ORDER BY created_at, id")
-      .all(chatId) as Row[]
+  private continuationSource(input: RuntimeContinuationInput): Row {
+    const chat = this.requireChat(input.sourceChatId)
+    if (!input.compactSourceSubChatId) return chat
+    const conversation = this.sqlite
+      .prepare(
+        "SELECT harness, model, worktree_path, permission_mode, mode FROM sub_chats WHERE chat_id = ? AND id = ?",
+      )
+      .get(input.sourceChatId, input.compactSourceSubChatId) as Row | undefined
+    if (!conversation)
+      throw new RuntimeChatLifecycleError("chat-missing", "Source conversation is missing.")
+    return {
+      ...chat,
+      harness: conversation.harness ?? chat.harness,
+      model: conversation.model ?? chat.model,
+      worktree_path: conversation.worktree_path ?? chat.worktree_path,
+      permission_mode: resolveChatModePermission(
+        normalizeChatMode(conversation.mode),
+        (conversation.permission_mode ?? chat.permission_mode) as RunPermissionMode,
+      ),
+    }
+  }
+
+  private sourceConversations(chatId: string, subChatId?: string) {
+    const rows = (
+      subChatId
+        ? this.sqlite
+            .prepare("SELECT * FROM sub_chats WHERE chat_id = ? AND id = ?")
+            .all(chatId, subChatId)
+        : this.sqlite
+            .prepare("SELECT * FROM sub_chats WHERE chat_id = ? ORDER BY created_at, id")
+            .all(chatId)
+    ) as Row[]
     if (rows.length === 0) {
       throw new RuntimeChatLifecycleError("chat-empty", "Source conversation is missing.")
     }
@@ -637,7 +693,17 @@ function continuationIds(sourceChatId: string, requestId: string) {
   }
 }
 
-function latestRunId(sqlite: Sqlite, chatId: string): string | null {
+function latestRunId(sqlite: Sqlite, chatId: string, subChatId?: string): string | null {
+  if (subChatId)
+    return (
+      (
+        sqlite
+          .prepare(
+            "SELECT id FROM agent_runs WHERE chat_id = ? AND sub_chat_id = ? ORDER BY started_at DESC, id DESC LIMIT 1",
+          )
+          .get(chatId, subChatId) as { id: string } | undefined
+      )?.id ?? null
+    )
   const row = sqlite
     .prepare(
       "SELECT id FROM agent_runs WHERE chat_id = ? ORDER BY started_at DESC, id DESC LIMIT 1",

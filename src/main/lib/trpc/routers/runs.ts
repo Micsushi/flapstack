@@ -1,5 +1,8 @@
 import { readRunTimings } from "../../run-timings"
-import { classifyProviderLimitError } from "../../../../shared/provider-limit-error"
+import {
+  classifyProviderLimitError,
+  monthlySpendLimit,
+} from "../../../../shared/provider-limit-error"
 import { getRunContextHealth } from "../../project-vaults/context-health"
 import { runContextHealthInputSchema } from "../../../../shared/run-context-health"
 import { getSqliteDatabase } from "../../db"
@@ -25,7 +28,12 @@ import {
 } from "../../db"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import { permissionModes } from "../../permissions"
-import { getRunChangeReview, getRunChangeSet, undoRunChangeSet } from "../../run-change-undo"
+import {
+  getRunChangeReview,
+  getRunChangeSet,
+  listUndoneRunIds,
+  undoRunChangeSet,
+} from "../../run-change-undo"
 import { publicProcedure, router } from "../index"
 import {
   assertUsageBudgetAllowsLaunch,
@@ -282,8 +290,10 @@ export const runsRouter = router({
          AND json_valid(payload_json) ORDER BY sequence DESC LIMIT 12`,
         )
         .all(run.id) as Array<{ message: string | null }>
-      const limitKind =
-        events.map((event) => classifyProviderLimitError(event.message ?? "")).find(Boolean) ?? null
+      const limitKind = events.some((event) => monthlySpendLimit(event.message ?? ""))
+        ? ("monthly-spend" as const)
+        : (events.map((event) => classifyProviderLimitError(event.message ?? "")).find(Boolean) ??
+          null)
       return { ...run, limitKind }
     }),
 
@@ -306,6 +316,19 @@ export const runsRouter = router({
       .all()
     return { checkpoints: runCheckpoints, manifest }
   }),
+
+  undoneForSubChat: publicProcedure
+    .input(z.object({ subChatId: z.string() }))
+    .query(async ({ input }) => {
+      const runs = getDatabase()
+        .select({ runId: agentRuns.id, worktreePath: agentRuns.worktreePath })
+        .from(agentRuns)
+        .innerJoin(fileChangeManifests, eq(fileChangeManifests.runId, agentRuns.id))
+        .where(eq(agentRuns.subChatId, input.subChatId))
+        .groupBy(agentRuns.id)
+        .all()
+      return [...(await listUndoneRunIds(runs))]
+    }),
 
   getChangeSet: publicProcedure
     .input(z.object({ runId: z.string() }))

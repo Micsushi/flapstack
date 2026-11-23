@@ -20,6 +20,7 @@ import type {
   RuntimeAdapterSession,
 } from "../../../../shared/agent-runtime"
 import { eventRecord } from "../event-values"
+import { sanitizeRuntimeText } from "../sanitizer"
 import { AntigravityEvents } from "./events"
 import { answerAntigravityForm, type AskAntigravityQuestion } from "./questions"
 import { antigravityPermissions } from "../../../../shared/antigravity-permissions"
@@ -72,6 +73,25 @@ type Dependencies = {
   ask: AskAntigravityQuestion
 }
 
+export function antigravityError(operation: string, cause: unknown): Error {
+  const outer = eventRecord(cause)
+  const error = outer.error && typeof outer.error === "object" ? eventRecord(outer.error) : outer
+  const code =
+    typeof error.code === "number" && Number.isSafeInteger(error.code) ? error.code : null
+  const message = typeof cause === "string" ? cause : error.message
+  const detail =
+    typeof message === "string" && message.trim() && message !== "[object Object]"
+      ? sanitizeRuntimeText(message.trim(), { mode: "diagnostic", maxLength: 500 })
+      : code === -32000
+        ? "Authentication required."
+        : code === -32002
+          ? "Requested resource not found."
+          : "The provider supplied no readable error message."
+  return new Error(
+    `Antigravity failed during ${operation}${code === null ? "" : ` (ACP ${code})`}. ${detail}`,
+  )
+}
+
 async function bounded<T>(action: Promise<T>, label: string, timeout = 15_000): Promise<T> {
   let timer: NodeJS.Timeout | undefined
   try {
@@ -79,11 +99,13 @@ async function bounded<T>(action: Promise<T>, label: string, timeout = 15_000): 
       action,
       new Promise<never>((_, reject) => {
         timer = setTimeout(
-          () => reject(new Error(`Antigravity timed out during ${label}.`)),
+          () => reject(new Error("The provider did not respond before the timeout.")),
           timeout,
         )
       }),
     ])
+  } catch (cause) {
+    throw antigravityError(label, cause)
   } finally {
     clearTimeout(timer)
   }
@@ -130,7 +152,7 @@ function connect(context: RuntimeAdapterContext, deps: Dependencies) {
         try {
           for (const event of state.mapper.update(update)) events.write(event)
         } catch (error) {
-          stop(error instanceof Error ? error : new Error(String(error)))
+          stop(antigravityError("activity processing", error))
         }
       },
       async extMethod(method, params) {
@@ -240,7 +262,7 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
         if (harness !== "antigravity") throw new Error("Wrong harness for Antigravity.")
         await antigravityModels()
       } catch (cause) {
-        error = cause instanceof Error ? cause.message : String(cause)
+        error = antigravityError("availability check", cause).message
       }
       const reason = error
         ? {
@@ -327,7 +349,7 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
           ended = true
         })
         .catch((error) => {
-          terminalError = error instanceof Error ? error : new Error(String(error))
+          terminalError = antigravityError("the turn", error)
         })
         .finally(() => {
           state.collecting = false

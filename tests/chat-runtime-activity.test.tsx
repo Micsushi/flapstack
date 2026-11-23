@@ -63,25 +63,22 @@ it("opens persisted activity, pages earlier events and refreshes after scoped in
       ),
     )
     expect(read).not.toHaveBeenCalled()
-    const details = host.querySelector("details")!
-    await act(async () => {
-      details.open = true
-      details.dispatchEvent(new Event("toggle"))
-    })
-    await vi.waitFor(() => expect(host.textContent).toContain("Latest public message"))
-    expect(host.querySelector('[role="feed"]')!.outerHTML).not.toContain(
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click())
+    const transcript = document.querySelector<HTMLElement>('[role="dialog"]')!
+    await vi.waitFor(() => expect(transcript.textContent).toContain("Latest public message"))
+    expect(transcript.querySelector('[role="feed"]')!.outerHTML).not.toContain(
       "PRIVATE_TIMELINE_SENTINEL",
     )
-    const load = [...host.querySelectorAll("button")].find(
+    const load = [...transcript.querySelectorAll("button")].find(
       (button) => button.textContent === "Load earlier activity",
     )!
     await act(async () => load.click())
-    await vi.waitFor(() => expect(host.textContent).toContain("Earlier public message"))
+    await vi.waitFor(() => expect(transcript.textContent).toContain("Earlier public message"))
     expect(read).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: "chat-1", limit: 500, beforeStorageId: 2 }),
     )
     expect(
-      [...host.querySelectorAll("[data-runtime-activity-key]")].map((row) =>
+      [...transcript.querySelectorAll("[data-runtime-activity-key]")].map((row) =>
         row.getAttribute("data-runtime-activity-key"),
       ),
     ).toEqual(["event:event-1", "event:event-2", "event:event-3"])
@@ -91,9 +88,9 @@ it("opens persisted activity, pages earlier events and refreshes after scoped in
         queryKey: getQueryKey(trpc.agentActivity.list, { chatId: "chat-1" }, "query"),
       })
     })
-    await vi.waitFor(() => expect(host.textContent).toContain("Updated public message"))
-    expect(host.textContent).toContain("Earlier public message")
-    expect(host.querySelector('[role="feed"]')!.outerHTML).not.toContain(
+    await vi.waitFor(() => expect(transcript.textContent).toContain("Updated public message"))
+    expect(transcript.textContent).toContain("Earlier public message")
+    expect(transcript.querySelector('[role="feed"]')!.outerHTML).not.toContain(
       "PRIVATE_TIMELINE_SENTINEL",
     )
   } finally {
@@ -119,19 +116,18 @@ it("shows recoverable loading failure and the empty state in the real timeline",
         </QueryClientProvider>,
       ),
     )
-    const details = host.querySelector("details")!
-    await act(async () => {
-      details.open = true
-      details.dispatchEvent(new Event("toggle"))
-    })
+    await act(async () => host.querySelector<HTMLButtonElement>("button")!.click())
+    const transcript = document.querySelector<HTMLElement>('[role="dialog"]')!
     await vi.waitFor(() =>
-      expect(host.querySelector('[role="alert"]')?.textContent).toContain("Activity unavailable"),
+      expect(transcript.querySelector('[role="alert"]')?.textContent).toContain(
+        "Activity unavailable",
+      ),
     )
-    const retry = [...host.querySelectorAll("button")].find(
+    const retry = [...transcript.querySelectorAll("button")].find(
       (button) => button.textContent === "Retry",
     )!
     await act(async () => retry.click())
-    await vi.waitFor(() => expect(host.textContent).toContain("No Runtime activity matches"))
+    await vi.waitFor(() => expect(transcript.textContent).toContain("No Runtime activity matches"))
   } finally {
     await act(async () => root.unmount())
     client.clear()

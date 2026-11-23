@@ -294,7 +294,7 @@ function rowLabel(source: RuntimeActivitySource, runtime: ResolvedAgentRuntime):
     case "lifecycle":
       return "Lifecycle"
     case "status":
-      return "Activity summary"
+      return payload(source, "status").code === "user-steer" ? "You steered" : "Activity summary"
     case "agent-text":
       if (!isPersisted(source) && source.role === "user") return "User message"
       return runtime === "codex"

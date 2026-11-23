@@ -120,3 +120,12 @@ describe("persisted failed intent recovery", () => {
     ).toBe(true)
   })
 })
+it("explains an explicit model spend limit after reopening and strips billing URLs", () => {
+  const live = presentRunError(
+    "You've hit your monthly spend limit. Manage https://account.invalid/?token=private",
+  )
+  expect(live).toMatchObject({ title: "Monthly spend limit reached", technicalDetail: null })
+  expect(live.message).toMatch(/Switch models/)
+  expect(live.message).not.toMatch(/private|https:/)
+  expect(presentRunError(null, "win32", "monthly-spend")).toEqual(live)
+})

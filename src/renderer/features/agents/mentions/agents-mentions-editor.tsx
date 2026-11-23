@@ -72,6 +72,7 @@ type AgentsMentionsEditorProps = {
   placeholder?: string
   className?: string
   onSubmit?: () => void
+  onQueueSubmit?: () => void
   onForceSubmit?: () => void // Opt+Enter: bypass queue, stop stream and send immediately
   disabled?: boolean
   onPaste?: (e: React.ClipboardEvent) => void
@@ -495,6 +496,7 @@ export const AgentsMentionsEditor = memo(
       placeholder,
       className,
       onSubmit,
+      onQueueSubmit,
       onForceSubmit,
       disabled,
       onPaste,
@@ -1053,7 +1055,9 @@ export const AgentsMentionsEditor = memo(
           }
           e.preventDefault()
           // Opt+Enter = force submit (bypass queue, stop stream and send immediately)
-          if (e.altKey && onForceSubmit) {
+          if ((e.ctrlKey || e.metaKey) && onQueueSubmit) {
+            onQueueSubmit()
+          } else if (e.altKey && onForceSubmit) {
             onForceSubmit()
           } else {
             onSubmit?.()
@@ -1104,6 +1108,7 @@ export const AgentsMentionsEditor = memo(
       },
       [
         onSubmit,
+        onQueueSubmit,
         onForceSubmit,
         onCloseTrigger,
         onCloseSlashTrigger,

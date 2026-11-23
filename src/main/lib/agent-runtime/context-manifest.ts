@@ -23,6 +23,7 @@ export function buildVisibleContextManifest(input: {
   sourceRunId: string | null
   conversations: readonly HandoffConversation[]
   selection?: VisibleContextSelection
+  compact?: boolean
 }): { contextText: string; manifest: VisibleContextManifest } {
   const selectedIds = input.selection?.messageIds ? new Set(input.selection.messageIds) : null
   const omissions = new Map<OmissionClass, number>()
@@ -33,17 +34,34 @@ export function buildVisibleContextManifest(input: {
     "This is bounded imported context, not native provider history.",
     "",
   ]
+  if (input.compact) sections.splice(0, sections.length, "# Conversation handoff", "")
   const selected: VisibleContextManifest["selected"] = []
 
   for (const conversation of input.conversations) {
+    // Keep the original request and the two latest exchanges. Only public conversation
+    // text enters a compact handoff; tool arguments and thoughts stay in the source.
+    const eligible = input.compact
+      ? conversation.messages.flatMap((message, index) =>
+          (message.role === "user" || message.role === "assistant") &&
+          (!selectedIds ||
+            selectedIds.has(normalizedMessageId(message, conversation.subChatId, index)))
+            ? [index]
+            : [],
+        )
+      : []
+    const original = eligible.find((index) => conversation.messages[index]?.role === "user")
+    const recent = new Set([...eligible.slice(-4), original])
     for (let messageIndex = 0; messageIndex < conversation.messages.length; messageIndex += 1) {
       const message = conversation.messages[messageIndex]!
       const messageId = normalizedMessageId(message, conversation.subChatId, messageIndex)
-      if (selectedIds && !selectedIds.has(messageId)) {
+      if (
+        (input.compact && !recent.has(messageIndex)) ||
+        (selectedIds && !selectedIds.has(messageId))
+      ) {
         addOmission(omissions, "unselected-message")
         continue
       }
-      const rendered = renderMessage(message, omissions)
+      const rendered = renderMessage(message, omissions, input.compact)
       const candidateRole =
         typeof message.role === "string" && message.role.trim() ? message.role : "message"
       const role = containsSecret(candidateRole) ? "message" : candidateRole
@@ -55,16 +73,24 @@ export function buildVisibleContextManifest(input: {
       if (conversationLabel !== candidateConversationLabel) {
         addOmission(omissions, "secret-or-credential")
       }
-      const body = rendered.parts
+      const visible = rendered.parts
         .map((part) => part.text)
         .join("\n\n")
         .trim()
-      const section = [
-        `## ${role} · ${conversationLabel} · ${messageId}`,
-        "",
-        body || "_(No transferable visible content)_",
-      ].join("\n")
-      sections.push(section, "")
+      if (input.compact && !visible) {
+        addOmission(omissions, "unselected-message")
+        continue
+      }
+      const body =
+        input.compact && visible.length > 1200 ? visible.slice(0, 1199).trimEnd() + "…" : visible
+      const heading = input.compact
+        ? messageIndex === original
+          ? "Original request"
+          : role === "user"
+            ? "Recent request"
+            : "Assistant update"
+        : role + " · " + conversationLabel + " · " + messageId
+      sections.push("## " + heading, "", body || "_(No transferable visible content)_", "")
       selected.push({
         sourceSubChatId: conversation.subChatId,
         messageId,
@@ -76,6 +102,8 @@ export function buildVisibleContextManifest(input: {
     }
   }
 
+  if (input.compact && !selected.length)
+    throw new Error("No transferable conversation text is available for this handoff.")
   const contextText = sections.join("\n").trimEnd() + "\n"
   if (containsSecret(contextText)) {
     throw new Error("Cross-provider visible context still contains detected secret material.")
@@ -172,6 +200,7 @@ export function sha256(value: string): string {
 function renderMessage(
   message: HandoffMessage,
   omissions: Map<OmissionClass, number>,
+  compact = false,
 ): { parts: Array<{ index: number; text: string }> } {
   if (typeof message.content === "string") {
     if (containsSecret(message.content)) {
@@ -201,14 +230,14 @@ function renderMessage(
         addOmission(omissions, "unselected-attachment")
         return []
       }
-      if (type === "text") {
-        const text = stringValue(part.text)
+      if (type === "text" || type === "data-user-steer") {
+        const text = stringValue(type === "data-user-steer" ? part.data : part.text)
         if (!text) return []
         if (containsSecret(text) || hasSecretField(part)) {
           addOmission(omissions, "secret-or-credential")
           return []
         }
-        return [{ index, text }]
+        return [{ index, text: type === "data-user-steer" ? "You steered: " + text : text }]
       }
       if (type === "tool-AskUserQuestion") {
         const visible = visibleQuestionAnswers(part).filter((text) => {
@@ -223,6 +252,7 @@ function renderMessage(
       }
       if (type === "tool-call" || type.startsWith("tool-")) {
         addOmission(omissions, "hidden-tool-state")
+        if (compact) return []
         const candidateName = stringValue(part.toolName) ?? (type.replace(/^tool-/, "") || "tool")
         const name = containsSecret(candidateName) ? "tool" : candidateName
         if (name !== candidateName) addOmission(omissions, "secret-or-credential")

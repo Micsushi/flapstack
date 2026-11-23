@@ -24,7 +24,12 @@ import {
   registerDatabaseMaintenanceParticipant,
   withDatabaseOperation,
 } from "./lib/db"
-import { getMainRuntimeLaunchService, hasActiveMainRuntimeRuns } from "./lib/main-run-launcher"
+import {
+  cancelMainRuntimeRunsForShutdown,
+  getMainRuntimeLaunchService,
+  hasActiveMainRuntimeRuns,
+} from "./lib/main-run-launcher"
+import { waitForCheckpointFinalization } from "./lib/run-checkpoint-boundary"
 import { initializeSleepPrevention, stopSleepPrevention } from "./lib/sleep-prevention/service"
 import { terminalManager } from "./lib/terminal"
 import {
@@ -208,13 +213,23 @@ async function abortAndWaitForAgentSessions(): Promise<void> {
   if (pendingRunTimer) clearInterval(pendingRunTimer)
   pendingRunTimer = null
   const stopped = await abortAndWaitForShutdownIdle({
-    abort: abortAllAgentSessions,
-    isIdle: () => !pendingRunDrainActive && !workflowAdvanceActive && !hasActiveAgentSessions(),
+    abort: () => {
+      abortAllAgentSessions()
+      void cancelMainRuntimeRunsForShutdown().catch((error) =>
+        console.error("[App] Could not stop a direct run", error),
+      )
+    },
+    isIdle: () =>
+      !pendingRunDrainActive &&
+      !workflowAdvanceActive &&
+      !hasActiveAgentSessions() &&
+      !hasActiveMainRuntimeRuns(),
     timeoutMs: 10_000,
   })
   if (!stopped) {
     throw new Error("Timed out waiting for agent sessions to stop during shutdown")
   }
+  await waitForCheckpointFinalization()
 }
 
 async function startAutomationBetaServices(): Promise<void> {
@@ -726,6 +741,18 @@ if (gotTheLock) {
       // Keep the app usable, but explicit Records mode still blocks legacy writes.
       console.error("[Records] Startup failed; no fallback task store was opened:", error)
     }
+    try {
+      initDatabase()
+    } catch (error) {
+      console.error("[DB] Startup stopped before accepting runs:", error)
+      if (!IS_ISOLATED_VERIFICATION && !IS_HEADLESS_PERFORMANCE)
+        dialog.showErrorBox(
+          "Flapstack could not open its database",
+          "The database upgrade could not finish. Close other Flapstack processes and reopen the app.",
+        )
+      app.exit(1)
+      return
+    }
     if (IS_HEADLESS_PERFORMANCE) app.dock?.hide()
     if (!IS_ISOLATED_VERIFICATION) {
       initializeSleepPrevention(() => ({
@@ -1080,6 +1107,12 @@ if (gotTheLock) {
         },
       ]
       Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+      if (process.platform === "win32") {
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.setAutoHideMenuBar(true)
+          window.setMenuBarVisibility(false)
+        }
+      }
     }
 
     // macOS: Set dock menu (right-click on dock icon)

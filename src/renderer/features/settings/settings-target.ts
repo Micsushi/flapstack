@@ -14,6 +14,9 @@ export function revealSettingsTarget(searchTarget: string, root: ParentNode = do
   )
   if (!target) return false
 
+  for (let parent = target.parentElement; parent; parent = parent.parentElement) {
+    if (parent instanceof HTMLDetailsElement) parent.open = true
+  }
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
   target.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" })
   const candidates = target.matches(FOCUSABLE_SETTINGS_TARGET)

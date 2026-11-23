@@ -1,3 +1,4 @@
+import { resolveInteractiveRuntime } from "../../agent-runtime/interactive-chat"
 import { changeClaudeMcpWithUndo } from "../../claude-mcp-actions"
 import { applyMcpAction } from "../../mcp-action-history"
 import { buildRecordTaskRunContext } from "../../project-records/run-context"
@@ -964,9 +965,9 @@ export async function getAllMcpConfigHandler() {
 
 export const claudeRouter = router({
   /**
-   * Stream chat with Claude - single subscription handles everything
+   * Explicit compatibility surface for historical Flapstack Native and offline sessions.
    */
-  chat: publicProcedure
+  compatibilityChat: publicProcedure
     .input(
       z.object({
         submittedAtMs: z.number().int().nonnegative().optional(),
@@ -992,6 +993,25 @@ export const claudeRouter = router({
       }),
     )
     .subscription(({ input }) => {
+      const database = getSqliteDatabase()
+      if (input.runId) {
+        const frozen = database
+          .prepare(
+            "SELECT resolved_runtime FROM agent_runs WHERE id = ? AND chat_id = ? AND sub_chat_id = ? AND harness = 'claude-code'",
+          )
+          .get(input.runId, input.chatId, input.subChatId) as
+          { resolved_runtime: string | null } | undefined
+        if (!frozen || (frozen.resolved_runtime && frozen.resolved_runtime !== "flapstack-native"))
+          throw new Error("This Claude run does not use the compatibility runtime.")
+      } else {
+        const selected = resolveInteractiveRuntime(database, {
+          ...input,
+          model: input.model ?? null,
+          harness: "claude-code",
+        })
+        if (selected.direct)
+          throw new Error("The selected Claude runtime requires a direct session. Send again.")
+      }
       return observable<UIMessageChunk>((emit) => {
         // Abort any existing session for this subChatId before starting a new one
         // This prevents race conditions if two messages are sent in quick succession

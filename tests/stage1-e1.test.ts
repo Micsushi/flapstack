@@ -1934,6 +1934,25 @@ describe("Stage 1 E1 checkpoint capture", () => {
     expect(readFileSync(join(worktreePath, "live-untracked.txt"), "utf8")).toBe("live\n")
   })
 
+  it("does not reconstruct an interrupted postimage from the checkout on restart", async () => {
+    const db = getDatabase()
+    const chat = insertChat({ scope: "global", name: "Interrupted final image" })
+    const run = db
+      .insert(agentRuns)
+      .values({ chatId: chat.id, harness: "codex", permissionMode: "full-access" })
+      .returning()
+      .get()
+    db.update(agentRuns)
+      .set({ status: "success", completedAt: new Date() })
+      .where(eq(agentRuns.id, run.id))
+      .run()
+    db.run(
+      sql`INSERT INTO agent_run_timing_marks(run_id,phase,at_ms) VALUES(${run.id},'undo-requested',1)`,
+    )
+    await expect(undoRunChangeSet(run.id)).rejects.toThrow("final state could not be verified")
+    expect(db.select().from(checkpoints).where(eq(checkpoints.runId, run.id)).all()).toEqual([])
+  })
+
   it("reviews and undoes physical CRLF, mixed endings and staged files without losing later edits", async () => {
     const root = join(homeDir, "newline-repo")
     mkdirSync(root)

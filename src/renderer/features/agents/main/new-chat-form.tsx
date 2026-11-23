@@ -1,5 +1,7 @@
 "use client"
 
+import { formatModelDisplayName } from "../../../../shared/model-catalog"
+
 import { useVirtualizer } from "@tanstack/react-virtual"
 import type { AgentRuntimePreference } from "../../../../shared/agent-runtime"
 import { initialChatName } from "../../../../shared/chat-title"
@@ -147,7 +149,6 @@ import {
   selectableCodexModels,
   CURSOR_MODELS,
   DEFAULT_OPENCODE_MODELS,
-  DEFAULT_CLAUDE_MODEL_ID,
   type ClaudeEffortLevel,
   type CodexReasoningLevel,
 } from "../lib/models"
@@ -441,11 +442,13 @@ export function NewChatForm({
   )?.reason
 
   // Get available models (with offline support)
-  const availableModels = useAvailableModels()
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
   const profile =
     agentProfileSelection && !("invalid" in agentProfileSelection) ? agentProfileSelection : null
   const newChatHarness = profile?.harness ?? selectedAgent.id
+  const availableModels = useAvailableModels(
+    isModelDropdownOpen || newChatHarness === "claude-code",
+  )
   useCheckpointPreparation(
     chatScope === "task" ? "task" : "project",
     chatScope === "task" ? selectedTask?.id : selectedProjectRecord?.id,
@@ -509,19 +512,7 @@ export function NewChatForm({
     lastSelectedReasoningEnabledAtom,
   )
 
-  const [selectedModel, setSelectedModel] = useState(
-    () =>
-      availableModels.models.find((m) => m.id === lastSelectedModelId) || availableModels.models[0],
-  )
-
-  // Sync selectedModel when atom value changes (e.g., after localStorage hydration)
-  useEffect(() => {
-    const model = availableModels.models.find((m) => m.id === lastSelectedModelId)
-    if (model && model.id !== selectedModel.id) {
-      setSelectedModel(model)
-    }
-  }, [lastSelectedModelId])
-
+  const selectedModel = availableModels.models.find((model) => model.id === lastSelectedModelId)
   const selectedModelEfforts =
     selectedModel && "efforts" in selectedModel ? selectedModel.efforts : undefined
   const selectedClaudeEffort = useMemo<ClaudeEffortLevel>(() => {
@@ -546,6 +537,28 @@ export function NewChatForm({
   const hiddenModels = useAtomValue(hiddenModelsAtom)
   const codexCatalog = trpc.codex.listModels.useQuery(undefined, { staleTime: 60_000 })
   const liveCodexModels = codexCatalog.data
+  // An existing choice stays explicit, even when the provider withdraws it.
+  useEffect(() => {
+    if (
+      newChatHarness === "claude-code" &&
+      availableModels.defaultModelId &&
+      localStorage.getItem("agents:lastSelectedModelId") === null
+    )
+      setLastSelectedModelId(availableModels.defaultModelId)
+    if (
+      newChatHarness === "codex" &&
+      localStorage.getItem("agents:lastSelectedCodexModelId") === null
+    ) {
+      const providerDefault = liveCodexModels?.find((model) => model.isDefault)
+      if (providerDefault) setLastSelectedCodexModelId(providerDefault.id)
+    }
+  }, [
+    newChatHarness,
+    availableModels.defaultModelId,
+    liveCodexModels,
+    setLastSelectedModelId,
+    setLastSelectedCodexModelId,
+  ])
   const codexModels = useMemo(
     () => selectableCodexModels(liveCodexModels, hasAppCodexApiKey ? "api-key" : "chatgpt"),
     [liveCodexModels, hasAppCodexApiKey],
@@ -578,9 +591,15 @@ export function NewChatForm({
   const codexSelection = profile?.model ?? lastSelectedCodexModelId
   const modelBlockedReason =
     antigravityBlockedReason ??
-    (newChatHarness === "codex" && !codexCatalog.isFetching && !codexCatalog.isError
-      ? codexSelectionIssue(liveCodexModels, codexSelection, selectedCodexReasoning)
-      : null)
+    (newChatHarness === "claude-code" && !hasCustomClaudeConfig && !availableModels.isOffline
+      ? availableModels.modelIssue(profile?.model ?? lastSelectedModelId)
+      : newChatHarness === "codex"
+        ? codexCatalog.isError
+          ? "Codex could not load its models. Refresh the list to try again."
+          : !liveCodexModels
+            ? "Checking which Codex models are available."
+            : codexSelectionIssue(liveCodexModels, codexSelection, selectedCodexReasoning)
+        : null)
 
   const selectedChatModel = useMemo(() => {
     if (selectedAgent.id === "antigravity") return antigravity.selectedModelId ?? ""
@@ -596,7 +615,7 @@ export function NewChatForm({
     if (selectedAgent.id === "openrouter" || selectedAgent.id === "nanogpt") {
       return lastSelectedOpencodeModels[selectedAgent.id]
     }
-    return selectedModel?.id ?? DEFAULT_CLAUDE_MODEL_ID
+    return selectedModel?.id ?? lastSelectedModelId
   }, [
     selectedAgent.id,
     localModelPicker.selectedModelId,
@@ -606,6 +625,7 @@ export function NewChatForm({
     antigravity.selectedModelId,
     lastSelectedOpencodeModels,
     selectedModel?.id,
+    lastSelectedModelId,
   ])
 
   // Determine current Ollama model (selected or recommended)
@@ -618,7 +638,11 @@ export function NewChatForm({
       return localModelPicker.selectedModelId ?? "Choose local model"
     }
     if (selectedAgent.id === "codex") {
-      return selectedCodexModel?.name ?? lastSelectedCodexModelId
+      return (
+        selectedCodexModel?.name ??
+        formatModelDisplayName(lastSelectedCodexModelId) ??
+        "Choose model"
+      )
     }
     if (selectedAgent.id === "cursor-agent") {
       return selectedCursorModel.name
@@ -645,7 +669,9 @@ export function NewChatForm({
       return "Select model"
     }
 
-    return `${selectedModel.name} ${selectedModel.version}`
+    return selectedModel
+      ? `${selectedModel.name} ${selectedModel.version}`.trim()
+      : lastSelectedModelId
   }, [
     selectedAgent.id,
     localModelPicker.selectedModelId,
@@ -2332,12 +2358,7 @@ export function NewChatForm({
                           ),
                           selectedModelId: selectedModel?.id,
                           onSelectModel: (modelId) => {
-                            const model =
-                              availableModels.models.find((m) => m.id === modelId) ||
-                              availableModels.models[0]
-                            if (!model) return
-                            setSelectedModel(model)
-                            setLastSelectedModelId(model.id)
+                            setLastSelectedModelId(modelId)
                           },
                           hasCustomModelConfig: hasCustomClaudeConfig,
                           isOffline: availableModels.isOffline && availableModels.hasOllama,
@@ -2533,7 +2554,18 @@ export function NewChatForm({
 
               {modelBlockedReason && (
                 <p role="status" className="mt-2 px-2 text-xs text-muted-foreground">
-                  {modelBlockedReason}
+                  {modelBlockedReason}{" "}
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() => {
+                      if (newChatHarness === "claude-code") availableModels.retry()
+                      else if (newChatHarness === "codex") void codexCatalog.refetch()
+                      else antigravity.retry()
+                    }}
+                  >
+                    Refresh models
+                  </button>
                 </p>
               )}
               {runtimeBlockedReason ? (

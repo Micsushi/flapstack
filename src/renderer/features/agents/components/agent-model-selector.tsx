@@ -1,9 +1,13 @@
 "use client"
 
 import { Brain, ChevronRight, Zap } from "lucide-react"
-import { useSetAtom } from "jotai"
-import { useCallback, useMemo, useRef, useState, type RefObject } from "react"
-import { agentsLoginModalOpenAtom, codexLoginModalOpenAtom } from "../../../lib/atoms"
+import { useAtom, useSetAtom } from "jotai"
+import { lazy, Suspense, useCallback, useMemo, useRef, useState, type RefObject } from "react"
+import {
+  showLegacyModelsAtom,
+  agentsLoginModalOpenAtom,
+  codexLoginModalOpenAtom,
+} from "../../../lib/atoms"
 import {
   Dialog,
   DialogContent,
@@ -26,8 +30,12 @@ import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/
 import { cn } from "../../../lib/utils"
 import type { ClaudeEffortLevel, CodexReasoningLevel } from "../lib/models"
 import { formatClaudeEffortLabel, formatCodexReasoningLevelLabel } from "../lib/models"
+import { isLegacyPickerModel } from "../../../../shared/model-catalog"
+import type { ContinueWithProvider, HandoffSource } from "./compact-handoff-action"
 import { getHarnessChipMeta } from "../constants"
 import { ProviderChipIcon } from "./provider-chip-icon"
+
+const CompactHandoffAction = lazy(() => import("./compact-handoff-action"))
 
 export type AgentProviderId =
   "claude-code" | "codex" | "antigravity" | "cursor-agent" | "openrouter" | "nanogpt" | "local"
@@ -71,7 +79,8 @@ interface AgentModelSelectorProps {
   triggerClassName?: string
   contentClassName?: string
   onOpenModelsSettings?: () => void
-  onContinueWithProvider?: (provider: AgentProviderId, targetModel: string) => void
+  continuationSource?: HandoffSource
+  onContinueWithProvider?: ContinueWithProvider
   onDelegateWithProvider?: (provider: AgentProviderId, targetModel: string) => void
   claude: {
     models: ClaudeModelOption[]
@@ -214,7 +223,10 @@ export function AgentModelTuningSelector({
   const selectedCodexModel = codex.models.find((model) => model.id === codex.selectedModelId)
   const codexReasoningLevels =
     selectedAgentId === "codex" ? selectedCodexModel?.reasoningLevels : undefined
-  const selectedCodexReasoning = codexReasoningLevels?.length ? codex.selectedReasoning : undefined
+  const selectedCodexReasoning =
+    selectedAgentId === "codex" && (!selectedCodexModel || codexReasoningLevels?.length)
+      ? codex.selectedReasoning
+      : undefined
   const fastModeAvailable =
     selectedAgentId === "codex" && selectedCodexModel?.supportsFastMode === true
   const fastModeEnabled = fastModeAvailable && codex.fastModeEnabled
@@ -337,16 +349,14 @@ export function AgentModelTuningSelector({
 function CrossProviderConfirmDialog({
   isOpen,
   providerName,
-  modelName,
-  onConfirm,
+  continueAction,
   onDelegate,
   onClose,
   returnFocusRef,
 }: {
   isOpen: boolean
   providerName: string
-  modelName: string
-  onConfirm: () => void
+  continueAction: React.ReactNode
   onDelegate?: () => void
   onClose: () => void
   returnFocusRef: RefObject<HTMLButtonElement | null>
@@ -386,16 +396,10 @@ function CrossProviderConfirmDialog({
             Switch to {providerName}
           </DialogTitle>
           <DialogDescription>
-            A distinct child Chat will receive only the visible conversation context. Hidden
-            provider state is not transferred.
+            Start a child chat with a summary of this conversation.
           </DialogDescription>
-          <dl className="mt-4 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
-            <div className="flex items-center justify-between gap-3">
-              <dt className="text-muted-foreground">Selected model</dt>
-              <dd className="truncate font-medium">{modelName}</dd>
-            </div>
-          </dl>
         </div>
+        {continueAction}
         <div className="bg-muted p-4 flex items-center justify-end border-t border-border rounded-b-xl">
           <div className="flex items-center gap-2">
             <Button ref={cancelRef} onClick={onClose} variant="ghost" className="rounded-md">
@@ -406,9 +410,6 @@ function CrossProviderConfirmDialog({
                 Delegate task
               </Button>
             ) : null}
-            <Button onClick={onConfirm} variant="default" className="rounded-md">
-              New chat
-            </Button>
           </div>
         </div>
       </DialogContent>
@@ -426,6 +427,7 @@ export function AgentModelSelector({
   triggerClassName,
   contentClassName,
   onOpenModelsSettings,
+  continuationSource,
   onContinueWithProvider,
   onDelegateWithProvider,
   claude,
@@ -435,6 +437,7 @@ export function AgentModelSelector({
   opencode = EMPTY_OPENCODE_PROVIDERS,
   local,
 }: AgentModelSelectorProps) {
+  const [showLegacyModels, setShowLegacyModels] = useAtom(showLegacyModelsAtom)
   const [search, setSearch] = useState("")
   const setClaudeLoginOpen = useSetAtom(agentsLoginModalOpenAtom)
   const setCodexLoginOpen = useSetAtom(codexLoginModalOpenAtom)
@@ -474,12 +477,24 @@ export function AgentModelSelector({
       claudeItems.push({ type: "custom" })
     } else {
       for (const m of claude.models) {
+        if (
+          !showLegacyModels &&
+          isLegacyPickerModel(m.id) &&
+          !(selectedAgentId === "claude-code" && m.id === claude.selectedModelId)
+        )
+          continue
         claudeItems.push({ type: "claude", model: m })
       }
     }
 
     const codexItems: FlatModelItem[] = []
     for (const m of codex.models) {
+      if (
+        !showLegacyModels &&
+        isLegacyPickerModel(m.id) &&
+        !(selectedAgentId === "codex" && m.id === codex.selectedModelId)
+      )
+        continue
       codexItems.push({ type: "codex", model: m })
     }
 
@@ -489,11 +504,11 @@ export function AgentModelSelector({
     }))
 
     const groups: ModelGroup[] = [
-      { id: "claude-code", label: "Claude Code", items: claudeItems },
+      { id: "claude-code", label: "Claude", items: claudeItems },
       { id: "codex", label: "Codex", items: codexItems },
       {
         id: "antigravity",
-        label: "Gemini · Antigravity",
+        label: "Gemini",
         items: antigravity.models.map((model) => ({ type: "antigravity", model })),
       },
       { id: "cursor-agent", label: "Cursor", items: cursorItems },
@@ -511,7 +526,16 @@ export function AgentModelSelector({
       items: (local?.models ?? []).map((model) => ({ type: "local", model })),
     })
     return groups
-  }, [claude, codex, cursor, antigravity.models, opencode, local?.models])
+  }, [
+    claude,
+    codex,
+    cursor,
+    antigravity.models,
+    opencode,
+    local?.models,
+    showLegacyModels,
+    selectedAgentId,
+  ])
 
   // Filter by search
   const filteredGroups = useMemo(() => {
@@ -620,14 +644,6 @@ export function AgentModelSelector({
       (onContinueWithProvider || onDelegateWithProvider),
     )
   }
-
-  const handleConfirmCrossProvider = useCallback(() => {
-    setConfirmDialogOpen(false)
-    if (pendingContinuation && onContinueWithProvider) {
-      onContinueWithProvider(pendingContinuation.provider, pendingContinuation.targetModelId)
-    }
-    setPendingContinuation(null)
-  }, [pendingContinuation, onContinueWithProvider])
 
   const handleCloseConfirmDialog = useCallback(() => {
     setConfirmDialogOpen(false)
@@ -752,6 +768,68 @@ export function AgentModelSelector({
     }
   }
 
+  function renderHandoffAction(
+    target: { provider: AgentProviderId; targetModelId: string; targetModelLabel: string },
+    onCreated: () => void,
+  ) {
+    if (!continuationSource || !onContinueWithProvider) return null
+    return (
+      <Suspense
+        fallback={
+          <span role="status" className="px-2 text-xs">
+            Preparing handoff…
+          </span>
+        }
+      >
+        <CompactHandoffAction
+          key={target.provider + target.targetModelId}
+          source={continuationSource}
+          provider={target.provider}
+          model={target.targetModelId}
+          modelLabel={target.targetModelLabel}
+          onContinue={onContinueWithProvider}
+          onCreated={onCreated}
+        />
+      </Suspense>
+    )
+  }
+
+  function getQuickHandoff(): {
+    provider: AgentProviderId
+    targetModelId: string
+    targetModelLabel: string
+  } | null {
+    if (
+      !open ||
+      !continuationSource ||
+      !onContinueWithProvider ||
+      currentFilter === selectedAgentId
+    )
+      return null
+    if (
+      currentFilter !== "codex" &&
+      currentFilter !== "claude-code" &&
+      currentFilter !== "antigravity"
+    )
+      return null
+    const models = modelGroups
+      .find((group) => group.id === currentFilter)
+      ?.items.filter((item) => !isItemDisabled(item))
+    const preferred =
+      currentFilter === "codex"
+        ? codex.selectedModelId
+        : currentFilter === "claude-code"
+          ? claude.selectedModelId
+          : antigravity.selectedModelId
+    const target = models?.find((item) => getItemModelId(item) === preferred) ?? models?.[0]
+    if (!target) return null
+    const targetModelId = getItemModelId(target)
+    return targetModelId
+      ? { provider: currentFilter, targetModelId, targetModelLabel: getItemLabel(target) }
+      : null
+  }
+
+  const quickHandoff = getQuickHandoff()
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
@@ -808,6 +886,15 @@ export function AgentModelSelector({
               </button>
             ))}
           </div>
+          {quickHandoff && renderHandoffAction(quickHandoff, () => handleOpenChange(false))}
+          <label className="flex items-center justify-between px-3 py-1.5 text-xs text-muted-foreground">
+            Show legacy models
+            <Switch
+              aria-label="Show legacy models"
+              checked={showLegacyModels}
+              onCheckedChange={setShowLegacyModels}
+            />
+          </label>
           <CommandList className="max-h-[min(360px,50vh)] overflow-y-auto">
             {filteredGroups.length > 0 ? (
               filteredGroups.map((group) => {
@@ -955,10 +1042,11 @@ export function AgentModelSelector({
                     ? "NanoGPT"
                     : pendingContinuation?.provider === "local"
                       ? "Local"
-                      : "Claude Code"
+                      : "Claude"
         }
-        modelName={pendingContinuation?.targetModelLabel ?? "Unavailable"}
-        onConfirm={handleConfirmCrossProvider}
+        continueAction={
+          pendingContinuation && renderHandoffAction(pendingContinuation, handleCloseConfirmDialog)
+        }
         onDelegate={onDelegateWithProvider ? handleDelegateCrossProvider : undefined}
         onClose={handleCloseConfirmDialog}
       />

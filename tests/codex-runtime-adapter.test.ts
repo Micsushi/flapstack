@@ -11,6 +11,33 @@ import {
 } from "./codex-runtime-test-helpers"
 
 describe("direct Codex Runtime adapter", () => {
+  it("targets steering to the active native turn and requires the matching provider receipt", async () => {
+    const client = new FakeCodexProtocolClient()
+    const adapter = createCodexRuntimeAdapterFactory({
+      createClient: () => client,
+      resolveThreadParams: () => ({ cwd: "/fixture" }),
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
+      appendActivity: () => undefined,
+    })()
+    const ctx = runtimeContext()
+    const session = await adapter.startSession(ctx)
+    await expect(adapter.steer!(ctx, "too early")).rejects.toThrow(/no longer/)
+    const turn = await adapter.startTurn(ctx, session, "first")
+    client.responses.set("turn/steer", { turnId: turn.providerTurnId })
+    await adapter.steer!(ctx, "change direction")
+    expect(client.requests.at(-1)).toMatchObject({
+      method: "turn/steer",
+      params: {
+        threadId: session.providerThreadId,
+        expectedTurnId: turn.providerTurnId,
+        input: [{ type: "text", text: "change direction", text_elements: [] }],
+      },
+    })
+    client.responses.set("turn/steer", { turnId: "other" })
+    await expect(adapter.steer!(ctx, "late")).rejects.toThrow(/did not confirm/)
+    await adapter.cleanup(ctx)
+  })
   it("releases unused connections and checks current authentication before starting a prepared session", async () => {
     const unused = new FakeCodexProtocolClient()
     const launched = new FakeCodexProtocolClient()

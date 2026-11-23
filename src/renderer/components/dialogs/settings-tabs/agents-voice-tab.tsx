@@ -150,7 +150,10 @@ export function AgentsVoiceTab() {
     updateSettings.mutate(patch)
   }
   const updateAudioStorage = (
-    patch: Pick<Partial<typeof settings>, "prepareReplyAudio" | "unplayedAudioRetentionDays">,
+    patch: Pick<
+      Partial<typeof settings>,
+      "prepareReplyAudio" | "unplayedAudioRetentionDays" | "replyReadMode"
+    >,
   ) => {
     const previous = Object.fromEntries(
       Object.keys(patch).map((key) => [key, settings[key as keyof typeof settings]]),
@@ -509,6 +512,22 @@ export function AgentsVoiceTab() {
         <h4 className="text-xs font-medium uppercase tracking-normal text-muted-foreground">
           Text to speech
         </h4>
+        <label className="space-y-1.5 block">
+          <span className="text-sm text-foreground">Reply read-back</span>
+          <select
+            value={settings.replyReadMode}
+            disabled={updateSettings.isPending}
+            onChange={(event) =>
+              updateAudioStorage({
+                replyReadMode: event.target.value === "whole" ? "whole" : "summary",
+              })
+            }
+            className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
+          >
+            <option value="whole">Read whole reply</option>
+            <option value="summary">Read summary</option>
+          </select>
+        </label>
         <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"

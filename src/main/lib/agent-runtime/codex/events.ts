@@ -30,9 +30,7 @@ const PINNED_METADATA_NOTIFICATIONS = new Set([
   "thread/name/updated",
   "thread/goal/updated",
   "thread/goal/cleared",
-  "thread/settings/updated",
   "turn/diff/updated",
-  "rawResponseItem/completed",
   "command/exec/outputDelta",
   "process/outputDelta",
   "process/exited",
@@ -79,6 +77,19 @@ export function mapCodexNotification(
   switch (notification.method) {
     case "thread/started":
       return [lifecycle(base, "started", "thread-started", null)]
+    case "rawResponseItem/completed":
+      // Structured item notifications carry public content; raw envelopes may contain private reasoning.
+      return [opaque(base, notification.method, { itemType: string(record(params.item).type) })]
+    case "thread/settings/updated": {
+      const settings = record(params.threadSettings)
+      return [
+        opaque(base, notification.method, {
+          model: string(settings.model),
+          effort: string(settings.effort),
+          summary: string(settings.summary),
+        }),
+      ]
+    }
     case "thread/archived":
       return [lifecycle(base, "completed", "thread-archived", null)]
     case "thread/unarchived":

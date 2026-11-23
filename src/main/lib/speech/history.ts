@@ -272,16 +272,22 @@ export async function deleteVoiceHistoryForChat(chatId: string): Promise<void> {
   )
 }
 
-export function getStoredSpokenText(subChatId?: string | null, messageId?: string | null) {
+export function getStoredSpokenText(
+  subChatId?: string | null,
+  messageId?: string | null,
+  mode: "whole" | "summary" = "summary",
+) {
   if (!subChatId || !messageId) return null
   const subChat = getDatabase().select().from(subChats).where(eq(subChats.id, subChatId)).get()
   const messages = parseMessages(subChat?.messages)
   const message = messages.find((candidate) => candidate?.id === messageId)
+  if ((message?.metadata?.spokenReadMode ?? "summary") !== mode) return null
   const spokenText = message?.metadata?.spokenText
   return typeof spokenText === "string" && spokenText.trim() ? spokenText : null
 }
 
 export function persistSpokenText(input: {
+  mode?: "whole" | "summary"
   subChatId?: string | null
   messageId?: string | null
   text: string
@@ -293,10 +299,18 @@ export function persistSpokenText(input: {
   const index = messages.findIndex((candidate) => candidate?.id === input.messageId)
   if (index < 0) return
   const message = messages[index]
-  if (message?.metadata?.spokenText === input.text) return
+  if (
+    message?.metadata?.spokenText === input.text &&
+    (message.metadata.spokenReadMode ?? "summary") === (input.mode ?? "summary")
+  )
+    return
   messages[index] = {
     ...message,
-    metadata: { ...(message.metadata || {}), spokenText: input.text },
+    metadata: {
+      ...(message.metadata || {}),
+      spokenText: input.text,
+      spokenReadMode: input.mode ?? "summary",
+    },
   }
   db.update(subChats)
     .set({ messages: JSON.stringify(messages) })

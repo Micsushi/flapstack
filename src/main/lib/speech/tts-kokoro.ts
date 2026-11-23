@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { createRequire } from "node:module"
@@ -106,18 +107,55 @@ function assertRequestActive(input: Pick<TtsInput, "shouldContinue">): void {
   if (input.shouldContinue?.() === false) throw new Error("Speech request was cancelled.")
 }
 
+// Only one inference uses the model at a time. Playback gets the next sentence
+// ahead of background reply preparation, including when it joins an existing job.
+const waiting: { interactive?: () => boolean; run: () => void }[] = []
+let synthesizing = false
+function scheduleKokoroSentence<T>(
+  interactive: (() => boolean) | undefined,
+  generate: () => Promise<T>,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    waiting.push({
+      interactive,
+      run() {
+        synthesizing = true
+        Promise.resolve()
+          .then(generate)
+          .then(resolve, reject)
+          .finally(() => {
+            synthesizing = false
+            nextSentence()
+          })
+      },
+    })
+    nextSentence()
+  })
+}
+function nextSentence() {
+  if (synthesizing || !waiting.length) return
+  const next = Math.max(
+    0,
+    waiting.findIndex((item) => item.interactive?.()),
+  )
+  waiting.splice(next, 1)[0]!.run()
+}
+
 export async function synthesizeKokoroChunks(
   model: KokoroModel,
   chunks: string[],
   voice: string,
   speed: number,
-  input: Pick<TtsInput, "shouldContinue">,
+  input: Pick<TtsInput, "shouldContinue" | "onChunk" | "interactive">,
 ): Promise<{ buffers: Float32Array[]; sampleRate: number }> {
   const buffers: Float32Array[] = []
   let sampleRate = DEFAULT_SAMPLE_RATE
   for (const chunk of chunks) {
     assertRequestActive(input)
-    const audio = await model.generate(chunk, { voice, speed })
+    const audio = await scheduleKokoroSentence(input.interactive, () => {
+      assertRequestActive(input)
+      return model.generate(chunk, { voice, speed })
+    })
     assertRequestActive(input)
     const samples = audio.audio || audio.data
     if (!samples || typeof samples.length !== "number") {
@@ -125,11 +163,30 @@ export async function synthesizeKokoroChunks(
     }
     sampleRate = Number(audio.sampling_rate || audio.sampleRate) || DEFAULT_SAMPLE_RATE
     buffers.push(samples)
+    if (input.onChunk) {
+      const gap = buffers.length < chunks.length ? Math.round(sampleRate * KOKORO_CHUNK_GAP_SEC) : 0
+      const pcm = gap ? new Float32Array(samples.length + gap) : samples
+      if (gap) pcm.set(samples)
+      input.onChunk({
+        audioBase64: encodeWav(pcm, sampleRate).toString("base64"),
+        mimeType: "audio/wav",
+        duration: pcm.length / sampleRate,
+      })
+    }
   }
   return { buffers, sampleRate }
 }
 
-async function loadModel(): Promise<KokoroModel> {
+let warmScheduled = false
+export function warmCachedKokoro() {
+  if (warmScheduled || loadPromise) return
+  const cached = path.join(getSpeechDataDir(), "kokoro", MODEL_ID, "onnx", "model_quantized.onnx")
+  if (!existsSync(cached)) return
+  warmScheduled = true
+  setTimeout(() => void loadModel(true).catch(() => {}), 1200).unref()
+}
+
+async function loadModel(cachedOnly = false): Promise<KokoroModel> {
   if (loadPromise) return loadPromise
   loadPromise = (async () => {
     const runtime = await tryResolveRuntime()
@@ -144,6 +201,7 @@ async function loadModel(): Promise<KokoroModel> {
     // process CWD so repeated runs reuse the first download.
     transformers.env.cacheDir = path.join(getSpeechDataDir(), "kokoro")
     const model = (await kokoro.KokoroTTS.from_pretrained(MODEL_ID, {
+      ...(cachedOnly && { local_files_only: true }),
       dtype: "q8",
       device: "cpu",
     })) as KokoroModel

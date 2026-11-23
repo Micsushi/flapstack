@@ -1311,6 +1311,7 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
       },
     })
     const createdWindow = window
+    if (process.platform === "win32") createdWindow.setMenuBarVisibility(false)
 
     // Register window with manager and get stable ID for localStorage namespacing
     stableWindowId = windowManager.register(createdWindow, options?.stableWindowId)

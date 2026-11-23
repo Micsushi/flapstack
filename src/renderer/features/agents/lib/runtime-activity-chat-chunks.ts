@@ -35,6 +35,16 @@ export class RuntimeActivityChatChunkMapper {
       event.payload.state === "turn-diff-snapshot"
     )
       return []
+    if (
+      event.kind === "status" &&
+      event.privacyClass === "public" &&
+      event.payload.code === "user-steer"
+    ) {
+      return [
+        ...this.closeOpenReasoning(),
+        { type: "data-user-steer", id: event.eventId, data: event.payload.message },
+      ]
+    }
     if (event.kind === "reasoning-summary" || event.kind === "provider-visible-reasoning") {
       return this.mapReasoning(event)
     }

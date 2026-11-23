@@ -13,6 +13,7 @@ import {
   type FileHandle,
 } from "node:fs/promises"
 import { createHash, randomUUID } from "node:crypto"
+import { execFile } from "node:child_process"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path"
 import type { SimpleGit, StatusResult } from "simple-git"
@@ -22,8 +23,9 @@ import { agentRuns, checkpoints, fileChangeManifests, getDatabase, getDatabasePa
 import type * as schema from "./db/schema"
 import { recordRunTimingInterval } from "./run-timings"
 import { withCheckpointFiles } from "./checkpoint-file-retention"
+import { acquireCheckpointCheckout, checkpointGitPaths } from "./run-checkpoint-boundary"
 import { splitUnifiedDiffByFile } from "./git/diff-parser"
-import { createGit } from "./git/git-factory"
+import { createGit, GIT_TIMEOUTS } from "./git/git-factory"
 import {
   selectCheckpointPreparation,
   withPreparedOriginals,
@@ -98,8 +100,10 @@ async function buildStatusSnapshot(
   worktreePath: string | null,
   db: AppDatabase,
   requireGitPreimage = false,
+  protectedIndex?: string,
 ): Promise<{ gitCommit: string | null; snapshot: CheckpointStatusSnapshot }> {
   if (!worktreePath || !existsSync(worktreePath)) {
+    if (protectedIndex) throw new Error("The checkpoint checkout no longer exists.")
     return {
       gitCommit: null,
       snapshot: {
@@ -113,7 +117,7 @@ async function buildStatusSnapshot(
   let confirmedGitWorktree = false
   try {
     const git = createGit(worktreePath)
-    const isRepo = await git.checkIsRepo()
+    const isRepo = !!protectedIndex || (await git.checkIsRepo())
     if (!isRepo) {
       return {
         gitCommit: null,
@@ -129,7 +133,7 @@ async function buildStatusSnapshot(
     const profile = checkpointProfile(db)
     const [head, staged, { originals, fileCapture, crlfPaths, eagerTree }] = await Promise.all([
       git.revparse(["--verify", "HEAD"]).catch(() => null),
-      git.raw(["write-tree"]),
+      protectedIndex ? readIndexTree(worktreePath, protectedIndex) : git.raw(["write-tree"]),
       captureOriginals(worktreePath, git, profile),
     ])
     const gitCommit = head?.trim() ?? null
@@ -158,6 +162,20 @@ async function buildStatusSnapshot(
         error: errorMessage(error),
       },
     }
+  }
+}
+
+// git write-tree rewrites the index even when the staged contents match. During
+// background finalization use a private copy, so a real index change is visible to the guard.
+async function readIndexTree(root: string, source: string) {
+  const temp = await mkdtemp(join(tmpdir(), "flapstack-index-"))
+  try {
+    const dest = join(temp, "index")
+    if (existsSync(source)) await copyFile(source, dest)
+    const reader = createGit(root).env({ GIT_INDEX_FILE: dest })
+    return await reader.raw(["write-tree"])
+  } finally {
+    await rm(temp, { recursive: true, force: true })
   }
 }
 
@@ -941,8 +959,11 @@ export async function captureCheckpoint(
   worktreePath: string | null,
   kind: CheckpointKind,
   db: AppDatabase = getDatabase(),
+  protectedIndex?: string,
 ) {
-  return withCheckpointFiles(db, () => captureLeasedCheckpoint(runId, worktreePath, kind, db))
+  return withCheckpointFiles(db, () =>
+    captureLeasedCheckpoint(runId, worktreePath, kind, db, protectedIndex),
+  )
 }
 
 async function captureLeasedCheckpoint(
@@ -950,6 +971,7 @@ async function captureLeasedCheckpoint(
   worktreePath: string | null,
   kind: CheckpointKind,
   db: AppDatabase,
+  protectedIndex?: string,
 ) {
   const started = Date.now()
   const run = db
@@ -963,7 +985,12 @@ async function captureLeasedCheckpoint(
           gitCommit: null,
           snapshot: { available: false, files: {}, skipped: true } as CheckpointStatusSnapshot,
         }
-      : await buildStatusSnapshot(worktreePath, db, kind === "before")
+      : await buildStatusSnapshot(
+          worktreePath,
+          db,
+          kind === "before" || !!protectedIndex,
+          protectedIndex,
+        )
 
   const checkpoint = db
     .insert(checkpoints)
@@ -979,20 +1006,28 @@ async function captureLeasedCheckpoint(
 
   if (worktreePath && snapshot.treeCommit) {
     try {
-      const git = createGit(worktreePath)
-      await git.raw([
-        "update-ref",
-        `refs/flapstack/checkpoints/${checkpoint.id}`,
-        snapshot.profileObjects ? (gitCommit ?? snapshot.indexTree!) : snapshot.treeCommit,
-      ])
-      if (snapshot.indexTree) {
-        await git.raw([
-          "update-ref",
-          `refs/flapstack/checkpoint-indexes/${checkpoint.id}`,
-          snapshot.indexTree,
-        ])
-      }
+      const base = snapshot.profileObjects
+        ? (gitCommit ?? snapshot.indexTree!)
+        : snapshot.treeCommit
+      const refs = [`update refs/flapstack/checkpoints/${checkpoint.id} ${base}`]
+      if (snapshot.indexTree)
+        refs.push(`update refs/flapstack/checkpoint-indexes/${checkpoint.id} ${snapshot.indexTree}`)
+      await new Promise<void>((done, fail) => {
+        const child = execFile(
+          "git",
+          ["update-ref", "--stdin"],
+          {
+            cwd: worktreePath,
+            windowsHide: true,
+            timeout: GIT_TIMEOUTS.LOCAL,
+          },
+          (error) => (error ? fail(error) : done()),
+        )
+        child.stdin?.on("error", fail)
+        child.stdin?.end(refs.join("\n") + "\n")
+      })
     } catch (error) {
+      if (protectedIndex) throw error
       console.warn("[checkpoints] Could not retain private checkpoint ref", error)
     }
   }
@@ -1004,13 +1039,35 @@ async function captureLeasedCheckpoint(
 /** Restore the exact worktree and index captured before a run. */
 export async function restoreCheckpoint(checkpointId: string): Promise<boolean> {
   const db = getDatabase()
-  return withCheckpointFiles(db, () => restoreLeasedCheckpoint(checkpointId, db))
+  const row = db
+    .select({ path: checkpoints.worktreePath })
+    .from(checkpoints)
+    .where(eq(checkpoints.id, checkpointId))
+    .get()
+  if (!row) throw new Error("Checkpoint not found")
+  if (!row.path) return false
+  const git = await checkpointGitPaths(row.path)
+  const release = await acquireCheckpointCheckout(git?.root ?? row.path)
+  try {
+    return await withCheckpointFiles(db, () => restoreLeasedCheckpoint(checkpointId, db))
+  } finally {
+    release()
+  }
 }
 
 async function restoreLeasedCheckpoint(checkpointId: string, db: AppDatabase): Promise<boolean> {
   const checkpoint = db.select().from(checkpoints).where(eq(checkpoints.id, checkpointId)).get()
   if (!checkpoint) throw new Error("Checkpoint not found")
   if (!checkpoint.worktreePath) return false
+  if (
+    checkpoint.kind === "after" &&
+    db.get(sql`
+    SELECT 1 FROM agent_run_timing_marks t JOIN agent_runs r ON t.run_id=r.id
+    WHERE t.run_id=${checkpoint.runId} AND t.phase='undo-requested'
+      AND (r.after_checkpoint_id IS NULL OR r.after_checkpoint_id<>${checkpoint.id})`)
+  ) {
+    throw new Error("This run's final checkout state could not be verified.")
+  }
 
   const snapshot = parseCheckpointSnapshot(checkpoint.gitStatusJson)
   if (snapshot.skipped) return false
@@ -1054,11 +1111,19 @@ async function restoreLeasedCheckpoint(checkpointId: string, db: AppDatabase): P
   return true
 }
 
-export async function captureRunManifest(runId: string, db: AppDatabase = getDatabase()) {
-  return withCheckpointFiles(db, () => captureLeasedManifest(runId, db))
+export async function captureRunManifest(
+  runId: string,
+  db: AppDatabase = getDatabase(),
+  validate?: (paths: string[]) => Promise<void>,
+) {
+  return withCheckpointFiles(db, () => captureLeasedManifest(runId, db, validate))
 }
 
-async function captureLeasedManifest(runId: string, db: AppDatabase) {
+async function captureLeasedManifest(
+  runId: string,
+  db: AppDatabase,
+  validate?: (paths: string[]) => Promise<void>,
+) {
   const runCheckpoints = db.select().from(checkpoints).where(eq(checkpoints.runId, runId)).all()
 
   const before = runCheckpoints.find((checkpoint) => checkpoint.kind === "before")
@@ -1124,7 +1189,12 @@ async function captureLeasedManifest(runId: string, db: AppDatabase) {
         afterHash: null,
       },
     ]
+  await validate?.(entries.map((entry) => entry.filePath))
   return db.transaction((tx) => {
+    // Make a verified direct run's Undo and its rows visible in one commit.
+    if (validate && after) {
+      tx.update(agentRuns).set({ afterCheckpointId: after.id }).where(eq(agentRuns.id, runId)).run()
+    }
     if (before && beforeSnapshot.reviewTree)
       tx.update(checkpoints)
         .set({ gitStatusJson: JSON.stringify(beforeSnapshot) })

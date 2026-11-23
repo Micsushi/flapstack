@@ -41,8 +41,12 @@ export type TtsInput = {
   /** Electron-window ownership for scoped native cancellation. */
   requestScopeId?: string
   /** Cheap cooperative cancellation between local synthesis chunks. */
+  interactive?: () => boolean
+  onChunk?: (chunk: SpeechAudioChunk) => void
   shouldContinue?: () => boolean
 }
+
+export type SpeechAudioChunk = { audioBase64: string; mimeType: "audio/wav"; duration: number }
 
 export type TtsResult = {
   audioBase64: string
@@ -89,6 +93,7 @@ export type VoiceSettings = {
   voiceByTtsAdapterId: Record<string, string | null>
   rate: number
   preferOffline: boolean
+  replyReadMode: "whole" | "summary"
   prepareReplyAudio: boolean
   unplayedAudioRetentionDays: 0 | 1 | 7 | 30
 }
@@ -109,6 +114,7 @@ export const defaultVoiceSettings: VoiceSettings = {
   voiceByTtsAdapterId: {},
   rate: 1,
   preferOffline: true,
+  replyReadMode: "summary",
   prepareReplyAudio: true,
   unplayedAudioRetentionDays: 0,
 }

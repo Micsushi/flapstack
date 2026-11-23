@@ -32,7 +32,11 @@ import {
 } from "../../components/ui/icons"
 import { desktopViewAtom } from "../agents/atoms"
 import { searchSettings, type SettingsSearchEntry } from "./settings-search"
-import { getVisibleSettingsTabs, type SettingsProviderScope } from "./settings-visibility"
+import {
+  getSettingsGroups,
+  settingsGroupTab,
+  type SettingsProviderScope,
+} from "./settings-visibility"
 import { useBetaFeatures } from "./use-beta-features"
 
 // Check if we're in development mode
@@ -80,6 +84,7 @@ function TabButton({ tab, isActive, onClick }: TabButtonProps) {
   return (
     <button
       onClick={onClick}
+      aria-current={isActive ? "page" : undefined}
       className={cn(
         "inline-flex items-center whitespace-nowrap transition-colors duration-75 cursor-pointer w-full justify-start gap-2 text-left px-3 py-1.5 text-sm h-7 rounded-md",
         "outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
@@ -124,26 +129,7 @@ export function SettingsSidebar() {
   // Show debug tab if in development OR if devtools are unlocked
   const showDebugTab = isDevelopment || devToolsUnlocked
 
-  const mainTabs = useMemo(
-    () =>
-      getVisibleSettingsTabs("main", { showDevelopment: showDebugTab, betaFeatures }).map(
-        (tab) => ({
-          ...tab,
-          icon: SETTINGS_TAB_ICONS[tab.id] ?? SlidersFilledIcon,
-        }),
-      ),
-    [betaFeatures, showDebugTab],
-  )
-  const advancedTabs = useMemo(
-    () =>
-      getVisibleSettingsTabs("advanced", { showDevelopment: showDebugTab, betaFeatures })
-        .filter((tab) => tab.id !== "skills" && tab.id !== "mcp")
-        .map((tab) => ({
-          ...tab,
-          icon: SETTINGS_TAB_ICONS[tab.id] ?? SlidersFilledIcon,
-        })),
-    [betaFeatures, showDebugTab],
-  )
+  const groups = getSettingsGroups({ showDevelopment: showDebugTab, betaFeatures })
 
   const availableApiProviders = useMemo(
     () =>
@@ -317,38 +303,23 @@ export function SettingsSidebar() {
             )}
           </div>
         ) : (
-          <>
-            {/* Main Tabs */}
-            <div className="space-y-1">
-              {mainTabs.map((tab) => (
+          <nav aria-label="Settings groups" className="space-y-1">
+            {groups.map((group) => {
+              const first = group.tabs[0]!
+              return (
                 <TabButton
-                  key={tab.id}
-                  tab={tab}
-                  isActive={activeTab === tab.id}
-                  onClick={() => handleTabClick(tab.id)}
+                  key={group.label}
+                  tab={{
+                    id: first.id,
+                    label: group.label,
+                    icon: SETTINGS_TAB_ICONS[first.id] ?? SlidersFilledIcon,
+                  }}
+                  isActive={group.tabs.some((tab) => tab.id === settingsGroupTab(activeTab))}
+                  onClick={() => handleTabClick(first.id)}
                 />
-              ))}
-            </div>
-
-            {/* Separator */}
-            <div className="border-t border-border/50 mx-2" />
-
-            {/* Advanced Tabs */}
-            <div className="space-y-1">
-              {advancedTabs.map((tab) => (
-                <TabButton
-                  key={tab.id}
-                  tab={tab}
-                  isActive={
-                    tab.id === "plugins" && ["plugins", "skills", "mcp"].includes(activeTab)
-                      ? true
-                      : activeTab === tab.id
-                  }
-                  onClick={() => handleTabClick(tab.id)}
-                />
-              ))}
-            </div>
-          </>
+              )
+            })}
+          </nav>
         )}
       </div>
     </div>

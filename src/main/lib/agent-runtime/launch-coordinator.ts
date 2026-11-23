@@ -107,12 +107,16 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
     private readonly hooks: RuntimeLaunchHooks<TActivity>,
   ) {}
 
-  async launch(request: RuntimeLaunchRequest): Promise<RuntimeLaunchResult> {
+  async launch(
+    request: RuntimeLaunchRequest,
+    preparedWorkspace?: Promise<void>,
+  ): Promise<RuntimeLaunchResult> {
     if (this.reserved.has(request.runId)) {
       throw new Error(`Runtime run ${request.runId} is already active.`)
     }
     this.reserved.add(request.runId)
     let releaseConnection: (() => Promise<void>) | undefined
+    let workspace: Promise<void> | undefined
     try {
       validateRequest(request)
       const adapter = this.registry.forNewLaunch(
@@ -120,8 +124,12 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
         request.launch.harness,
       )
       releaseConnection = adapter.prepareConnection?.(request.runId)
-      return await this.launchReserved(request, adapter)
+      workspace = preparedWorkspace ?? this.hooks.prepareWorkspace?.(request)
+      // Observe early failure while independent provider readiness is in flight.
+      void workspace?.catch(() => {})
+      return await this.launchReserved(request, adapter, workspace)
     } finally {
+      await workspace?.catch(() => {})
       const pending = this.pendingCancellations.get(request.runId)
       if (pending && !pending.settled) {
         pending.settled = true
@@ -136,18 +144,14 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
   private async launchReserved(
     request: RuntimeLaunchRequest,
     adapter: HarnessAdapter<TActivity>,
+    workspace: Promise<void> | undefined,
   ): Promise<RuntimeLaunchResult> {
-    // The native availability probe does not start a session or submit a turn.
-    // Wait for both operations, including on failure, before releasing this run.
-    const [readiness, workspace] = await Promise.allSettled([
+    const [probe] = await Promise.all([
       request.launch.preferenceSource === "legacy"
         ? null
         : this.registry.probe(request.launch.resolvedRuntime, request.launch.harness),
-      this.hooks.prepareWorkspace?.(request),
+      adapter.preparesSessionBeforeWorkspace ? undefined : workspace,
     ])
-    if (workspace.status === "rejected") throw workspace.reason
-    if (readiness.status === "rejected") throw readiness.reason
-    const probe = readiness.value
     if (probe) {
       if (!probe.available) {
         throw new RuntimeRegistryError(
@@ -196,6 +200,10 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       instructions: request.instructions?.trim() || null,
       outputSchema: request.outputSchema ?? null,
       signal: controller.signal,
+      waitForWorkspace: async () => {
+        await workspace
+        if (controller.signal.aborted) throw new RuntimeLaunchCancelledError(request.runId)
+      },
     }
     const active: ActiveLaunch<TActivity> = {
       request,
@@ -412,6 +420,20 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       await this.hooks.onLifecycle?.(request, "uncertain", safeMessage(error))
       return false
     }
+  }
+
+  async steer(runId: string, subChatId: string, text: string): Promise<void> {
+    const active = this.active.get(runId)
+    if (
+      !active ||
+      active.context.subChatId !== subChatId ||
+      active.state !== "running" ||
+      active.context.signal.aborted ||
+      !active.adapter.steer
+    ) {
+      throw new Error("This turn is no longer available for steering.")
+    }
+    await active.adapter.steer(active.context, text)
   }
 
   async requestPermission(runId: string, request: unknown): Promise<unknown> {

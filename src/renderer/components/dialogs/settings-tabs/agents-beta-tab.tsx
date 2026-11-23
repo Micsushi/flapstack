@@ -3,7 +3,6 @@ import { BETA_FEATURE_REGISTRY } from "../../../../shared/beta-features"
 import { trpc } from "../../../lib/trpc"
 import { Switch } from "../../ui/switch"
 import { Button } from "../../ui/button"
-import { BetaFeatureTutorial } from "../../../features/onboarding/beta-feature-tutorial"
 
 export function AgentsBetaTab() {
   const utils = trpc.useUtils()
@@ -40,11 +39,16 @@ export function AgentsBetaTab() {
             className="flex items-center gap-3 py-3"
             data-settings-id={`beta-feature-${feature.id}`}
           >
-            <span className="min-w-0 flex-1 text-sm font-medium">{feature.label}</span>
-            <BetaFeatureTutorial feature={feature.id} label={feature.label} />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium">{feature.label}</div>
+              <p id={feature.id + "-description"} className="text-xs text-muted-foreground">
+                {feature.description}
+              </p>
+            </div>
             <Switch
               checked={settings.data?.[feature.id] ?? false}
               disabled={!settings.data || settings.isError || update.isPending}
+              aria-describedby={feature.id + "-description"}
               aria-label={`Enable ${feature.label}`}
               onCheckedChange={(enabled) => update.mutate({ feature: feature.id, enabled })}
             />

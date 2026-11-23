@@ -1,4 +1,9 @@
 import * as recordTaskContext from "../src/main/lib/project-records/run-context"
+import {
+  observePostimage,
+  checkpointGitPaths,
+  waitForCheckpointFinalization,
+} from "../src/main/lib/run-checkpoint-boundary"
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { execFileSync } from "node:child_process"
@@ -98,6 +103,15 @@ describe("process-wide Runtime launch service", () => {
       .prepare("SELECT sequence FROM agent_activity_events WHERE run_id = ? ORDER BY sequence")
       .all(runId) as { sequence: number }[]
     expect(announced).toEqual(persisted.map((row) => row.sequence))
+    expect(
+      sqlite.prepare("SELECT count(*) FROM checkpoints WHERE run_id=?").pluck().get(runId),
+    ).toBe(0)
+    expect(
+      sqlite
+        .prepare("SELECT count(*) FROM file_change_manifests WHERE run_id=?")
+        .pluck()
+        .get(runId),
+    ).toBe(0)
   })
 
   it.each(["feedback", "mobile"])(
@@ -326,6 +340,10 @@ describe("process-wide Runtime launch service", () => {
 
       await service.launch(run)
 
+      expect(sqlite.prepare("SELECT status FROM agent_runs WHERE id=?").pluck().get(runId)).toBe(
+        "success",
+      )
+      await waitForCheckpointFinalization(path, runId)
       const persisted = sqlite
         .prepare(
           "SELECT before_checkpoint_id beforeId, after_checkpoint_id afterId FROM agent_runs WHERE id = ?",
@@ -369,7 +387,11 @@ describe("process-wide Runtime launch service", () => {
       const projectRoot = join(directory, runId)
       mkdirSync(projectRoot)
       seedDirectRun(runId)
-      sqlite.prepare("UPDATE agent_runs SET worktree_path = ? WHERE id = ?").run(projectRoot, runId)
+      sqlite
+        .prepare(
+          "UPDATE agent_runs SET worktree_path = ?, permission_mode='full-access' WHERE id = ?",
+        )
+        .run(projectRoot, runId)
 
       let streamStarted!: () => void
       let release!: () => void
@@ -392,12 +414,15 @@ describe("process-wide Runtime launch service", () => {
       })
       const run = queued(runId)
       run.worktreePath = projectRoot
+      run.permissionMode = "full-access"
+      run.runtimeLaunch!.permission.mode = "full-access"
       const running = service.launch(run)
       if (outcome === "cancelled") {
         await started
         await expect(service.cancel(runId, "operator")).resolves.toBe(true)
       }
       await expect(running).rejects.toThrow()
+      await waitForCheckpointFinalization(path, runId)
 
       expect(
         sqlite
@@ -421,6 +446,116 @@ describe("process-wide Runtime launch service", () => {
           .prepare("SELECT change_type changeType FROM file_change_manifests WHERE run_id = ?")
           .all(runId),
       ).toEqual([{ changeType: "none" }])
+    },
+  )
+
+  it("rejects a postimage if a separate editor or git staging operation changed the checkout after completion", async () => {
+    const root = join(directory, "guarded")
+    mkdirSync(root)
+    execFileSync("git", ["init", "-q"], { cwd: root, windowsHide: true })
+    const git = await checkpointGitPaths(root)
+    const editor = observePostimage(root, git)
+    try {
+      writeFileSync(join(root, "user.txt"), "User edits")
+      await expect(editor.validate(["user.txt"])).rejects.toThrow("checkout changed")
+    } finally {
+      editor.close()
+    }
+    const staging = observePostimage(root, git)
+    try {
+      execFileSync("git", ["add", "user.txt"], { cwd: root, windowsHide: true })
+      await expect(staging.validate([])).rejects.toThrow("checkout changed")
+    } finally {
+      staging.close()
+    }
+  })
+
+  it.each(["success", "failure", "cancelled"])(
+    "keeps a %s turn's real edits separate from an overlapping writer in another chat",
+    async (outcome) => {
+      const root = join(directory, "overlap")
+      mkdirSync(root)
+      execFileSync("git", ["init", "-q"], { cwd: root, windowsHide: true })
+      writeFileSync(join(root, "tracked.txt"), "original\n")
+      execFileSync("git", ["add", "tracked.txt"], { cwd: root, windowsHide: true })
+      execFileSync("git", ["commit", "-qm", "fixture"], { cwd: root, windowsHide: true })
+      writeFileSync(join(root, "tracked.txt"), "user's tracked edit\r\n")
+      writeFileSync(join(root, "untracked.txt"), "user's untracked edit\r\n")
+      const requests = ["first", "second"].map((id) => {
+        seedDirectRun(id)
+        sqlite
+          .prepare(
+            "UPDATE agent_runs SET permission_mode='full-access', worktree_path=? WHERE id=?",
+          )
+          .run(root, id)
+        const request = queued(id)
+        request.worktreePath = root
+        request.projectPath = root
+        request.permissionMode = "full-access"
+        request.runtimeLaunch!.permission.mode = "full-access"
+        return request
+      })
+      const firstWrote = Promise.withResolvers<void>()
+      const resume = Promise.withResolvers<void>()
+      const secondPreparing = Promise.withResolvers<void>()
+      const value = directAdapter()
+      const session = value.startSession
+      const stream = value.streamActivity
+      const adapter: HarnessAdapter = {
+        ...value,
+        preparesSessionBeforeWorkspace: true,
+        async startSession(context) {
+          if (context.runId === "second") secondPreparing.resolve()
+          await context.waitForWorkspace!()
+          return session(context)
+        },
+        async startTurn(context) {
+          writeFileSync(
+            join(root, context.runId === "first" ? "tracked.txt" : "untracked.txt"),
+            context.runId + " wrote\r\n",
+          )
+          return { providerTurnId: context.runId }
+        },
+        async *streamActivity(context, s, t) {
+          if (context.runId === "first") {
+            firstWrote.resolve()
+            await resume.promise
+            if (outcome === "failure") throw new Error("provider failed after a write")
+          }
+          yield* stream(context, s, t)
+        },
+        async cancel() {
+          resume.resolve()
+        },
+      }
+      const service = getMainRuntimeLaunchService(path, {
+        codexFactory: () => adapter,
+        enableCodex: true,
+      })
+      const first = service.launch(requests[0]!).then(
+        () => "success",
+        () => "stopped",
+      )
+      await firstWrote.promise
+      const second = service.launch(requests[1]!)
+      await secondPreparing.promise
+      expect(
+        sqlite
+          .prepare("SELECT before_checkpoint_id FROM agent_runs WHERE id='second'")
+          .pluck()
+          .get(),
+      ).toBeNull()
+      if (outcome === "cancelled") await service.cancel("first", "owner stopped")
+      else resume.resolve()
+      expect(await first).toBe(outcome === "success" ? "success" : "stopped")
+      await second
+      await waitForCheckpointFinalization(path, "second")
+      expect(
+        sqlite.prepare("SELECT run_id,file_path FROM file_change_manifests ORDER BY run_id").all(),
+      ).toEqual([
+        { run_id: "first", file_path: "tracked.txt" },
+        { run_id: "second", file_path: "untracked.txt" },
+      ])
     },
   )
 

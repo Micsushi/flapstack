@@ -1,5 +1,8 @@
 "use client"
 
+import type { ContinueWithProvider } from "../components/compact-handoff-action"
+import { formatModelDisplayName } from "../../../../shared/model-catalog"
+
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { AlertTriangle, Camera, ChevronDown, ListTodo, Plus, RefreshCw, Target } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -166,7 +169,7 @@ export interface ChatInputAreaProps {
   // File input ref - for attachment button
   fileInputRef: React.RefObject<HTMLInputElement | null>
   // Core callbacks
-  onSend: (inputValueOverride?: string) => void
+  onSend: (inputValueOverride?: string, intent?: "queue" | "steer") => void
   onForceSend: () => void // Opt+Enter: stop stream and send immediately, bypassing queue
   onStop: () => Promise<void>
   onCompact: () => void
@@ -222,7 +225,7 @@ export interface ChatInputAreaProps {
   // Callback to switch provider for brand new (empty) sub-chats
   onProviderChange?: (provider: AgentProviderId) => void
   // Callback to continue chat with a different provider (creates new sub-chat with history)
-  onContinueWithProvider?: (provider: AgentProviderId, targetModel: string) => void
+  onContinueWithProvider?: ContinueWithProvider
   // Callback to delegate a bounded task to a distinct provider child Chat.
   onDelegateWithProvider?: (provider: AgentProviderId, targetModel: string) => void
   // Whether this sub-chat tab is the active/visible one (prevents window-level hotkeys in background tabs)
@@ -644,7 +647,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   const setLastSelectedCodexFastMode = useSetAtom(lastSelectedCodexFastModeAtom)
   const setLastSelectedCursorModelId = useSetAtom(lastSelectedCursorModelIdAtom)
   const [selectedOllamaModel, setSelectedOllamaModel] = useAtom(selectedOllamaModelAtom)
-  const availableModels = useAvailableModels()
+  const availableModels = useAvailableModels(isModelDropdownOpen || provider === "claude-code")
   const selectedModel = availableModels.models.find((model) => model.id === selectedSubChatModelId)
 
   useEffect(() => {
@@ -852,7 +855,11 @@ export const ChatInputArea = memo(function ChatInputArea({
       return localModelPicker.selectedModelId ?? "Choose local model"
     }
     if (provider === "codex") {
-      return selectedCodexModel?.name ?? selectedSubChatCodexModelId
+      return (
+        selectedCodexModel?.name ??
+        formatModelDisplayName(selectedSubChatCodexModelId) ??
+        "Choose model"
+      )
     }
 
     if (provider === "cursor-agent") {
@@ -1437,9 +1444,19 @@ export const ChatInputArea = memo(function ChatInputArea({
       : null
   const modelBlockedReason =
     antigravityBlockedReason ??
-    (provider === "codex" && !codexCatalog.isFetching && !codexCatalog.isError
-      ? codexSelectionIssue(liveCodexModels, selectedSubChatCodexModelId, selectedCodexReasoning)
-      : null)
+    (provider === "claude-code" && !hasCustomClaudeConfig && !availableModels.isOffline
+      ? availableModels.modelIssue(selectedSubChatModelId)
+      : provider === "codex"
+        ? codexCatalog.isError
+          ? "Codex could not load its models. Refresh the list to try again."
+          : !liveCodexModels
+            ? "Checking which Codex models are available."
+            : codexSelectionIssue(
+                liveCodexModels,
+                selectedSubChatCodexModelId,
+                selectedCodexReasoning,
+              )
+        : null)
   const { data: permissionPreview } = trpc.permissions.previewHarness.useQuery({
     harness: provider,
     mode: effectivePermissionMode,
@@ -1726,58 +1743,67 @@ export const ChatInputArea = memo(function ChatInputArea({
 
   // Editor submit handler - handles Enter key with queue logic
   // If input is empty and queue has items, stop stream and send first from queue
-  const handleEditorSubmit = useCallback(async () => {
-    if (modelBlockedReason) {
-      toast.error(modelBlockedReason)
-      return
-    }
-    if (localModelMissing) {
-      toast.error("Choose a local model before sending.")
-      return
-    }
-    if (worktreeBlockedReason) {
-      toast.error(worktreeWasReplaced ? "Checkout was replaced" : "Checkout unavailable", {
-        description: worktreeBlockedReason,
-      })
-      return
-    }
+  const steerOnEnter =
+    isStreaming && (resolvedRuntime === "codex" || resolvedRuntime === "claude-code")
+  const handleEditorSubmit = useCallback(
+    async (intent?: "queue") => {
+      if (modelBlockedReason) {
+        toast.error(modelBlockedReason)
+        return
+      }
+      if (localModelMissing) {
+        toast.error("Choose a local model before sending.")
+        return
+      }
+      if (worktreeBlockedReason) {
+        toast.error(worktreeWasReplaced ? "Checkout was replaced" : "Checkout unavailable", {
+          description: worktreeBlockedReason,
+        })
+        return
+      }
 
-    // Capture the chat-bound callback before transcription finishes. The input can
-    // unmount while the user navigates, but this send must keep its original target.
-    const sendToCapturedChat = onSend
-    await finishVoiceBeforeSend()
-    const inputValue = editorRef.current?.getValue() || currentDraftTextRef.current
-    const hasText = inputValue.trim().length > 0
-    const hasAttachments =
-      images.length > 0 ||
-      files.length > 0 ||
-      textContexts.length > 0 ||
-      (diffTextContexts?.length ?? 0) > 0
+      // Capture the chat-bound callback before transcription finishes. The input can
+      // unmount while the user navigates, but this send must keep its original target.
+      const sendToCapturedChat = onSend
+      await finishVoiceBeforeSend()
+      const inputValue = editorRef.current?.getValue() || currentDraftTextRef.current
+      const hasText = inputValue.trim().length > 0
+      const hasAttachments =
+        images.length > 0 ||
+        files.length > 0 ||
+        textContexts.length > 0 ||
+        (diffTextContexts?.length ?? 0) > 0
 
-    if (!hasText && !hasAttachments && queueLength > 0 && onSendFromQueue && firstQueueItemId) {
-      // Input empty, queue has items - stop stream and send from queue
-      await onStop()
-      onSendFromQueue(firstQueueItemId)
-    } else {
-      sendToCapturedChat(inputValue)
-    }
-  }, [
-    editorRef,
-    images,
-    files,
-    textContexts,
-    diffTextContexts,
-    queueLength,
-    onSendFromQueue,
-    firstQueueItemId,
-    onStop,
-    onSend,
-    finishVoiceBeforeSend,
-    worktreeBlockedReason,
-    worktreeWasReplaced,
-    localModelMissing,
-    modelBlockedReason,
-  ])
+      if (!hasText && !hasAttachments && queueLength > 0 && onSendFromQueue && firstQueueItemId) {
+        // Input empty, queue has items - stop stream and send from queue
+        await onStop()
+        onSendFromQueue(firstQueueItemId)
+      } else {
+        sendToCapturedChat(
+          inputValue,
+          intent === "queue" ? "queue" : steerOnEnter ? "steer" : undefined,
+        )
+      }
+    },
+    [
+      editorRef,
+      images,
+      files,
+      textContexts,
+      diffTextContexts,
+      queueLength,
+      onSendFromQueue,
+      firstQueueItemId,
+      onStop,
+      onSend,
+      finishVoiceBeforeSend,
+      worktreeBlockedReason,
+      worktreeWasReplaced,
+      localModelMissing,
+      modelBlockedReason,
+      steerOnEnter,
+    ],
+  )
 
   // Mention select handler
   const handleMentionSelect = useCallback(
@@ -2268,11 +2294,16 @@ export const ChatInputArea = memo(function ChatInputArea({
                   onCloseSlashTrigger={handleCloseSlashTrigger}
                   onContentChange={handleContentChange}
                   onSubmit={onSubmitWithQuestionAnswer || handleEditorSubmit}
+                  onQueueSubmit={isStreaming ? () => void handleEditorSubmit("queue") : undefined}
                   onForceSubmit={onForceSend}
                   onShiftTab={toggleMode}
                   onHistoryNavigate={handleHistoryNavigate}
                   placeholder={
-                    isStreaming ? "Add to the queue" : "Plan, @ for context, / for commands"
+                    steerOnEnter
+                      ? "Steer this turn · Ctrl+Enter to queue"
+                      : isStreaming
+                        ? "Add to the queue"
+                        : "Plan, @ for context, / for commands"
                   }
                   className={cn(
                     "bg-transparent max-h-[200px] overflow-y-auto p-1",
@@ -2300,6 +2331,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         onProviderChange?.(nextProvider)
                       }}
                       allowProviderSwitch={canSwitchProvider}
+                      continuationSource={{ chatId: parentChatId, subChatId }}
                       triggerClassName="max-w-[250px] min-w-0"
                       onContinueWithProvider={
                         !canSwitchProvider ? onContinueWithProvider : undefined
@@ -3065,7 +3097,18 @@ export const ChatInputArea = memo(function ChatInputArea({
             </PromptInput>
             {modelBlockedReason && (
               <p role="status" className="mt-2 px-2 text-xs text-muted-foreground">
-                {modelBlockedReason}
+                {modelBlockedReason}{" "}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => {
+                    if (provider === "claude-code") availableModels.retry()
+                    else if (provider === "codex") void codexCatalog.refetch()
+                    else antigravity.retry()
+                  }}
+                >
+                  Refresh models
+                </button>
               </p>
             )}
             {localModelMissing ? (

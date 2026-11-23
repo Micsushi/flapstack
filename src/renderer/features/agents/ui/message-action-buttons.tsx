@@ -13,8 +13,8 @@ import {
 } from "../../../components/ui/icons"
 import { cn } from "../../../lib/utils"
 import { writeClipboardText } from "../../../lib/clipboard"
-import { trpc, trpcClient } from "../../../lib/trpc"
-import { buildMessageSpeechRequest } from "../../../lib/message-speech-request"
+import { trpc } from "../../../lib/trpc"
+import { streamReplySpeech } from "../../../lib/reply-speech-stream"
 import {
   getSpeechCursor,
   getSpeechDisplayTokens,
@@ -22,9 +22,7 @@ import {
   getSpeechStartTime,
   extendSpeechRangeThroughPunctuation,
   normalizeSpeechDisplayWord,
-  playManagedSpeech,
   setSpeechPlaybackPosition,
-  stopManagedSpeech,
 } from "../../../lib/speech-playback"
 import { useHaptic } from "../hooks/use-haptic"
 
@@ -107,7 +105,9 @@ export const PlayButton = memo(function PlayButton({
   expandDirection = "right",
   highlightColor = "gray",
 }: PlayButtonProps) {
-  const playbackKey = messageId ?? `${chatId ?? "chat"}:${text}`
+  const { data: voiceSettings } = trpc.speech.getSettings.useQuery()
+  const replyKey = messageId ?? `${chatId ?? "chat"}:${text}`
+  const playbackKey = voiceSettings?.replyReadMode === "whole" ? replyKey + ":whole" : replyKey
   const savedPosition = getSpeechPlaybackPosition(playbackKey)
   const [state, setState] = useState<PlayButtonState>("idle")
   const [currentTime, setCurrentTime] = useState(savedPosition.currentTime)
@@ -115,7 +115,6 @@ export const PlayButton = memo(function PlayButton({
   const [spokenText, setSpokenText] = useState(savedPosition.spokenText)
   const [isExpanded, setIsExpanded] = useState(false)
   const utils = trpc.useUtils()
-  const { data: voiceSettings } = trpc.speech.getSettings.useQuery()
   const playbackRate = voiceSettings?.rate ?? 1
   const updateVoiceSettings = trpc.speech.updateSettings.useMutation({
     onMutate: async (patch) => {
@@ -132,11 +131,9 @@ export const PlayButton = memo(function PlayButton({
   const setPlaybackRate = (rate: number) => updateVoiceSettings.mutate({ rate })
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
-  const mediaSourceRef = useRef<MediaSource | null>(null)
-  const sourceBufferRef = useRef<SourceBuffer | null>(null)
-  const abortControllerRef = useRef<AbortController | null>(null)
-  const animationFrameRef = useRef<number | null>(null)
-  const chunkCountRef = useRef(0)
+  const stream = useRef<ReturnType<typeof streamReplySpeech> | null>(null)
+  const rateRef = useRef(playbackRate)
+  rateRef.current = playbackRate
   const readingCursor = useMemo(
     () => getSpeechCursor(spokenText, currentTime, duration),
     [spokenText, currentTime, duration],
@@ -170,10 +167,6 @@ export const PlayButton = memo(function PlayButton({
     }
   }, [messageId, spokenText, readingCursor.count, readingCursor.wordProgress, highlightColor])
 
-  useEffect(() => {
-    setSpeechPlaybackPosition(playbackKey, { currentTime, duration, spokenText })
-  }, [playbackKey, currentTime, duration, spokenText])
-
   // Update playback rate when it changes
   useEffect(() => {
     if (audioRef.current) {
@@ -182,137 +175,52 @@ export const PlayButton = memo(function PlayButton({
   }, [playbackRate])
 
   const cleanup = useCallback(() => {
-    if (animationFrameRef.current !== null) {
-      cancelAnimationFrame(animationFrameRef.current)
-      animationFrameRef.current = null
-    }
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-      abortControllerRef.current = null
-    }
-    stopManagedSpeech(audioRef.current)
-    if (mediaSourceRef.current && mediaSourceRef.current.readyState === "open") {
-      try {
-        mediaSourceRef.current.endOfStream()
-      } catch {
-        // Ignore errors during cleanup
-      }
-    }
+    stream.current?.stop()
+    stream.current = null
     audioRef.current = null
-    mediaSourceRef.current = null
-    sourceBufferRef.current = null
-    chunkCountRef.current = 0
   }, [])
+  useEffect(() => cleanup, [cleanup])
 
-  const playWithFallback = useCallback(async () => {
-    abortControllerRef.current = new AbortController()
-
-    const result = await trpcClient.speech.speak.mutate(
-      buildMessageSpeechRequest({ text, chatId, subChatId, messageId }),
-      { signal: abortControllerRef.current.signal },
-    )
-    if (result.skipped) {
-      setState("idle")
-      return
-    }
-    if (!result.historySaved)
-      toast.warning("Speech played but Voice History could not save", {
-        description: result.historyError || undefined,
-      })
-    const exactSpokenText = result.spokenText
-    setSpokenText(exactSpokenText)
-    setSpeechPlaybackPosition(playbackKey, { spokenText: exactSpokenText })
-    const resumeAt = getSpeechStartTime(getSpeechPlaybackPosition(playbackKey))
-    const audio = await playManagedSpeech(result, {
-      rate: playbackRate,
-      startTime: resumeAt,
-      onEnded: () => {
-        if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current)
-        const finalDuration = Number.isFinite(audio.duration) ? audio.duration : duration
-        setCurrentTime(finalDuration)
-        setDuration(finalDuration)
-        setState("idle")
-        audioRef.current = null
-      },
-      onError: () => {
-        if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current)
-        setState("idle")
-        audioRef.current = null
-      },
-      onStopped: () => {
-        if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current)
-        setState("idle")
-        audioRef.current = null
-      },
-    })
-    audio.ontimeupdate = () => {
-      setCurrentTime(audio.currentTime)
-      setSpeechPlaybackPosition(playbackKey, { currentTime: audio.currentTime })
-    }
-    const syncProgress = () => {
-      setCurrentTime(audio.currentTime)
-      setSpeechPlaybackPosition(playbackKey, { currentTime: audio.currentTime })
-      if (!audio.paused && !audio.ended) {
-        animationFrameRef.current = requestAnimationFrame(syncProgress)
-      }
-    }
-    animationFrameRef.current = requestAnimationFrame(syncProgress)
-    audio.ondurationchange = () => {
-      const nextDuration = Number.isFinite(audio.duration) ? audio.duration : 0
-      setDuration(nextDuration)
-      setSpeechPlaybackPosition(playbackKey, { duration: nextDuration })
-    }
-    const nextDuration = Number.isFinite(audio.duration) ? audio.duration : duration
-    setDuration(nextDuration)
-    setCurrentTime(resumeAt)
-    setSpeechPlaybackPosition(playbackKey, { currentTime: resumeAt, duration: nextDuration })
-    audioRef.current = audio
-    if (result.artifactId) void trpcClient.speech.markPlayed.mutate({ id: result.artifactId })
-    setState("playing")
-  }, [text, playbackRate, chatId, subChatId, messageId, playbackKey, duration])
-
-  const handlePlay = useCallback(async () => {
+  const handlePlay = useCallback(() => {
     setIsExpanded(true)
-
-    // If playing, stop the audio (and halt any server-side synthesis).
-    if (state === "playing") {
-      stopManagedSpeech(audioRef.current)
-      audioRef.current = null
-      void trpcClient.speech.stopSpeaking.mutate()
-      setState("idle")
-      return
-    }
-
-    // If loading, cancel and reset (abort the request + stop synthesis).
-    if (state === "loading") {
+    if (state !== "idle") {
       cleanup()
-      void trpcClient.speech.stopSpeaking.mutate()
       setState("idle")
       return
     }
-
-    // Preempt current renderer playback immediately. Waiting for the next
-    // synthesis result would allow the old utterance to keep talking.
-    cleanup()
-    stopManagedSpeech()
     setState("loading")
-    chunkCountRef.current = 0
-
-    try {
-      await playWithFallback()
-    } catch (error) {
-      if ((error as Error).name !== "AbortError") {
-        console.error("[PlayButton] TTS error:", error)
-      }
-      cleanup()
-      setState("idle")
-    }
-  }, [state, cleanup, playWithFallback])
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return cleanup
-  }, [cleanup])
+    const saved = getSpeechPlaybackPosition(playbackKey)
+    stream.current = streamReplySpeech(
+      { text, chatId, subChatId, messageId },
+      {
+        startTime: getSpeechStartTime(saved),
+        getRate: () => rateRef.current,
+        onText(value) {
+          setSpokenText(value)
+          setSpeechPlaybackPosition(playbackKey, { spokenText: value })
+        },
+        onProgress(time, total) {
+          setCurrentTime(time)
+          setDuration(total)
+          setSpeechPlaybackPosition(playbackKey, { currentTime: time, duration: total })
+        },
+        onPlaying(audio) {
+          audioRef.current = audio
+          setState("playing")
+        },
+        onFinish() {
+          audioRef.current = null
+          setState("idle")
+        },
+        onError(error) {
+          toast.error("Could not play reply", { description: error.message })
+        },
+        onHistoryError(error) {
+          toast.warning("Could not save reply audio", { description: error })
+        },
+      },
+    )
+  }, [state, cleanup, playbackKey, text, chatId, subChatId, messageId])
 
   return (
     <div
@@ -377,7 +285,7 @@ export const PlayButton = memo(function PlayButton({
             value={Math.min(currentTime, duration || 1)}
             onChange={(event) => {
               const nextTime = Number(event.target.value)
-              if (audioRef.current) audioRef.current.currentTime = nextTime
+              stream.current?.seek(nextTime)
               setCurrentTime(nextTime)
               setSpeechPlaybackPosition(playbackKey, { currentTime: nextTime })
             }}

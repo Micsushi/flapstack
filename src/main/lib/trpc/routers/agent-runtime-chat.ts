@@ -9,6 +9,7 @@ import { app } from "electron"
 import { join } from "node:path"
 import { z } from "zod"
 import { CHAT_MODES } from "../../../../shared/chat-mode"
+import { MAX_AGENT_ACTIVITY_PAYLOAD_BYTES } from "../../../../shared/agent-activity"
 import { CODEX_THREAD_VISIBILITIES } from "../../../../shared/codex-thread-visibility"
 import { openAppDatabase } from "../../db/access"
 import { getDatabasePath } from "../../db"
@@ -315,6 +316,32 @@ export const agentRuntimeChatRouter = router({
       }
     })
   }),
+
+  steer: publicProcedure
+    .input(
+      z.object({
+        runId: z.string().trim().min(1).max(512),
+        subChatId: z.string().trim().min(1).max(512),
+        text: z
+          .string()
+          .trim()
+          .min(1)
+          .refine(
+            (text) =>
+              Buffer.byteLength(JSON.stringify({ code: "user-steer", message: text })) <=
+              MAX_AGENT_ACTIVITY_PAYLOAD_BYTES,
+            "This steering message is too long. Shorten it and send again.",
+          ),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      await requireRuntimeLaunchAuthority(getDatabasePath()).steer(
+        input.runId,
+        input.subChatId,
+        input.text,
+      )
+      return { accepted: true as const }
+    }),
 
   cancel: publicProcedure
     .input(z.object({ runId: z.string().trim().min(1).max(512) }))

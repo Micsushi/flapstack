@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import { waitForCheckpointFinalization } from "../run-checkpoint-boundary"
 import { providerAccountSnapshotFromRow } from "../provider-accounts/snapshot"
 import { openAppDatabase } from "../db/access"
 import { execFileSync } from "node:child_process"
@@ -879,7 +880,7 @@ export class AutomationExecutionService {
     }
   }
 
-  private finalize(
+  private async finalize(
     occurrence: LeasedAutomationOccurrence,
     executionId: string,
     attempt: number,
@@ -889,7 +890,8 @@ export class AutomationExecutionService {
     stopReason: string | null,
     message: string,
     allowRetry = true,
-  ): AutomationExecutionOutcome {
+  ): Promise<AutomationExecutionOutcome> {
+    if (materialized) await waitForCheckpointFinalization(this.databasePath, materialized.run.runId)
     return this.withDatabase((database) => {
       const current = database
         .prepare("SELECT state FROM automation_executions WHERE id = ?")

@@ -66,6 +66,10 @@ export class AgentRuntimeRegistry<
     })
   }
 
+  closeIdleSessions(): void {
+    for (const adapter of this.adapters.values()) adapter.closeIdleSessions?.()
+  }
+
   get(runtime: ResolvedAgentRuntime, harness?: string): HarnessAdapter<TActivity> | null {
     const resolved = this.resolveEntry(runtime, harness)
     if (!resolved) return null

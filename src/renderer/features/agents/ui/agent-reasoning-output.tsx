@@ -147,7 +147,7 @@ export const AgentReasoningOutput = memo(function AgentReasoningOutput({
   if (hideHeader) {
     if (!reasoningOutputText.trim()) return null
     return (
-      <div className="max-h-40 overflow-y-auto px-2 py-1 text-muted-foreground scrollbar-hide">
+      <div className="min-w-0 break-words px-2 py-1 text-muted-foreground">
         <ChatMarkdownRenderer content={reasoningOutputText} size="sm" isStreaming={isStreaming} />
       </div>
     )

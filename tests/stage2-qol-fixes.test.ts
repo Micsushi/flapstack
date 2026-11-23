@@ -12,14 +12,15 @@ describe("Stage 2 QOL regression contracts", () => {
     )
   })
 
-  it("collapses a single tool activity inside reasoning", () => {
+  it("keeps tool activity in one turn disclosure", () => {
     const source = readSource("src/renderer/features/agents/main/assistant-message-item.tsx")
-    expect(source).toContain(
-      'if (current.length >= 1) result.push({ type: "activity-group", parts: current })',
+    const timeline = source.slice(
+      source.indexOf("<ReasoningTimeline"),
+      source.indexOf("</ReasoningTimeline>"),
     )
-    expect(source).not.toContain(
-      'if (current.length >= 2) result.push({ type: "activity-group", parts: current })',
-    )
+    expect(timeline).toContain("stepParts.map")
+    expect(timeline).toContain("renderPart")
+    expect(timeline).not.toContain("ToolActivityGroup")
   })
 
   it("moves duplicate assistant toolbar actions into overflow only when narrow", () => {

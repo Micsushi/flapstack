@@ -1,6 +1,7 @@
 import { useSetAtom } from "jotai"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { subChatFilesAtom, subChatToChatMapAtom, type SubChatFileChange } from "../atoms"
+import { trpc } from "../../../lib/trpc"
 import { runtimePatchStats } from "../utils/runtime-patch-stats"
 // import { REPO_ROOT_PATH } from "@/lib/codesandbox-constants"
 const REPO_ROOT_PATH = "/workspace" // Desktop mock
@@ -19,6 +20,7 @@ interface MessagePart {
 }
 
 interface Message {
+  metadata?: { runId?: string }
   role: string
   parts?: MessagePart[]
 }
@@ -37,6 +39,21 @@ export function useChangedFilesTracking(
 ) {
   const setSubChatFiles = useSetAtom(subChatFilesAtom)
   const setSubChatToChatMap = useSetAtom(subChatToChatMapAtom)
+
+  const undone = trpc.runs.undoneForSubChat.useQuery(
+    { subChatId },
+    {
+      enabled: messages.some(
+        (message) =>
+          message.metadata?.runId &&
+          message.parts?.some((part) =>
+            ["tool-ApplyPatch", "tool-Edit", "tool-Write"].includes(part.type),
+          ),
+      ),
+    },
+  )
+  const undoneIds = useMemo(() => new Set(undone.data), [undone.data])
+  const previousUndone = useRef(undoneIds)
 
   // Helper to get display path (removes sandbox prefixes and worktree paths)
   const getDisplayPath = useCallback(
@@ -136,7 +153,8 @@ export function useChangedFilesTracking(
       >()
 
       for (const msg of inputMessages) {
-        if (msg.role !== "assistant") continue
+        if (msg.role !== "assistant" || (msg.metadata?.runId && undoneIds.has(msg.metadata.runId)))
+          continue
         for (const part of msg.parts || []) {
           if (part.type === "tool-ApplyPatch") {
             const changes = part.input?.changes?.length
@@ -219,7 +237,7 @@ export function useChangedFilesTracking(
 
       return result
     },
-    [messages, getDisplayPath, calculateDiffStats, isSessionFile],
+    [messages, getDisplayPath, calculateDiffStats, isSessionFile, undoneIds],
   )
 
   const recomputeChangedFiles = useCallback(
@@ -235,7 +253,7 @@ export function useChangedFilesTracking(
   // Also calculate on initial mount if not streaming
   useEffect(() => {
     // Detect streaming end: was streaming, now not streaming
-    if (wasStreamingRef.current && !isStreaming) {
+    if ((!isStreaming && wasStreamingRef.current) || previousUndone.current !== undoneIds) {
       const newChangedFiles = calculateChangedFiles()
       setChangedFiles(newChangedFiles)
       isInitializedRef.current = true
@@ -247,8 +265,9 @@ export function useChangedFilesTracking(
       isInitializedRef.current = true
     }
 
+    previousUndone.current = undoneIds
     wasStreamingRef.current = isStreaming
-  }, [isStreaming, calculateChangedFiles, messages.length])
+  }, [isStreaming, calculateChangedFiles, messages.length, undoneIds])
 
   // Update atom when changed files change
   useEffect(() => {

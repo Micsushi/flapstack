@@ -132,7 +132,7 @@ it("accepts successful tool-only turns and actual answers after a failure, inclu
     sessionUpdate: "agent_message_chunk",
     content: { type: "text", text: "Checking again." },
   })
-  turn.update({
+  const command = turn.update({
     sessionUpdate: "tool_call",
     toolCallId: "b",
     kind: "execute",
@@ -140,7 +140,12 @@ it("accepts successful tool-only turns and actual answers after a failure, inclu
     status: "completed",
     rawOutput: { exit_code: 3 },
   })
-  expect(turn.completionError()).toBeInstanceOf(Error)
+  expect(command.at(-1)).toMatchObject({
+    kind: "command",
+    phase: "completed",
+    payload: { exitCode: 3 },
+  })
+  expect(turn.completionError()).toBeNull()
   turn.update({
     sessionUpdate: "agent_message_chunk",
     content: { type: "text", text: "Could not read the file." },

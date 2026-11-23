@@ -2,7 +2,7 @@
 import { parseMessageReply } from "../../../../shared/message-replies"
 import { markStoppedChatTurns } from "../../../../shared/stopped-chat-turn"
 import { textContextMention } from "../lib/queue-utils"
-import { SideQuestionWorkspace } from "./side-question-panel"
+import { SideQuestionTrigger, SideQuestionWorkspace } from "./side-question-panel"
 import { MessageReplyContext } from "./message-reply-context"
 
 import { stripEmojis } from "../../../components/chat-markdown-renderer"
@@ -85,6 +85,8 @@ import { useRemoteChat } from "../../../lib/hooks/use-remote-chats"
 import { useResolvedHotkeyDisplay } from "../../../lib/hotkeys"
 import { appStore } from "../../../lib/jotai-store"
 import { api } from "../../../lib/mock-api"
+import { recordAppAction } from "../../../lib/app-action-history"
+import { getSteerableRun } from "../lib/direct-runtime-chat-transport"
 import { trpc, trpcClient } from "../../../lib/trpc"
 import { prepareReplyAudio } from "../../../lib/prepare-reply-audio"
 import { stopManagedSpeech } from "../../../lib/speech-playback"
@@ -279,6 +281,7 @@ import {
 } from "../utils/pr-message"
 import { ChatInputArea } from "./chat-input-area"
 import { IsolatedMessagesSection, type MessageVirtualizerHandle } from "./isolated-messages-section"
+import { DropdownMenuItem } from "../../../components/ui/dropdown-menu"
 import { ChatRuntimeActivity } from "../runtime-activity/chat-runtime-activity"
 import { RuntimeActivityFixtureControls } from "../runtime-activity/runtime-activity-fixture-controls"
 // import { selectedTeamIdAtom } from "@/lib/atoms/team"
@@ -396,33 +399,14 @@ function getDistanceFromScrollBottom(container: HTMLElement) {
   return Math.max(0, container.scrollHeight - container.scrollTop - container.clientHeight)
 }
 
-const STREAMING_WORDS = [
-  "Thinking",
-  "Working",
-  "Cooking",
-  "Pondering",
-  "Mulling",
-  "Considering",
-] as const
-
-function StreamingCue() {
-  const [wordIndex, setWordIndex] = useState(0)
-  useEffect(() => {
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return
-    const timer = window.setInterval(
-      () => setWordIndex((current) => (current + 1) % STREAMING_WORDS.length),
-      4_000,
-    )
-    return () => window.clearInterval(timer)
-  }, [])
-
+function StreamingCue({ compacting }: { compacting: boolean }) {
   return (
     <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground" role="status">
       <span
         className="h-1.5 w-1.5 animate-pulse motion-reduce:animate-none rounded-full bg-blue-500"
         aria-hidden
       />
-      <span>{STREAMING_WORDS[wordIndex]}…</span>
+      <span>{compacting ? "Compacting…" : "Starting…"}</span>
     </div>
   )
 }
@@ -441,6 +425,8 @@ function hasAssistantOutputForLatestTurn(messages: readonly any[]) {
       (part: any) =>
         (part.type === "text" && typeof part.text === "string" && part.text.trim().length > 0) ||
         part.type?.startsWith("tool-") ||
+        (part.type === "reasoning" && part.text?.trim()) ||
+        part.type === "data-user-steer" ||
         part.type === "dynamic-tool",
     )
   })
@@ -1944,6 +1930,7 @@ const ChatViewInner = memo(function ChatViewInner({
   const scrollInitializedRef = useRef(false) // Track whether initial scroll setup has run for this pane
   const hasUnapprovedPlanRef = useRef(false) // Track unapproved plan state for scroll initialization
   const chatContainerRef = useRef<HTMLElement | null>(null)
+  const [transcriptOpen, setTranscriptOpen] = useState(false)
   const messageVirtualizerRef = useRef<MessageVirtualizerHandle>(null)
   const [hasUnreadBottomUpdate, setHasUnreadBottomUpdate] = useState(false)
   // Cleanup isAutoScrollingRef on unmount to prevent stuck state
@@ -2000,9 +1987,8 @@ const ChatViewInner = memo(function ChatViewInner({
   const chatContainerObserverRef = useRef<ResizeObserver | null>(null)
   const bottomDockObserverRef = useRef<ResizeObserver | null>(null)
   const chatContainerHeightRef = useRef(0)
-  const bottomDockHeightRef = useRef(0)
   const syncCompactChatHeight = useCallback(() => {
-    const usableChatHeight = chatContainerHeightRef.current - bottomDockHeightRef.current
+    const usableChatHeight = chatContainerHeightRef.current
     chatContainerRef.current?.toggleAttribute("data-compact-chat-height", usableChatHeight < 400)
   }, [])
 
@@ -4272,9 +4258,10 @@ const ChatViewInner = memo(function ChatViewInner({
   const filesRef = useRef(files)
   filesRef.current = files
   const sendInFlightRef = useRef(false)
+  const steeringInFlightRef = useRef(false)
 
   const handleSend = useCallback(
-    async (inputValueOverride?: string) => {
+    async (inputValueOverride?: string, intent?: "queue" | "steer") => {
       // Block sending while sandbox is still being set up
       if (sandboxSetupStatus !== "ready") {
         return
@@ -4309,6 +4296,38 @@ const ChatViewInner = memo(function ChatViewInner({
         return
 
       const isStreamingNow = isStreamingRef.current
+      if (intent === "steer") {
+        const runId = getSteerableRun(subChatId)
+        if (!runId || !isStreamingNow) {
+          toast.info("This turn is not accepting steering. Your draft is saved.")
+          return
+        }
+        if (
+          currentImages.length ||
+          currentFiles.length ||
+          hasPastedTexts ||
+          hasTextContexts ||
+          hasDiffTextContexts
+        ) {
+          toast.info("Use Ctrl+Enter to queue attachments for the next turn.")
+          return
+        }
+        if (steeringInFlightRef.current) return
+        steeringInFlightRef.current = true
+        try {
+          await trpcClient.agentRuntimeChat.steer.mutate({
+            runId,
+            subChatId,
+            text: inputValue.trim(),
+          })
+          if (editorRef.current?.getValue() === inputValue) clearInputAndDraft()
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "Could not steer this turn")
+        } finally {
+          steeringInFlightRef.current = false
+        }
+        return
+      }
 
       if (!isStreamingNow) {
         if (sendInFlightRef.current) return
@@ -4557,6 +4576,7 @@ const ChatViewInner = memo(function ChatViewInner({
       addToQueue,
       setExpiredQuestionsMap,
       rememberMessagedProject,
+      clearInputAndDraft,
     ],
   )
 
@@ -5075,74 +5095,64 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Continue with a different provider through the durable top-level Chat authority.
   const isContinuingRef = useRef(false)
-  const providerContinuationRequestRef = useRef<string | null>(null)
   const handleContinueWithProvider = useCallback(
-    async (targetProvider: AgentProviderId, targetModel: string) => {
-      if (isStreaming || isContinuingRef.current) return
-      if (!messages || messages.length === 0) return
+    async (
+      targetProvider: AgentProviderId,
+      targetModel: string,
+      confirmation: { requestId: string; digest: string },
+    ) => {
+      if (isStreaming || isContinuingRef.current || !messages.length)
+        throw new Error("Wait until this turn finishes.")
       isContinuingRef.current = true
-
       try {
-        const preference =
-          targetProvider === "claude-code"
-            ? "claude-code"
-            : targetProvider === "codex"
-              ? "codex"
-              : "flapstack-native"
-        const requestId = providerContinuationRequestRef.current ?? crypto.randomUUID()
-        providerContinuationRequestRef.current = requestId
-        const preview = await trpcClient.chats.previewRuntimeContinuation.query({
-          sourceChatId: parentChatId,
-          targetHarness: targetProvider,
-          targetModel,
-          preference,
-          requestId,
-        })
-        const modelName =
-          formatModelDisplayName(preview.targetSnapshot.model) ?? "the provider default model"
-        const worktreePath = preview.authorityCeiling.worktreePath
-        const worktreeName = worktreePath?.split(/[\\/]/).filter(Boolean).at(-1) ?? "None"
-        const confirmed = window.confirm(
-          [
-            `Continue with ${modelName}?`,
-            "",
-            `Provider: ${preview.targetSnapshot.harness}`,
-            `Runtime: ${preview.targetSnapshot.runtime} (${preview.targetSnapshot.runtimeMode})`,
-            `Messages to include: ${preview.visibleMessageCount}`,
-            `Permission: ${preview.authorityCeiling.permissionMode}`,
-            `Network: ${preview.authorityCeiling.network ? "Allowed" : "Blocked"}`,
-            `Worktree: ${worktreeName}`,
-            "",
-            "Creates a new child Chat and provider session. Your source Chat stays unchanged.",
-          ].join("\n"),
-        )
-        if (!confirmed) {
-          providerContinuationRequestRef.current = null
-          return
-        }
+        const name = getHarnessChipMeta(targetProvider).name
         const created = await trpcClient.chats.continueWithRuntime.mutate({
           sourceChatId: parentChatId,
+          compactSourceSubChatId: subChatId,
           targetHarness: targetProvider,
           targetModel,
-          preference,
-          requestId,
-          confirmedPreviewDigest: preview.digest,
+          preference:
+            targetProvider === "claude-code"
+              ? "claude-code"
+              : targetProvider === "codex"
+                ? "codex"
+                : "flapstack-native",
+          requestId: confirmation.requestId,
+          confirmedPreviewDigest: confirmation.digest,
         })
-        await localUtils.chats.list.invalidate({})
+        void localUtils.chats.list.invalidate({})
         appStore.set(openAgentChatIdsAtom, (current) =>
           current.includes(created.chatId) ? current : [...current, created.chatId],
         )
         appStore.set(selectedAgentChatIdAtom, created.chatId)
-        providerContinuationRequestRef.current = null
-        toast.success(`Continued in a new ${targetProvider} Chat`)
-      } catch (error) {
-        console.error("[handleContinueWithProvider] Error:", error)
-        toast.error(error instanceof Error ? error.message : "Failed to continue with provider")
+        if (created.created)
+          recordAppAction({
+            label: "Continue in " + name,
+            undo: async () => {
+              await trpcClient.chats.undoRuntimeContinuation.mutate({
+                sourceChatId: parentChatId,
+                targetChatId: created.chatId,
+              })
+              appStore.set(openAgentChatIdsAtom, (ids) => ids.filter((id) => id !== created.chatId))
+              if (appStore.get(selectedAgentChatIdAtom) === created.chatId)
+                appStore.set(selectedAgentChatIdAtom, parentChatId)
+              void localUtils.chats.list.invalidate({})
+            },
+            redo: async () => {
+              await trpcClient.chats.restore.mutate({ id: created.chatId })
+              appStore.set(openAgentChatIdsAtom, (ids) =>
+                ids.includes(created.chatId) ? ids : [...ids, created.chatId],
+              )
+              appStore.set(selectedAgentChatIdAtom, created.chatId)
+              void localUtils.chats.list.invalidate({})
+            },
+          })
+        toast.success("Continued in " + name)
       } finally {
         isContinuingRef.current = false
       }
     },
-    [isStreaming, localUtils.chats.list, messages, parentChatId],
+    [isStreaming, localUtils.chats.list, messages.length, parentChatId, subChatId],
   )
   const isDelegatingRef = useRef(false)
   const handleDelegateWithProvider = useCallback(
@@ -5244,6 +5254,26 @@ const ChatViewInner = memo(function ChatViewInner({
             {/* Chat search bar */}
             <ChatSearchBar messages={messages} topOffset={searchBarTopOffset} />
 
+            {isMobile && (
+              <div className="flex shrink-0 justify-end gap-1 px-2">
+                <SideQuestionTrigger />
+                <ChatRuntimeActivity chatId={parentChatId} live={isStreaming} />
+              </div>
+            )}
+
+            {!isMobile && (
+              <ChatRuntimeActivity
+                chatId={parentChatId}
+                live={isStreaming}
+                open={transcriptOpen}
+                onOpenChange={setTranscriptOpen}
+                returnFocus={() => {
+                  chatContainerRef.current?.parentElement
+                    ?.querySelector<HTMLButtonElement>('button[aria-label="More chat actions"]')
+                    ?.focus()
+                }}
+              />
+            )}
             {/* Chat title - flex above scroll area (desktop only) */}
             {!isMobile && (
               <div
@@ -5272,7 +5302,17 @@ const ChatViewInner = memo(function ChatViewInner({
                   onDismissAgentWait={handleDismissAgentWait}
                   workspaceBranch={workspaceBranch}
                   localFolderPath={localFolderPath}
-                  headerActions={isActive ? headerActions : undefined}
+                  headerActions={
+                    <>
+                      {isActive && headerActions}
+                      <SideQuestionTrigger inMenu />
+                      <DropdownMenuItem
+                        onSelect={() => requestAnimationFrame(() => setTranscriptOpen(true))}
+                      >
+                        Activity transcript
+                      </DropdownMenuItem>
+                    </>
+                  }
                 />
               </div>
             )}
@@ -5313,21 +5353,14 @@ const ChatViewInner = memo(function ChatViewInner({
                   chatContainerObserverRef.current = observer
                 }
               }}
-              className="flex-1 overflow-y-auto w-full relative allow-text-selection outline-none"
+              className="min-h-0 flex-1 overflow-y-auto w-full relative allow-text-selection outline-none"
               tabIndex={-1}
               data-chat-container
               data-active-sub-chat-id={subChatId}
               data-stage6-performance-message-count={messages.length}
               data-visible-activity-count={visibleActivityCount}
             >
-              <div
-                ref={contentWrapperRef}
-                className="mx-auto max-w-2xl px-2 pt-6"
-                style={{
-                  paddingBottom:
-                    "calc(var(--chat-bottom-dock-height, var(--chat-input-height, 4rem)) + 32px)",
-                }}
-              >
+              <div ref={contentWrapperRef} className="mx-auto max-w-2xl px-2 pt-6 pb-5">
                 <div className="space-y-4">
                   {/* ISOLATED: Messages rendered via Jotai atom subscription
                 Each component subscribes to specific atoms and only re-renders when those change
@@ -5337,11 +5370,6 @@ const ChatViewInner = memo(function ChatViewInner({
                       projectId={projectId ?? null}
                       chatId={parentChatId}
                       subChatId={subChatId}
-                    />
-                    <ChatRuntimeActivity
-                      key={parentChatId}
-                      chatId={parentChatId}
-                      live={isStreaming}
                     />
                     <MessageReplyContext.Provider value={handleReplyToMessage}>
                       <IsolatedMessagesSection
@@ -5364,7 +5392,7 @@ const ChatViewInner = memo(function ChatViewInner({
                         onFork={handleForkFromMessage}
                       />
                     </MessageReplyContext.Provider>
-                    {showStreamingCue && <StreamingCue />}
+                    {showStreamingCue && <StreamingCue compacting={isCompacting} />}
                     {(status === "error" || persistedRunFailed) && (
                       <div
                         role="alert"
@@ -5416,15 +5444,13 @@ const ChatViewInner = memo(function ChatViewInner({
                 const root = element.parentElement
                 const observer = new ResizeObserver(([entry]) => {
                   const height = entry?.contentRect.height ?? 0
-                  bottomDockHeightRef.current = height
-                  syncCompactChatHeight()
                   root?.style.setProperty("--chat-bottom-dock-height", `${height}px`)
                   root?.style.setProperty("--chat-input-height", `${height}px`)
                 })
                 observer.observe(element)
                 bottomDockObserverRef.current = observer
               }}
-              className="absolute bottom-0 left-0 right-3 z-20"
+              className="relative z-20 shrink-0 bg-background pr-3"
               data-chat-bottom-dock
             >
               {/* Questions stay visible without expanding or taking focus until requested. */}

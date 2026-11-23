@@ -48,56 +48,52 @@ export const BETA_FEATURE_REGISTRY: ReadonlyArray<{
   {
     id: "workspaceEditing",
     label: "File editing",
-    description:
-      "Edit connected chat text files with durable drafts, conflict-checked Save, opt-in autosave, disk review and undo. Draft discard and undo preserve the saved file.",
+    description: "Edit project files with recoverable drafts and conflict-checked saves.",
   },
   {
     id: "diffAnnotations",
     label: "Code review comments",
-    description:
-      "Diff-bound comments with editing, reversible deletion, and queued feedback to the selected conversation. Sent batches show status and offer cancellation.",
+    description: "Send comments on specific changes to a chat.",
   },
   {
     id: "streamedFileSearch",
     label: "Search while scanning",
-    description:
-      "Show partial file discovery results while scanning. Existing search remains available when disabled.",
+    description: "Show matching files as the project is scanned.",
   },
   {
     id: "terminalRecovery",
     label: "Restore terminal output",
-    description:
-      "Reattach terminal views and recover saved output after restart. Restored history is stopped; processes and commands are not replayed.",
+    description: "Recover terminal output after restart without rerunning commands.",
   },
   {
     id: "projectMemory",
     label: "Project knowledge",
-    description: "Project knowledge sections, run context, search, backups, and editing.",
+    description: "Save and search notes that agents can use as project context.",
   },
   {
     id: "orchestration",
     label: "Agent workflows",
-    description: "Multi-agent workflows, coordination engines, fleet controls, and recovery.",
+    description: "Coordinate multiple agents on a shared task.",
   },
   {
     id: "savedWorkspaces",
     label: "Saved layouts",
-    description: "Saved layouts, operation workspaces, pane restoration, and pop-out windows.",
+    description: "Restore saved pane layouts and pop-out windows.",
   },
   {
     id: "automations",
     label: "Automations",
-    description: "Automation creation, schedules, event triggers, execution, and inbox.",
+    description: "Run tasks on a schedule or in response to events.",
   },
   {
     id: "planning",
     label: "Work board & plans",
-    description: "Plan sources, task proposals, plan promotion, and Kanban controls.",
+    description: "Organize tasks on a board and turn proposals into plans.",
   },
   {
     id: "branchesAndWorktrees",
     label: "Branches & worktrees",
-    description: "Read-only repository branch and worktree overview.",
+    description: "Inspect branches and worktrees for a repository.",
   },
 ]
 

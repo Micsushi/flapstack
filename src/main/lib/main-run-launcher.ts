@@ -10,6 +10,7 @@ import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
 import { randomUUID } from "node:crypto"
 import { promisify } from "node:util"
+import { setImmediate as nextEventLoop } from "node:timers/promises"
 import { createAppRouter } from "./trpc/routers"
 import { publishLocalProductInvalidation } from "./mcp-control/invalidation-bridge"
 import {
@@ -66,7 +67,15 @@ import { sanitizeRuntimeText } from "./agent-runtime/sanitizer"
 import { getDatabasePath } from "./db"
 import * as schema from "./db/schema"
 import { nowEpochSeconds } from "./db/timestamps"
-import { captureAgentRunBefore, captureAgentRunCompletionArtifacts } from "./agent-run-lifecycle"
+import { captureAgentRunBefore } from "./agent-run-lifecycle"
+import { captureCheckpoint, captureRunManifest } from "./checkpoints"
+import {
+  acquireCheckpointCheckout,
+  checkpointGitPaths,
+  observePostimage,
+  trackCheckpointFinalization,
+  type CheckpointGitPaths,
+} from "./run-checkpoint-boundary"
 import {
   createFlapstackNativeAdapterFactory,
   type FlapstackNativeDelegationProbe,
@@ -179,9 +188,25 @@ export type RuntimeStructuredOutput = Readonly<{
 }>
 
 const services = new Map<string, MainRuntimeLaunchService>()
+type RunCheckpointCheckout = {
+  path: string
+  git: CheckpointGitPaths
+  release(): void
+  providerCleanup: Promise<void>
+  providerStopped(): void
+  finalization?: Promise<void>
+}
 
 export function hasActiveMainRuntimeRuns(): boolean {
-  return [...services.values()].some((service) => service.coordinator.activeRunIds().length > 0)
+  return [...services.values()].some((service) => service.activeRunIds().length > 0)
+}
+export async function cancelMainRuntimeRunsForShutdown() {
+  for (const service of services.values()) service.registry.closeIdleSessions()
+  await Promise.all(
+    [...services.values()].flatMap((service) =>
+      service.activeRunIds().map((id) => service.cancel(id, "app-quit")),
+    ),
+  )
 }
 const TRANSLATED_RUNTIME_RELEASE_REASON =
   "Translated Runtime pack credentialed provider and package evidence is open."
@@ -197,6 +222,7 @@ export class MainRuntimeLaunchService {
   private readonly prelaunchCancellations = new Set<string>()
   private readonly persistedCancellations = new Map<string, Promise<boolean>>()
   private readonly persistedOperations = new Map<string, Promise<void>>()
+  private readonly checkpointCheckouts = new Map<string, RunCheckpointCheckout>()
   private readonly databasePath: string
   private readonly hookStore: HookStateStore
   private readonly hookRuntimeExecutor: ManagedHookRuntimeExecutor
@@ -374,11 +400,6 @@ export class MainRuntimeLaunchService {
         { runtime: "flapstack-native", factory: nativeFactory },
       ])
     this.coordinator = new RuntimeLaunchCoordinator(this.registry, {
-      prepareWorkspace: async ({ runId, launch }) => {
-        if (launch.resolvedRuntime !== "flapstack-native" || launch.harness === "antigravity") {
-          await this.serializePersistedOperation(runId, () => this.captureBeforeCheckpoint(runId))
-        }
-      },
       persistIntent: (request) => this.persistIntent(request.runId, request.launch),
       persistSession: (request, session) => this.persistSession(request.runId, session),
       persistTurn: (request, session, turn) =>
@@ -394,13 +415,24 @@ export class MainRuntimeLaunchService {
       throw new Error(`Runtime run ${run.runId} is already active.`)
     }
     this.runs.set(run.runId, run)
+    let workspace: Promise<void> | undefined
     try {
       assertFrozenProfileToolPolicySupported(run)
+      // Give an immediate cancellation precedence over opening the project or provider.
+      await Promise.resolve()
+      if (this.prelaunchCancellations.has(run.runId))
+        throw new RuntimeLaunchCancelledError(run.runId)
+      const resolvedLaunch = run.runtimeLaunch ?? legacyLaunch(run)
+      if (resolvedLaunch.resolvedRuntime !== "flapstack-native" || run.harness === "antigravity") {
+        workspace = this.serializePersistedOperation(run.runId, () =>
+          this.captureBeforeCheckpoint(run.runId),
+        )
+        void workspace.catch(() => {})
+      }
       const instructions = await this.resolveDirectRuntimeInstructions(run)
       if (this.prelaunchCancellations.has(run.runId)) {
         throw new RuntimeLaunchCancelledError(run.runId)
       }
-      const resolvedLaunch = run.runtimeLaunch ?? legacyLaunch(run)
       const persistedSession = await this.loadPersistedSession(run.runId)
       let recordTaskContext = ""
       if (
@@ -436,16 +468,19 @@ export class MainRuntimeLaunchService {
       if (this.prelaunchCancellations.has(run.runId)) {
         throw new RuntimeLaunchCancelledError(run.runId)
       }
-      await this.coordinator.launch({
-        runId: run.runId,
-        chatId: run.chatId,
-        subChatId: run.subChatId,
-        launch: resolvedLaunch,
-        prompt: recordTaskContext ? `${recordTaskContext}\n\n${prompt}` : prompt,
-        instructions,
-        outputSchema: run.outputSchema,
-        persistedSession,
-      })
+      await this.coordinator.launch(
+        {
+          runId: run.runId,
+          chatId: run.chatId,
+          subChatId: run.subChatId,
+          launch: resolvedLaunch,
+          prompt: recordTaskContext ? `${recordTaskContext}\n\n${prompt}` : prompt,
+          instructions,
+          outputSchema: run.outputSchema,
+          persistedSession,
+        },
+        workspace,
+      )
     } catch (error) {
       const cancelled =
         error instanceof RuntimeLaunchCancelledError ||
@@ -462,10 +497,24 @@ export class MainRuntimeLaunchService {
         ? error
         : new RuntimeLaunchCancelledError(run.runId)
     } finally {
+      await workspace?.catch(() => {})
+      const checkout = this.checkpointCheckouts.get(run.runId)
+      checkout?.providerStopped()
+      if (checkout?.finalization) {
+        // A successor must wait for both the provider cleanup and the final image.
+        void checkout.finalization
+          .finally(checkout.release)
+          .catch((error) => console.warn("[checkpoints] Could not release checkout", error))
+      } else checkout?.release()
+      this.checkpointCheckouts.delete(run.runId)
       this.prelaunchCancellations.delete(run.runId)
       this.runs.delete(run.runId)
       this.streams.delete(run.runId)
     }
+  }
+
+  activeRunIds() {
+    return [...new Set([...this.runs.keys(), ...this.coordinator.activeRunIds()])]
   }
 
   async cancel(runId: string, reason: string): Promise<boolean> {
@@ -557,6 +606,20 @@ export class MainRuntimeLaunchService {
       await this.persistLifecycle(run.runId, state === "completed" ? "completed" : state)
       return loadAgentRunReconciliationState(this.databasePath, run.runId)
     })
+  }
+
+  async steer(runId: string, subChatId: string, text: string): Promise<void> {
+    await this.coordinator.steer(runId, subChatId, text)
+    await this.appendActivity(runId, [
+      {
+        provider: "flapstack",
+        kind: "status",
+        phase: "completed",
+        displayClass: "status",
+        privacyClass: "public",
+        payload: { code: "user-steer", message: text },
+      },
+    ])
   }
 
   async requestPermission(runId: string, request: unknown): Promise<unknown> {
@@ -885,6 +948,7 @@ export class MainRuntimeLaunchService {
 
   private claudeDependencies(): ClaudeRuntimeDependencies {
     return {
+      streamingInput: true,
       query: (input) => claudeQuery(input),
       probe: () => probeClaudeRuntimeReadiness(),
       buildQueryOptions: async (context, _prompt, abortController) => {
@@ -1139,11 +1203,20 @@ export class MainRuntimeLaunchService {
     detail?: string | null,
   ): Promise<void> {
     const terminal = terminalStatus(lifecycle)
+    const checkout = terminal && this.checkpointCheckouts.get(runId)
+    let postimage: ReturnType<typeof observePostimage> | undefined
+    if (checkout && !checkout.finalization && lifecycle !== "uncertain") {
+      try {
+        postimage = observePostimage(checkout.path, checkout.git)
+      } catch (error) {
+        console.warn("[runtime] Could not monitor final checkout state:", error)
+      }
+    }
     if (terminal) agentInputLifecycle.cancelByRun(runId, "This run has ended.")
-    const afterCheckpointId = terminal ? await this.captureCompletionArtifacts(runId) : undefined
     const db = this.open()
     let activityInvalidation: AgentActivityInvalidation | undefined
     let chatId: string | undefined
+    let saveUndo = false
     try {
       db.transaction(() => {
         const run = this.requireRunRow(db, runId)
@@ -1152,12 +1225,21 @@ export class MainRuntimeLaunchService {
         if (terminal) {
           const transition = db
             .prepare(
-              `UPDATE agent_runs SET status = ?, completed_at = ?,
-                 after_checkpoint_id = COALESCE(?, after_checkpoint_id)
+              `UPDATE agent_runs SET status = ?, completed_at = ?
                WHERE id = ? AND status IN ('pending','running') AND completed_at IS NULL`,
             )
-            .run(terminal, now, afterCheckpointId ?? null, runId)
+            .run(terminal, now, runId)
           if (transition.changes === 0) return
+          if (run.resolved_runtime !== "flapstack-native" || run.harness === "antigravity") {
+            saveUndo =
+              db
+                .prepare(
+                  `INSERT OR IGNORE INTO agent_run_timing_marks (run_id,phase,at_ms)
+               SELECT id,'undo-requested',? FROM agent_runs
+               WHERE id=? AND before_checkpoint_id IS NOT NULL AND after_checkpoint_id IS NULL`,
+                )
+                .run(Date.now(), runId).changes > 0
+          }
           if (
             terminal === "success" &&
             (run.resolved_runtime !== "flapstack-native" || run.harness === "antigravity") &&
@@ -1208,9 +1290,16 @@ export class MainRuntimeLaunchService {
         ])
       }).immediate()
       if (activityInvalidation) broadcastAgentActivityInvalidation(activityInvalidation)
+    } catch (error) {
+      postimage?.close()
+      throw error
     } finally {
       db.close()
     }
+    if (saveUndo && chatId && checkout && postimage) {
+      checkout.finalization = this.finishCheckpoint(runId, chatId, checkout, postimage)
+      trackCheckpointFinalization(this.databasePath, runId, checkout.finalization)
+    } else postimage?.close()
     // Native routers may already have committed terminal state. Their transcript
     // still needs the same post-commit refresh as direct-runtime projection.
     if (chatId && terminalStatus(lifecycle)) {
@@ -1227,26 +1316,72 @@ export class MainRuntimeLaunchService {
   private async captureBeforeCheckpoint(runId: string): Promise<void> {
     const sqlite = this.open()
     try {
-      await captureAgentRunBefore(drizzle(sqlite, { schema }), runId)
+      const run = sqlite
+        .prepare("SELECT permission_mode,worktree_path,completed_at FROM agent_runs WHERE id=?")
+        .get(runId) as {
+        permission_mode: string
+        worktree_path: string | null
+        completed_at: number | null
+      }
+      if (run.completed_at != null || run.permission_mode === "read-only") return
+      if (run.worktree_path && existsSync(run.worktree_path)) {
+        const git = await checkpointGitPaths(run.worktree_path)
+        const release = await acquireCheckpointCheckout(git?.root ?? run.worktree_path)
+        let providerStopped!: () => void
+        const providerCleanup = new Promise<void>((resolve) => {
+          providerStopped = resolve
+        })
+        this.checkpointCheckouts.set(runId, {
+          path: run.worktree_path,
+          git,
+          release,
+          providerCleanup,
+          providerStopped,
+        })
+      }
+      await captureAgentRunBefore(
+        drizzle(sqlite, { schema }),
+        runId,
+        this.checkpointCheckouts.get(runId)?.git?.index,
+      )
     } finally {
       sqlite.close()
     }
   }
 
-  private async captureCompletionArtifacts(runId: string): Promise<string | undefined> {
-    const sqlite = this.open()
+  private async finishCheckpoint(
+    runId: string,
+    chatId: string,
+    checkout: RunCheckpointCheckout,
+    guard: ReturnType<typeof observePostimage>,
+  ) {
+    let sqlite: Database.Database | undefined
     try {
-      const run = sqlite
-        .prepare("SELECT resolved_runtime,harness FROM agent_runs WHERE id = ?")
-        .get(runId) as { resolved_runtime: string | null; harness: string } | undefined
-      if (!run || (run.resolved_runtime === "flapstack-native" && run.harness !== "antigravity"))
-        return undefined
-      return await captureAgentRunCompletionArtifacts(drizzle(sqlite, { schema }), {
-        runId,
-        logLabel: "runtime",
+      await nextEventLoop()
+      sqlite = this.open()
+      const db = drizzle(sqlite, { schema })
+      await captureCheckpoint(runId, checkout.path, "after", db, checkout.git?.index)
+      await captureRunManifest(runId, db, async (paths) => {
+        await checkout.providerCleanup
+        await guard.validate(paths)
       })
+    } catch (error) {
+      console.warn("[runtime] Could not establish this run's Undo:", error)
+      await this.appendDiagnostic(
+        runId,
+        "undo-unavailable",
+        "Flapstack could not verify this run's final file changes. Undo is unavailable.",
+      )
     } finally {
-      sqlite.close()
+      guard.close()
+      sqlite?.close()
+      publishLocalProductInvalidation({
+        version: 1,
+        source: "product-mcp",
+        domains: ["runs", "chats"],
+        chatIds: [chatId],
+        runIds: [runId],
+      })
     }
   }
 
@@ -2053,7 +2188,7 @@ async function launchLegacyStream(
           : {}),
       })
     case "claude-code":
-      return caller.claude.chat({
+      return caller.claude.compatibilityChat({
         runId: run.runId,
         chatId: run.chatId,
         subChatId: run.subChatId,
