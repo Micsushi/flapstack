@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm"
+import { and, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm"
 import { createHash } from "node:crypto"
 import { app, BrowserWindow, dialog } from "electron"
 import * as fs from "fs/promises"
@@ -2900,7 +2900,14 @@ export const chatsRouter = router({
           fileCount: sql<number>`count(*)`,
         })
         .from(agentRuns)
-        .innerJoin(fileChangeManifests, eq(fileChangeManifests.runId, agentRuns.id))
+        .innerJoin(
+          fileChangeManifests,
+          and(
+            eq(fileChangeManifests.runId, agentRuns.id),
+            ne(fileChangeManifests.changeType, "none"),
+            ne(fileChangeManifests.filePath, ""),
+          ),
+        )
         .where(
           input.chatIds?.length
             ? inArray(agentRuns.chatId, input.chatIds)

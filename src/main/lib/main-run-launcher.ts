@@ -302,6 +302,8 @@ export class MainRuntimeLaunchService {
           runtime: "codex",
           harness: "codex",
           factory: codexFactory,
+          // The native probe verifies the active credential context on every call.
+          cacheProbeResult: !!options.codexFactory,
           enabled: options.enableCodex ?? RUNTIME_RELEASE_POLICY.codex.enabledForNewLaunches,
           disabledReason: RUNTIME_RELEASE_POLICY.codex.reason,
         },

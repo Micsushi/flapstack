@@ -15,6 +15,7 @@ export type RuntimeRegistryEntry<TActivity = unknown> = {
   composition?: RuntimeAdapterCompositionSnapshot
   factory: HarnessAdapterFactory<TActivity>
   enabled?: boolean
+  cacheProbeResult?: boolean
   disabledReason?: string | null
 }
 
@@ -60,6 +61,7 @@ export class AgentRuntimeRegistry<
       harness: entry.harness ?? null,
       composition: entry.composition ?? null,
       enabled: entry.enabled ?? true,
+      cacheProbeResult: entry.cacheProbeResult ?? true,
       disabledReason: entry.disabledReason ?? null,
     })
   }
@@ -122,9 +124,10 @@ export class AgentRuntimeRegistry<
   }
 
   async probe(runtime: ResolvedAgentRuntime, harness: string): Promise<RuntimeAdapterProbe> {
+    const cache = this.resolveEntry(runtime, harness)?.[1].cacheProbeResult !== false
     const key = `${runtime}\0${harness}`
     const cached = this.probes.get(key)
-    if (cached && cached.expiresAt > Date.now()) return await cached.value
+    if (cache && cached && cached.expiresAt > Date.now()) return await cached.value
     const value = (async () => {
       try {
         return await this.forNewLaunch(runtime, harness).probe(harness)
@@ -138,6 +141,7 @@ export class AgentRuntimeRegistry<
         )
       }
     })()
+    if (!cache) return await value
     this.probes.set(key, { expiresAt: Number.POSITIVE_INFINITY, value })
     try {
       const result = await value

@@ -118,6 +118,19 @@ describe("recorded chat outcomes", () => {
     seedRun(null)
     sqlite
       .prepare(
+        `INSERT INTO agent_runs (id, chat_id, sub_chat_id, harness, permission_mode, status)
+      VALUES ('read-only', 'chat-1', 'sub-1', 'claude-code', 'read-only', 'success')`,
+      )
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO file_change_manifests
+      (id,run_id,file_path,change_type,additions,deletions)
+      VALUES ('no-change','read-only','','none',0,0)`,
+      )
+      .run()
+    sqlite
+      .prepare(
         `INSERT INTO file_change_manifests
       (id,run_id,file_path,change_type,additions,deletions)
       VALUES ('diff','run-1','result.json','added',9,0)`,

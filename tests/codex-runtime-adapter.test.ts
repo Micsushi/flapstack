@@ -318,6 +318,33 @@ describe("direct Codex Runtime adapter", () => {
     ).toMatchObject({ effort: "low", serviceTier: "fast" })
   })
 
+  it("requests public summaries per turn and clears them on resume when switched off", async () => {
+    const client = new FakeCodexProtocolClient()
+    const factory = createCodexRuntimeAdapterFactory({
+      appendActivity: collectActivity().append,
+      resolveThreadParams: () => ({ cwd: "/worktree" }),
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.166.0-alpha.6",
+      createClient: () => client,
+    })
+    const first = factory()
+    const context = runtimeContext()
+    const session = await first.startSession(context)
+    await first.startTurn(context, session, "FIRST")
+
+    const next = factory()
+    const resumed = runtimeContext()
+    resumed.launch.controls.reasoningDisplay = false
+    const reopened = await next.resumeSession(resumed, session)
+    await next.startTurn(resumed, reopened, "FOLLOW_UP")
+
+    expect(
+      client.requests
+        .filter((request) => request.method === "turn/start")
+        .map((request) => request.params?.summary),
+    ).toEqual(["detailed", "none"])
+  })
+
   it.each([
     ["minimal", "low"],
     ["ultra", "max"],

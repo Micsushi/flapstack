@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process"
+import { app } from "electron"
 import { CodexFileChangeApprovals } from "./file-change-approval"
+import { CodexReadinessConnection } from "./readiness"
 import { promisify } from "node:util"
 import type { AgentActivityAppend } from "../../../../shared/agent-activity"
 import type { LiveCodexModel, CodexReasoningLevel } from "../../../../shared/model-catalog"
@@ -112,7 +114,13 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
   private readonly states = new Map<string, CodexRunState>()
   private readonly connections = new Map<string, Promise<CodexProtocolClient>>()
 
-  constructor(private readonly options: CodexRuntimeAdapterOptions) {}
+  private readonly readiness?: CodexReadinessConnection
+  constructor(private readonly options: CodexRuntimeAdapterOptions) {
+    if (!options.createClient && !options.getBinaryVersion) {
+      this.readiness = new CodexReadinessConnection()
+      app?.once?.("will-quit", () => this.readiness?.dispose())
+    }
+  }
 
   prepareConnection(runId: string) {
     // The client has no workspace, thread, permissions or prompt until startSession.
@@ -134,10 +142,22 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
         "runtime-incompatible",
         "Codex Runtime requires the Codex harness.",
       )
+    return this.readiness
+      ? this.readiness.serialize(() => this.probeOnce(harness))
+      : this.probeOnce(harness)
+  }
+
+  private async probeOnce(harness: string): Promise<RuntimeAdapterProbe> {
     let client: CodexProtocolClient | null = null
+    let reused = false
     try {
       const command = await this.resolveCommand()
-      const version = await (this.options.getBinaryVersion ?? readCodexVersion)(command)
+      const lease = await this.readiness?.take(command)
+      client = lease?.client ?? null
+      reused = !!client
+      const version = client
+        ? PINNED_CODEX_APP_SERVER_VERSION
+        : await (this.options.getBinaryVersion ?? readCodexVersion)(command)
       if (version !== PINNED_CODEX_APP_SERVER_VERSION) {
         return unavailableProbe(
           harness,
@@ -145,10 +165,13 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
           `Codex ${version} is installed; direct Runtime is pinned to ${PINNED_CODEX_APP_SERVER_VERSION}.`,
         )
       }
-      client = await this.createClient({ cwd: process.cwd() }, command)
-      await initialize(client)
+      if (!client) {
+        client = await this.createClient({ cwd: process.cwd() }, command)
+        await initialize(client)
+      }
       const account = record(await client.request("account/read", { refreshToken: false }))
       if (!account.account) {
+        if (reused) return await this.probeOnce(harness)
         return unavailableProbe(
           harness,
           "runtime-unavailable",
@@ -159,11 +182,16 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       }
       const models = await discoverModels(client)
       if (models.length === 0) {
+        if (reused) return await this.probeOnce(harness)
         return unavailableProbe(
           harness,
           "runtime-unavailable",
           "Codex App Server returned no available models.",
         )
+      }
+      if (lease && this.readiness) {
+        if (await this.readiness.keep(lease, client, account.account)) client = null
+        else if (reused) return await this.probeOnce(harness)
       }
       return {
         runtime: "codex",
@@ -175,6 +203,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
         reason: null,
       }
     } catch (error) {
+      if (reused) return await this.probeOnce(harness)
       return unavailableProbe(
         harness,
         "runtime-unavailable",
@@ -323,6 +352,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
             input,
             model: context.launch.model,
             effort: state.effort,
+            summary: context.launch.controls.reasoningDisplay ? "detailed" : "none",
             ...(context.outputSchema ? { outputSchema: context.outputSchema } : {}),
             ...(context.launch.controls.serviceTier
               ? { serviceTier: context.launch.controls.serviceTier }
