@@ -133,7 +133,7 @@ jobs:
         run: |
           git fetch --no-tags origin "$GITHUB_SHA"
           git worktree add --detach "$RUNNER_TEMP/release-auditor" "$GITHUB_SHA"
-          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/release-auditor/node_modules"
+          export NODE_PATH="$GITHUB_WORKSPACE/node_modules"
           node "$RUNNER_TEMP/release-auditor/scripts/audit-macos-package.mjs" \
             --source-root="$GITHUB_WORKSPACE" \
             --app='${{ matrix.app-path }}' \
