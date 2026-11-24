@@ -77,6 +77,10 @@ describe("Flapstack MCP stdio transport", () => {
     expect(client.getInstructions()).toContain("Use spawn_thread")
 
     const listed = await client.listTools()
+    // Antigravity compiles tool parameter patterns with RE2, which rejects lookaround.
+    for (const tool of listed.tools) {
+      expect(JSON.stringify(tool.inputSchema), tool.name).not.toMatch(/\(\?(?:[=!]|<[=!])/)
+    }
     expect(listed.tools.map((tool) => tool.name)).toEqual([
       "stop_run",
       "steer_run",

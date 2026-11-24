@@ -36,7 +36,7 @@ export const workflowSchemas = {
     .object({
       ...chat,
       name: id.max(100).optional(),
-      baseBranch: id.regex(/^(?!-)\S+$/, "Expected a Git branch or revision.").optional(),
+      baseBranch: id.regex(/^[^\s-]\S*$/, "Expected a Git branch or revision.").optional(),
     })
     .strict(),
   list_changed_files: z
