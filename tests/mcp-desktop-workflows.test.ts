@@ -2,7 +2,7 @@ import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
@@ -32,6 +32,8 @@ vi.mock("../src/main/lib/analytics", () => ({
 
 import { invokeDesktopWorkflow } from "../src/main/lib/mcp-control/desktop-workflows"
 import { bindFilesystemRootIdentity } from "../src/main/lib/git/security/path-validation"
+import { captureCheckpoint, captureRunManifest } from "../src/main/lib/checkpoints"
+import { moveStoredChat } from "../src/main/lib/projects/move-chat"
 import { closeDatabase } from "../src/main/lib/db"
 import { registerDesktopSpeechReceiver } from "../src/main/lib/speech/desktop-playback"
 
@@ -106,6 +108,139 @@ it("attaches a managed checkout to the chat and its inherited conversation, then
   expect(
     await invoke("read_git_diff", { chatId: "caller", path: "note.txt", limit: 3 }),
   ).toMatchObject({ ok: true, data: { diff: "dif" } })
+  db.prepare(
+    "INSERT INTO agent_runs(id,chat_id,sub_chat_id,harness,permission_mode,status,worktree_path) VALUES ('linked','caller','a','codex','full-access','success',?)",
+  ).run(sub.path)
+  await captureCheckpoint("linked", sub.path, "before")
+  writeFileSync(join(sub.path, "note.txt"), "newer\n")
+  await captureCheckpoint("linked", sub.path, "after")
+  await captureRunManifest("linked")
+  expect(await invoke("undo_run_changes", { chatId: "caller", runId: "linked" })).toMatchObject({
+    ok: true,
+    data: { success: true },
+  })
+  expect(readFileSync(join(sub.path, "note.txt"), "utf8")).toBe("after\n")
+})
+
+it("preserves the chat checkout and the newly created worktree when a run queues during creation", async () => {
+  const root = join(dir, "queue-repo")
+  mkdirSync(root)
+  execFileSync("git", ["-C", root, "init", "--quiet", "--initial-branch=main"], {
+    windowsHide: true,
+  })
+  bindFilesystemRootIdentity(root)
+  db.prepare("UPDATE projects SET path=? WHERE id='one'").run(root)
+  db.prepare("UPDATE chats SET worktree_path=? WHERE id='caller'").run(root)
+  db.prepare("UPDATE sub_chats SET worktree_path=? WHERE id='a'").run(root)
+  db.exec(`CREATE TRIGGER queue_on_checkout AFTER INSERT ON filesystem_root_registrations BEGIN
+    INSERT INTO agent_runs(id,chat_id,sub_chat_id,harness,permission_mode,status,worktree_path,runtime_snapshot_version,runtime_preference_source)
+    VALUES ('waiting','caller','a','codex','full-access','pending',(SELECT worktree_path FROM chats WHERE id='caller'),1,'chat');
+    END;`)
+  const request = { chatId: "caller", name: "queue-race", baseBranch: "main" }
+  expect(await invoke("create_worktree", request)).toMatchObject({
+    ok: false,
+    error: { code: "conflict", message: expect.stringContaining("retained at") },
+  })
+  const retained = db
+    .prepare("SELECT path FROM filesystem_root_registrations WHERE path<>?")
+    .get(root) as { path: string }
+  expect(existsSync(join(retained.path, ".git"))).toBe(true)
+  expect(
+    db
+      .prepare(
+        "SELECT worktree_path FROM chats WHERE id='caller' UNION SELECT worktree_path FROM sub_chats WHERE id='a' UNION SELECT worktree_path FROM agent_runs WHERE id='waiting'",
+      )
+      .all(),
+  ).toEqual([{ worktree_path: root }])
+  expect(await invoke("create_worktree", request)).toMatchObject({
+    ok: false,
+    error: { code: "conflict", message: expect.stringContaining("active runs") },
+  })
+})
+
+it("keeps a moved chat's historical run in its original project checkout", async () => {
+  const roots = ["one", "two"].map((id) => {
+    const root = join(dir, id)
+    mkdirSync(root)
+    execFileSync("git", ["-C", root, "init", "--quiet", "--initial-branch=main"], {
+      windowsHide: true,
+    })
+    bindFilesystemRootIdentity(root)
+    db.prepare("UPDATE projects SET path=? WHERE id=?").run(root, id)
+    return root
+  })
+  db.prepare("UPDATE chats SET worktree_path=? WHERE id='caller'").run(roots[0])
+  db.prepare("UPDATE sub_chats SET worktree_path=? WHERE id='a'").run(roots[0])
+  db.prepare(
+    "INSERT INTO agent_runs(id,chat_id,sub_chat_id,harness,permission_mode,status,worktree_path) VALUES ('old','caller','a','codex','full-access','success',?)",
+  ).run(roots[0])
+  const file = join(roots[0], "note.txt")
+  writeFileSync(file, "before\n")
+  await captureCheckpoint("old", roots[0], "before")
+  writeFileSync(file, "after\n")
+  await captureCheckpoint("old", roots[0], "after")
+  await captureRunManifest("old")
+  moveStoredChat(db, { id: "caller", scope: "project", projectId: "two" }, true)
+  const request = { chatId: "caller", runId: "old" }
+  expect(
+    await invokeDesktopWorkflow(
+      "undo_run_changes",
+      { ...caller, projectId: "two" },
+      request,
+      context,
+    ),
+  ).toMatchObject({ ok: false, error: { code: "out-of-scope" } })
+  expect(readFileSync(file, "utf8")).toBe("after\n")
+  const taskRoot = join(dir, "task-worktree")
+  execFileSync("git", ["-C", roots[0], "commit", "--allow-empty", "-q", "-m", "Seed fixture"], {
+    windowsHide: true,
+  })
+  execFileSync(
+    "git",
+    ["-C", roots[0], "worktree", "add", "--quiet", "--detach", taskRoot, "HEAD"],
+    { windowsHide: true },
+  )
+  bindFilesystemRootIdentity(taskRoot)
+  db.prepare(
+    "INSERT INTO tasks(id,name,project_id,primary_worktree_path) VALUES ('assigned','Fixture','one',?)",
+  ).run(taskRoot)
+  moveStoredChat(db, { id: "caller", scope: "task", projectId: "one", taskId: "assigned" }, true)
+  expect(
+    await invokeDesktopWorkflow(
+      "undo_run_changes",
+      { ...caller, taskId: "assigned" },
+      request,
+      context,
+    ),
+  ).toMatchObject({ ok: false, error: { code: "out-of-scope" } })
+  expect(readFileSync(file, "utf8")).toBe("after\n")
+  moveStoredChat(db, { id: "caller", scope: "project", projectId: "one" }, true)
+  expect(await invoke("undo_run_changes", request)).toMatchObject({
+    ok: true,
+    data: { success: true },
+  })
+  expect(readFileSync(file, "utf8")).toBe("before\n")
+})
+
+it("checks the selected conversation's explicit authority and rejects a malformed mode", async () => {
+  const restricted = { ...caller, permissionMode: "read-only" as const }
+  db.exec(
+    "UPDATE chats SET permission_mode='read-only' WHERE id='caller';UPDATE sub_chats SET permission_mode='full-access' WHERE id='a'",
+  )
+  const request = { chatId: "caller", messageId: "question" }
+  expect(await invokeDesktopWorkflow("fork_chat", restricted, request, context)).toMatchObject({
+    ok: false,
+    error: { code: "permission-denied" },
+  })
+  db.exec("UPDATE sub_chats SET permission_mode=NULL WHERE id='a'")
+  expect(await invokeDesktopWorkflow("fork_chat", restricted, request, context)).toMatchObject({
+    ok: true,
+  })
+  db.exec("UPDATE chats SET permission_mode='invalid' WHERE id='caller'")
+  expect(await invoke("fork_chat", request)).toMatchObject({
+    ok: false,
+    error: { code: "permission-denied" },
+  })
 })
 
 it("forks only the selected visible history and rejects a conversation in another chat", async () => {

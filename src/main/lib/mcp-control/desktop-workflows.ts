@@ -12,6 +12,7 @@ import { workflowSchemas as schemas } from "./workflow-contract"
 import {
   replaceWorkflowTags,
   requireWorkflowChat,
+  requireWorkflowCheckout,
   requireWorkflowAuthority,
   workflowConversation,
   WorkflowError,
@@ -56,9 +57,11 @@ async function dispatch(name: string, caller: McpCallerIdentity, raw: unknown) {
   switch (name) {
     case "fork_chat": {
       const input = schemas.fork_chat.parse(raw)
-      requireWorkflowAuthority(caller, target(input.chatId))
+      const source = target(input.chatId)
+      const subChatId = conversation(input)
+      requireWorkflowAuthority(db, caller, source, subChatId)
       const fork = await chats.forkSubChat({
-        subChatId: conversation(input),
+        subChatId,
         messageId: input.messageId,
         name: input.name,
       })
@@ -66,7 +69,9 @@ async function dispatch(name: string, caller: McpCallerIdentity, raw: unknown) {
     }
     case "handoff_chat": {
       const input = schemas.handoff_chat.parse(raw)
-      requireWorkflowAuthority(caller, target(input.chatId))
+      const source = target(input.chatId)
+      const subChatId = conversation(input)
+      requireWorkflowAuthority(db, caller, source, subChatId)
       if (profiles.get(input.chatId))
         throw new WorkflowError(
           "permission-denied",
@@ -74,7 +79,7 @@ async function dispatch(name: string, caller: McpCallerIdentity, raw: unknown) {
         )
       const request = {
         sourceChatId: input.chatId,
-        compactSourceSubChatId: conversation(input),
+        compactSourceSubChatId: subChatId,
         requestId: input.requestId,
         name: input.name,
         targetHarness: input.targetHarness,
@@ -85,7 +90,7 @@ async function dispatch(name: string, caller: McpCallerIdentity, raw: unknown) {
             : ("flapstack-native" as const),
       }
       const preview = await chats.previewRuntimeContinuation(request)
-      requireWorkflowAuthority(caller, target(input.chatId))
+      requireWorkflowAuthority(db, caller, target(input.chatId), subChatId)
       const result = await chats.continueWithRuntime({
         ...request,
         confirmedPreviewDigest: preview.digest,
@@ -110,16 +115,6 @@ async function dispatch(name: string, caller: McpCallerIdentity, raw: unknown) {
     case "create_worktree": {
       const input = schemas.create_worktree.parse(raw)
       target(input.chatId)
-      if (
-        db
-          .prepare("SELECT 1 FROM agent_runs WHERE chat_id=? AND status IN ('queued','running')")
-          .get(input.chatId)
-      ) {
-        throw new WorkflowError(
-          "conflict",
-          "Wait for the chat's active runs before changing its checkout.",
-        )
-      }
       const chat = await chats.createWorktreeForExistingChat({
         id: input.chatId,
         baseBranch: input.baseBranch ?? "HEAD",
@@ -182,7 +177,12 @@ async function dispatch(name: string, caller: McpCallerIdentity, raw: unknown) {
       ) {
         throw new WorkflowError("stale-target", "Run is missing from this chat.")
       }
-      const result = await undoRunChangeSet(input.runId)
+      const result = await undoRunChangeSet(
+        input.runId,
+        caller.projectId || caller.taskId
+          ? (checkout) => requireWorkflowCheckout(db, caller, input.chatId, input.runId, checkout)
+          : undefined,
+      )
       if (!result.success)
         throw new WorkflowError(
           "conflict",
@@ -278,7 +278,7 @@ async function dispatch(name: string, caller: McpCallerIdentity, raw: unknown) {
     }
     case "bind_agent_profile": {
       const input = schemas.bind_agent_profile.parse(raw)
-      requireWorkflowAuthority(caller, target(input.chatId))
+      requireWorkflowAuthority(db, caller, target(input.chatId))
       const previous = profiles.get(input.chatId)?.snapshot.profile ?? null
       if (input.profile) {
         const preview = profiles.preview({ chatId: input.chatId, profile: input.profile })

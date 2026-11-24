@@ -1,5 +1,5 @@
 import { moveStoredChat } from "../../projects/move-chat"
-import { and, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm"
+import { and, desc, eq, inArray, isNotNull, isNull, ne, notExists, or, sql } from "drizzle-orm"
 import { createHash } from "node:crypto"
 import { app, BrowserWindow, dialog } from "electron"
 import * as fs from "fs/promises"
@@ -862,6 +862,15 @@ export const chatsRouter = router({
       const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
       if (!chat) throw new Error("Chat not found")
       if (chat.scope === "global") throw new Error("Global chats do not have project worktrees")
+      const activeRuns = db
+        .select({ id: agentRuns.id })
+        .from(agentRuns)
+        .where(
+          and(eq(agentRuns.chatId, chat.id), inArray(agentRuns.status, ["pending", "running"])),
+        )
+        .limit(1)
+      if (activeRuns.get())
+        throw new Error("Wait for the chat’s active runs before changing its checkout.")
 
       const task = chat.taskId
         ? db.select().from(tasks).where(eq(tasks.id, chat.taskId)).get()
@@ -910,6 +919,7 @@ export const chatsRouter = router({
           .where(
             and(
               eq(chats.id, chat.id),
+              notExists(activeRuns),
               eq(chats.projectId, project.id),
               chat.taskId ? eq(chats.taskId, chat.taskId) : isNull(chats.taskId),
               isNull(chats.archivedAt),
@@ -922,7 +932,7 @@ export const chatsRouter = router({
           .get()
         if (!updatedChat)
           throw new Error(
-            `The chat changed during creation. The new checkout is retained at ${worktreePath}.`,
+            `The chat or its active runs changed during creation. The new checkout is retained at ${worktreePath}.`,
           )
         const inherited = chat.worktreePath
           ? or(isNull(subChats.worktreePath), eq(subChats.worktreePath, chat.worktreePath))

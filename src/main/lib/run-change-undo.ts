@@ -386,7 +386,7 @@ export async function listUndoneRunIds(runs: { runId: string; worktreePath: stri
   return undone
 }
 
-export async function getRunChangeSet(runId: string) {
+export async function getRunChangeSet(runId: string, authorize?: AuthorizeCheckout) {
   await waitForCheckpointFinalization(getDatabasePath(), runId)
   const db = getDatabase()
   const run = db.select().from(agentRuns).where(eq(agentRuns.id, runId)).get()
@@ -415,6 +415,7 @@ export async function getRunChangeSet(runId: string) {
     .filter((entry) => entry.changeType !== "none" && entry.filePath)
   let undone: boolean | null = null
   if (run.worktreePath) {
+    await authorize?.(run.worktreePath)
     try {
       await execFileAsync(
         "git",
@@ -490,17 +491,20 @@ export async function getRunChangeReview(runId: string, filePath?: string) {
   }
 }
 
-export async function undoRunChangeSet(runId: string) {
-  return withCheckpointFiles(getDatabase(), () => undoLeasedRunChangeSet(runId))
+type AuthorizeCheckout = (worktreePath: string) => Promise<void>
+
+export async function undoRunChangeSet(runId: string, authorize?: AuthorizeCheckout) {
+  return withCheckpointFiles(getDatabase(), () => undoLeasedRunChangeSet(runId, authorize))
 }
 
-async function undoLeasedRunChangeSet(runId: string) {
-  const changeSet = await getRunChangeSet(runId)
+async function undoLeasedRunChangeSet(runId: string, authorize?: AuthorizeCheckout) {
+  const changeSet = await getRunChangeSet(runId, authorize)
   const worktreePath = changeSet.run.worktreePath
   if (!worktreePath) throw new Error("Run has no worktree")
-  if (changeSet.files.length === 0) throw new Error("Run has no file changes")
 
   return withWorktreeLock(worktreePath, async () => {
+    await authorize?.(worktreePath)
+    if (changeSet.files.length === 0) throw new Error("Run has no file changes")
     const git = createGit(worktreePath)
     const undoneRef = `refs/flapstack/undone/${runId}`
     try {
@@ -553,7 +557,9 @@ async function undoLeasedRunChangeSet(runId: string) {
       worktreePath,
       plans.map((plan) => plan.filePath),
     )
+    await authorize?.(worktreePath)
     await git.raw(["update-ref", `refs/flapstack/recovery/${runId}-${Date.now()}`, recoveryCommit])
+    await authorize?.(worktreePath)
     await writePlan(plans)
     await git.raw(["update-ref", undoneRef, recoveryCommit])
     return {
