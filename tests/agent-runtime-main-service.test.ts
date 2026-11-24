@@ -449,6 +449,25 @@ describe("process-wide Runtime launch service", () => {
     },
   )
 
+  it("keeps Undo available across transient Git locks and checkpoint refs", async () => {
+    const root = join(directory, "transient-lock")
+    mkdirSync(root)
+    execFileSync("git", ["init", "-q"], { cwd: root, windowsHide: true })
+    const observer = observePostimage(root, await checkpointGitPaths(root))
+    try {
+      const lock = join(root, ".git", "index.lock")
+      writeFileSync(lock, "")
+      rmSync(lock)
+      const refs = join(root, ".git", "refs", "flapstack")
+      mkdirSync(refs)
+      writeFileSync(join(refs, "checkpoint"), "fixture")
+      await new Promise((done) => setTimeout(done, 75))
+      await expect(observer.validate([])).resolves.toBeUndefined()
+    } finally {
+      observer.close()
+    }
+  })
+
   it("rejects a postimage if a separate editor or git staging operation changed the checkout after completion", async () => {
     const root = join(directory, "guarded")
     mkdirSync(root)

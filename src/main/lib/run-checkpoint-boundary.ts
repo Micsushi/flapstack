@@ -1,8 +1,15 @@
 import { createHash } from "node:crypto"
-import { realpathSync, statSync, watch, type FSWatcher } from "node:fs"
+import {
+  lstatSync,
+  realpathSync,
+  statSync,
+  watch,
+  type FSWatcher,
+  type WatchEventType,
+} from "node:fs"
 import { lstat } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { dirname, join, resolve, sep } from "node:path"
+import { dirname, join, relative, resolve, sep } from "node:path"
 import { setImmediate } from "node:timers/promises"
 import { beginDatabaseAccessMaintenance } from "./db/access"
 import { createGit } from "./git/git-factory"
@@ -85,10 +92,17 @@ export function observePostimage(path: string, git: CheckpointGitPaths) {
     return info && [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(":")
   }
   const initialIndex = indexIdentity()
+  const dotGit = join(git?.root ?? root, ".git")
+  const gitDirectoryIdentity = () => {
+    if (!git || relative(dotGit, git.gitDir) !== "") return undefined
+    const info = lstatSync(dotGit, { bigint: true, throwIfNoEntry: false })
+    return info?.isDirectory() ? [info.dev, info.ino].join(":") : undefined
+  }
+  const initialGitDirectory = gitDirectoryIdentity()
   const watchers: FSWatcher[] = []
-  const watchRoot = (root: string, relevant: (name: string) => boolean) => {
-    const watcher = watch(root, { recursive: true, persistent: false }, (_event, file) => {
-      if (!file || relevant(file.replaceAll("\\", "/"))) changed = true
+  const watchRoot = (root: string, relevant: (name: string, event: WatchEventType) => boolean) => {
+    const watcher = watch(root, { recursive: true, persistent: false }, (event, file) => {
+      if (!file || relevant(file.replaceAll("\\", "/"), event)) changed = true
     })
     watcher.on("error", () => {
       changed = true
@@ -96,7 +110,11 @@ export function observePostimage(path: string, git: CheckpointGitPaths) {
     watchers.push(watcher)
   }
   try {
-    watchRoot(git?.root ?? path, (name) => !name.startsWith(".git/"))
+    watchRoot(git?.root ?? path, (name, event) => {
+      // Windows reports a change on the directory itself when Git removes an index.lock.
+      if (name === ".git" && event === "change" && initialGitDirectory) return false
+      return !name.startsWith(".git/")
+    })
     if (git) {
       for (const dir of new Set([git.gitDir, git.common])) {
         watchRoot(dir, (name) =>
@@ -134,7 +152,11 @@ export function observePostimage(path: string, git: CheckpointGitPaths) {
         }
       }
       await setImmediate()
-      if (changed || indexIdentity() !== initialIndex)
+      if (
+        changed ||
+        indexIdentity() !== initialIndex ||
+        gitDirectoryIdentity() !== initialGitDirectory
+      )
         throw new Error("The checkout changed while this run's Undo was being saved.")
     },
     close: () => watchers.forEach((watcher) => watcher.close()),
