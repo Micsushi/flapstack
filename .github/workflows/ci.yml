@@ -18,7 +18,7 @@ jobs:
       CARGO_BUILD_JOBS: 2
       CMAKE_BUILD_PARALLEL_LEVEL: 2
     # Native qualification takes about 38 minutes before the multi-GB upload.
-    timeout-minutes: 90
+    timeout-minutes: 150
     concurrency:
       group: ci-${{ github.ref }}
       cancel-in-progress: true
@@ -97,7 +97,7 @@ jobs:
           test "$actual" = "$expected"
 
       - name: Upload Linux Preview
-        timeout-minutes: 45
+        timeout-minutes: 90
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: flapstack-preview-linux-${{ github.sha }}

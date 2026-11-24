@@ -48,12 +48,11 @@ Replace the last four commands with their `:arm64` variants on a native arm64
 host. The smoke loads Claude, Codex, whisper.cpp, the speech sidecar,
 better-sqlite3, Sharp, and node-pty from the packaged app.
 
-The Linux CI job allows 90 minutes overall and bounds artifact upload to
-45 minutes. Native checks, packaging, and audits have taken about 38 minutes
-before upload starts; the previous 60-minute job limit cancelled a progressing
-multi-GB upload after all qualification gates passed. Test deadlines and audit
-requirements are unchanged. A passing Check is not a completed release: confirm
-that upload finishes and the artifact is available before claiming delivery.
+The Linux CI job allows 150 minutes overall and up to 90 minutes for artifact
+upload. In the 0.1.3 release run, the package passed inspection, smoke tests,
+and audit before the upload started 51 minutes into the job. The previous
+90-minute limit stopped the transfer while it was still sending data. Confirm
+that GitHub lists the completed artifact before claiming delivery.
 
 ## Install and remove
 
@@ -65,6 +64,11 @@ sudo apt install ./flapstack-preview_0.1.0_amd64.deb
 flapstack-preview
 sudo apt remove flapstack-preview
 ```
+
+On minimal Ubuntu 24.04 installations, select the native ALSA library when
+installing the Debian package. A clean 0.1.1 to 0.1.3 upgrade passed with
+`sudo apt install libasound2t64 ./Flapstack-0.1.3-amd64.deb`. The alternative
+OSS compatibility package can leave Electron unable to load its audio symbols.
 
 The package declares Electron's GPU and audio runtime libraries in addition to
 electron-builder's desktop dependencies. Preview and production packages use
