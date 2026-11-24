@@ -19,7 +19,7 @@ import { readPackageSourceState } from "./lib/package-provenance.mjs"
 
 const require = createRequire(import.meta.url)
 const asar = require("@electron/asar")
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const auditRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const SECRET_SCAN_OVERLAP_BYTES = 64 * 1024
 const BUILD_OUTPUT_EXTENSIONS = new Set([".exp", ".iobj", ".ilk", ".ipdb", ".lib", ".obj", ".pdb"])
 const NATIVE_FORMATS = new Set(["elf", "mach-o", "mach-o-fat", "pe"])
@@ -89,13 +89,13 @@ export async function collectLinuxPackageFiles(packageRoot) {
   return entries
 }
 
-async function scanFileForSecrets(filePath, displayPath) {
+async function scanFileForSecrets(filePath, displayPath, fileSha256) {
   let overlap = Buffer.alloc(0)
   const findings = []
   const seen = new Set()
   for await (const rawChunk of createReadStream(filePath, { highWaterMark: 1024 * 1024 })) {
     const chunk = Buffer.concat([overlap, rawChunk])
-    for (const finding of findSecretFindings(displayPath, chunk)) {
+    for (const finding of findSecretFindings(displayPath, chunk, fileSha256)) {
       const key = `${finding.kind}:${finding.fingerprint}`
       if (!seen.has(key)) {
         seen.add(key)
@@ -121,7 +121,11 @@ async function scanLinuxPackageText(packageRoot, manifest) {
     externalBytes += item.bytes
     if (item.path === "resources/app.asar") continue
     findings.push(
-      ...(await scanFileForSecrets(path.join(packageRoot, ...item.path.split("/")), item.path)),
+      ...(await scanFileForSecrets(
+        path.join(packageRoot, ...item.path.split("/")),
+        item.path,
+        item.sha256,
+      )),
     )
   }
 
@@ -142,10 +146,17 @@ async function scanLinuxPackageText(packageRoot, manifest) {
     findings.push(...findSecretFindings(displayPath, buffer))
   }
   return {
-    findings,
+    findings: findings.filter((finding) => !finding.reviewedAs),
     includedPaths,
     includedFileHashes,
-    coverage: { externalFiles, externalBytes, asarFiles, asarBytes, skippedFiles: 0 },
+    coverage: {
+      externalFiles,
+      externalBytes,
+      asarFiles,
+      asarBytes,
+      skippedFiles: 0,
+      reviewedFindings: findings.filter((finding) => finding.reviewedAs),
+    },
   }
 }
 
@@ -501,6 +512,7 @@ async function main() {
     throw new Error("Linux package security audit must run on native Linux")
   }
   const args = process.argv.slice(2)
+  const root = path.resolve(parseArg(args, "--source-root") ?? auditRoot)
   const appArgument = parseArg(args, "--app")
   const platform = parseArg(args, "--platform")
   const channel = parseArg(args, "--channel") ?? "preview"
@@ -532,7 +544,11 @@ async function main() {
 
   const manifest = await collectLinuxPackageFiles(packageRoot)
   const source = readPackageSourceState(root)
-  if (channel === "release") assertReleaseSourceState(source)
+  const auditor = root === auditRoot ? source : readPackageSourceState(auditRoot)
+  if (channel === "release") {
+    assertReleaseSourceState(source)
+    assertReleaseSourceState(auditor)
+  }
   const provenancePath = path.join(packageRoot, "resources", "package-provenance.json")
   const provenanceBytes = readRegularFile(provenancePath, "Package provenance manifest")
   const provenance = JSON.parse(provenanceBytes.toString("utf8"))
@@ -586,6 +602,7 @@ async function main() {
   )
   const report = {
     schemaVersion: 1,
+    auditSource: auditor.sha,
     channel,
     generatedAt: new Date().toISOString(),
     source: { ...source, version: packageJson.version },

@@ -27,6 +27,23 @@ const POOLED_CODEX_LITERAL_SHA256 = new Set([
   "5045032a4c9a448e9c399db2c8f116502ee0c1bc8cff3f6c56b50cfceb653be0",
   "4694c03eb59bb22b82e5024a33f4fdbc98ba19ad41327de39ae9e9bd5965149c",
 ])
+// In the same upstream release, Linux x64 and both Darwin toolchains pool the
+// FedRAMP routing prefixes with plain auth field names. Bind each reviewed
+// string to the full SHA256 of its independently verified upstream executable.
+const POSIX_CODEX_LITERAL_BY_BINARY = new Map([
+  [
+    "61e3d01014af380737cff11499d7e624595869920097dff24a395d5607b8a150",
+    "5b559561b01bfeee73e3b0096f4e16df4f8d7f89739431b3607641568add0db7",
+  ],
+  [
+    "4aa059a94ec7070ec18ef4f6e20bf9e0935714c43cc09ce75f424d864ab5697f",
+    "93cad477243086e4c1f109ce333039a59f875f5744cc69f5329c6f4b7794564d",
+  ],
+  [
+    "6bd852705cfd966fac4471c4b8f2125a26d35de66239b454852c9a3072698a1a",
+    "095e0a2dc956abfd1bd0b4ff8fea5428f6eb618c6b78b9dd7f7a40eee18a4ffb",
+  ],
+])
 const SECRET_PATTERNS = [
   { kind: "GitHub token", pattern: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g },
   { kind: "Slack token", pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
@@ -166,10 +183,12 @@ export function findSecretFindings(filePath, buffer, fileSha256) {
         if (seen.has(key)) continue
         seen.add(key)
         const reviewed =
-          filePath === "resources/bin/codex.exe" &&
-          fileSha256 === CODEX_WINDOWS_RELEASE_SHA256 &&
           kind === "API key" &&
-          POOLED_CODEX_LITERAL_SHA256.has(digest)
+          ((filePath === "resources/bin/codex.exe" &&
+            fileSha256 === CODEX_WINDOWS_RELEASE_SHA256 &&
+            POOLED_CODEX_LITERAL_SHA256.has(digest)) ||
+            (filePath === "resources/bin/codex" &&
+              POSIX_CODEX_LITERAL_BY_BINARY.get(fileSha256) === digest))
         findings.push({
           path: filePath,
           kind,

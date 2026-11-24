@@ -36,6 +36,40 @@ import { fileSymlinksSupported } from "./helpers/symlink-capability"
 const requireFromTest = createRequire(import.meta.url)
 
 describe("Windows package security report", () => {
+  it("classifies only the verified provider binary and its exact pooled public literals", () => {
+    const project = "sk-proj-fedramp-"
+    const service = "sk-svcacct-fedramp-"
+    const cases = [
+      [
+        "61e3d01014af380737cff11499d7e624595869920097dff24a395d5607b8a150",
+        project + service.slice(3) + service.slice(0, 16) + "oauth_provenance",
+      ],
+      [
+        "4aa059a94ec7070ec18ef4f6e20bf9e0935714c43cc09ce75f424d864ab5697f",
+        project + service + "authentication",
+      ],
+      [
+        "6bd852705cfd966fac4471c4b8f2125a26d35de66239b454852c9a3072698a1a",
+        project + service + "auth",
+      ],
+    ]
+    for (const [sha, literal] of cases) {
+      const buffer = Buffer.from(literal)
+      expect(findSecretFindings("resources/bin/codex", buffer, sha)[0].reviewedAs).toBe(
+        "upstream pooled string literals",
+      )
+      for (const [file, value, hash] of [
+        ["resources/bin/codex", literal, "bad-digest"],
+        ["resources/bin/other", literal, sha],
+        ["resources/bin/codex", literal + "x", sha],
+      ]) {
+        const findings = findSecretFindings(file, Buffer.from(value), hash)
+        expect(findings).toHaveLength(1)
+        expect(findings[0].reviewedAs).toBeUndefined()
+      }
+    }
+  })
+
   it("isolates Windows PowerShell module lookup and makes signature errors terminating", () => {
     vi.stubEnv("PSModulePath", "incompatible-powershell-modules")
     try {

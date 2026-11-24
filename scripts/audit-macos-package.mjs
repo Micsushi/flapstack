@@ -21,7 +21,7 @@ import { readPackageSourceState } from "./lib/package-provenance.mjs"
 
 const require = createRequire(import.meta.url)
 const asar = require("@electron/asar")
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const auditRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const SECRET_SCAN_OVERLAP_BYTES = 64 * 1024
 const BUILD_OUTPUT_EXTENSIONS = new Set([
   ".dSYM",
@@ -112,13 +112,13 @@ export async function collectMacPackageFiles(appPath) {
   return entries
 }
 
-async function scanFileForSecrets(filePath, displayPath) {
+async function scanFileForSecrets(filePath, displayPath, fileSha256) {
   let overlap = Buffer.alloc(0)
   const findings = []
   const seen = new Set()
   for await (const rawChunk of createReadStream(filePath, { highWaterMark: 1024 * 1024 })) {
     const chunk = Buffer.concat([overlap, rawChunk])
-    for (const finding of findSecretFindings(displayPath, chunk)) {
+    for (const finding of findSecretFindings(displayPath, chunk, fileSha256)) {
       const key = `${finding.kind}:${finding.fingerprint}`
       if (seen.has(key)) continue
       seen.add(key)
@@ -144,7 +144,11 @@ export async function scanMacPackageText(appPath, manifest) {
     externalBytes += item.bytes
     if (item.path === "Contents/Resources/app.asar") continue
     findings.push(
-      ...(await scanFileForSecrets(path.join(appPath, ...item.path.split("/")), normalized)),
+      ...(await scanFileForSecrets(
+        path.join(appPath, ...item.path.split("/")),
+        normalized,
+        item.sha256,
+      )),
     )
   }
 
@@ -164,10 +168,17 @@ export async function scanMacPackageText(appPath, manifest) {
     findings.push(...findSecretFindings(displayPath, buffer))
   }
   return {
-    findings,
+    findings: findings.filter((finding) => !finding.reviewedAs),
     includedPaths,
     includedFileHashes,
-    coverage: { externalFiles, externalBytes, asarFiles, asarBytes, skippedFiles: 0 },
+    coverage: {
+      externalFiles,
+      externalBytes,
+      asarFiles,
+      asarBytes,
+      skippedFiles: 0,
+      reviewedFindings: findings.filter((finding) => finding.reviewedAs),
+    },
   }
 }
 
@@ -421,6 +432,7 @@ function parseArg(args, name) {
 }
 
 export async function auditMacPackage(options) {
+  const root = path.resolve(options.sourceRoot ?? auditRoot)
   const appPath = path.resolve(options.appPath)
   const outputPath = path.resolve(options.outputPath)
   const channel = options.channel ?? "preview"
@@ -441,7 +453,11 @@ export async function auditMacPackage(options) {
 
   const manifest = await collectMacPackageFiles(appPath)
   const source = readPackageSourceState(root)
-  if (channel === "release") assertReleaseSourceState(source)
+  const auditor = root === auditRoot ? source : readPackageSourceState(auditRoot)
+  if (channel === "release") {
+    assertReleaseSourceState(source)
+    assertReleaseSourceState(auditor)
+  }
   const info = plistJson(path.join(appPath, "Contents", "Info.plist"))
   if (
     info.CFBundleName !== expectedProductName ||
@@ -517,6 +533,7 @@ export async function auditMacPackage(options) {
   }
   const report = {
     schemaVersion: 1,
+    auditSource: auditor.sha,
     channel,
     generatedAt: new Date().toISOString(),
     source: { ...source, version: packageJson.version },
@@ -577,6 +594,7 @@ async function main() {
     platform,
     channel,
     outputPath,
+    sourceRoot: parseArg(args, "--source-root"),
     artifactPath: parseArg(args, "--artifact"),
     requireSigned: args.includes("--require-signed"),
   })

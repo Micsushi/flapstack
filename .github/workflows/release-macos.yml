@@ -63,7 +63,11 @@ jobs:
             test "$release_sha" = "$(git rev-parse origin/main)"
           else
             git merge-base --is-ancestor "$release_sha" origin/main
-            git diff --exit-code "$release_sha" origin/main -- . ':(exclude).github/workflows'
+            git diff --exit-code "$release_sha" "$GITHUB_SHA" -- . \
+              ':(exclude).github/workflows' ':(exclude)tests' \
+              ':(exclude)scripts/audit-linux-package.mjs' \
+              ':(exclude)scripts/audit-macos-package.mjs' \
+              ':(exclude)scripts/audit-windows-package.mjs'
           fi
           echo "release-sha=$release_sha" >> "$GITHUB_OUTPUT"
           echo "package-version=$package_version" >> "$GITHUB_OUTPUT"
@@ -127,7 +131,11 @@ jobs:
 
       - name: Audit macOS package security
         run: |
-          node scripts/audit-macos-package.mjs \
+          git fetch --no-tags origin "$GITHUB_SHA"
+          git worktree add --detach "$RUNNER_TEMP/release-auditor" "$GITHUB_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/release-auditor/node_modules"
+          node "$RUNNER_TEMP/release-auditor/scripts/audit-macos-package.mjs" \
+            --source-root="$GITHUB_WORKSPACE" \
             --app='${{ matrix.app-path }}' \
             --platform=${{ matrix.platform }} \
             --channel=release \
