@@ -19,13 +19,15 @@ import {
 } from "../src/main/lib/main-run-launcher"
 import { migrateDatabase } from "../src/main/lib/db/migrate"
 import * as schema from "../src/main/lib/db/schema"
+import * as registration from "../src/main/lib/mcp-control/registration"
 import type { HarnessAdapter, RuntimeAdapterContext } from "../src/shared/agent-runtime"
 
 // Provider routers are not part of this no-provider composition fixture.
 vi.mock("../src/main/lib/trpc/routers", () => ({
   createAppRouter: () => ({ createCaller: () => ({}) }),
 }))
-vi.mock("../src/main/lib/mcp-control/invalidation-bridge", () => ({
+vi.mock(import("../src/main/lib/mcp-control/invalidation-bridge"), async (importOriginal) => ({
+  ...(await importOriginal()),
   publishLocalProductInvalidation: vi.fn(),
 }))
 
@@ -60,6 +62,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   resetMainRuntimeLaunchServicesForTests()
   db.close()
   rmSync(directory, { recursive: true, force: true })
@@ -190,6 +193,7 @@ function runtimeService(disabled = false) {
 
 describe("actual orchestration materialization through the Runtime registry", () => {
   it("preserves worker authority and terminal activity through the real launch port and service recreation", async () => {
+    const registrations = vi.spyOn(registration, "buildMcpStdioRegistration")
     const requests = createWorkers()
     expect(requests).toHaveLength(2)
     const snapshots = requests.map(({ runId }) =>
@@ -216,6 +220,16 @@ describe("actual orchestration materialization through the Runtime registry", ()
       "claude-code",
       "codex",
     ])
+    expect(registrations.mock.results.map((result) => result.value.env)).toEqual(
+      requests.map(({ chatId, runId }) =>
+        expect.objectContaining({
+          FLAPSTACK_MCP_CHAT_ID: chatId,
+          FLAPSTACK_MCP_RUN_ID: runId,
+          FLAPSTACK_MCP_PERMISSION_MODE: "read-only",
+          FLAPSTACK_DB_PATH: databasePath,
+        }),
+      ),
+    )
     for (const { context, row, intent } of observed) {
       expect(intent).toBeGreaterThan(0)
       expect(row).toMatchObject({
