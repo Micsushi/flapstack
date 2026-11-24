@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useSyncExternalStore } from "react"
+import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { ChevronLeft, ChevronRight, Redo2, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -30,6 +30,9 @@ export function WindowsTitleBar({
   onForward?: () => void
 }) {
   const [hasNativeFrame, setHasNativeFrame] = useState(false)
+  const [menusVisible, setMenusVisible] = useState(false)
+  const menuRow = useRef<HTMLDivElement>(null)
+  const previousFocus = useRef<HTMLElement | null>(null)
   const actionHistory = useSyncExternalStore(
     subscribeAppActionHistory,
     getAppActionHistorySnapshot,
@@ -55,6 +58,49 @@ export function WindowsTitleBar({
   }, [isWindows])
 
   const showsAppControls = isWindows && !hasNativeFrame
+
+  useEffect(() => {
+    if (!showsAppControls) return
+    let altOnly = false
+    const close = () => {
+      altOnly = false
+      setMenusVisible(false)
+    }
+    const keyDown = (event: KeyboardEvent) => {
+      if (event.repeat) return
+      altOnly = event.key === "Alt" && !event.ctrlKey && !event.shiftKey && !event.metaKey
+      if (event.key === "Escape") {
+        if (menuRow.current?.contains(document.activeElement)) previousFocus.current?.focus()
+        close()
+      }
+    }
+    const keyUp = (event: KeyboardEvent) => {
+      if (event.key !== "Alt" || !altOnly) return
+      altOnly = false
+      if (menuRow.current?.contains(document.activeElement)) previousFocus.current?.focus()
+      else
+        previousFocus.current =
+          document.activeElement instanceof HTMLElement ? document.activeElement : null
+      setMenusVisible((visible) => !visible)
+    }
+    const pointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || !menuRow.current?.contains(event.target)) close()
+    }
+    window.addEventListener("keydown", keyDown)
+    window.addEventListener("keyup", keyUp)
+    window.addEventListener("pointerdown", pointerDown)
+    window.addEventListener("blur", close)
+    return () => {
+      window.removeEventListener("keydown", keyDown)
+      window.removeEventListener("keyup", keyUp)
+      window.removeEventListener("pointerdown", pointerDown)
+      window.removeEventListener("blur", close)
+    }
+  }, [showsAppControls])
+
+  useEffect(() => {
+    if (menusVisible) menuRow.current?.querySelector("button")?.focus()
+  }, [menusVisible])
 
   // Don't render on non-Windows or when using native frame
   if (!showsAppControls) return null
@@ -133,16 +179,25 @@ export function WindowsTitleBar({
         >
           <Redo2 className="h-3.5 w-3.5" />
         </button>
-        {APPLICATION_MENUS.map((menu) => (
-          <button
-            key={menu}
-            type="button"
-            className="flex h-7 items-center rounded-md px-2 text-xs text-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground"
-            onClick={() => void window.desktopApi.showApplicationMenu(menu)}
+        {menusVisible && (
+          <div
+            ref={menuRow}
+            role="group"
+            aria-label="Application menus"
+            className="flex items-center gap-0.5"
           >
-            {menu}
-          </button>
-        ))}
+            {APPLICATION_MENUS.map((menu) => (
+              <button
+                key={menu}
+                type="button"
+                className="flex h-7 items-center rounded-md px-2 text-xs text-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground"
+                onClick={() => void window.desktopApi.showApplicationMenu(menu)}
+              >
+                {menu}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

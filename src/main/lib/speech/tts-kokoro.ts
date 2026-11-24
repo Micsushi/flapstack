@@ -32,7 +32,7 @@ export type KokoroModel = {
 }
 
 let loadPromise: Promise<KokoroModel> | null = null
-let runtimeMissingReason: string | null = null
+let activeProcess: Electron.UtilityProcess | undefined
 
 export const kokoroTtsAdapter: TtsAdapter = {
   id: "kokoro",
@@ -42,14 +42,14 @@ export const kokoroTtsAdapter: TtsAdapter = {
   platform: "all",
 
   async isAvailable(): Promise<SpeechAdapterAvailability> {
-    const runtime = await tryResolveRuntime()
-    if (!runtime) {
+    try {
+      require.resolve("@huggingface/transformers")
+      require.resolve("kokoro-js")
+    } catch {
       return {
         available: false,
         status: "not-configured",
-        reason:
-          runtimeMissingReason ??
-          "Kokoro runtime is not installed. Repair the app installation to use Kokoro.",
+        reason: "Kokoro runtime is not installed. Repair the app installation to use Kokoro.",
       }
     }
     // The model downloads on first synthesis, then runs locally.
@@ -188,50 +188,81 @@ export function warmCachedKokoro() {
 
 async function loadModel(cachedOnly = false): Promise<KokoroModel> {
   if (loadPromise) return loadPromise
-  loadPromise = (async () => {
-    const runtime = await tryResolveRuntime()
-    if (!runtime) {
-      throw new Error(
-        runtimeMissingReason ??
-          "Kokoro runtime is not installed. Repair the app installation to use Kokoro.",
-      )
-    }
-    const { transformers, kokoro } = runtime
-    // Cache the ONNX model + voices under the app speech dir instead of the
-    // process CWD so repeated runs reuse the first download.
-    transformers.env.cacheDir = path.join(getSpeechDataDir(), "kokoro")
-    const model = (await kokoro.KokoroTTS.from_pretrained(MODEL_ID, {
-      ...(cachedOnly && { local_files_only: true }),
-      dtype: "q8",
-      device: "cpu",
-    })) as KokoroModel
-    return model
-  })().catch((error) => {
-    loadPromise = null
-    throw error
+  const pending = startSynthesisProcess(cachedOnly)
+  loadPromise = pending
+  void pending.catch(() => {
+    if (loadPromise === pending) loadPromise = null
   })
-  return loadPromise
+  return pending
 }
 
-type KokoroRuntime = {
-  transformers: { env: { cacheDir?: string; allowLocalModels?: boolean; localModelPath?: string } }
-  kokoro: { KokoroTTS: { from_pretrained: (id: string, options: unknown) => Promise<unknown> } }
-}
-
-async function tryResolveRuntime(): Promise<KokoroRuntime | null> {
-  try {
-    // Kokoro's CJS entry uses this instance; the ESM env has a separate cacheDir.
-    const transformers = require("@huggingface/transformers") as KokoroRuntime["transformers"]
-    const kokoro = require("kokoro-js") as KokoroRuntime["kokoro"]
-    runtimeMissingReason = null
-    return { transformers, kokoro }
-  } catch (error) {
-    runtimeMissingReason =
-      "Kokoro runtime (kokoro-js/@huggingface/transformers) is not installed. Run npm install."
-    if (process.env.FLAPSTACK_DEBUG_SPEECH) {
-      console.warn("[Speech] Kokoro runtime unavailable:", error)
+async function startSynthesisProcess(cachedOnly: boolean): Promise<KokoroModel> {
+  const { app, utilityProcess } = require("electron") as typeof import("electron")
+  const child = utilityProcess.fork(
+    path.join(app.getAppPath(), "out/main/kokoro-synthesis.js"),
+    [],
+    {
+      stdio: "ignore",
+      serviceName: "Flapstack speech synthesis",
+    },
+  )
+  activeProcess = child
+  const close = () => {
+    child.kill()
+  }
+  app.once("will-quit", close)
+  type Reply = { voices?: string[]; audio?: Float32Array; sampling_rate?: number }
+  let waiting: { id: number; resolve(value: Reply): void; reject(error: Error): void } | undefined
+  let sequence = 0
+  let exited = false
+  child.on("exit", () => {
+    exited = true
+    app.removeListener("will-quit", close)
+    if (activeProcess === child) {
+      activeProcess = undefined
+      loadPromise = null
     }
-    return null
+    waiting?.reject(new Error("The Kokoro speech process stopped. Play the reply again."))
+    waiting = undefined
+  })
+  child.on("message", (message: { id: number; result?: Reply; error?: string }) => {
+    const request = waiting
+    if (!request || request.id !== message.id) return
+    waiting = undefined
+    if (message.result) request.resolve(message.result)
+    else request.reject(new Error(message.error || "Kokoro synthesis failed."))
+  })
+  // The existing sentence scheduler issues one inference at a time across all replies.
+  const request = (payload: Record<string, unknown>) =>
+    new Promise<Reply>((resolve, reject) => {
+      if (exited || waiting) return reject(new Error("The Kokoro speech process is unavailable."))
+      const id = ++sequence
+      waiting = { id, resolve, reject }
+      const send = () => {
+        try {
+          child.postMessage({ ...payload, id })
+        } catch (error) {
+          waiting = undefined
+          reject(error)
+        }
+      }
+      if (child.pid) send()
+      else child.once("spawn", send)
+    })
+  try {
+    const loaded = await request({
+      kind: "load",
+      modelId: MODEL_ID,
+      cacheDir: path.join(getSpeechDataDir(), "kokoro"),
+      cachedOnly,
+    })
+    return {
+      voices: Object.fromEntries((loaded.voices ?? []).map((name) => [name, true])),
+      generate: (text, options) => request({ kind: "sentence", text, ...options }),
+    }
+  } catch (error) {
+    close()
+    throw error
   }
 }
 
