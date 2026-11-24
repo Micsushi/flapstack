@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { basename, join } from "node:path"
 import type { ClientSideConnection } from "@agentclientprotocol/sdk"
 import { z } from "zod"
+import { isOwnerRegistration } from "../../mcp-control/child-registration"
 import { readFileInsideRoot } from "../../path-safety"
 import type { RuntimeAdapterContext } from "../../../../shared/agent-runtime"
 
@@ -56,6 +57,7 @@ export async function projectMcpServers(
   const labels: string[] = []
   let unsupported = false
   for (const [name, value] of Object.entries(entries)) {
+    if (isOwnerRegistration(name, value)) continue
     if (typeof value === "object" && value && "disabled" in value && value.disabled === true)
       continue
     if (!/^[a-z0-9._-]+$/i.test(name)) {

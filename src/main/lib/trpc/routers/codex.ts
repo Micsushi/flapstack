@@ -76,6 +76,7 @@ import {
   renameProductMcpServerCollisions,
 } from "../../mcp-control/registration"
 import { resolveCodexRuntimeCommand } from "../../agent-runtime/codex/binary"
+import { isOwnerRegistration } from "../../mcp-control/child-registration"
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
 import { mergeMessagesPreservingSpokenText } from "../../speech/history"
@@ -910,7 +911,10 @@ async function resolveCodexMcpSnapshot(params: {
     throw new Error("Failed to parse Codex MCP list JSON output.")
   }
 
-  const entries = z.array(codexMcpListEntrySchema).parse(parsed)
+  const entries = z
+    .array(codexMcpListEntrySchema)
+    .parse(parsed)
+    .filter((entry) => !isOwnerRegistration(entry.name, entry.transport))
   const mcpServersForSession: CodexMcpServerForSession[] = []
   const mcpServersForSettings: CodexMcpServerForSettings[] = []
 
@@ -2278,9 +2282,14 @@ export const codexRouter = router({
             try {
               const resolvedProjectPathFromCwd = resolveProjectPathFromWorktree(input.cwd)
               const mcpLookupPath = input.projectPath || resolvedProjectPathFromCwd || input.cwd
-              mcpSnapshot = await resolveCodexMcpSnapshot({
-                lookupPath: mcpLookupPath,
-              })
+              const discovered = await resolveCodexMcpSnapshot({ lookupPath: mcpLookupPath })
+              // Launcher identities are run-specific and must never enter the discovery cache.
+              mcpSnapshot = {
+                ...discovered,
+                mcpServersForSession: discovered.mcpServersForSession.map((server) => ({
+                  ...server,
+                })),
+              }
               if (productMcpEnabledAtLaunch) {
                 const registration = buildMcpStdioRegistration(
                   { chatId: input.chatId, runId: input.runId, permissionMode },

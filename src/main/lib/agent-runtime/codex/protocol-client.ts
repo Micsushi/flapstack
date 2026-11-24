@@ -1,3 +1,4 @@
+import { childHarnessEnvironment } from "../../mcp-control/child-registration"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { sanitizeRuntimeText } from "../sanitizer"
 import { LargeCodexToolFrame } from "./large-tool-frame"
@@ -136,7 +137,7 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS
     this.child = (options.spawnProcess ?? defaultSpawn)(options.command, ["app-server"], {
       cwd: options.cwd,
-      env: options.env ?? process.env,
+      env: childHarnessEnvironment(options.env ?? process.env),
       windowsHide: true,
     })
 

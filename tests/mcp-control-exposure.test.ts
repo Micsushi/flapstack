@@ -5,6 +5,10 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import {
+  isOwnerRegistration,
+  childHarnessEnvironment,
+} from "../src/main/lib/mcp-control/child-registration"
 import { closeDatabase } from "../src/main/lib/db"
 import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 import * as schema from "../src/main/lib/db/schema"
@@ -42,6 +46,7 @@ afterEach(() => {
 describe("Flapstack MCP per-chat exposure", () => {
   it.each([
     ["codex", true],
+    ["antigravity", true],
     ["claude", true],
     ["claude-code", true],
     ["cursor-agent", true],
@@ -52,6 +57,25 @@ describe("Flapstack MCP per-chat exposure", () => {
     [null, false],
   ] as const)("defaults product MCP exposure for %s to %s", (harness, expected) => {
     expect(isProductMcpEnabledByDefault(harness)).toBe(expected)
+  })
+
+  it("keeps owner registrations and ambient owner credentials out of child launches", () => {
+    expect(isOwnerRegistration("flapstack-app-control", {})).toBe(true)
+    expect(
+      isOwnerRegistration("alias", { args: ["C:\\App\\mcp-control-stdio.js", "--external"] }),
+    ).toBe(true)
+    expect(isOwnerRegistration("alias", { env: { FLAPSTACK_MCP_OWNER_TOKEN: "fixture" } })).toBe(
+      true,
+    )
+    expect(isOwnerRegistration("other", { args: ["other.js", "--external"] })).toBe(false)
+    expect(isOwnerRegistration("flapstack", { env: { FLAPSTACK_MCP_RUN_ID: "child" } })).toBe(false)
+    const parent = {
+      FLAPSTACK_MCP_OWNER_TOKEN: "fixture",
+      FLAPSTACK_MCP_CALLER_MODE: "external",
+      PATH: "bin",
+    }
+    expect(childHarnessEnvironment(parent)).toEqual({ PATH: "bin" })
+    expect(parent.FLAPSTACK_MCP_OWNER_TOKEN).toBe("fixture")
   })
 
   it("preserves existing exposure choices during the default-on migration", () => {
@@ -72,6 +96,7 @@ describe("Flapstack MCP per-chat exposure", () => {
 
   it.each([
     ["cursor-agent", "Cursor"],
+    ["antigravity", "Antigravity"],
     ["openrouter", "OpenRouter"],
     ["nanogpt", "NanoGPT"],
   ] as const)("supports product MCP exposure for %s chats", (harness, label) => {

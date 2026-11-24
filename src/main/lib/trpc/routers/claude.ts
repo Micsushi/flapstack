@@ -64,6 +64,7 @@ import {
   FLAPSTACK_MCP_SERVER_NAME,
   renameProductMcpRecordCollisions,
 } from "../../mcp-control/registration"
+import { childHarnessEnvironment, isOwnerRegistration } from "../../mcp-control/child-registration"
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
 import { FLAPSTACK_MCP_INSTRUCTIONS } from "../../mcp-control/guidance"
@@ -1689,6 +1690,9 @@ export const claudeRouter = router({
                   ...projectServers,
                 }
 
+                for (const [name, server] of Object.entries(allServers)) {
+                  if (isOwnerRegistration(name, server)) delete allServers[name]
+                }
                 if (productMcpEnabledAtLaunch) {
                   const permissionMode = resolveClaudeRunPermission(input.chatId)
                   const registration = buildMcpStdioRegistration(
@@ -2171,7 +2175,7 @@ ${prompt}
                 // Always suppress SDK config discovery. Offline mode intentionally passes
                 // an empty set so repository-controlled .mcp.json commands cannot self-load.
                 ...strictClaudeMcpSdkOptions(mcpServersFiltered),
-                env: finalEnv,
+                env: childHarnessEnvironment(finalEnv),
                 permissionMode: sdkPermission.sdkPermissionMode,
                 ...(sdkPermission.allowDangerouslySkipPermissions && {
                   allowDangerouslySkipPermissions: sdkPermission.allowDangerouslySkipPermissions,

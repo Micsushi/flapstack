@@ -12,6 +12,7 @@ const activeProductMcpSessions = new Map<string, ActiveProductMcpSession>()
 
 const PRODUCT_MCP_DEFAULT_HARNESSES = new Set([
   "codex",
+  "antigravity",
   "claude",
   "claude-code",
   "cursor-agent",

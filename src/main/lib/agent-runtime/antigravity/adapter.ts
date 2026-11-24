@@ -23,6 +23,12 @@ import type {
 } from "../../../../shared/agent-runtime"
 import { eventRecord } from "../event-values"
 import { sanitizeRuntimeText } from "../sanitizer"
+import { childHarnessEnvironment } from "../../mcp-control/child-registration"
+import {
+  FLAPSTACK_MCP_SERVER_NAME,
+  renameProductMcpServerCollisions,
+  type McpStdioRegistration,
+} from "../../mcp-control/registration"
 import { projectMcpServers } from "./project-mcp"
 import { AntigravityEvents } from "./events"
 import { answerAntigravityForm, type AskAntigravityQuestion } from "./questions"
@@ -74,6 +80,7 @@ async function fetchModels() {
 }
 
 type Dependencies = {
+  registration?: (runId: string) => McpStdioRegistration | undefined
   cwd: (context: RuntimeAdapterContext) => string
   images: (runId: string) => Array<{ base64Data: string; mediaType: string }>
   append: (runId: string, events: AgentActivityAppend[]) => Promise<void>
@@ -155,6 +162,7 @@ function connect(context: RuntimeAdapterContext, deps: Dependencies) {
   const handshakeDirectory = mkdtempSync(join(tmpdir(), "flapstack-acp-"))
   const child = spawn(command, args, {
     cwd: handshakeDirectory,
+    env: childHarnessEnvironment(process.env),
     windowsHide: true,
     stdio: ["pipe", "pipe", "ignore"],
   })
@@ -280,6 +288,16 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
         ]),
     )
     context.signal.throwIfAborted()
+    const product = deps.registration?.(context.runId)
+    if (product) {
+      renameProductMcpServerCollisions(mcpServers)
+      mcpServers.push({
+        name: FLAPSTACK_MCP_SERVER_NAME,
+        command: product.command,
+        args: product.args,
+        env: Object.entries(product.env).map(([name, value]) => ({ name, value })),
+      })
+    }
     if (previous && !previous.providerSessionId)
       throw new Error("Cannot resume Antigravity without its saved session ID.")
     const session = previous?.providerSessionId

@@ -12,6 +12,15 @@ import { randomUUID } from "node:crypto"
 import { promisify } from "node:util"
 import { setImmediate as nextEventLoop } from "node:timers/promises"
 import { createAppRouter } from "./trpc/routers"
+import {
+  buildMcpStdioRegistration,
+  FLAPSTACK_MCP_SERVER_NAME,
+  renameProductMcpRecordCollisions,
+  type McpStdioRegistration,
+} from "./mcp-control/registration"
+import { registerActiveProductMcpSession } from "./mcp-control/exposure"
+import { resolveProviderMcpPermission } from "./mcp-control/provider-permissions"
+import { isOwnerRegistration, childHarnessEnvironment } from "./mcp-control/child-registration"
 import { publishLocalProductInvalidation } from "./mcp-control/invalidation-bridge"
 import {
   loadAgentRunReconciliationState,
@@ -221,6 +230,7 @@ export class MainRuntimeLaunchService {
   readonly coordinator: RuntimeLaunchCoordinator<unknown>
   private readonly caller = createAppRouter(() => null).createCaller({ getWindow: () => null })
   private readonly runs = new Map<string, QueuedAgentRun>()
+  private readonly productRegistrations = new Map<string, McpStdioRegistration>()
   private readonly streams = new Map<string, unknown>()
   private readonly states = new Map<string, "running" | "completed" | "uncertain">()
   private readonly prelaunchCancellations = new Set<string>()
@@ -280,6 +290,7 @@ export class MainRuntimeLaunchService {
                 enhanced ? buildManagedCodexHookConfig(authority.hooks) : {},
                 authority.policy,
               )
+          const product = this.productRegistrations.get(context.runId)
           return {
             cwd: authority.cwd,
             ...(enhanced && operation === "start" && context.instructions
@@ -288,6 +299,14 @@ export class MainRuntimeLaunchService {
             ...codexPermissionOptions(context.launch.permission.mode),
             config: {
               ...config,
+              ...(product
+                ? {
+                    mcp_servers: {
+                      ...(isPlainRecord(config.mcp_servers) ? config.mcp_servers : {}),
+                      [FLAPSTACK_MCP_SERVER_NAME]: { ...product, enabled: true },
+                    },
+                  }
+                : {}),
               ...(run?.interactiveChat && run.harness === "codex" && this.inputHandler
                 ? {
                     features: {
@@ -383,6 +402,7 @@ export class MainRuntimeLaunchService {
           harness: "antigravity",
           factory: () =>
             createAntigravityAdapter({
+              registration: (runId) => this.productRegistrations.get(runId),
               cwd: (context) => {
                 const db = this.open()
                 try {
@@ -419,6 +439,7 @@ export class MainRuntimeLaunchService {
       throw new Error(`Runtime run ${run.runId} is already active.`)
     }
     this.runs.set(run.runId, run)
+    let releaseProductSession: (() => void) | undefined
     let workspace: Promise<void> | undefined
     try {
       assertFrozenProfileToolPolicySupported(run)
@@ -453,6 +474,35 @@ export class MainRuntimeLaunchService {
             chatId: run.chatId,
             cwd: run.worktreePath || run.projectPath || "",
           })
+          const enabled = sqlite
+            .prepare(
+              "SELECT 1 FROM chats WHERE id = ? AND mcp_exposure_enabled = 1 AND archived_at IS NULL",
+            )
+            .get(run.chatId)
+          if (enabled) {
+            this.productRegistrations.set(
+              run.runId,
+              buildMcpStdioRegistration(
+                {
+                  chatId: run.chatId,
+                  runId: run.runId,
+                  permissionMode: resolvedLaunch.permission.mode,
+                },
+                {
+                  executablePath: process.execPath,
+                  mainDirectory: __dirname,
+                  databasePath: this.databasePath,
+                },
+              ),
+            )
+            releaseProductSession = registerActiveProductMcpSession({
+              chatId: run.chatId,
+              runId: run.runId,
+              revoke: () => {
+                void this.cancel(run.runId, "product MCP disabled").catch(() => {})
+              },
+            })
+          }
         } finally {
           sqlite.close()
         }
@@ -504,6 +554,8 @@ export class MainRuntimeLaunchService {
         ? error
         : new RuntimeLaunchCancelledError(run.runId)
     } finally {
+      releaseProductSession?.()
+      this.productRegistrations.delete(run.runId)
       await workspace?.catch(() => {})
       const checkout = this.checkpointCheckouts.get(run.runId)
       checkout?.providerStopped()
@@ -988,11 +1040,15 @@ export class MainRuntimeLaunchService {
                   hydrateMcpServerSecrets(server),
                 ]),
               )
-        const mcpServers = hiddenPreviewVerification
-          ? {}
-          : filterClaudeExtensionMcpServers(loadedMcpServers, authority.policy)
+        const mcpServers = filterClaudeExtensionMcpServers(loadedMcpServers, authority.policy) ?? {}
+        const product = this.productRegistrations.get(context.runId)
+        if (product) {
+          renameProductMcpRecordCollisions(mcpServers)
+          mcpServers[FLAPSTACK_MCP_SERVER_NAME] = product
+        }
         return {
           cwd: authority.cwd,
+          env: childHarnessEnvironment(process.env),
           pathToClaudeCodeExecutable: await resolveBundledClaudePath(),
           includePartialMessages: true,
           settingSources: hiddenPreviewVerification ? [] : ["user", "project", "local"],
@@ -1044,6 +1100,19 @@ export class MainRuntimeLaunchService {
                 },
               }
             }
+            const mcp = resolveProviderMcpPermission({
+              permissionMode: context.launch.permission.mode,
+              correlationId: options.toolUseID,
+              providerToolName: toolName,
+              trustedProductServerName: product ? FLAPSTACK_MCP_SERVER_NAME : null,
+              customPermissions: parseRuntimeCustomPermissions(
+                this.runs.get(context.runId)?.customPermissions ?? null,
+              ),
+            })
+            if (mcp?.source === "product" || mcp?.source === "unknown-product") {
+              if (mcp.decision === "allow") return { behavior: "allow", updatedInput: toolInput }
+              if (mcp.decision === "deny") return { behavior: "deny", message: mcp.reason }
+            }
             const decision = await resolveClaudeRuntimeToolPermission({
               mode: context.launch.permission.mode,
               customPermissions: parseRuntimeCustomPermissions(
@@ -1070,9 +1139,9 @@ export class MainRuntimeLaunchService {
           ...claudePermissionOptions(context.launch.permission.mode),
           ...(context.launch.model ? { model: context.launch.model } : {}),
           ...sdkOptions,
-          ...strictClaudeMcpSdkOptions(mcpServers),
           ...(Object.keys(hooks).length > 0 ? { hooks, includeHookEvents: true } : {}),
           ...claudeReadOnlyToolOptions(context.launch.permission.mode),
+          ...strictClaudeMcpSdkOptions(mcpServers),
         }
       },
       resolvePrompt: (context, prompt) =>
@@ -2017,7 +2086,11 @@ async function loadClaudeMcpServers(cwd: string): Promise<Record<string, McpServ
       }
     }
   }
-  return { ...pluginServers, ...globalServers, ...projectServers }
+  return Object.fromEntries(
+    Object.entries({ ...pluginServers, ...globalServers, ...projectServers }).filter(
+      ([name, server]) => !isOwnerRegistration(name, server),
+    ),
+  )
 }
 
 export function getMainRuntimeLaunchService(

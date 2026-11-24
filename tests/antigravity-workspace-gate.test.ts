@@ -43,6 +43,11 @@ it("initializes ACP independently and only gives it the project once its checkpo
   const cwd = vi.fn(() => "/selected/project")
   const adapter = createAntigravityAdapter({
     cwd,
+    registration: () => ({
+      command: "electron",
+      args: ["app/mcp-control-stdio.js"],
+      env: { FLAPSTACK_MCP_CHAT_ID: "chat-1", FLAPSTACK_MCP_RUN_ID: "workspace-gate" },
+    }),
     images: () => [],
     append: vi.fn(),
     permission: vi.fn(),
@@ -62,7 +67,20 @@ it("initializes ACP independently and only gives it the project once its checkpo
     expect(acp.newSession).not.toHaveBeenCalled()
     release()
     await expect(session).resolves.toMatchObject({ providerSessionId: "test" })
-    expect(acp.newSession).toHaveBeenCalledWith({ cwd: "/selected/project", mcpServers: [] })
+    expect(acp.newSession).toHaveBeenCalledWith({
+      cwd: "/selected/project",
+      mcpServers: [
+        {
+          name: "flapstack",
+          command: "electron",
+          args: ["app/mcp-control-stdio.js"],
+          env: [
+            { name: "FLAPSTACK_MCP_CHAT_ID", value: "chat-1" },
+            { name: "FLAPSTACK_MCP_RUN_ID", value: "workspace-gate" },
+          ],
+        },
+      ],
+    })
   } finally {
     release()
     await adapter.cleanup(context)
