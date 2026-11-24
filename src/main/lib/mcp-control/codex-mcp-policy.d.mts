@@ -1,3 +1,4 @@
+export function isProtectedChildCredentialName(name: unknown): boolean
 export function isOwnerRegistration(name: string, config: unknown): boolean
 export function disabledCodexMcpServers(
   native: unknown,

@@ -79,6 +79,7 @@ import {
 } from "../../mcp-control/registration"
 import { resolveCodexRuntimeCommand } from "../../agent-runtime/codex/binary"
 import { childHarnessEnvironment, isOwnerRegistration } from "../../mcp-control/child-registration"
+import { isProtectedChildCredentialName } from "../../mcp-control/codex-mcp-policy.mjs"
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
 import { mergeMessagesPreservingSpokenText } from "../../speech/history"
@@ -765,6 +766,11 @@ function objectToPairs(
   return pairs.length > 0 ? pairs : undefined
 }
 
+// Resolve only provider-owned values from the desktop, including during settings probes.
+function codexMcpEnvironmentValue(name: string): string | undefined {
+  return isProtectedChildCredentialName(name) ? undefined : process.env[name]
+}
+
 function resolveCodexStdioEnv(
   transport: CodexMcpListEntry["transport"],
 ): Record<string, string> | undefined {
@@ -772,7 +778,7 @@ function resolveCodexStdioEnv(
 
   if (transport.env) {
     for (const [name, value] of Object.entries(transport.env)) {
-      if (typeof name === "string" && typeof value === "string") {
+      if (typeof value === "string" && !isProtectedChildCredentialName(name)) {
         merged[name] = value
       }
     }
@@ -780,7 +786,7 @@ function resolveCodexStdioEnv(
 
   if (Array.isArray(transport.env_vars)) {
     for (const envName of transport.env_vars) {
-      const value = process.env[envName]
+      const value = codexMcpEnvironmentValue(envName)
       if (typeof value === "string" && value.length > 0 && !merged[envName]) {
         merged[envName] = value
       }
@@ -806,7 +812,7 @@ function resolveCodexHttpHeaders(
   if (transport.env_http_headers) {
     for (const [headerName, envName] of Object.entries(transport.env_http_headers)) {
       if (typeof headerName !== "string" || typeof envName !== "string") continue
-      const value = process.env[envName]
+      const value = codexMcpEnvironmentValue(envName)
       if (typeof value === "string" && value.length > 0) {
         merged[headerName] = value
       }
@@ -815,7 +821,7 @@ function resolveCodexHttpHeaders(
 
   const bearerEnvVar = transport.bearer_token_env_var?.trim()
   if (bearerEnvVar && !merged.Authorization) {
-    const token = process.env[bearerEnvVar]?.trim()
+    const token = codexMcpEnvironmentValue(bearerEnvVar)?.trim()
     if (token) {
       merged.Authorization = `Bearer ${token}`
     }

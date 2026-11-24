@@ -1,9 +1,18 @@
+/** Desktop authority. Claim-bound Records workers use PROJECT_RECORDS_GRANT_FILE. */
+export function isProtectedChildCredentialName(name) {
+  return (
+    typeof name === "string" &&
+    /^(?:FLAPSTACK_MCP_OWNER_TOKEN|(?:FLAPSTACK_)?PROJECT_RECORDS_TOKEN)(?:_FILE)?$/i.test(
+      name.trim(),
+    )
+  )
+}
+
 /** External registrations belong to the owner's harness, never to an app-launched agent. */
 export function isOwnerRegistration(name, config) {
   if (name.toLowerCase() === "flapstack-app-control") return true
   if (!config || typeof config !== "object") return false
   const env = config.env ?? {}
-  const ownerTokenName = (key) => /^FLAPSTACK_MCP_OWNER_TOKEN(?:_FILE)?$/i.test(key)
   return (
     (Array.isArray(config.args) &&
       config.args.includes("--external") &&
@@ -12,10 +21,12 @@ export function isOwnerRegistration(name, config) {
       )) ||
     Object.entries(env).some(
       ([key, value]) =>
-        ownerTokenName(key) ||
+        isProtectedChildCredentialName(key) ||
         (key.toUpperCase() === "FLAPSTACK_MCP_CALLER_MODE" && value === "external"),
     ) ||
-    (Array.isArray(config.env_vars) && config.env_vars.some(ownerTokenName))
+    (Array.isArray(config.env_vars) && config.env_vars.some(isProtectedChildCredentialName)) ||
+    Object.values(config.env_http_headers ?? {}).some(isProtectedChildCredentialName) ||
+    isProtectedChildCredentialName(config.bearer_token_env_var)
   )
 }
 

@@ -1,3 +1,5 @@
+import { isProtectedChildCredentialName } from "./codex-mcp-policy.mjs"
+
 export { isOwnerRegistration } from "./codex-mcp-policy.mjs"
 
 export function childHarnessEnvironment<T extends string | undefined>(
@@ -5,12 +7,9 @@ export function childHarnessEnvironment<T extends string | undefined>(
 ): Record<string, T> {
   const env = { ...environment }
   for (const key of Object.keys(env)) {
-    if (
-      /^(?:FLAPSTACK_MCP_(?:OWNER_TOKEN(?:_FILE)?|CALLER_MODE)|(?:FLAPSTACK_)?PROJECT_RECORDS_TOKEN(?:_FILE)?)$/i.test(
-        key,
-      )
-    )
+    if (isProtectedChildCredentialName(key) || key.toUpperCase() === "FLAPSTACK_MCP_CALLER_MODE") {
       delete env[key]
+    }
   }
   return env
 }

@@ -265,13 +265,46 @@ describe("Codex router terminal provider failure", () => {
 
   it("enforces task-resolved skill and MCP policy for a direct Codex launch", async () => {
     seedCodexExtensionPolicy()
+    const workerEnv = {
+      PROJECT_RECORDS_GRANT_FILE: "public-claim",
+      PROJECT_RECORDS_ATTEMPT_ID: "public-attempt",
+    }
+    const servers = {
+      inlineRecords: {
+        type: "stdio",
+        command: "example",
+        env: { PROJECT_RECORDS_TOKEN: "public-inline-marker" },
+      },
+      stdioRecords: {
+        type: "stdio",
+        command: "example",
+        env_vars: ["FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE"],
+      },
+      httpRecords: {
+        type: "streamable_http",
+        url: "https://public.invalid",
+        env_http_headers: { Authorization: "project_records_token_file" },
+      },
+      bearerRecords: {
+        type: "streamable_http",
+        url: "https://public.invalid",
+        bearer_token_env_var: "FLAPSTACK_PROJECT_RECORDS_TOKEN",
+      },
+      claimWorker: { type: "stdio", command: "example", env: workerEnv },
+      publicServer: { type: "stdio", command: "example" },
+    }
+    mocks.spawn.mockImplementation(() =>
+      fakeCodexMcpListProcess(
+        Object.entries(servers).map(([name, transport]) => ({ name, enabled: true, transport })),
+      ),
+    )
     vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE", "public-desktop-fixture")
     vi.stubEnv(
       "CODEX_CONFIG",
       JSON.stringify({
         mcp_servers: {
           publicAlias: { env: { FLAPSTACK_MCP_OWNER_TOKEN: "public-inline-fixture" } },
-          publicServer: { command: "example" },
+          ...servers,
         },
       }),
     )
@@ -300,7 +333,25 @@ describe("Codex router terminal provider failure", () => {
     }
     const config = JSON.parse(providerOptions.env.CODEX_CONFIG)
     expect(config.mcp_servers.publicAlias).toEqual({ enabled: false })
-    expect(config.mcp_servers.publicServer).toEqual({ command: "example" })
+    expect(config.mcp_servers.publicServer).toEqual(servers.publicServer)
+    expect(config.mcp_servers.claimWorker).toEqual(servers.claimWorker)
+    expect(providerOptions.session.mcpServers).toContainEqual(
+      expect.objectContaining({
+        name: "claimWorker",
+        env: expect.arrayContaining([
+          { name: "PROJECT_RECORDS_GRANT_FILE", value: "public-claim" },
+        ]),
+      }),
+    )
+    expect(providerOptions.session.mcpServers).toContainEqual(
+      expect.objectContaining({ name: "publicServer" }),
+    )
+    for (const name of ["inlineRecords", "stdioRecords", "httpRecords", "bearerRecords"]) {
+      expect(config.mcp_servers[name]).toEqual({ enabled: false })
+      expect(providerOptions.session.mcpServers).not.toContainEqual(
+        expect.objectContaining({ name }),
+      )
+    }
     expect(config.skills.config).toContainEqual({
       path: join(directory, ".agents", "skills", "policy-alpha-task", "SKILL.md"),
       enabled: false,
@@ -452,7 +503,7 @@ function readVisibleTranscript(): string[] {
   )
 }
 
-function fakeCodexMcpListProcess(): any {
+function fakeCodexMcpListProcess(entries: unknown[] = []): any {
   const stdoutListeners: Array<(chunk: Buffer) => void> = []
   const closeListeners: Array<(code: number) => void> = []
   const stdout = {
@@ -475,7 +526,7 @@ function fakeCodexMcpListProcess(): any {
     },
   }
   queueMicrotask(() => {
-    for (const listener of stdoutListeners) listener(Buffer.from("[]"))
+    for (const listener of stdoutListeners) listener(Buffer.from(JSON.stringify(entries)))
     for (const listener of closeListeners) listener(0)
   })
   return child

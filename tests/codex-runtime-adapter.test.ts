@@ -623,6 +623,14 @@ describe("Codex App Server JSON-RPC transport bounds", () => {
                       mcp_servers: {
                         "flapstack-app-control": { command: "example" },
                         publicGlobal: { command: "example" },
+                        inlineRecords: { env: { PROJECT_RECORDS_TOKEN: "public-inline-marker" } },
+                        stdioRecords: { env_vars: ["flapstack_project_records_token_file"] },
+                        httpRecords: {
+                          env_http_headers: { Authorization: "PROJECT_RECORDS_TOKEN_FILE" },
+                        },
+                        bearerRecords: {
+                          bearer_token_env_var: " FLAPSTACK_PROJECT_RECORDS_TOKEN ",
+                        },
                       },
                     },
                   },
@@ -643,6 +651,12 @@ describe("Codex App Server JSON-RPC transport bounds", () => {
         const servers = {
           flapstack: { command: "trusted-chat-fixture" },
           publicRun: { command: "example" },
+          claimWorker: {
+            env: {
+              PROJECT_RECORDS_GRANT_FILE: "public-claim",
+              PROJECT_RECORDS_ATTEMPT_ID: "public-attempt",
+            },
+          },
         }
         await client.request(method, {
           cwd: "/fixture",
@@ -658,6 +672,10 @@ describe("Codex App Server JSON-RPC transport bounds", () => {
             ...servers,
             "flapstack-app-control": { enabled: false },
             publicAlias: { enabled: false },
+            inlineRecords: { enabled: false },
+            stdioRecords: { enabled: false },
+            httpRecords: { enabled: false },
+            bearerRecords: { enabled: false },
           },
         })
       } finally {
