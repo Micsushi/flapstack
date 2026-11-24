@@ -301,6 +301,28 @@ describe("authenticated dev control for live product MCP", () => {
     45_000,
   )
 
+  it("rejects a child permission upgrade even after approval of the spawn", async () => {
+    const caller = prepareProductMcpCaller({ harness: "codex", permissionMode: "ask-before-edits" })
+    setProductMcpTestExposure({ chatId: caller.chatId, enabled: true })
+    const started = startProductMcpTestCall(
+      {
+        chatId: caller.chatId,
+        runId: caller.runId,
+        toolName: "spawn_thread",
+        arguments: { ...spawnArguments("claude-code"), permission: { mode: "full-access" } },
+      },
+      { registration: sourceRegistration(caller.chatId, caller.runId, "ask-before-edits") },
+    )
+    const approval = await waitForApproval(caller.chatId)
+    replyProductMcpApproval({ approvalId: approval.id, decision: "approve" })
+    expect(await waitForCall(started.id)).toMatchObject({
+      status: "failed",
+      response: { ok: false, error: { code: "permission-denied" } },
+    })
+    expect(getProductMcpState({ chatId: caller.chatId }).children).toEqual([])
+    cleanupProductMcpCaller({ chatId: caller.chatId })
+  }, 45_000)
+
   it("stops an approval-waiting child, cancels its caller, and clears the pending decision", async () => {
     const caller = prepareProductMcpCaller({
       harness: "codex",
@@ -353,7 +375,7 @@ function spawnArguments(targetHarness: "codex" | "claude-code") {
   return {
     targetHarness,
     scope: { kind: "global" },
-    permission: { mode: "full-access" },
+    permission: { mode: "read-only" },
     worktree: { strategy: "none" },
     launch: { initialPrompt: "Test launch without provider execution." },
   }
