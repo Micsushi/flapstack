@@ -89,7 +89,7 @@ export function createMcpControlServer(
           // received invocation owns a fresh internal identity instead.
           const invocationId = randomUUID()
           const response = needsDesktopMcp(tool.name)
-            ? await callDesktopMcpTool(tool.name, caller, toolInput)
+            ? await callDesktopMcpTool(tool.name, caller, toolInput, extra?.signal)
             : await invokeMcpControlTool(tool.name, caller, toolInput, undefined, {
                 approvals,
                 approvalId: () => invocationId,

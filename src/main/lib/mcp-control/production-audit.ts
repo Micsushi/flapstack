@@ -1,9 +1,5 @@
 import { getDatabase } from "../db"
-import {
-  appendMcpAuditRecord,
-  findUnresolvedMcpDispatch,
-  recoverMcpDispatchClaims,
-} from "./audit-storage"
+import { appendMcpAuditRecord, findUnresolvedMcpDispatch } from "./audit-storage"
 import type { McpAuditWriter } from "./registry"
 
 export function productMcpAudit(onChange: () => void): McpAuditWriter {
@@ -13,7 +9,6 @@ export function productMcpAudit(onChange: () => void): McpAuditWriter {
       onChange()
     },
     findUnresolvedDispatch(lookup) {
-      recoverMcpDispatchClaims(getDatabase(), { staleAfterMs: 0, limit: 25 })
       return findUnresolvedMcpDispatch(getDatabase(), lookup)
     },
   }

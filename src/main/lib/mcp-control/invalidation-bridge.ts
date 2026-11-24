@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { chmodSync, rmSync } from "node:fs"
-import { createConnection, createServer } from "node:net"
+import { createConnection, createServer, type Socket } from "node:net"
 import { join } from "node:path"
 import {
   invalidationForProjectVaultChange,
@@ -39,7 +39,11 @@ export async function startProductMcpInvalidationBridge(options: {
 }): Promise<ProductMcpInvalidationBridge> {
   const endpoint = options.endpoint ?? createProductMcpInvalidationEndpoint()
   if (process.platform !== "win32") rmSync(endpoint, { force: true })
+  const sockets = new Set<Socket>()
   const server = createServer((socket) => {
+    sockets.add(socket)
+    socket.once("close", () => sockets.delete(socket))
+    socket.setTimeout(5000, () => socket.destroy())
     let buffered = ""
     socket.on("error", () => socket.destroy())
     socket.setEncoding("utf8")
@@ -80,6 +84,7 @@ export async function startProductMcpInvalidationBridge(options: {
       if (activeProductMcpInvalidationEndpoint === endpoint) {
         activeProductMcpInvalidationEndpoint = null
       }
+      for (const socket of sockets) socket.destroy()
       await new Promise<void>((resolve) => server.close(() => resolve()))
       if (process.platform !== "win32") rmSync(endpoint, { force: true })
     },

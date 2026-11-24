@@ -4,7 +4,7 @@ import { drainPendingMcpRuns } from "../src/main/lib/run-launch-service"
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, unlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -24,6 +24,7 @@ import {
   createProductMcpInvalidationEndpoint,
   startProductMcpInvalidationBridge,
 } from "../src/main/lib/mcp-control/invalidation-bridge"
+import { createExternalMcpRegistration } from "../src/main/lib/mcp-control/external-registration"
 import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 import type { McpCallerIdentity } from "../src/main/lib/mcp-control/types"
 
@@ -112,6 +113,10 @@ describe("live app control", () => {
       })
       expect(runtime.cancel).not.toHaveBeenCalled()
       vi.stubEnv(CHILD_LIVE_KEY, childLiveKey("controller", "child"))
+      expect(await callDesktopMcpTool("list_pending_approvals", child, {})).toMatchObject({
+        ok: true,
+        data: { items: [] },
+      })
       expect(
         await callDesktopMcpTool("steer_run", child, { runId: "turn", message: "Please clarify." }),
       ).toMatchObject({ ok: true, data: { delivery: "steered" } })
@@ -179,6 +184,85 @@ describe("live app control", () => {
       await receiver.stop()
     }
   }, 30_000)
+
+  it("accepts the registered external client's signed call and checks revocation on the next connection", async () => {
+    const credentials = mkdtempSync(join(tmpdir(), "flapstack-live-registration-"))
+    const issued = createExternalMcpRegistration({
+      client: "claude",
+      configDir: directory,
+      databasePath,
+      entryPoint: resolve("src/main/mcp-control-stdio.ts"),
+      executablePath: process.execPath,
+      outputRoot: credentials,
+      permissionMode: "full-access",
+    })
+    const config = JSON.parse(readFileSync(issued.configPath, "utf8")).mcpServers[
+      "flapstack-app-control"
+    ]
+    const desktop = await startDesktopMcpTransport(
+      databasePath,
+      async (name, input, resolveCaller) => invokeDesktopRunTool(name, resolveCaller(), input),
+    )
+    const withdraw = advertiseProductMcpRuntime(directory, {
+      version: 1,
+      databasePath,
+      controlEndpoint: desktop.endpoint,
+      invalidationEndpoint: createProductMcpInvalidationEndpoint(),
+    })
+    const client = new Client({ name: "signed-external-fixture", version: "1" })
+    try {
+      await client.connect(
+        new StdioClientTransport({
+          command: process.execPath,
+          args: ["--import", "tsx", ...config.args],
+          env: { PATH: process.env.PATH ?? "", ...config.env },
+          stderr: "pipe",
+        }),
+      )
+      expect(
+        (await client.callTool({ name: "list_pending_approvals", arguments: {} }))
+          .structuredContent,
+      ).toMatchObject({ ok: true, data: { items: [] } })
+      unlinkSync(issued.grantPath)
+      expect(
+        (await client.callTool({ name: "list_pending_approvals", arguments: {} }))
+          .structuredContent,
+      ).toMatchObject({ ok: false })
+    } finally {
+      await client.close()
+      withdraw()
+      await desktop.stop()
+      rmSync(credentials, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  it("queues a follow-up behind a running turn and retries a failed prompt once per operation key", async () => {
+    const queued = await invokeDesktopRunTool("steer_run", child, {
+      runId: "turn",
+      delivery: "queue",
+      message: "second",
+      idempotencyKey: "followup-1",
+    })
+    expect(queued).toMatchObject({
+      ok: true,
+      data: { delivery: "queued", status: "pending", created: true },
+    })
+    sqlite.prepare("UPDATE agent_runs SET status='failed' WHERE id='turn'").run()
+    const args = { runId: "turn", idempotencyKey: "retry-1" }
+    expect(await invokeDesktopRunTool("retry_run", child, args)).toMatchObject({
+      ok: true,
+      data: { created: true, retryOf: "turn" },
+    })
+    expect(await invokeDesktopRunTool("retry_run", child, args)).toMatchObject({
+      ok: true,
+      data: { created: false, retryOf: "turn" },
+    })
+    expect(
+      sqlite
+        .prepare("SELECT initial_prompt FROM agent_runs WHERE status='pending' ORDER BY rowid")
+        .all(),
+    ).toEqual([{ initial_prompt: "second" }, { initial_prompt: "original turn" }])
+  })
 
   it("answers questions once and keeps permission resolution with the external owner", async () => {
     const pending = (kind: "permission" | "question") =>

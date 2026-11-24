@@ -18,7 +18,7 @@ const shortId = z.string().min(1).max(256)
 const signedRequest = z
   .object({
     name: shortId,
-    input: z.record(z.unknown()),
+    input: z.record(z.string(), z.unknown()),
     proof: z.discriminatedUnion("kind", [
       z
         .object({ kind: z.literal("child"), chatId: shortId, runId: shortId, signature: shortId })
@@ -112,7 +112,18 @@ export async function startDesktopMcpTransport(databasePath: string, invoke: Des
         )
       }
       resolveCaller()
-      return await invoke(name, input, resolveCaller, abort.signal)
+      try {
+        return await invoke(name, input, resolveCaller, abort.signal)
+      } catch {
+        return {
+          ok: false,
+          error: {
+            code: "reconciliation-required",
+            message:
+              "The desktop could not confirm completion. Inspect the target before retrying.",
+          },
+        } satisfies McpControlResponse
+      }
     }
     void execute()
       .catch((): McpControlResponse => ({
@@ -160,11 +171,21 @@ export async function callDesktopMcpTool(
   name: string,
   caller: McpCallerIdentity,
   input: unknown,
+  signal?: AbortSignal,
 ): Promise<McpControlResponse> {
+  if (signal?.aborted)
+    return {
+      ok: false,
+      error: { code: "approval-cancelled", message: "Desktop request cancelled before dispatch." },
+    }
   const pointer = readProductMcpRuntimePointer()
   if (!pointer) return offline()
   const socket = createConnection(pointer.controlEndpoint)
   socket.on("error", () => socket.destroy())
+  const cancel = () => {
+    socket.destroy()
+  }
+  signal?.addEventListener("abort", cancel, { once: true })
   let sent = false
   try {
     const { nonce } = z
@@ -207,6 +228,7 @@ export async function callDesktopMcpTool(
         }
       : offline()
   } finally {
+    signal?.removeEventListener("abort", cancel)
     socket.destroy()
   }
 }
