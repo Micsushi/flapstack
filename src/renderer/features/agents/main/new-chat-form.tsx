@@ -146,6 +146,7 @@ import { useDictationSession } from "../voice/dictation-session"
 import { registerVoiceHistoryInsertTarget } from "../../../lib/voice-history-insert"
 import {
   codexSelectionIssue,
+  resolveNewCodexModel,
   selectableCodexModels,
   CURSOR_MODELS,
   DEFAULT_OPENCODE_MODELS,
@@ -537,6 +538,15 @@ export function NewChatForm({
   const hiddenModels = useAtomValue(hiddenModelsAtom)
   const codexCatalog = trpc.codex.listModels.useQuery(undefined, { staleTime: 60_000 })
   const liveCodexModels = codexCatalog.data
+  const savedCodexModel =
+    localStorage.getItem("agents:lastSelectedCodexModelId") === null
+      ? undefined
+      : lastSelectedCodexModelId
+  const newCodexModelId = resolveNewCodexModel(
+    liveCodexModels,
+    savedCodexModel,
+    lastSelectedCodexModelId,
+  )
   // An existing choice stays explicit, even when the provider withdraws it.
   useEffect(() => {
     if (
@@ -567,7 +577,7 @@ export function NewChatForm({
     () => codexModels.filter((model) => !hiddenModels.includes(model.id)),
     [codexModels, hiddenModels],
   )
-  const selectedCodexModel = codexModels.find((model) => model.id === lastSelectedCodexModelId)
+  const selectedCodexModel = codexModels.find((model) => model.id === newCodexModelId)
   const cursorUiModels = useMemo(() => {
     const liveIds = cursorModelData?.models?.length
       ? cursorModelData.models
@@ -588,7 +598,7 @@ export function NewChatForm({
   const selectedCodexReasoning = lastSelectedCodexReasoning
   const codexFastModeEnabled =
     selectedCodexModel?.supportsFastMode === true && lastSelectedCodexFastMode
-  const codexSelection = profile?.model ?? lastSelectedCodexModelId
+  const codexSelection = profile?.model ?? newCodexModelId ?? ""
   const modelBlockedReason =
     antigravityBlockedReason ??
     (newChatHarness === "claude-code" && !hasCustomClaudeConfig && !availableModels.isOffline
@@ -607,7 +617,7 @@ export function NewChatForm({
       return localModelPicker.selectedModelId ?? ""
     }
     if (selectedAgent.id === "codex") {
-      return `${lastSelectedCodexModelId}/${selectedCodexReasoning}`
+      return newCodexModelId ? `${newCodexModelId}/${selectedCodexReasoning}` : ""
     }
     if (selectedAgent.id === "cursor-agent") {
       return selectedCursorModel.id
@@ -619,7 +629,7 @@ export function NewChatForm({
   }, [
     selectedAgent.id,
     localModelPicker.selectedModelId,
-    lastSelectedCodexModelId,
+    newCodexModelId,
     selectedCodexReasoning,
     selectedCursorModel.id,
     antigravity.selectedModelId,
@@ -638,11 +648,7 @@ export function NewChatForm({
       return localModelPicker.selectedModelId ?? "Choose local model"
     }
     if (selectedAgent.id === "codex") {
-      return (
-        selectedCodexModel?.name ??
-        formatModelDisplayName(lastSelectedCodexModelId) ??
-        "Choose model"
-      )
+      return selectedCodexModel?.name ?? formatModelDisplayName(newCodexModelId) ?? "Codex default"
     }
     if (selectedAgent.id === "cursor-agent") {
       return selectedCursorModel.name
@@ -676,7 +682,7 @@ export function NewChatForm({
     selectedAgent.id,
     localModelPicker.selectedModelId,
     selectedCodexModel?.name,
-    lastSelectedCodexModelId,
+    newCodexModelId,
     selectedCursorModel.name,
     antigravity.label,
     lastSelectedOpencodeModels,
@@ -1389,15 +1395,19 @@ export function NewChatForm({
       }
     }
 
+    let submissionModel = agentProfileSelection?.model ?? selectedChatModel
     if (newChatHarness === "codex" && (!liveCodexModels || codexCatalog.isFetching)) {
       const live = await trpcUtils.codex.listModels.fetch().catch(() => undefined)
+      const verifiedId = resolveNewCodexModel(live, savedCodexModel, lastSelectedCodexModelId)
       const issue = live
-        ? codexSelectionIssue(live, codexSelection, selectedCodexReasoning)
+        ? codexSelectionIssue(live, profile?.model ?? verifiedId ?? "", selectedCodexReasoning)
         : "Codex could not load its models. Refresh the list to try again."
       if (issue) {
         toast.error(issue)
         return
       }
+      if (!agentProfileSelection?.model && verifiedId)
+        submissionModel = `${verifiedId}/${selectedCodexReasoning}`
     }
     if (editorRef.current?.element !== originalEditor || editorRef.current?.getValue() !== original)
       return
@@ -1528,7 +1538,7 @@ export function NewChatForm({
       scope: chatScope,
       name: initialChatName(message, chatTitleGenerationEnabled),
       harness: agentProfileSelection?.harness ?? selectedAgent.id,
-      model: agentProfileSelection?.model ?? selectedChatModel,
+      model: submissionModel,
       runtimePreference: agentProfileSelection?.runtimePreference ?? runtimePreference,
       permissionMode:
         (agentProfileSelection?.permissionMode as NewChatPermissionMode | undefined) ??
@@ -1577,7 +1587,9 @@ export function NewChatForm({
     newChatHarness,
     liveCodexModels,
     codexCatalog.isFetching,
-    codexSelection,
+    savedCodexModel,
+    lastSelectedCodexModelId,
+    profile?.model,
     selectedCodexReasoning,
     agentProfileSelection,
     setSettingsActiveTab,
@@ -2391,7 +2403,7 @@ export function NewChatForm({
                         }}
                         codex={{
                           models: codexUiModels,
-                          selectedModelId: lastSelectedCodexModelId,
+                          selectedModelId: newCodexModelId ?? "",
                           onSelectModel: (modelId) => {
                             const model = codexUiModels.find((item) => item.id === modelId)
                             if (!model) return
@@ -2491,7 +2503,7 @@ export function NewChatForm({
                         }}
                         codex={{
                           models: codexModels,
-                          selectedModelId: lastSelectedCodexModelId,
+                          selectedModelId: newCodexModelId ?? "",
                           selectedReasoning: selectedCodexReasoning,
                           onSelectReasoning: setLastSelectedCodexReasoning,
                           fastModeEnabled: codexFastModeEnabled,

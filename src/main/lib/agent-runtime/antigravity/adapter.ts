@@ -11,6 +11,7 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { delimiter, isAbsolute, join } from "node:path"
 import { PassThrough, Readable, Writable } from "node:stream"
+import { setTimeout as delay } from "node:timers/promises"
 import { promisify } from "node:util"
 import type { AgentActivityAppend } from "../../../../shared/agent-activity"
 import type {
@@ -54,6 +55,11 @@ async function fetchModels() {
     windowsHide: true,
     timeout: 12_000,
     maxBuffer: 256_000,
+  }).catch((cause) => {
+    throw new Error(
+      "Antigravity could not list Gemini models. Check your CLI sign-in and refresh the list.",
+      { cause },
+    )
   })
   const models = stdout.split(/\r?\n/).flatMap((line) => {
     const [id, name] = line.trim().split("\t")
@@ -92,7 +98,32 @@ export function antigravityError(operation: string, cause: unknown): Error {
   )
 }
 
-async function bounded<T>(action: Promise<T>, label: string, timeout = 15_000): Promise<T> {
+/** An internal rejection during newSession is before any user prompt or tool dispatch. */
+export async function createAntigravitySession<T>(create: () => Promise<T>, signal: AbortSignal) {
+  signal.throwIfAborted()
+  try {
+    return await create()
+  } catch (cause) {
+    const outer = eventRecord(cause)
+    const error = outer.error && typeof outer.error === "object" ? eventRecord(outer.error) : outer
+    if (
+      signal.aborted ||
+      error.code !== -32603 ||
+      error.message !== "Failed to start Antigravity conversation" ||
+      error.data != null
+    )
+      throw cause
+    await delay(200, undefined, { signal })
+    return create()
+  }
+}
+
+const ACP_REQUEST_TIMEOUT_MS = 15_000
+async function bounded<T>(
+  action: Promise<T>,
+  label: string,
+  timeout = ACP_REQUEST_TIMEOUT_MS,
+): Promise<T> {
   let timer: NodeJS.Timeout | undefined
   try {
     return await Promise.race([
@@ -232,7 +263,13 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
           }),
           "resume",
         )
-      : await bounded(connection.newSession({ cwd, mcpServers: [] }), "session setup")
+      : await bounded(
+          createAntigravitySession(
+            () => connection.newSession({ cwd, mcpServers: [] }),
+            AbortSignal.any([context.signal, AbortSignal.timeout(ACP_REQUEST_TIMEOUT_MS)]),
+          ),
+          "session setup",
+        )
     const sessionId =
       previous?.providerSessionId || ("sessionId" in session && String(session.sessionId))
     if (!sessionId) throw new Error("Antigravity returned no session ID.")

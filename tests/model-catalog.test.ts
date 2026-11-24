@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { resolveNewCodexModel } from "../src/renderer/features/agents/lib/models"
 import {
   CLAUDE_MODEL_ID_MAP,
   CLAUDE_MODELS,
@@ -12,6 +13,16 @@ import {
   formatModelDisplayName,
   normalizeOpencodeModelId,
 } from "../src/shared/model-catalog"
+
+it("uses the live Codex default for a fresh composer and preserves an explicit model choice", () => {
+  const fallback = { id: "previous", name: "Previous", reasoningLevels: [] }
+  const current = { id: "current", name: "Current", isDefault: true, reasoningLevels: [] }
+  expect(resolveNewCodexModel(undefined, undefined, fallback.id)).toBeUndefined()
+  expect(resolveNewCodexModel([fallback, current], undefined, fallback.id)).toBe(current.id)
+  expect(resolveNewCodexModel([fallback], undefined, fallback.id)).toBe(fallback.id)
+  expect(resolveNewCodexModel([], undefined, fallback.id)).toBeUndefined()
+  expect(resolveNewCodexModel([current], fallback.id, fallback.id)).toBe(fallback.id)
+})
 
 describe("Claude model catalog", () => {
   it("exposes concrete Claude models newest-release first across families", () => {

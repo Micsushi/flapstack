@@ -26,6 +26,18 @@ import type {
   LiveCodexModel,
 } from "../../../../shared/model-catalog"
 
+export function resolveNewCodexModel(
+  live: LiveCodexModel[] | undefined,
+  saved: string | undefined,
+  fallback: string,
+): string | undefined {
+  return (
+    saved ??
+    live?.find((model) => model.isDefault)?.id ??
+    live?.find((model) => model.id === fallback)?.id
+  )
+}
+
 export function codexSelectionIssue(
   live: LiveCodexModel[] | undefined,
   selection: string,
