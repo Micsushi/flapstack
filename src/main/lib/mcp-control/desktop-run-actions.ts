@@ -50,13 +50,15 @@ function visibleChat(db: Database.Database, caller: McpCallerIdentity, chatId: s
 function visibleRun(db: Database.Database, caller: McpCallerIdentity, runId: string) {
   const row = db
     .prepare(
-      "SELECT id,chat_id,sub_chat_id,status,initial_prompt,prompt_message_id,permission_mode,custom_permissions FROM agent_runs WHERE id=?",
+      "SELECT id,chat_id,sub_chat_id,status,initial_prompt,prompt_message_id,permission_mode,custom_permissions,harness,resolved_runtime FROM agent_runs WHERE id=?",
     )
     .get(runId) as
     | {
         id: string
+        harness: string
+        resolved_runtime: string
         chat_id: string
-        sub_chat_id: string
+        sub_chat_id: string | null
         status: string
         initial_prompt: string | null
         prompt_message_id: string | null
@@ -65,6 +67,50 @@ function visibleRun(db: Database.Database, caller: McpCallerIdentity, runId: str
       }
     | undefined
   return row && visibleChat(db, caller, row.chat_id) ? row : null
+}
+
+async function cancelTarget(target: NonNullable<ReturnType<typeof visibleRun>>) {
+  const runtime = getMainRuntimeLaunchService(getDatabasePath())
+  if (
+    target.status === "running" &&
+    target.sub_chat_id &&
+    target.resolved_runtime === "flapstack-native" &&
+    !runtime.activeRunIds().includes(target.id)
+  ) {
+    // Interactive compatibility chats can be owned by the renderer's provider subscription.
+    const ids = { subChatId: target.sub_chat_id, runId: target.id }
+    switch (target.harness) {
+      case "codex":
+        if ((await import("../trpc/routers/codex")).cancelActiveCodexRun(ids).cancelled) return true
+        break
+      case "claude-code":
+        if ((await import("../trpc/routers/claude")).cancelActiveClaudeSession(ids).cancelled)
+          return true
+        break
+      case "cursor-agent":
+        if ((await import("../trpc/routers/cursor")).cancelActiveCursorRun(ids).cancelled)
+          return true
+        break
+      case "openrouter":
+      case "nanogpt":
+        if ((await import("../trpc/routers/opencode")).cancelActiveOpencodeRun(ids).cancelled)
+          return true
+        break
+      case "local": {
+        const { localModelsRouter } = await import("../trpc/routers/local-models")
+        if (
+          (
+            await localModelsRouter
+              .createCaller({ getWindow: () => null })
+              .cancel({ runId: target.id })
+          ).cancelled
+        )
+          return true
+        break
+      }
+    }
+  }
+  return runtime.cancel(target.id, "mcp-stop-requested")
 }
 
 function listPending(
@@ -237,15 +283,13 @@ export async function invokeDesktopRunTool(
       )
     if (input.kind === "stop_run") {
       if (!["pending", "running"].includes(target.status)) return stale()
-      const stopped = await getMainRuntimeLaunchService(getDatabasePath()).cancel(
-        target.id,
-        "mcp-stop-requested",
-      )
+      const stopped = await cancelTarget(target)
       if (stopped) agentInputLifecycle.cancelByRun(target.id)
       return stopped
         ? { ok: true, data: { stopped, chatId: target.chat_id, runId: target.id } }
         : fail("conflict", "The runtime could not confirm cancellation.")
     }
+    if (!target.sub_chat_id) return stale()
     if (!mcpTargetPermissionAllowed(caller, target.permission_mode, target.custom_permissions))
       return fail("permission-denied", "Target run exceeds the caller's permissions.")
     if (input.kind === "steer_run") {

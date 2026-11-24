@@ -461,8 +461,8 @@ export function cancelActiveClaudeSession(input: { subChatId: string; runId?: st
   ignoredStale: boolean
 } {
   const session = activeSessions.get(input.subChatId)
-  if (session && input.runId && session.runId !== input.runId) {
-    return { cancelled: false, ignoredStale: true }
+  if (input.runId && session?.runId !== input.runId) {
+    return { cancelled: false, ignoredStale: Boolean(session) }
   }
   if (session) {
     session.cancelRequested = true
@@ -3331,9 +3331,9 @@ ${prompt}
   /**
    * Cancel active session
    */
-  cancel: publicProcedure.input(z.object({ subChatId: z.string() })).mutation(({ input }) => {
-    return cancelActiveClaudeSession(input)
-  }),
+  cancel: publicProcedure
+    .input(z.object({ subChatId: z.string(), runId: z.string().optional() }))
+    .mutation(({ input }) => cancelActiveClaudeSession(input)),
 
   /**
    * Check if session is active

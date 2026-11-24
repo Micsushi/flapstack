@@ -30,7 +30,15 @@ import { createExternalMcpRegistration } from "../src/main/lib/mcp-control/exter
 import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 import type { McpCallerIdentity } from "../src/main/lib/mcp-control/types"
 
-const runtime = vi.hoisted(() => ({ cancel: vi.fn(), steer: vi.fn() }))
+const runtime = vi.hoisted(() => ({
+  cancel: vi.fn(),
+  steer: vi.fn(),
+  activeRunIds: vi.fn(() => ["turn"]),
+  compatibilityCancel: vi.fn(),
+}))
+vi.mock("../src/main/lib/trpc/routers/codex", () => ({
+  cancelActiveCodexRun: runtime.compatibilityCancel,
+}))
 vi.mock("../src/main/lib/mcp-control/desktop-workflows", () => ({ invokeDesktopWorkflow: vi.fn() }))
 vi.mock("../src/main/lib/mcp-control/desktop-project-actions", () => ({
   invokeDesktopProjectTool: vi.fn(),
@@ -300,6 +308,20 @@ describe("live app control", () => {
         .prepare("SELECT count(*) count FROM mcp_approval_requests WHERE caller_run_id='child'")
         .get(),
     ).toEqual({ count: 1 })
+  })
+
+  it("cancels the exact renderer-owned compatibility session before runtime reconciliation", async () => {
+    runtime.activeRunIds.mockReturnValueOnce([])
+    runtime.compatibilityCancel.mockReturnValueOnce({ cancelled: true, ignoredStale: false })
+    expect(await invokeDesktopRunTool("stop_run", child, { runId: "turn" })).toMatchObject({
+      ok: true,
+      data: { stopped: true },
+    })
+    expect(runtime.compatibilityCancel).toHaveBeenCalledWith({
+      subChatId: "target-sub",
+      runId: "turn",
+    })
+    expect(runtime.cancel).not.toHaveBeenCalled()
   })
 
   it("answers questions once and keeps permission resolution with the external owner", async () => {

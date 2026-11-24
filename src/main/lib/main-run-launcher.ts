@@ -2224,7 +2224,7 @@ function createLegacyDelegation(
           await caller.codex.cancel({ subChatId: run.subChatId, runId: run.runId })
           break
         case "claude-code":
-          await caller.claude.cancel({ subChatId: run.subChatId })
+          await caller.claude.cancel({ subChatId: run.subChatId, runId: run.runId })
           break
         case "cursor-agent":
           await caller.cursor.cancel({ subChatId: run.subChatId, runId: run.runId })
