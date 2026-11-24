@@ -134,7 +134,7 @@ export async function createCanonicalTask(
     ...data.records,
     kind: "task",
     title: data.name,
-    description: data.description ?? "",
+    description: data.description?.trim() ? data.description : data.name,
   })
   const result = z
     .object({ recordId: z.string(), path: z.string(), revision: z.string() })

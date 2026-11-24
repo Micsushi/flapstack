@@ -87,6 +87,17 @@ test("bundled standalone SQL shares Board and MCP writes and survives restart wi
       )?.title,
     ).toBe(request.name)
     expect((await createCanonicalTask(client, request)).id).toBe(canonical.id)
+    for (const [index, description] of [undefined, "   "].entries()) {
+      const titleOnly = await createCanonicalTask(client, {
+        name: "Task with a title only",
+        description,
+        records: { projectId: "integration", requestId: `title-only-${index}` },
+      })
+      const document = (await client.read(titleOnly.path)).document
+      expect(document.records.find((record) => record.id === titleOnly.id)?.description).toBe(
+        "Task with a title only",
+      )
+    }
     const read = await client.read(created.path)
     const id = created.recordId
     expect(read.document.records.find((record) => record.id === id)?.title).toBe("Board created")
