@@ -120,6 +120,7 @@ export class ClaudeStreamingSession {
     }
     const submitted = send()
     void submitted.catch(() => this.close())
+    let pendingTaskNotification = false
     try {
       while (!this.closed) {
         const next = await this.messages.next()
@@ -150,6 +151,27 @@ export class ClaudeStreamingSession {
         }
         if (next.value.type === "system" && next.value.subtype === "task_started")
           this.backgroundWork = true
+        if (next.value.type === "system" && next.value.subtype === "task_notification")
+          pendingTaskNotification = true
+        if (next.value.type === "assistant" || next.value.type === "stream_event")
+          pendingTaskNotification = false
+        if (next.value.type === "result") {
+          const result = next.value
+          // A resumed SDK process can finish an old background task notification before
+          // it answers our submitted prompt. Older CLIs omit the notification origin.
+          const notificationResult =
+            result.origin?.kind === "task-notification" ||
+            (!result.origin &&
+              pendingTaskNotification &&
+              result.subtype === "success" &&
+              !result.is_error &&
+              result.num_turns === 0 &&
+              result.stop_reason == null &&
+              result.usage?.input_tokens === 0 &&
+              result.usage?.output_tokens === 0)
+          pendingTaskNotification = false
+          if (notificationResult) continue
+        }
         // Native priority:now can abort the first command and immediately start the
         // queued steering command. Both belong to the same Flapstack run.
         if (
