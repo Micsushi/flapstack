@@ -1,6 +1,12 @@
 name: Release macOS
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to rebuild
+        required: true
+        type: string
   push:
     tags:
       - "v*.*.*"
@@ -14,14 +20,20 @@ concurrency:
 
 jobs:
   verify:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      ONNXRUNTIME_NODE_INSTALL_CUDA: skip
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     outputs:
       package-version: ${{ steps.release.outputs.package-version }}
+      release-sha: ${{ steps.release.outputs.release-sha }}
     steps:
       - name: Checkout release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: refs/tags/${{ inputs.release_tag || github.ref_name }}
           fetch-depth: 0
 
       - name: Set up Node 22
@@ -35,8 +47,8 @@ jobs:
         shell: bash
         run: |
           package_version="$(node -p "require('./package.json').version")"
-          if [[ "$GITHUB_REF_NAME" != "v${package_version}" ]]; then
-            echo "Tag $GITHUB_REF_NAME does not match package version v${package_version}." >&2
+          if [[ "$RELEASE_TAG" != "v${package_version}" ]]; then
+            echo "Tag $RELEASE_TAG does not match package version v${package_version}." >&2
             exit 1
           fi
           notes_file="docs/releases/${package_version}.md"
@@ -45,17 +57,22 @@ jobs:
             exit 1
           fi
           git fetch origin main
-          if [[ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]]; then
-            echo "Release tags must point at the current origin/main commit." >&2
-            exit 1
+          release_sha="$(git rev-parse HEAD)"
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            test "$release_sha" = "$GITHUB_SHA"
+            test "$release_sha" = "$(git rev-parse origin/main)"
+          else
+            git merge-base --is-ancestor "$release_sha" origin/main
+            git diff --exit-code "$release_sha" origin/main -- . ':(exclude).github/workflows'
           fi
+          echo "release-sha=$release_sha" >> "$GITHUB_OUTPUT"
           echo "package-version=$package_version" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
       - name: Run release gate
-        run: npm run check
+        run: npm run check -- --portable-linux
 
   build:
     needs: verify
@@ -76,6 +93,8 @@ jobs:
     steps:
       - name: Checkout release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.verify.outputs.release-sha }}
 
       - name: Set up Node 22
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -133,6 +152,8 @@ jobs:
     steps:
       - name: Checkout release notes
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.verify.outputs.release-sha }}
 
       - name: Download DMGs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -157,10 +178,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PACKAGE_VERSION: ${{ needs.verify.outputs.package-version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "v$PACKAGE_VERSION" \
             release/*.dmg \
             release/SHA256SUMS.txt \
             --verify-tag \
             --prerelease \
-            --title "Flapstack ${GITHUB_REF_NAME#v}" \
+            --title "Flapstack $PACKAGE_VERSION" \
             --notes-file "docs/releases/${PACKAGE_VERSION}.md"
