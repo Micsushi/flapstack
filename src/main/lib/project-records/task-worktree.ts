@@ -10,23 +10,11 @@ import { z } from "zod"
 import { chats, projects, subChats } from "../db/schema"
 import * as schema from "../db/schema"
 import { assertRegisteredFilesystemRoot } from "../git/security/path-validation"
-import { projectRecordPathSchema } from "../../../shared/project-records"
+export { openRecordChatSchema, previewRecordChatSchema } from "./task-chat-contract"
+import { openRecordChatSchema, previewRecordChatSchema } from "./task-chat-contract"
 import type { ProjectRecordsClient } from "./client"
 import type { ProjectRecord } from "../../../shared/project-records"
 
-export const previewRecordChatSchema = z
-  .object({
-    path: projectRecordPathSchema,
-    recordId: z.string().min(1).max(200),
-    canonicalProjectId: z.string().min(1).max(200),
-    localProjectId: z.string().min(1).max(200),
-    expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
-    claimId: z.string().min(1).max(200),
-  })
-  .strict()
-export const openRecordChatSchema = previewRecordChatSchema.extend({
-  expectedTarget: z.string().regex(/^[a-f0-9]{64}$/),
-})
 type Input = z.infer<typeof previewRecordChatSchema>
 type Link = {
   id: string

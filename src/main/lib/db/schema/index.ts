@@ -48,6 +48,17 @@ export const discussionRevisions = sqliteTable(
   (table) => [primaryKey({ columns: [table.topicId, table.revision] })],
 )
 
+export const recordChatLinks = sqliteTable("record_chat_links", {
+  chatId: text("chat_id")
+    .primaryKey()
+    .references(() => chats.id, { onDelete: "cascade" }),
+  storeIdentity: text("store_identity").notNull(),
+  recordPath: text("record_path").notNull(),
+  recordId: text("record_id").notNull(),
+  canonicalProjectId: text("canonical_project_id").notNull(),
+  sourceRevision: text("source_revision").notNull(),
+})
+
 // Local execution links only; task state and claims remain in Project Records.
 export const recordsPlanPairs = sqliteTable("records_plan_pairs", {
   id: text("id").primaryKey(),
