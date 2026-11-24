@@ -353,11 +353,18 @@ function createTestSchema() {
     )`,
   ]
 
-  statements.push(
-    ...readFileSync(join(process.cwd(), "drizzle/0077_run_timings.sql"), "utf8").split(
-      "--> statement-breakpoint",
-    ),
-  )
+  for (const migration of [
+    "0038_agent_profiles.sql",
+    "0049_agent_profile_chat_bindings.sql",
+    "0077_run_timings.sql",
+    "0079_mcp_turn_settings.sql",
+  ]) {
+    statements.push(
+      ...readFileSync(join(process.cwd(), "drizzle", migration), "utf8").split(
+        "--> statement-breakpoint",
+      ),
+    )
+  }
   for (const statement of statements) {
     db.run(sql.raw(statement))
   }
@@ -1038,6 +1045,9 @@ describe("Stage 1 E1 worktree resolution", () => {
 
   it("passes a named and chosen location to Git worktree creation", async () => {
     const project = insertProject("named-worktree")
+    mkdirSync(project.path, { recursive: true })
+    execFileSync("git", ["init", "--quiet", project.path])
+    bindRegisteredFilesystemRoot(project.path)
     const chat = insertChat({
       scope: "project",
       projectId: project.id,

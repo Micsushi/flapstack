@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -689,6 +690,9 @@ function setup() {
       result_summary text
     );
   `)
+  sqlite.exec(
+    readFileSync(new URL("../drizzle/0079_mcp_turn_settings.sql", import.meta.url), "utf8"),
+  )
   sqlite.prepare("INSERT INTO projects (id) VALUES ('project-1')").run()
   sqlite.prepare("INSERT INTO chats (id, project_id) VALUES ('chat-1', 'project-1')").run()
   sqlite.prepare("INSERT INTO sub_chats (id, chat_id, messages) VALUES (?, ?, ?)").run(
