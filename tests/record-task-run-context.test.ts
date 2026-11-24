@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
+import { projectActionSchemas } from "../src/main/lib/mcp-control/project-control-contract"
 import { attachRecordTaskChat } from "../src/main/lib/mcp-control/desktop-project-actions"
 import { buildRecordTaskRunContext } from "../src/main/lib/project-records/run-context"
 
@@ -88,7 +89,7 @@ it("reads fresh task context every turn without copying authority or replaying s
 })
 it("attaches an existing project conversation without claiming the task or creating a mirror task", async () => {
   sqlite.prepare("DELETE FROM record_task_worktrees").run()
-  const storeIdentity = async () => "e".repeat(64)
+  const storeIdentity = async () => `sqlite:${"e".repeat(64)}`
   const data = {
     localProjectId: "project",
     canonicalProjectId: "flapstack",
@@ -97,10 +98,15 @@ it("attaches an existing project conversation without claiming the task or creat
     expectedRevision: "b".repeat(64),
     chatId: "chat",
   }
-  await expect(attachRecordTaskChat(sqlite, { read, storeIdentity }, data)).resolves.toMatchObject({
-    chatId: "chat",
-    recordId: "TASK-1",
-  })
+  const attached = await attachRecordTaskChat(sqlite, { read, storeIdentity }, data)
+  expect(attached).toMatchObject({ chatId: "chat", recordId: "TASK-1" })
+  expect(projectActionSchemas.detach_record_task_chat.parse(attached)).toEqual(attached)
+  expect(
+    projectActionSchemas.detach_record_task_chat.safeParse({
+      ...attached,
+      storeIdentity: "e".repeat(64),
+    }).success,
+  ).toBe(false)
   await expect(attachRecordTaskChat(sqlite, { read, storeIdentity }, data)).resolves.toMatchObject({
     chatId: "chat",
   })

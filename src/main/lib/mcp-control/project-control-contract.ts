@@ -38,7 +38,7 @@ export const projectActionSchemas = {
       recordId: id,
       path: projectRecordPathSchema,
       canonicalProjectId: id,
-      storeIdentity: z.string().regex(/^[a-f0-9]{64}$/),
+      storeIdentity: z.string().regex(/^sqlite:[a-f0-9]{64}$/),
     })
     .strict(),
   preview_record_task_worktree: previewRecordChatSchema,
