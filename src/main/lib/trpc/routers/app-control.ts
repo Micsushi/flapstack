@@ -11,6 +11,7 @@ import {
 import { evaluateMcpGate } from "../../mcp-control/gate"
 import { getChatMcpExposureStatus, setChatMcpExposure } from "../../mcp-control/exposure"
 import { mcpControlTools } from "../../mcp-control/registry"
+import { withRecordsTaskApprovalDisplay } from "../../mcp-control/records-approval-display"
 import { publicProcedure, router } from "../index"
 import {
   decideApprovalWithLocalWriteContext,
@@ -94,7 +95,7 @@ export const appControlRouter = router({
   ),
 
   listPendingApprovals: publicProcedure.query(() =>
-    listPendingApprovalsWithLocalWriteContext(getDatabase()),
+    listPendingApprovalsWithLocalWriteContext(getDatabase()).map(withRecordsTaskApprovalDisplay),
   ),
 
   listAuditRecovery: publicProcedure.query(() => {

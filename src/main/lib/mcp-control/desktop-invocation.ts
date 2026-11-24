@@ -13,6 +13,7 @@ import { needsDesktopMcp } from "./live-control-contract"
 import { invokeDesktopRunTool } from "./desktop-run-actions"
 import { invokeDesktopModelDiscovery } from "./desktop-models"
 import { invokeDesktopProjectTool } from "./desktop-project-actions"
+import { trackRecordsTaskApproval } from "./records-approval-display"
 import { desktopProjectToolNames } from "./project-control-contract"
 import { invokeDesktopWorkflow } from "./desktop-workflows"
 import { desktopWorkflowToolNames } from "./workflow-contract"
@@ -58,6 +59,8 @@ export function desktopMcpInvoker(
       const invocationId = randomUUID()
       const runSession = caller.permissionMode === "ask-before-edits" && caller.runId
       const approvals = runSession ? approvalsForRun(runSession) : createApprovals()
+      const untrack =
+        name === "create_task" ? trackRecordsTaskApproval(invocationId, approvals) : undefined
       const disconnected = () => approvals.cancel(invocationId)
       signal.addEventListener("abort", disconnected, { once: true })
       try {
@@ -83,6 +86,7 @@ export function desktopMcpInvoker(
         if (event) notify(event)
         return response
       } finally {
+        untrack?.()
         signal.removeEventListener("abort", disconnected)
         if (!runSession) approvals.shutdown()
       }

@@ -11,6 +11,10 @@ import {
   listPendingMcpApprovals,
 } from "../src/main/lib/mcp-control/approval-coordinator"
 import { McpApprovalLifecycle } from "../src/main/lib/mcp-control/approval-lifecycle"
+import {
+  trackRecordsTaskApproval,
+  withRecordsTaskApprovalDisplay,
+} from "../src/main/lib/mcp-control/records-approval-display"
 import * as schema from "../src/main/lib/db/schema"
 
 describe("MCP approval renderer coordination", () => {
@@ -26,6 +30,44 @@ describe("MCP approval renderer coordination", () => {
   afterEach(() => {
     sqlite.close()
     rmSync(directory, { recursive: true, force: true })
+  })
+
+  it("shows the exact Records task to the owner while its matching request is pending", () => {
+    const db = drizzle(sqlite, { schema })
+    const lifecycle = new McpApprovalLifecycle(createSqliteMcpApprovalCoordinator(db))
+    const untrack = trackRecordsTaskApproval("task-request", lifecycle)
+    try {
+      lifecycle.request({
+        id: "task-request",
+        caller: { chatId: "chat-1", runId: "run-1" },
+        toolName: "create_task",
+        tier: 3,
+        input: {
+          name: "Check receipt",
+          description: "private notes",
+          records: {
+            projectId: "demo",
+            path: "lanes/vault/tasks.md",
+            requestId: "approved-task",
+          },
+        },
+      })
+      const [view] = listPendingMcpApprovals(db)
+      expect(JSON.stringify(view)).not.toContain("Check receipt")
+      expect(withRecordsTaskApprovalDisplay(view!)).toMatchObject({
+        targetLabel: "Project demo � lanes/vault/tasks.md",
+        inputSummary: "Create task �Check receipt�",
+      })
+      expect(withRecordsTaskApprovalDisplay({ ...view!, inputSummary: "{}" }).inputSummary).toBe(
+        "{}",
+      )
+      expect(JSON.stringify(withRecordsTaskApprovalDisplay(view!))).not.toContain("private notes")
+      untrack()
+      expect(withRecordsTaskApprovalDisplay(view!)).toEqual(view)
+    } finally {
+      untrack()
+      lifecycle.shutdown()
+    }
   })
 
   it("publishes redacted context and resolves exactly once across processes", async () => {
