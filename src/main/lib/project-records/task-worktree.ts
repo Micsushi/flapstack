@@ -11,7 +11,11 @@ import { chats, projects, subChats } from "../db/schema"
 import * as schema from "../db/schema"
 import { assertRegisteredFilesystemRoot } from "../git/security/path-validation"
 export { openRecordChatSchema, previewRecordChatSchema } from "./task-chat-contract"
-import { openRecordChatSchema, previewRecordChatSchema } from "./task-chat-contract"
+import {
+  openRecordChatSchema,
+  previewRecordChatSchema,
+  RecordTaskTargetError,
+} from "./task-chat-contract"
 import type { ProjectRecordsClient } from "./client"
 import type { ProjectRecord } from "../../../shared/project-records"
 
@@ -131,10 +135,13 @@ export class RecordTaskWorktreeService {
     const snapshot = await this.client.read(input.path)
     const record = snapshot.document.records.find((item) => item.id === input.recordId)
     if (snapshot.revision !== input.expectedRevision || !record || record.kind !== "task")
-      throw new Error("The task changed. Refresh the Board before opening its Chat.")
+      throw new RecordTaskTargetError(
+        "The task changed. Refresh the Board before opening its Chat.",
+        "stale-target",
+      )
     const membership = z.array(z.object({ id: z.string() })).safeParse(record.projects)
     if (!membership.success || !membership.data.some((p) => p.id === input.canonicalProjectId))
-      throw new Error("The task does not belong to the selected canonical project.")
+      throw new RecordTaskTargetError("The task does not belong to the selected canonical project.")
     const query = new URLSearchParams({
       path: input.path,
       recordId: input.recordId,
@@ -158,7 +165,7 @@ export class RecordTaskWorktreeService {
       !status.readiness.currentClaim ||
       status.readiness.claim?.id !== input.claimId
     )
-      throw new Error(
+      throw new RecordTaskTargetError(
         "The task claim is stale or blocked. Refresh and claim the task before opening its Chat.",
       )
     return record
@@ -168,7 +175,8 @@ export class RecordTaskWorktreeService {
     const record = await this.validate(input)
     const db = drizzle(this.sqlite, { schema })
     const project = db.select().from(projects).where(eq(projects.id, input.localProjectId)).get()
-    if (!project || project.archivedAt) throw new Error("Select an active local project first.")
+    if (!project || project.archivedAt)
+      throw new RecordTaskTargetError("Select an active local project first.")
     assertRegisteredFilesystemRoot(project.path, db)
     const repo = await realpath(project.path)
     const key = [this.endpoint, input.path, input.recordId, input.canonicalProjectId]
@@ -179,11 +187,11 @@ export class RecordTaskWorktreeService {
       )
       .get(...key) as Link | undefined
     if (link && (link.local_project_id !== project.id || link.claim_id !== input.claimId))
-      throw new Error(
+      throw new RecordTaskTargetError(
         "This task belongs to another local project or worker claim. Open its existing Chat from the sidebar; do not take over its worktree.",
       )
     if (link && !link.chat_id && link.base_branch === null)
-      throw new Error(
+      throw new RecordTaskTargetError(
         "This interrupted worktree predates base-branch tracking. Preserve it and resolve its reviewed base branch before reopening.",
       )
     const exists = Boolean(link)
@@ -222,7 +230,10 @@ export class RecordTaskWorktreeService {
     const prepared = await this.prepare(input)
     const { record, db, project, repo, key, link, exists, baseBranch } = prepared
     if (this.targetPreview(prepared).expectedTarget !== input.expectedTarget)
-      throw new Error("The local worktree target changed. Review its preview again.")
+      throw new RecordTaskTargetError(
+        "The local worktree target changed. Review its preview again.",
+        "stale-target",
+      )
     const reserve = () => {
       this.sqlite
         .prepare(
@@ -257,12 +268,14 @@ export class RecordTaskWorktreeService {
     )
     if (existing) {
       if (!exists)
-        throw new Error("The task worktree path or branch is occupied. No Git changes were made.")
+        throw new RecordTaskTargetError(
+          "The task worktree path or branch is occupied. No Git changes were made.",
+        )
       if (
         existing.branch !== link.branch ||
         !samePath(await realpath(link.worktree_path), link.worktree_path)
       )
-        throw new Error(
+        throw new RecordTaskTargetError(
           "The recorded worktree identity changed. Repair it before reopening this task.",
         )
       const registered = db
@@ -289,7 +302,7 @@ export class RecordTaskWorktreeService {
           (await git(link.worktree_path, ["rev-parse", "HEAD"])) !== link.base_commit ||
           (await git(link.worktree_path, ["status", "--porcelain", "--untracked-files=all"]))
         )
-          throw new Error(
+          throw new RecordTaskTargetError(
             "The interrupted worktree changed. Preserve it and resolve its identity before reopening.",
           )
         await this.validate(input)
@@ -298,7 +311,7 @@ export class RecordTaskWorktreeService {
       assertRegisteredFilesystemRoot(link.worktree_path, db)
     } else {
       if (link.chat_id)
-        throw new Error(
+        throw new RecordTaskTargetError(
           "The task worktree is missing. Its Chat and association have been preserved.",
         )
       const destination = await lstat(link.worktree_path).catch((error) => {
@@ -311,7 +324,9 @@ export class RecordTaskWorktreeService {
         `refs/heads/${link.branch}`,
       ])
       if (destination || branches)
-        throw new Error("The task worktree path or branch is occupied. No Git changes were made.")
+        throw new RecordTaskTargetError(
+          "The task worktree path or branch is occupied. No Git changes were made.",
+        )
       await this.validate(input)
       if (!exists) reserve()
       await this.createWorktree(repo, link.branch, link.worktree_path, link.base_commit)
@@ -322,7 +337,7 @@ export class RecordTaskWorktreeService {
     if (link.chat_id) {
       const chat = db.select().from(chats).where(eq(chats.id, link.chat_id)).get()
       if (!chat || chat.projectId !== project.id || chat.worktreePath !== link.worktree_path)
-        throw new Error(
+        throw new RecordTaskTargetError(
           "The linked Chat target changed. Open it from the sidebar to resolve the association.",
         )
       return { chatId: chat.id, worktreePath: link.worktree_path }

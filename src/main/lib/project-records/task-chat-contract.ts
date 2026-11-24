@@ -14,3 +14,13 @@ export const previewRecordChatSchema = z
 export const openRecordChatSchema = previewRecordChatSchema.extend({
   expectedTarget: z.string().regex(/^[a-f0-9]{64}$/),
 })
+
+/** A user-actionable conflict affecting a Records task or its checkout. */
+export class RecordTaskTargetError extends Error {
+  constructor(
+    message: string,
+    readonly code: "conflict" | "stale-target" = "conflict",
+  ) {
+    super(message)
+  }
+}

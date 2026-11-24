@@ -222,10 +222,13 @@ export function invalidationForProductMcpMutation(
         runIds: compactIds(stringValue(request.runId)),
       })
     case "create_chat":
-    case "spawn_thread":
-      return event(["chats"], {
+    case "spawn_thread": {
+      const runId = stringValue(result.runId)
+      return event(runId ? ["runs", "chats"] : ["chats"], {
         chatIds: compactIds(resultId, stringValue(result.childChatId), chatId),
+        ...(runId ? { runIds: [runId] } : {}),
       })
+    }
     case "create_project":
       return event(["projects"], { projectIds: compactIds(resultId) })
     case "open_record_task_worktree":

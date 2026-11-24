@@ -106,6 +106,37 @@ describe("canonical Records MCP bridge", () => {
     expect(request).toHaveBeenCalledTimes(2)
   })
 
+  it.each([
+    [409, "conflict"],
+    [404, "stale-target"],
+    [422, "invalid-input"],
+    [403, "permission-denied"],
+    [503, "reconciliation-required"],
+  ])("returns an actionable MCP error for Records status %i", async (status, code) => {
+    vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_MODE", "connected")
+    vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_URL", "http://127.0.0.1:47839")
+    vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_TOKEN", "isolated-test-token")
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response(JSON.stringify({ message: "private service detail" }), {
+          status: Number(status),
+        }),
+    )
+    const result = await invokeDesktopProjectTool(
+      "create_task",
+      {
+        callerKind: "external-owner",
+        chatId: "external-owner:fixture",
+        permissionMode: "full-access",
+      },
+      { name: "Canonical task", records: { projectId: "candidate", requestId: "scoped-test" } },
+      { invocationId: "owner", approved: false },
+    )
+    expect(result).toMatchObject({ ok: false, error: { code } })
+    expect(JSON.stringify(result)).not.toContain("private service detail")
+  })
+
   it("does not advertise unavailable Records authority in tool discovery or describe", async () => {
     vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_URL", "http://127.0.0.1:47839")
     vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_TOKEN", "runner-owner-token")

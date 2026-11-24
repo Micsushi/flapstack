@@ -2,8 +2,10 @@ import { z } from "zod"
 import { getDatabasePath, getSqliteDatabase } from "../db"
 import {
   configuredProjectRecordsClient,
+  ProjectRecordsOperationError,
   type ProjectRecordsClient,
 } from "../project-records/client"
+import { RecordTaskTargetError } from "../project-records/task-chat-contract"
 import { projectRecordsEnabled } from "../project-records/mode"
 import { configuredRecordTaskWorktrees } from "../project-records/configured-task-worktrees"
 import { createMcpMutationService } from "./mutation-service"
@@ -11,11 +13,67 @@ import { desktopProjectToolNames, projectActionSchemas } from "./project-control
 import type { McpCallerIdentity, McpControlResponse } from "./types"
 import type Database from "better-sqlite3"
 
+type ProjectInvocation = { invocationId: string; approved: boolean; desktopApproved?: boolean }
+
 export async function invokeDesktopProjectTool(
   name: string,
   caller: McpCallerIdentity,
   input: unknown,
-  context: { invocationId: string; approved: boolean; desktopApproved?: boolean },
+  context: ProjectInvocation,
+): Promise<McpControlResponse> {
+  try {
+    return await dispatchProjectTool(name, caller, input, context)
+  } catch (error) {
+    if (error instanceof RecordTaskTargetError)
+      return { ok: false, error: { code: error.code, message: error.message } }
+    if (error instanceof ProjectRecordsOperationError) {
+      if (error.status === 409)
+        return {
+          ok: false,
+          error: {
+            code: "conflict",
+            message: "The Records task changed. Refresh the task before retrying.",
+          },
+        }
+      if (error.status === 404)
+        return {
+          ok: false,
+          error: {
+            code: "stale-target",
+            message: "The Records destination is no longer available.",
+          },
+        }
+      if (error.status === 400 || error.status === 422)
+        return {
+          ok: false,
+          error: {
+            code: "invalid-input",
+            message:
+              "Project Records rejected the task details. Check the project, document and task fields.",
+          },
+        }
+      if (error.status === 403)
+        return {
+          ok: false,
+          error: { code: "permission-denied", message: "Project Records refused this operation." },
+        }
+    }
+    return {
+      ok: false,
+      error: {
+        code: "reconciliation-required",
+        message:
+          "Flapstack could not confirm the project operation. Check the task or checkout before retrying.",
+      },
+    }
+  }
+}
+
+async function dispatchProjectTool(
+  name: string,
+  caller: McpCallerIdentity,
+  input: unknown,
+  context: ProjectInvocation,
 ): Promise<McpControlResponse> {
   if (name === "orchestrate_task") {
     if (projectRecordsEnabled())
@@ -169,7 +227,10 @@ export async function attachRecordTaskChat(
         project.id === data.canonicalProjectId,
     )
   )
-    throw new Error("The canonical task or its project changed. Reload the selected task.")
+    throw new RecordTaskTargetError(
+      "The canonical task or its project changed. Reload the selected task.",
+      "stale-target",
+    )
   return db
     .transaction(() => {
       if (
@@ -179,9 +240,9 @@ export async function attachRecordTaskChat(
           )
           .get(data.chatId, data.localProjectId)
       )
-        throw new Error("Select an active project Chat without a local task.")
+        throw new RecordTaskTargetError("Select an active project Chat without a local task.")
       if (db.prepare("SELECT 1 FROM record_task_worktrees WHERE chat_id=?").get(data.chatId))
-        throw new Error("This Chat already has a claimed Records worktree.")
+        throw new RecordTaskTargetError("This Chat already has a claimed Records worktree.")
       db.prepare(
         "INSERT INTO record_chat_links(chat_id,store_identity,record_path,record_id,canonical_project_id,source_revision) VALUES(?,?,?,?,?,?) ON CONFLICT(chat_id) DO NOTHING",
       ).run(
@@ -199,7 +260,9 @@ export async function attachRecordTaskChat(
           )
           .get(data.chatId, store, data.path, data.recordId, data.canonicalProjectId)
       )
-        throw new Error("Detach the previous Records task before assigning another.")
+        throw new RecordTaskTargetError(
+          "Detach the previous Records task before assigning another.",
+        )
       return {
         chatId: data.chatId,
         recordId: data.recordId,

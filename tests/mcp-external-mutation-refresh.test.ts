@@ -212,6 +212,26 @@ describe("product MCP external mutation refresh", () => {
     })
     expect(
       invalidationForProductMcpMutation(
+        "spawn_thread",
+        {},
+        {
+          ok: true,
+          data: { childChatId: "child", runId: "spawned-run" },
+        },
+      ),
+    ).toMatchObject({ domains: ["runs", "chats"], chatIds: ["child"], runIds: ["spawned-run"] })
+    expect(
+      invalidationForProductMcpMutation(
+        "spawn_thread",
+        {},
+        {
+          ok: true,
+          data: { childChatId: "idle-child" },
+        },
+      ),
+    ).toMatchObject({ domains: ["chats"], chatIds: ["idle-child"] })
+    expect(
+      invalidationForProductMcpMutation(
         "launch_run",
         { chatId: "chat-2" },
         { ok: true, data: { runId: "run-2", created: true } },
