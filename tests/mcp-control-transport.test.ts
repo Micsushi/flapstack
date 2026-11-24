@@ -7,21 +7,36 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
-import { afterEach, describe, expect, it } from "vitest"
-import { readMcpCallerIdentity } from "../src/main/lib/mcp-control/identity"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { readMcpCallerIdentity, readMcpLaunch } from "../src/main/lib/mcp-control/identity"
 import * as schema from "../src/main/lib/db/schema"
 import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 
+import { startProductMcpRuntime } from "../src/main/lib/mcp-control/desktop-invocation"
+import { childLiveKey, CHILD_LIVE_KEY } from "../src/main/lib/mcp-control/child-live-key"
+import { closeDatabase } from "../src/main/lib/db"
+
+let runtime: Awaited<ReturnType<typeof startProductMcpRuntime>> | undefined
 const transports: StdioClientTransport[] = []
 const directories: string[] = []
 
 afterEach(async () => {
   await Promise.all(transports.splice(0).map((transport) => transport.close()))
+  await runtime?.stop()
+  runtime = undefined
+  closeDatabase()
+  vi.unstubAllEnvs()
   directories.splice(0).forEach((directory) => rmSync(directory, { recursive: true, force: true }))
 })
 
 describe("Flapstack MCP stdio transport", () => {
   it("rejects startup without launcher-owned caller identity", () => {
+    expect(() =>
+      readMcpLaunch([], {
+        FLAPSTACK_MCP_CHAT_ID: "fixture-chat",
+        FLAPSTACK_MCP_RUN_ID: "fixture-run",
+      }),
+    ).toThrow(/launcher-issued MCP credential/)
     expect(() => readMcpCallerIdentity({})).toThrow(/launcher-provided caller identity/)
     expect(() => readMcpCallerIdentity({ FLAPSTACK_MCP_CHAT_ID: "chat-without-run" })).toThrow(
       /launcher-provided caller identity/,
@@ -53,6 +68,9 @@ describe("Flapstack MCP stdio transport", () => {
       )
       .run(...testRuntimeSnapshotSqlValues())
     database.close()
+    vi.stubEnv("FLAPSTACK_DB_PATH", databasePath)
+    vi.stubEnv("FLAPSTACK_CONFIG_DIR", directory)
+    runtime = await startProductMcpRuntime(databasePath, () => {})
     const entry = fileURLToPath(new URL("../src/main/mcp-control-stdio.ts", import.meta.url))
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -60,6 +78,8 @@ describe("Flapstack MCP stdio transport", () => {
       env: {
         ELECTRON_RUN_AS_NODE: "1",
         PATH: process.env.PATH ?? "",
+        [CHILD_LIVE_KEY]: childLiveKey("chat-transport-test", "run-transport-test"),
+        FLAPSTACK_CONFIG_DIR: directory,
         FLAPSTACK_MCP_CHAT_ID: "chat-transport-test",
         FLAPSTACK_MCP_RUN_ID: "run-transport-test",
         FLAPSTACK_MCP_PERMISSION_MODE: "read-only",
@@ -150,8 +170,6 @@ describe("Flapstack MCP stdio transport", () => {
     })
     const projects = await client.callTool({ name: "list_projects", arguments: {} })
     expect(projects.structuredContent).toEqual({ ok: true, data: { items: [], nextCursor: null } })
-    await client.close()
-
     const audited = new Database(databasePath, { readonly: true })
     expect(
       audited
@@ -161,5 +179,18 @@ describe("Flapstack MCP stdio transport", () => {
         .get(),
     ).toEqual({ count: 3 })
     audited.close()
+
+    await runtime.stop()
+    runtime = undefined
+    for (const request of [
+      { name: "list_projects", arguments: {} },
+      { name: "create_chat", arguments: { scope: "global", name: "Offline" } },
+    ]) {
+      expect((await client.callTool(request)).structuredContent).toMatchObject({
+        ok: false,
+        error: { code: "tool-unavailable" },
+      })
+    }
+    await client.close()
   })
 })

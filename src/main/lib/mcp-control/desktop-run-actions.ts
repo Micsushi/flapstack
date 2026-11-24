@@ -281,6 +281,8 @@ export async function invokeDesktopRunTool(
         "forbidden-loop",
         "Cannot control the current caller run or enqueue work into its own conversation.",
       )
+    if (!mcpTargetPermissionAllowed(caller, target.permission_mode, target.custom_permissions))
+      return fail("permission-denied", "Target run exceeds the caller's permissions.")
     if (input.kind === "stop_run") {
       if (!["pending", "running"].includes(target.status)) return stale()
       const stopped = await cancelTarget(target)
@@ -290,8 +292,6 @@ export async function invokeDesktopRunTool(
         : fail("conflict", "The runtime could not confirm cancellation.")
     }
     if (!target.sub_chat_id) return stale()
-    if (!mcpTargetPermissionAllowed(caller, target.permission_mode, target.custom_permissions))
-      return fail("permission-denied", "Target run exceeds the caller's permissions.")
     if (input.kind === "steer_run") {
       if (target.status !== "running") return stale()
       if (input.delivery === "steer") {

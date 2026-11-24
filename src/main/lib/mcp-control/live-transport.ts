@@ -14,6 +14,8 @@ import type { McpCallerIdentity, McpControlResponse } from "./types"
 
 import { CHILD_LIVE_KEY, childLiveKey } from "./child-live-key"
 
+export const CHILD_SESSION_TOOL = "flapstack.internal.child-session"
+
 const shortId = z.string().min(1).max(256)
 const signedRequest = z
   .object({
@@ -111,7 +113,12 @@ export async function startDesktopMcpTransport(databasePath: string, invoke: Des
           createSqliteMcpCallerStore(databasePath),
         )
       }
-      resolveCaller()
+      const verified = resolveCaller()
+      if (name === CHILD_SESSION_TOOL && proof.kind === "child")
+        return {
+          ok: true,
+          data: verified.profileRuntimeAuthority ?? null,
+        } satisfies McpControlResponse
       try {
         return await invoke(name, input, resolveCaller, abort.signal)
       } catch {

@@ -9,6 +9,7 @@ import { parseCustomPermissionToggles, parsePermissionMode } from "../permission
 import type { McpCallerIdentity, McpCallerStore } from "./types"
 import { readDurableAgentProfileRuntimeAuthority } from "../agent-profiles/runtime-authority"
 import { canonicalMcpChatScope } from "./scope"
+import { CHILD_LIVE_KEY } from "./child-live-key"
 
 const callerEnvironmentSchema = z.object({
   FLAPSTACK_MCP_CHAT_ID: z.string().trim().min(1),
@@ -46,8 +47,11 @@ export function readMcpLaunch(
     args,
     options: { external: { type: "boolean" }, profile: { type: "string" } },
   })
-  if (!values.external && environment.FLAPSTACK_MCP_CALLER_MODE !== "external")
-    return { caller: readMcpCallerIdentity(environment) }
+  if (!values.external && environment.FLAPSTACK_MCP_CALLER_MODE !== "external") {
+    const caller = readMcpCallerIdentity(environment)
+    if (!environment[CHILD_LIVE_KEY]) throw new Error("Missing launcher-issued MCP credential.")
+    return { caller }
+  }
   if (
     environment.FLAPSTACK_MCP_CHAT_ID !== undefined ||
     environment.FLAPSTACK_MCP_RUN_ID !== undefined

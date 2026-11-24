@@ -9,7 +9,10 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
-import { desktopMcpInvoker } from "../src/main/lib/mcp-control/desktop-invocation"
+import {
+  desktopMcpInvoker,
+  startProductMcpRuntime,
+} from "../src/main/lib/mcp-control/desktop-invocation"
 import { decideMcpApproval } from "../src/main/lib/mcp-control/approval-coordinator"
 import { agentInputLifecycle } from "../src/main/lib/agent-input/service"
 import { invokeDesktopRunTool } from "../src/main/lib/mcp-control/desktop-run-actions"
@@ -22,10 +25,7 @@ import {
   callDesktopMcpTool,
   startDesktopMcpTransport,
 } from "../src/main/lib/mcp-control/live-transport"
-import {
-  createProductMcpInvalidationEndpoint,
-  startProductMcpInvalidationBridge,
-} from "../src/main/lib/mcp-control/invalidation-bridge"
+import { createProductMcpInvalidationEndpoint } from "../src/main/lib/mcp-control/invalidation-bridge"
 import { createExternalMcpRegistration } from "../src/main/lib/mcp-control/external-registration"
 import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 import type { McpCallerIdentity } from "../src/main/lib/mcp-control/types"
@@ -129,6 +129,12 @@ describe("live app control", () => {
         ok: false,
         error: { code: "invalid-caller" },
       })
+      for (const name of ["list_chats", "create_chat"]) {
+        expect(await callDesktopMcpTool(name, child, {})).toMatchObject({
+          ok: false,
+          error: { code: "invalid-caller" },
+        })
+      }
       expect(runtime.cancel).not.toHaveBeenCalled()
       vi.stubEnv(CHILD_LIVE_KEY, childLiveKey("controller", "child"))
       expect(await callDesktopMcpTool("list_pending_approvals", child, {})).toMatchObject({
@@ -160,16 +166,8 @@ describe("live app control", () => {
   it("discovers the selected profile and wakes its pending run from a separate stdio process", async () => {
     sqlite.prepare("UPDATE agent_runs SET status='completed' WHERE id='turn'").run()
     const launch = vi.fn().mockResolvedValue(undefined)
-    const receiver = await startProductMcpInvalidationBridge({
-      onInvalidation: (event) => {
-        if (event.domains.includes("runs")) void drainPendingMcpRuns(databasePath, launch)
-      },
-    })
-    const withdraw = advertiseProductMcpRuntime(directory, {
-      version: 1,
-      databasePath,
-      controlEndpoint: createProductMcpInvalidationEndpoint(),
-      invalidationEndpoint: receiver.endpoint,
+    const receiver = await startProductMcpRuntime(databasePath, (event) => {
+      if (event.domains.includes("runs")) void drainPendingMcpRuns(databasePath, launch)
     })
     const client = new Client({ name: "external-refresh-fixture", version: "1" })
     const transport = new StdioClientTransport({
@@ -179,6 +177,7 @@ describe("live app control", () => {
         PATH: process.env.PATH ?? "",
         FLAPSTACK_CONFIG_DIR: directory,
         FLAPSTACK_DB_PATH: databasePath,
+        [CHILD_LIVE_KEY]: childLiveKey(child.chatId, child.runId!),
         FLAPSTACK_MCP_CHAT_ID: child.chatId,
         FLAPSTACK_MCP_RUN_ID: child.runId!,
       },
@@ -198,7 +197,6 @@ describe("live app control", () => {
       )
     } finally {
       await client.close()
-      withdraw()
       await receiver.stop()
     }
   }, 30_000)
@@ -284,6 +282,7 @@ describe("live app control", () => {
 
   it("honors a desktop session approval on a fresh socket call for the same active run", async () => {
     const invoke = desktopMcpInvoker(databasePath, () => {})
+    sqlite.prepare("UPDATE agent_runs SET permission_mode='read-only' WHERE id='turn'").run()
     const caller = () => ({ ...child, permissionMode: "ask-before-edits" as const })
     runtime.cancel.mockResolvedValue(true)
     const first = invoke("stop_run", { runId: "turn" }, caller, new AbortController().signal)
@@ -310,6 +309,25 @@ describe("live app control", () => {
     ).toEqual({ count: 1 })
   })
 
+  it("refuses to stop a higher-permission run or the caller's own run", async () => {
+    const restricted = { ...child, permissionMode: "ask-before-edits" as const }
+    for (const status of ["pending", "running"]) {
+      sqlite.prepare("UPDATE agent_runs SET status=? WHERE id='turn'").run(status)
+      expect(await invokeDesktopRunTool("stop_run", restricted, { runId: "turn" })).toMatchObject({
+        ok: false,
+        error: { code: "permission-denied" },
+      })
+      expect(sqlite.prepare("SELECT status FROM agent_runs WHERE id='turn'").pluck().get()).toBe(
+        status,
+      )
+    }
+    expect(await invokeDesktopRunTool("stop_run", child, { runId: child.runId })).toMatchObject({
+      ok: false,
+      error: { code: "forbidden-loop" },
+    })
+    expect(runtime.cancel).not.toHaveBeenCalled()
+    expect(runtime.compatibilityCancel).not.toHaveBeenCalled()
+  })
   it("cancels the exact renderer-owned compatibility session before runtime reconciliation", async () => {
     runtime.activeRunIds.mockReturnValueOnce([])
     runtime.compatibilityCancel.mockReturnValueOnce({ cancelled: true, ignoredStale: false })

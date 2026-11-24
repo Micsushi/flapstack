@@ -8,15 +8,16 @@ import {
 import { createSqliteMcpApprovalCoordinator } from "./approval-coordinator"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
 import { invokeMcpControlTool } from "./registry"
+import { recoverMcpDispatchClaims } from "./audit-storage"
 import { productMcpAudit } from "./production-audit"
 import { needsDesktopMcp } from "./live-control-contract"
-import { invokeDesktopRunTool } from "./desktop-run-actions"
-import { invokeDesktopModelDiscovery } from "./desktop-models"
-import { invokeDesktopProjectTool } from "./desktop-project-actions"
 import { trackRecordsTaskApproval } from "./records-approval-display"
 import { desktopProjectToolNames } from "./project-control-contract"
-import { invokeDesktopWorkflow } from "./desktop-workflows"
 import { desktopWorkflowToolNames } from "./workflow-contract"
+import { createMcpReadService, openReadStore } from "./read-service"
+import { createMcpProjectVaultService } from "./project-vault-service"
+import { createMcpAutomationService } from "./automation-service"
+import { createMcpTaskProposalService } from "./task-proposal-service"
 import { createMcpMutationService } from "./mutation-service"
 import { advertiseProductMcpRuntime } from "./live-discovery"
 import { startDesktopMcpTransport, type DesktopMcpInvoke } from "./live-transport"
@@ -26,6 +27,11 @@ export function desktopMcpInvoker(
   databasePath: string,
   notify: (event: ProductMcpRendererInvalidation) => void,
 ): DesktopMcpInvoke {
+  const reads = createMcpReadService(openReadStore(databasePath))
+  const mutations = createMcpMutationService(databasePath)
+  const projectVaults = createMcpProjectVaultService(databasePath)
+  const automationControls = createMcpAutomationService(databasePath)
+  const taskProposalControls = createMcpTaskProposalService(databasePath)
   const changed = (domain: "audit" | "approvals") =>
     notify({ version: 1, source: "product-mcp", domains: [domain] })
   const runApprovals = new Map<string, McpApprovalLifecycle>()
@@ -53,8 +59,6 @@ export function desktopMcpInvoker(
   }
   return (name, input, resolveCaller, signal) =>
     withDatabaseOperation(async () => {
-      if (!needsDesktopMcp(name))
-        return { ok: false, error: { code: "tool-not-found", message: "Unknown desktop control." } }
       const caller = resolveCaller()
       const invocationId = randomUUID()
       const runSession = caller.permissionMode === "ask-before-edits" && caller.runId
@@ -64,23 +68,47 @@ export function desktopMcpInvoker(
       const disconnected = () => approvals.cancel(invocationId)
       signal.addEventListener("abort", disconnected, { once: true })
       try {
-        const response = await invokeMcpControlTool(name, caller, input, undefined, {
+        const response = await invokeMcpControlTool(name, caller, input, reads, {
+          mutations,
+          projectVaults,
+          automationControls,
+          taskProposalControls,
           resolveCaller,
           approvals,
           invocationId: () => invocationId,
           approvalId: () => invocationId,
           audit: productMcpAudit(() => changed("audit")),
-          execute: ({ caller: current, context }) => {
-            if (desktopProjectToolNames.has(name))
-              return invokeDesktopProjectTool(name, current, input, context)
-            if (name === "create_project" || name === "move_chat")
-              return createMcpMutationService(databasePath).invoke(name, current, input, context)
-            if (desktopWorkflowToolNames.has(name))
-              return invokeDesktopWorkflow(name, current, input, context)
-            if (name === "list_models" || name === "list_providers")
-              return invokeDesktopModelDiscovery(name, current, input)
-            return invokeDesktopRunTool(name, current, input)
-          },
+          execute: needsDesktopMcp(name)
+            ? async ({ caller: current, context }) => {
+                if (desktopProjectToolNames.has(name))
+                  return (await import("./desktop-project-actions")).invokeDesktopProjectTool(
+                    name,
+                    current,
+                    input,
+                    context,
+                  )
+                if (name === "create_project" || name === "move_chat")
+                  return mutations.invoke(name, current, input, context)
+                if (desktopWorkflowToolNames.has(name))
+                  return (await import("./desktop-workflows")).invokeDesktopWorkflow(
+                    name,
+                    current,
+                    input,
+                    context,
+                  )
+                if (name === "list_models" || name === "list_providers")
+                  return (await import("./desktop-models")).invokeDesktopModelDiscovery(
+                    name,
+                    current,
+                    input,
+                  )
+                return (await import("./desktop-run-actions")).invokeDesktopRunTool(
+                  name,
+                  current,
+                  input,
+                )
+              }
+            : undefined,
         })
         const event = invalidationForProductMcpMutation(name, input, response)
         if (event) notify(event)
@@ -97,6 +125,7 @@ export async function startProductMcpRuntime(
   databasePath: string,
   onInvalidation: (event: ProductMcpRendererInvalidation) => void,
 ) {
+  recoverMcpDispatchClaims(getDatabase())
   const invalidation = await startProductMcpInvalidationBridge({ onInvalidation })
   try {
     const control = await startDesktopMcpTransport(

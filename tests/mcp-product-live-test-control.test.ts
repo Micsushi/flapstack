@@ -6,6 +6,8 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { startProductMcpRuntime } from "../src/main/lib/mcp-control/desktop-invocation"
+import { childLiveKey, CHILD_LIVE_KEY } from "../src/main/lib/mcp-control/child-live-key"
 import { closeDatabase } from "../src/main/lib/db"
 import * as schema from "../src/main/lib/db/schema"
 import {
@@ -32,19 +34,24 @@ vi.mock("electron", () => ({
 
 let directory = ""
 let databasePath = ""
+let runtime: Awaited<ReturnType<typeof startProductMcpRuntime>>
 
-beforeEach(() => {
+beforeEach(async () => {
   directory = mkdtempSync(join(tmpdir(), "flapstack-product-mcp-live-control-"))
   databasePath = join(directory, "agents.db")
   const sqlite = new Database(databasePath)
   migrate(drizzle(sqlite, { schema }), { migrationsFolder: resolve(process.cwd(), "drizzle") })
   sqlite.close()
   process.env.FLAPSTACK_DB_PATH = databasePath
+  vi.stubEnv("FLAPSTACK_CONFIG_DIR", directory)
+  runtime = await startProductMcpRuntime(databasePath, () => {})
 })
 
 afterEach(async () => {
   await resetProductMcpTestCallsForTests()
+  await runtime.stop()
   closeDatabase()
+  vi.unstubAllEnvs()
   delete process.env.FLAPSTACK_DB_PATH
   rmSync(directory, { recursive: true, force: true })
 })
@@ -363,6 +370,8 @@ function sourceRegistration(chatId: string, runId: string, permissionMode = "ful
     args: ["--import", "tsx", entry],
     env: {
       ELECTRON_RUN_AS_NODE: "1",
+      [CHILD_LIVE_KEY]: childLiveKey(chatId, runId),
+      FLAPSTACK_CONFIG_DIR: directory,
       FLAPSTACK_MCP_CHAT_ID: chatId,
       FLAPSTACK_MCP_RUN_ID: runId,
       FLAPSTACK_MCP_PERMISSION_MODE: permissionMode,

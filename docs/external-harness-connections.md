@@ -25,4 +25,4 @@ Each registration uses the desktop executable and bundled stdio entrypoint for t
 
 To revoke access, reopen **External Harness Connections**, select **Revoke a connection**, and select the grant with the matching connection ID. The next tool call from that client will fail, including on an existing connection. You can then remove the generated client directory. Register again to issue a fresh credential.
 
-Agents launched inside Flapstack receive a separate chat- and run-scoped registration. Keep external client configurations private and separate from any provider homes and projects used by those agents.
+Agents launched inside Flapstack receive a separate credential scoped to their chat and active run. The running desktop verifies it at startup and on every tool call, including reads. Keep external client configurations private and separate from any provider homes and projects used by those agents.

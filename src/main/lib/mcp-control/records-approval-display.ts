@@ -41,7 +41,7 @@ export function withRecordsTaskApprovalDisplay<
     )
   return {
     ...view,
-    targetLabel: `Project ${label(records.projectId)} � ${records.path ?? "Default Records task document"}`,
-    inputSummary: `Create task �${label(name)}�`,
+    targetLabel: `Project ${label(records.projectId)} · ${records.path ?? "Default Records task document"}`,
+    inputSummary: `Create task “${label(name)}”`,
   }
 }

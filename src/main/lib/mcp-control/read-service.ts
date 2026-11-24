@@ -620,8 +620,7 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
   }
 }
 
-function openReadStore(): McpReadStore {
-  const path = process.env.FLAPSTACK_DB_PATH
+export function openReadStore(path = process.env.FLAPSTACK_DB_PATH): McpReadStore {
   if (!path) throw new Error("FLAPSTACK_DB_PATH is required for read operations.")
   return {
     get: (sql, params) => withReadDatabase(path, (db) => db.prepare(sql).get(...params) as Row),

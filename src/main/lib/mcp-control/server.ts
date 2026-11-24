@@ -13,10 +13,10 @@ import { createMcpTaskProposalService, mcpTaskProposalInputShapes } from "./task
 import { McpApprovalLifecycle } from "./approval-lifecycle"
 import { recoverMcpDispatchClaims } from "./audit-storage"
 import { productMcpAudit } from "./production-audit"
-import { callDesktopMcpTool } from "./live-transport"
+import { agentProfileRuntimeAuthoritySchema } from "../../../shared/agent-profiles"
+import { CHILD_SESSION_TOOL, callDesktopMcpTool } from "./live-transport"
 import { needsDesktopMcp, liveControlInputShapes } from "./live-control-contract"
 import { beginDatabaseOperation, getDatabase } from "../db"
-import { createSqliteMcpCallerStore, resolveTrustedMcpCaller } from "./identity"
 import { createSqliteMcpApprovalCoordinator } from "./approval-coordinator"
 import { publishProductMcpInvalidation } from "./invalidation-bridge"
 import {
@@ -31,34 +31,26 @@ import {
 } from "../beta-features/settings"
 import { isFrozenAgentProfileToolAllowed } from "../agent-profiles/runtime-authority"
 
-export function createMcpControlServer(
+async function createMcpControlServer(
   caller: McpCallerIdentity,
   resolveExternal?: () => McpCallerIdentity,
-): McpServer {
-  const callerStore = createSqliteMcpCallerStore()
-  const resolveCaller =
-    resolveExternal ??
-    ((identity: McpCallerIdentity) => resolveTrustedMcpCaller(identity, callerStore))
-  const startupCaller = resolveCaller(caller)
-  recoverMcpDispatchClaims(getDatabase())
+): Promise<McpServer> {
+  let startupProfileAuthority = null
+  if (resolveExternal) {
+    const owner = resolveExternal()
+    if (owner.callerKind !== "external-owner") throw new Error("Expected a verified owner grant.")
+    recoverMcpDispatchClaims(getDatabase())
+  } else {
+    const session = await callDesktopMcpTool(CHILD_SESSION_TOOL, caller, {})
+    if (!session.ok) throw new Error(session.error.message)
+    startupProfileAuthority = agentProfileRuntimeAuthoritySchema.nullable().parse(session.data)
+  }
   const server = new McpServer(
     { name: "flapstack-app-control", version: applicationVersion },
     { instructions: FLAPSTACK_MCP_INSTRUCTIONS },
   )
-  const publish = (event: ProductMcpRendererInvalidation): void => {
-    void publishProductMcpInvalidation(event)
-  }
-  const publishApprovalChange = () =>
-    publish({ version: 1, source: "product-mcp", domains: ["approvals"] })
-  const approvals = new McpApprovalLifecycle(
-    createSqliteMcpApprovalCoordinator(getDatabase, publishApprovalChange),
-    publishApprovalChange,
-  )
-  const mutations = createMcpMutationService()
-  const projectVaults = createMcpProjectVaultService()
-  const automationControls = createMcpAutomationService()
-  const taskProposalControls = createMcpTaskProposalService()
-  const startupProfileAuthority = startupCaller.profileRuntimeAuthority ?? null
+  // Only an owner-authorized external client may run database tools without a desktop.
+  const offlineOwner = resolveExternal ? createOwnerDispatch(resolveExternal) : undefined
 
   const betaToolRegistrations = new Map<string, { enable(): void; disable(): void }>()
   for (const tool of listImplementedMcpControlTools({ includeDisabledBeta: true }).filter(
@@ -81,37 +73,17 @@ export function createMcpControlServer(
         annotations: { readOnlyHint: tool.tier === 0, destructiveHint: tool.tier >= 2 },
       },
       async (input, extra) => {
-        const releaseDatabaseOperation = beginDatabaseOperation()
-        try {
-          // MCP SDK callbacks with no input schema receive only the request context.
-          const toolInput = extra ? input : {}
-          // Provider request IDs are caller-controlled and can be replayed. Every
-          // received invocation owns a fresh internal identity instead.
-          const invocationId = randomUUID()
-          const response = needsDesktopMcp(tool.name)
-            ? await callDesktopMcpTool(tool.name, caller, toolInput, extra?.signal)
-            : await invokeMcpControlTool(tool.name, caller, toolInput, undefined, {
-                approvals,
-                approvalId: () => invocationId,
-                invocationId: () => invocationId,
-                audit: productMcpAudit(() =>
-                  publish({ version: 1, source: "product-mcp", domains: ["audit"] }),
-                ),
-                mutations,
-                projectVaults,
-                automationControls,
-                taskProposalControls,
-                resolveCaller,
-              })
-          const invalidation = invalidationForProductMcpMutation(tool.name, toolInput, response)
-          if (invalidation && !needsDesktopMcp(tool.name)) publish(invalidation)
-          return {
-            content: [{ type: "text" as const, text: JSON.stringify(response) }],
-            structuredContent: response,
-            isError: !response.ok,
-          }
-        } finally {
-          releaseDatabaseOperation()
+        // With no input schema the SDK passes only its request context.
+        const toolInput = extra ? input : {}
+        const { signal } = extra ?? (input as { signal?: AbortSignal })
+        const response =
+          offlineOwner && !needsDesktopMcp(tool.name)
+            ? await offlineOwner.invoke(tool.name, toolInput)
+            : await callDesktopMcpTool(tool.name, caller, toolInput, signal)
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(response) }],
+          structuredContent: response,
+          isError: !response.ok,
         }
       },
     )
@@ -132,10 +104,53 @@ export function createMcpControlServer(
   const close = server.close.bind(server)
   server.close = async () => {
     unsubscribeBetaFeatures()
-    approvals.shutdown()
+    offlineOwner?.shutdown()
     await close()
   }
   return server
+}
+
+function createOwnerDispatch(resolveCaller: () => McpCallerIdentity) {
+  const owner = resolveCaller()
+  const publish = (event: ProductMcpRendererInvalidation) => {
+    void publishProductMcpInvalidation(event)
+  }
+  const publishApprovalChange = () =>
+    publish({ version: 1, source: "product-mcp", domains: ["approvals"] })
+  const approvals = new McpApprovalLifecycle(
+    createSqliteMcpApprovalCoordinator(getDatabase, publishApprovalChange),
+    publishApprovalChange,
+  )
+  const services = {
+    mutations: createMcpMutationService(),
+    projectVaults: createMcpProjectVaultService(),
+    automationControls: createMcpAutomationService(),
+    taskProposalControls: createMcpTaskProposalService(),
+  }
+  return {
+    shutdown: () => approvals.shutdown(),
+    async invoke(name: string, input: unknown) {
+      const release = beginDatabaseOperation()
+      try {
+        const invocationId = randomUUID()
+        const response = await invokeMcpControlTool(name, owner, input, undefined, {
+          ...services,
+          approvals,
+          approvalId: () => invocationId,
+          invocationId: () => invocationId,
+          audit: productMcpAudit(() =>
+            publish({ version: 1, source: "product-mcp", domains: ["audit"] }),
+          ),
+          resolveCaller,
+        })
+        const event = invalidationForProductMcpMutation(name, input, response)
+        if (event) publish(event)
+        return response
+      } finally {
+        release()
+      }
+    },
+  }
 }
 
 export async function connectMcpControlServer(
@@ -143,7 +158,7 @@ export async function connectMcpControlServer(
   transport: Transport,
   resolveExternal?: () => McpCallerIdentity,
 ): Promise<{ close: () => Promise<void> }> {
-  const server = createMcpControlServer(caller, resolveExternal)
+  const server = await createMcpControlServer(caller, resolveExternal)
   await server.connect(transport)
   let closed = false
   return {

@@ -55,8 +55,8 @@ describe("MCP approval renderer coordination", () => {
       const [view] = listPendingMcpApprovals(db)
       expect(JSON.stringify(view)).not.toContain("Check receipt")
       expect(withRecordsTaskApprovalDisplay(view!)).toMatchObject({
-        targetLabel: "Project demo � lanes/vault/tasks.md",
-        inputSummary: "Create task �Check receipt�",
+        targetLabel: "Project demo · lanes/vault/tasks.md",
+        inputSummary: "Create task “Check receipt”",
       })
       expect(withRecordsTaskApprovalDisplay({ ...view!, inputSummary: "{}" }).inputSummary).toBe(
         "{}",
