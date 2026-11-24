@@ -99,7 +99,11 @@ import {
 import { probeCursorCapabilities, probeOpencodeCapabilities } from "./harness/provider-capabilities"
 import { probeLocalModelCatalog } from "./harness/local-model-catalog"
 import { PINNED_OPENCODE_VERSION } from "./harness/opencode-sidecar/binary"
-import { assertRegisteredFilesystemRoot } from "./git/security/path-validation"
+import {
+  assertRegisteredFilesystemRoot,
+  bindFilesystemRootIdentity,
+} from "./git/security/path-validation"
+import { ensureGlobalChatRuntimePath } from "./global-chat-runtime"
 import {
   getMergedGlobalMcpServers,
   getMergedLocalProjectMcpServers,
@@ -422,6 +426,9 @@ export class MainRuntimeLaunchService {
       await Promise.resolve()
       if (this.prelaunchCancellations.has(run.runId))
         throw new RuntimeLaunchCancelledError(run.runId)
+      if (!run.worktreePath && !run.projectPath) {
+        await this.attachGlobalRunDirectory(run)
+      }
       const resolvedLaunch = run.runtimeLaunch ?? legacyLaunch(run)
       if (resolvedLaunch.resolvedRuntime !== "flapstack-native" || run.harness === "antigravity") {
         workspace = this.serializePersistedOperation(run.runId, () =>
@@ -1606,6 +1613,32 @@ export class MainRuntimeLaunchService {
       }
     } finally {
       db.close()
+    }
+  }
+
+  private async attachGlobalRunDirectory(run: QueuedAgentRun): Promise<void> {
+    const sqlite = this.open()
+    try {
+      const globalChat = sqlite
+        .prepare(
+          `SELECT c.id FROM chats c JOIN agent_runs r ON r.chat_id = c.id
+           WHERE r.id = ? AND c.id = ? AND c.scope = 'global' AND c.project_id IS NULL`,
+        )
+        .get(run.runId, run.chatId)
+      if (!globalChat) return
+      const { app } = await import("electron")
+      const directory = await ensureGlobalChatRuntimePath(app.getPath("userData"), run.chatId)
+      const root = bindFilesystemRootIdentity(directory, drizzle(sqlite, { schema }))
+      const stored = sqlite
+        .prepare(
+          "UPDATE agent_runs SET worktree_path = ? WHERE id = ? AND worktree_path IS NULL AND completed_at IS NULL",
+        )
+        .run(root.path, run.runId)
+      if (!stored.changes)
+        throw new Error("The run changed before its global chat folder was attached.")
+      run.worktreePath = root.path
+    } finally {
+      sqlite.close()
     }
   }
 

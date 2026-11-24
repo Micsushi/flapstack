@@ -28,6 +28,11 @@ const harnessMocks = vi.hoisted(() => ({
   localCancel: vi.fn(),
 }))
 
+vi.mock("electron", () => ({
+  app: { getPath: () => directory },
+  BrowserWindow: { getAllWindows: () => [] },
+}))
+
 vi.mock("../src/main/lib/trpc/routers", () => ({
   createAppRouter: () => ({
     createCaller: () => ({
@@ -77,6 +82,22 @@ function testLauncher() {
 }
 
 describe("MCP main run launcher", () => {
+  it("launches a global chat in its own durable folder without attaching it to a project", async () => {
+    const run = queuedRun("global-run", "codex")
+    for (const table of ["chats", "sub_chats", "agent_runs"]) {
+      sqlite.prepare(`UPDATE ${table} SET worktree_path = NULL`).run()
+    }
+    await testLauncher()({ ...run, worktreePath: null, projectPath: null })
+    const expected = join(directory, "data", "global-chats", run.chatId)
+    expect(
+      sqlite.prepare("SELECT worktree_path FROM agent_runs WHERE id = ?").get(run.runId),
+    ).toEqual({ worktree_path: expected })
+    expect(
+      sqlite.prepare("SELECT project_id, worktree_path FROM chats WHERE id = ?").get(run.chatId),
+    ).toEqual({ project_id: null, worktree_path: null })
+    expect(harnessMocks.codex).toHaveBeenCalledWith(expect.objectContaining({ cwd: expected }))
+  })
+
   it("reuses the queued run identity for Codex and Claude launches", async () => {
     const launch = testLauncher()
     await launch(queuedRun("queued-codex", "codex"))
