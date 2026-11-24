@@ -1,3 +1,4 @@
+import { version as applicationVersion } from "../../../../package.json"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import { randomUUID } from "node:crypto"
@@ -41,7 +42,7 @@ export function createMcpControlServer(
   const startupCaller = resolveCaller(caller)
   recoverMcpDispatchClaims(getDatabase())
   const server = new McpServer(
-    { name: "flapstack-app-control", version: "0.1.0" },
+    { name: "flapstack-app-control", version: applicationVersion },
     { instructions: FLAPSTACK_MCP_INSTRUCTIONS },
   )
   const publish = (event: ProductMcpRendererInvalidation): void => {
