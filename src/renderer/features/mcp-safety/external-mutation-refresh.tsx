@@ -1,13 +1,47 @@
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
+import { toast } from "sonner"
+import { streamReplySpeech } from "../../lib/reply-speech-stream"
+import { stopManagedSpeech } from "../../lib/speech-playback"
 import {
   createProjectVaultQueryInvalidator,
   createProductMcpInvalidationCoalescer,
   createProductMcpRendererInvalidator,
 } from "./external-mutation-refresh-model"
-import { trpc } from "../../lib/trpc"
+import { trpc, trpcClient } from "../../lib/trpc"
 
 export function McpExternalMutationRefreshBridge() {
   const utils = trpc.useUtils()
+  const playback = useRef<ReturnType<typeof streamReplySpeech> | null>(null)
+  trpc.speech.playbackCommands.useSubscription(undefined, {
+    enabled: Boolean(window.desktopApi),
+    onData(command) {
+      if (command.kind === "stop") {
+        if (command.requestedOnly && !playback.current) return
+        stopManagedSpeech()
+        void trpcClient.speech.stopSpeaking
+          .mutate()
+          .catch((error) => toast.error("Could not stop speech", { description: error.message }))
+        return
+      }
+      playback.current = streamReplySpeech(command, {
+        startTime: 0,
+        getRate: () => command.rate,
+        onText() {},
+        onProgress() {},
+        onPlaying() {},
+        onFinish() {
+          playback.current = null
+        },
+        onError(error) {
+          toast.error("Could not play reply", { description: error.message })
+        },
+        onHistoryError(error) {
+          toast.warning("Could not save reply audio", { description: error })
+        },
+      })
+    },
+  })
+  useEffect(() => () => playback.current?.stop(), [])
 
   useEffect(() => {
     if (!window.desktopApi?.onProductMcpInvalidation) return
@@ -76,6 +110,16 @@ export function McpExternalMutationRefreshBridge() {
               utils.planSources.sourceLinks.invalidate({ projectId }),
             ])
           : utils.planSources.invalidate(),
+      speech: () => utils.speech.getSettings.invalidate(),
+      chatWorkflows: () =>
+        Promise.all([
+          utils.chats.listTags.invalidate(),
+          utils.chats.listTagAssignments.invalidate(),
+          utils.chats.getParsedDiff.invalidate(),
+          utils.agentProfiles.getChatBinding.invalidate(),
+          utils.sideQuestions.list.invalidate(),
+          utils.runs.getChangeSet.invalidate(),
+        ]),
       providerExtensions: () => utils.providerExtensions.invalidate(),
     })
     const coalescer = createProductMcpInvalidationCoalescer(invalidate)

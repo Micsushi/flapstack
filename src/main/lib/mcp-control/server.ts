@@ -3,6 +3,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import { randomUUID } from "node:crypto"
 import type { McpCallerIdentity } from "./types"
 import { invokeMcpControlTool, listImplementedMcpControlTools } from "./registry"
+import { workflowInputShapes } from "./workflow-contract"
 import { mcpReadInputShapes } from "./read-service"
 import { createMcpMutationService, mcpMutationInputShapes } from "./mutation-service"
 import { createMcpProjectVaultService, mcpProjectVaultInputShapes } from "./project-vault-service"
@@ -70,6 +71,7 @@ export function createMcpControlServer(
         description: tool.description,
         inputSchema:
           liveControlInputShapes[tool.name] ??
+          workflowInputShapes[tool.name] ??
           mcpReadInputShapes[tool.name] ??
           mcpMutationInputShapes[tool.name] ??
           mcpProjectVaultInputShapes[tool.name] ??

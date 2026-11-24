@@ -17,6 +17,7 @@ import {
 } from "../../analytics"
 import {
   agentRuns,
+  agentProfileChatBindings,
   chats,
   chatTagAssignments,
   chatTags,
@@ -875,6 +876,9 @@ export const chatsRouter = router({
         : null
       if (!project) throw new Error("Project not found")
 
+      assertRegisteredFilesystemRoot(project.path, db)
+      if (!(await simpleGit(project.path).checkIsRepo()))
+        throw new Error("The project folder is not a Git repository.")
       const result = await createWorktreeForChat(
         project.path,
         sanitizeProjectName(project.name),
@@ -901,19 +905,38 @@ export const chatsRouter = router({
         throw new Error(result.error || "Worktree creation failed")
       }
 
-      const updatedChat = db
-        .update(chats)
-        .set({
-          worktreePath: result.worktreePath,
-          branch: result.branch,
-          baseBranch: result.baseBranch,
-          updatedAt: new Date(),
-        })
-        .where(eq(chats.id, chat.id))
-        .returning()
-        .get()
-
-      return updatedChat
+      const worktreePath = result.worktreePath
+      return db.transaction((tx) => {
+        const updatedAt = new Date()
+        const updatedChat = tx
+          .update(chats)
+          .set({ worktreePath, branch: result.branch, baseBranch: result.baseBranch, updatedAt })
+          .where(
+            and(
+              eq(chats.id, chat.id),
+              eq(chats.projectId, project.id),
+              chat.taskId ? eq(chats.taskId, chat.taskId) : isNull(chats.taskId),
+              isNull(chats.archivedAt),
+              chat.worktreePath
+                ? eq(chats.worktreePath, chat.worktreePath)
+                : isNull(chats.worktreePath),
+            ),
+          )
+          .returning()
+          .get()
+        if (!updatedChat)
+          throw new Error(
+            `The chat changed during creation. The new checkout is retained at ${worktreePath}.`,
+          )
+        const inherited = chat.worktreePath
+          ? or(isNull(subChats.worktreePath), eq(subChats.worktreePath, chat.worktreePath))
+          : isNull(subChats.worktreePath)
+        tx.update(subChats)
+          .set({ worktreePath, updatedAt })
+          .where(and(eq(subChats.chatId, chat.id), inherited))
+          .run()
+        return updatedChat
+      })
     }),
 
   /**
@@ -1864,6 +1887,7 @@ export const chatsRouter = router({
             mcpExposureEnabled: sourceChat.mcpExposureEnabled,
             harness: sourceChat.harness,
             model: sourceChat.model,
+            runtimePreference: sourceChat.runtimePreference,
             worktreePath: sourceChat.worktreePath,
             branch: sourceChat.branch,
             baseBranch: sourceChat.baseBranch,
@@ -1885,6 +1909,15 @@ export const chatsRouter = router({
           })
           .returning()
           .get()
+        const binding = tx
+          .select()
+          .from(agentProfileChatBindings)
+          .where(eq(agentProfileChatBindings.chatId, sourceChat.id))
+          .get()
+        if (binding)
+          tx.insert(agentProfileChatBindings)
+            .values({ ...binding, chatId: newChat.id, boundAt: new Date(), frozenAt: null })
+            .run()
         return { newChat, newSubChat }
       })
 

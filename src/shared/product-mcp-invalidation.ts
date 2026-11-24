@@ -17,6 +17,8 @@ export const productMcpInvalidationDomains = [
   "task-proposals",
   "plan-sources",
   "provider-extensions",
+  "chat-workflows",
+  "speech",
 ] as const
 
 export type ProductMcpInvalidationDomain = (typeof productMcpInvalidationDomains)[number]
@@ -202,6 +204,22 @@ export function invalidationForProductMcpMutation(
           stringValue(objectValue(request.proposal).projectId),
           stringValue(objectValue(result.record).projectId),
         ),
+      })
+    case "update_speech_settings":
+      return event(["speech"], {})
+    case "fork_chat":
+    case "handoff_chat":
+    case "ask_side_question":
+    case "set_chat_tags":
+    case "create_worktree":
+    case "bind_agent_profile":
+      return event(["chats", "chat-workflows"], {
+        chatIds: compactIds(chatId, stringValue(result.chatId)),
+      })
+    case "undo_run_changes":
+      return event(["chats", "runs", "chat-workflows"], {
+        chatIds: compactIds(chatId),
+        runIds: compactIds(stringValue(request.runId)),
       })
     case "create_chat":
     case "spawn_thread":

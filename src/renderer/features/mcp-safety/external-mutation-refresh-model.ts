@@ -69,6 +69,8 @@ export type ProductMcpRendererInvalidators = {
   automations: Invalidate
   taskProposals: Invalidate
   planSources: (projectId?: string) => unknown | Promise<unknown>
+  speech?: Invalidate
+  chatWorkflows?: Invalidate
   providerExtensions: Invalidate
 }
 
@@ -121,6 +123,8 @@ export function createProductMcpRendererInvalidator(
       if (projectIds.length === 0) pending.push(invalidators.planSources())
       else pending.push(...projectIds.map((id) => invalidators.planSources(id)))
     }
+    if (domains.has("speech")) pending.push(invalidators.speech?.())
+    if (domains.has("chat-workflows")) pending.push(invalidators.chatWorkflows?.())
     if (domains.has("provider-extensions")) pending.push(invalidators.providerExtensions())
     await Promise.all(pending)
   }

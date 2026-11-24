@@ -3,6 +3,7 @@ import { liveControlTools } from "./live-control-contract"
 import { randomUUID } from "node:crypto"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
 import type { AppendMcpAuditRecord, McpAuditStatus, McpDispatchBlock } from "./audit-storage"
+import { workflowTools } from "./workflow-contract"
 import { evaluateMcpToolGate } from "./gate"
 import { createMcpReadService, type McpReadService } from "./read-service"
 import { evaluateMcpGateWithSelfReference } from "./self-reference"
@@ -61,6 +62,7 @@ export type McpAuditWriter = {
 
 export const mcpControlTools: McpControlTool[] = [
   ...liveControlTools,
+  ...workflowTools,
   {
     name: "ping",
     description: "Check Flapstack app-control server health.",

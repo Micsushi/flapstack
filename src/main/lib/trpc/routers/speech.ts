@@ -16,6 +16,10 @@ import { createFallbackSpokenSummary } from "../../speech/spoken-summary"
 import { resolveSpeechText } from "../../speech/speech-text"
 import { prepareKokoroOpening, warmCachedKokoro } from "../../speech/tts-kokoro"
 import { prepareSpeech } from "../../speech/prepare"
+import {
+  registerDesktopSpeechReceiver,
+  type DesktopSpeechCommand,
+} from "../../speech/desktop-playback"
 import { SpeechRequestOwnership } from "../../speech/request-ownership"
 import { ensureModel, getSttModelStatus, listWhisperModels } from "../../speech/stt-whisper-cpp"
 import {
@@ -54,6 +58,16 @@ async function stopTtsAdapters(requestScopeId: string) {
 }
 
 export const speechRouter = router({
+  playbackCommands: publicProcedure.subscription(({ ctx }) =>
+    observable<DesktopSpeechCommand>((emit) => {
+      const windowId = ctx.getWindow()?.id
+      if (windowId === undefined) {
+        emit.complete()
+        return
+      }
+      return registerDesktopSpeechReceiver(windowId, (command) => emit.next(command))
+    }),
+  ),
   prepareOpening: publicProcedure
     .input(z.object({ text: z.string().min(1).max(320) }))
     .mutation(({ input }) => {
