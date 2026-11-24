@@ -10,7 +10,8 @@ import {
 } from "../../../shared/agent-runtime"
 import {
   customPermissionCapabilitiesSchema,
-  customPermissionCapabilityKeys,
+  permissionCapabilityLevels,
+  capabilityLevelsNarrow,
   type CustomPermissionCapabilities,
 } from "../../../shared/permission-capabilities"
 import {
@@ -1013,8 +1014,6 @@ function narrowAuthority(
   }
 }
 
-type CapabilityLevels = Record<(typeof customPermissionCapabilityKeys)[number], 0 | 1 | 2>
-
 function requestedCustomPermissions(
   parent: DelegationAuthorityCeiling,
   permissionMode: DelegationAuthorityCeiling["permissionMode"],
@@ -1051,38 +1050,15 @@ function requestedCustomPermissions(
 
 function capabilitiesForAuthority(
   mode: DelegationAuthorityCeiling["permissionMode"],
-  customPermissions: CustomPermissionCapabilities | null,
-): CapabilityLevels {
-  const levels = Object.fromEntries(
-    customPermissionCapabilityKeys.map((key) => [key, 0 as const]),
-  ) as CapabilityLevels
-  if (mode === "read-only") return levels
-  if (mode === "auto-edit-project-only") {
-    levels.projectWrite = 2
-    return levels
-  }
-  if (mode === "ask-before-edits") {
-    for (const key of customPermissionCapabilityKeys) levels[key] = 1
-    return levels
-  }
-  if (mode === "full-access") {
-    for (const key of customPermissionCapabilityKeys) levels[key] = 2
-    return levels
-  }
-  if (!customPermissions) {
+  custom: CustomPermissionCapabilities | null,
+) {
+  const levels = permissionCapabilityLevels(mode, custom)
+  if (!levels)
     throw new CrossProviderDelegationError(
       "authority-widening",
       "Custom parent authority is missing exact enforceable capabilities.",
     )
-  }
-  for (const key of customPermissionCapabilityKeys) {
-    levels[key] = customPermissions[key] ? 2 : 0
-  }
   return levels
-}
-
-function capabilityLevelsNarrow(parent: CapabilityLevels, requested: CapabilityLevels): boolean {
-  return customPermissionCapabilityKeys.every((key) => requested[key] <= parent[key])
 }
 
 function toolTiersFor(

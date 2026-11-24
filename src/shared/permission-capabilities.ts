@@ -1,3 +1,4 @@
+import type { RunPermissionMode } from "./harness-types"
 import { z, type RefinementCtx } from "zod"
 import type { AgentHarness, RunPermissionMode } from "./harness-types"
 
@@ -196,4 +197,42 @@ export function getPermissionEligibility(
   }
 
   return { selectable: false, enforcement: "unavailable", reason: "Unsupported mode." }
+}
+
+type CapabilityLevels = Record<(typeof customPermissionCapabilityKeys)[number], 0 | 1 | 2>
+
+export function permissionCapabilityLevels(
+  mode: RunPermissionMode,
+  customPermissions: CustomPermissionCapabilities | null,
+): CapabilityLevels | null {
+  const levels = Object.fromEntries(
+    customPermissionCapabilityKeys.map((key) => [key, 0 as const]),
+  ) as CapabilityLevels
+  if (mode === "read-only") return levels
+  if (mode === "auto-edit-project-only") {
+    levels.projectWrite = 2
+    return levels
+  }
+  if (mode === "ask-before-edits") {
+    for (const key of customPermissionCapabilityKeys) levels[key] = 1
+    return levels
+  }
+  if (mode === "full-access") {
+    for (const key of customPermissionCapabilityKeys) levels[key] = 2
+    return levels
+  }
+  if (!customPermissions) {
+    return null
+  }
+  for (const key of customPermissionCapabilityKeys) {
+    levels[key] = customPermissions[key] ? 2 : 0
+  }
+  return levels
+}
+
+export function capabilityLevelsNarrow(
+  parent: CapabilityLevels,
+  requested: CapabilityLevels,
+): boolean {
+  return customPermissionCapabilityKeys.every((key) => requested[key] <= parent[key])
 }
