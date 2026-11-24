@@ -526,7 +526,7 @@ describe("message speech request", () => {
 
 describe("kokoro helpers", () => {
   it("loads the package entry that retains Kokoro's bundled voice path", () => {
-      const source = readFileSync("src/main/kokoro-synthesis.ts", "utf8")
+    const source = readFileSync("src/main/kokoro-synthesis.ts", "utf8")
     expect(source).toContain("createRequire(import.meta.url)")
     expect(source).toContain('require("kokoro-js")')
     expect(source).not.toContain('await import("kokoro-js")')
