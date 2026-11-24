@@ -55,7 +55,7 @@ async function stopTtsAdapters(requestScopeId: string) {
 export const speechRouter = router({
   getSettings: publicProcedure.query(() => {
     const settings = getVoiceSettings()
-    if (settings.ttsAdapterId === "kokoro" && settings.prepareReplyAudio) warmCachedKokoro()
+    if (settings.ttsAdapterId === "kokoro") warmCachedKokoro()
     return settings
   }),
 
@@ -85,6 +85,7 @@ export const speechRouter = router({
     .mutation(({ input }) => {
       const previous = getVoiceSettings()
       const next = setVoiceSettings(input)
+      if (previous.ttsAdapterId !== "kokoro" && next.ttsAdapterId === "kokoro") warmCachedKokoro()
       if (!next.cloudTranscriptionEnabled || next.sttAdapterId !== "openai-whisper")
         cancelCloudTranscriptions()
       if (previous.sttModelUnloadMinutes !== next.sttModelUnloadMinutes)

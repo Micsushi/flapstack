@@ -687,11 +687,18 @@ export class MainRuntimeLaunchService {
     const codexApproval =
       method === "item/commandExecution/requestApproval" ||
       method === "item/fileChange/requestApproval"
-    if (codexApproval || method === "item/permissions/requestApproval") {
+    if (
+      codexApproval ||
+      method === "item/permissions/requestApproval" ||
+      method === "projectMcp/connect"
+    ) {
       options.push({
         id: "allow-session",
         label: "Allow for this session",
-        description: "Remember this approval in the current Codex session.",
+        description:
+          method === "projectMcp/connect"
+            ? "Use this project configuration in this chat until Flapstack closes."
+            : "Remember this approval in the current Codex session.",
       })
     }
     const amendment = params.proposedExecpolicyAmendment

@@ -7,8 +7,9 @@ import {
   type RequestPermissionRequest,
 } from "@agentclientprotocol/sdk"
 import { execFile, spawn } from "node:child_process"
-import { existsSync } from "node:fs"
-import { homedir } from "node:os"
+import { existsSync, mkdtempSync } from "node:fs"
+import { rmdir } from "node:fs/promises"
+import { homedir, tmpdir } from "node:os"
 import { delimiter, isAbsolute, join } from "node:path"
 import { PassThrough, Readable, Writable } from "node:stream"
 import { setTimeout as delay } from "node:timers/promises"
@@ -22,6 +23,7 @@ import type {
 } from "../../../../shared/agent-runtime"
 import { eventRecord } from "../event-values"
 import { sanitizeRuntimeText } from "../sanitizer"
+import { projectMcpServers } from "./project-mcp"
 import { AntigravityEvents } from "./events"
 import { answerAntigravityForm, type AskAntigravityQuestion } from "./questions"
 import { antigravityPermissions } from "../../../../shared/antigravity-permissions"
@@ -143,18 +145,20 @@ async function bounded<T>(
 }
 
 function connect(context: RuntimeAdapterContext, deps: Dependencies) {
-  const cwd = deps.cwd(context)
   const permissions = antigravityPermissions(context.launch.permission.mode)
   if (!permissions.applied) throw new Error(permissions.reason)
   const args =
     context.launch.controls.antigravityNativeApprovals === true
       ? ["acp"]
       : ["acp", "--dangerously-skip-permissions"]
-  const child = spawn(executable(), args, {
-    cwd,
+  const command = executable()
+  const handshakeDirectory = mkdtempSync(join(tmpdir(), "flapstack-acp-"))
+  const child = spawn(command, args, {
+    cwd: handshakeDirectory,
     windowsHide: true,
     stdio: ["pipe", "pipe", "ignore"],
   })
+  child.once("close", () => void rmdir(handshakeDirectory).catch(() => {}))
   const events = new PassThrough({ objectMode: true })
   // An early process failure may precede attachment of the activity iterator.
   events.on("error", () => {})
@@ -204,7 +208,7 @@ function connect(context: RuntimeAdapterContext, deps: Dependencies) {
           provider: "antigravity",
           toolName: toolCall.title || toolCall.kind || "Antigravity tool",
           toolInput: { file_path: path, command: input.CommandLine },
-          params: { cwd },
+          params: { cwd: deps.cwd(context) },
         })
         if (context.signal.aborted || !state.collecting || state.sessionId !== request.sessionId)
           return cancelled
@@ -227,17 +231,18 @@ function connect(context: RuntimeAdapterContext, deps: Dependencies) {
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     ),
   )
-  return { state, connection, cwd }
+  return { state, connection }
 }
 
 export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<AgentActivityAppend> {
   const runs = new Map<string, ReturnType<typeof connect>>()
+  const projectApprovals = new Map<string, string>()
   async function open(context: RuntimeAdapterContext, previous?: RuntimeAdapterSession) {
     if (context.outputSchema)
       throw new Error("Antigravity ACP does not support structured result schemas.")
     const run = connect(context, deps)
     runs.set(context.runId, run)
-    const { state, connection, cwd } = run
+    const { state, connection } = run
     // SDK 0.14.1 forwards draft ACP capabilities and requests through extMethod.
     const clientCapabilities: ClientCapabilities & { elicitation: { form: object } } = {
       elicitation: { form: {} },
@@ -252,6 +257,29 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
     )
     if (init.protocolVersion !== 1)
       throw new Error("Antigravity returned an incompatible ACP version.")
+    // Only the protocol handshake runs before the checkpoint. A session can load project hooks.
+    await context.waitForWorkspace?.()
+    context.signal.throwIfAborted()
+    const cwd = deps.cwd(context)
+    const mcpServers = await projectMcpServers(
+      cwd,
+      init.agentCapabilities?.mcpCapabilities?.http === true,
+      context,
+      projectApprovals,
+      deps.permission,
+      (message) =>
+        deps.append(context.runId, [
+          {
+            provider: "antigravity",
+            kind: "warning",
+            phase: "updated",
+            displayClass: "status",
+            privacyClass: "public",
+            payload: { message, code: "gemini-project-mcp" },
+          },
+        ]),
+    )
+    context.signal.throwIfAborted()
     if (previous && !previous.providerSessionId)
       throw new Error("Cannot resume Antigravity without its saved session ID.")
     const session = previous?.providerSessionId
@@ -259,13 +287,13 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
           connection.unstable_resumeSession({
             sessionId: previous.providerSessionId,
             cwd,
-            mcpServers: [],
+            mcpServers,
           }),
           "resume",
         )
       : await bounded(
           createAntigravitySession(
-            () => connection.newSession({ cwd, mcpServers: [] }),
+            () => connection.newSession({ cwd, mcpServers }),
             AbortSignal.any([context.signal, AbortSignal.timeout(ACP_REQUEST_TIMEOUT_MS)]),
           ),
           "session setup",
@@ -293,6 +321,7 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
 
   return {
     runtime: "flapstack-native",
+    preparesSessionBeforeWorkspace: true,
     async probe(harness): Promise<RuntimeAdapterProbe> {
       let error: string | null = null
       try {

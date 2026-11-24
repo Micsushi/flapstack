@@ -1,4 +1,5 @@
 import { createRequire } from "node:module"
+import { availableParallelism } from "node:os"
 import type { KokoroModel } from "./lib/speech/tts-kokoro"
 
 const require = createRequire(import.meta.url)
@@ -20,6 +21,10 @@ async function handle(request: Request) {
         ...local,
         dtype: "q8",
         device: "cpu",
+        session_options: {
+          intraOpNumThreads: Math.min(4, availableParallelism()),
+          interOpNumThreads: 1,
+        },
       }),
       AutoTokenizer.from_pretrained(request.modelId, local),
     ])
