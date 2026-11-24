@@ -1,10 +1,14 @@
 import type { SessionUpdate, ToolCallUpdate } from "@agentclientprotocol/sdk"
 import { createTwoFilesPatch } from "diff"
 import { eventRecord } from "../event-values"
+import { sanitizeRuntimeText } from "../sanitizer"
 import type {
   AgentActivityAppend,
   AgentActivityAppendBase,
 } from "../../../../shared/agent-activity"
+
+// Antigravity ACP reports executor startup failures as a message followed by end_turn.
+const EXECUTOR_ERROR_PREFIX = "\n⚠ agent executor error: "
 
 // ACP sends text deltas and tool boundaries, without a final aggregate message.
 export class AntigravityEvents {
@@ -12,6 +16,7 @@ export class AntigravityEvents {
   private pending = ""
   private part = 0
   private answeredSinceTool = false
+  private answerPrefix = ""
   private receivedUsage = false
   private readonly tools = new Map<
     string,
@@ -49,7 +54,13 @@ export class AntigravityEvents {
   }
 
   confirmedCompaction(prompt: string): AgentActivityAppend | undefined {
-    if (prompt.trim() !== "/compact" || !this.receivedUsage || this.tools.size) return
+    if (
+      prompt.trim() !== "/compact" ||
+      !this.receivedUsage ||
+      this.tools.size ||
+      this.executorFailed
+    )
+      return
     return {
       ...this.identity(),
       kind: "compaction",
@@ -59,7 +70,18 @@ export class AntigravityEvents {
     }
   }
 
+  private get executorFailed(): boolean {
+    return this.answerPrefix.startsWith(EXECUTOR_ERROR_PREFIX)
+  }
+
   completionError(): Error | null {
+    if (this.executorFailed) {
+      const detail = sanitizeRuntimeText(this.answerPrefix.trim(), {
+        mode: "diagnostic",
+        maxLength: 500,
+      })
+      return new Error(`Antigravity failed during the turn. ${detail}`)
+    }
     if (this.answeredSinceTool) return null
     const tools = [...this.tools.values()]
     if (
@@ -109,7 +131,7 @@ export class AntigravityEvents {
 
   finishTurn(): AgentActivityAppend[] {
     return [
-      ...this.finish(),
+      ...this.finish(this.executorFailed ? "commentary" : "final_answer"),
       ...Array.from(this.pendingDeclines.keys(), (id) => this.declinedEvent(id)),
     ]
   }
@@ -143,7 +165,10 @@ export class AntigravityEvents {
       const kind =
         update.sessionUpdate === "agent_message_chunk" ? "agent-text" : "provider-visible-reasoning"
       if (kind === "provider-visible-reasoning" && !this.showThoughts) return []
-      if (kind === "agent-text" && update.content.text.trim()) this.answeredSinceTool = true
+      if (kind === "agent-text") {
+        this.answerPrefix += update.content.text.slice(0, 512 - this.answerPrefix.length)
+        if (update.content.text.trim()) this.answeredSinceTool = true
+      }
       const events = this.kind && this.kind !== kind ? this.finish("commentary") : []
       // Each aggregate fits the store's 64 KiB encoded JSON limit, even for escaped controls.
       let delta = ""

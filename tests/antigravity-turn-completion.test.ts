@@ -3,6 +3,35 @@ import { AntigravityEvents } from "../src/main/lib/agent-runtime/antigravity/eve
 import { RuntimeActivityChatChunkMapper } from "../src/renderer/features/agents/lib/runtime-activity-chat-chunks"
 import { activity } from "./runtime-activity-test-helpers"
 
+it("fails an ACP end_turn containing only an executor diagnostic, including split chunks", () => {
+  const turn = new AntigravityEvents("error-session", true)
+  const message = (text: string) =>
+    turn.update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } })
+  message("\n⚠ agent exec")
+  message("utor error: building toolbox: invalid schema. Bearer secret-fixture-token")
+  turn.update({ sessionUpdate: "usage_update", used: 2, size: 1000 })
+  expect(turn.confirmedCompaction("/compact")).toBeUndefined()
+  const failure = turn.completionError()
+  expect(failure?.message).toContain("building toolbox: invalid schema")
+  expect(failure?.message).not.toContain("secret-fixture-token")
+  expect(turn.finishTurn()).not.toContainEqual(
+    expect.objectContaining({ sectionBoundary: "final_answer" }),
+  )
+})
+
+it("preserves an answer explaining the native executor diagnostic", () => {
+  const turn = new AntigravityEvents("explanation", false)
+  turn.update({
+    sessionUpdate: "agent_message_chunk",
+    content: {
+      type: "text",
+      text: "Here is the error:\n⚠ agent executor error: building toolbox.",
+    },
+  })
+  expect(turn.completionError()).toBeNull()
+  expect(turn.finishTurn()[0]).toMatchObject({ sectionBoundary: "final_answer" })
+})
+
 it("finishes a user-declined file change without an invented reply or a failure notification", () => {
   const turn = new AntigravityEvents("gemini-session", false)
   const file = {
