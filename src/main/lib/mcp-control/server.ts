@@ -9,11 +9,10 @@ import { createMcpProjectVaultService, mcpProjectVaultInputShapes } from "./proj
 import { createMcpAutomationService, mcpAutomationInputShapes } from "./automation-service"
 import { createMcpTaskProposalService, mcpTaskProposalInputShapes } from "./task-proposal-service"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
-import {
-  appendMcpAuditRecord,
-  findUnresolvedMcpDispatch,
-  recoverMcpDispatchClaims,
-} from "./audit-storage"
+import { recoverMcpDispatchClaims } from "./audit-storage"
+import { productMcpAudit } from "./production-audit"
+import { callDesktopMcpTool } from "./live-transport"
+import { needsDesktopMcp, liveControlInputShapes } from "./live-control-contract"
 import { beginDatabaseOperation, getDatabase } from "../db"
 import { createSqliteMcpCallerStore, resolveTrustedMcpCaller } from "./identity"
 import { createSqliteMcpApprovalCoordinator } from "./approval-coordinator"
@@ -70,6 +69,7 @@ export function createMcpControlServer(
       {
         description: tool.description,
         inputSchema:
+          liveControlInputShapes[tool.name] ??
           mcpReadInputShapes[tool.name] ??
           mcpMutationInputShapes[tool.name] ??
           mcpProjectVaultInputShapes[tool.name] ??
@@ -85,28 +85,23 @@ export function createMcpControlServer(
           // Provider request IDs are caller-controlled and can be replayed. Every
           // received invocation owns a fresh internal identity instead.
           const invocationId = randomUUID()
-          const response = await invokeMcpControlTool(tool.name, caller, toolInput, undefined, {
-            approvals,
-            approvalId: () => invocationId,
-            invocationId: () => invocationId,
-            audit: {
-              append: (record) => {
-                appendMcpAuditRecord(getDatabase(), record)
-                publish({ version: 1, source: "product-mcp", domains: ["audit"] })
-              },
-              findUnresolvedDispatch: (lookup) => {
-                recoverMcpDispatchClaims(getDatabase(), { staleAfterMs: 0, limit: 25 })
-                return findUnresolvedMcpDispatch(getDatabase(), lookup)
-              },
-            },
-            mutations,
-            projectVaults,
-            automationControls,
-            taskProposalControls,
-            resolveCaller,
-          })
+          const response = needsDesktopMcp(tool.name)
+            ? await callDesktopMcpTool(tool.name, caller, toolInput)
+            : await invokeMcpControlTool(tool.name, caller, toolInput, undefined, {
+                approvals,
+                approvalId: () => invocationId,
+                invocationId: () => invocationId,
+                audit: productMcpAudit(() =>
+                  publish({ version: 1, source: "product-mcp", domains: ["audit"] }),
+                ),
+                mutations,
+                projectVaults,
+                automationControls,
+                taskProposalControls,
+                resolveCaller,
+              })
           const invalidation = invalidationForProductMcpMutation(tool.name, toolInput, response)
-          if (invalidation) publish(invalidation)
+          if (invalidation && !needsDesktopMcp(tool.name)) publish(invalidation)
           return {
             content: [{ type: "text" as const, text: JSON.stringify(response) }],
             structuredContent: response,

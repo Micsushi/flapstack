@@ -49,6 +49,7 @@ import { createAutomationExecutionDispatcher } from "./lib/automation/runtime"
 import { AutomationScheduler } from "./lib/automation/scheduler"
 import { AutomationTriggerRuntime } from "./lib/automation/trigger-runtime"
 import { reconcileOperationWorkspaces } from "./lib/saved-workspaces/operations"
+import { startProductMcpRuntime } from "./lib/mcp-control/desktop-invocation"
 import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
 import { advanceChatWaits } from "./lib/chat-waits"
 import { reconcileVoiceHistory } from "./lib/speech/history"
@@ -64,7 +65,6 @@ import {
 } from "./lib/mcp-test-control/lifecycle"
 import {
   broadcastProductInvalidationToWindows,
-  startProductMcpInvalidationBridge,
   type ProductMcpInvalidationBridge,
 } from "./lib/mcp-control/invalidation-bridge"
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
@@ -341,6 +341,7 @@ export function getAppUrl(): string {
 let authManager: AuthManager
 let pendingRunTimer: NodeJS.Timeout | null = null
 let pendingRunDrainActive = false
+let wakePendingRunScheduler: (() => void) | undefined
 let workflowAdvanceActive = false
 
 export function getAuthManager(): AuthManager {
@@ -1230,12 +1231,15 @@ if (gotTheLock) {
             {
               name: "Product MCP invalidation bridge",
               run: async () => {
-                productMcpInvalidationBridge = await startProductMcpInvalidationBridge({
-                  onInvalidation: (payload) => {
+                productMcpInvalidationBridge = await startProductMcpRuntime(
+                  getDatabasePath(),
+                  (payload) => {
+                    if (payload.domains.includes("runs") && pendingRunTimer)
+                      wakePendingRunScheduler?.()
                     mobileControlRuntime?.ingestInvalidation(payload)
                     broadcastProductInvalidationToWindows(payload, BrowserWindow.getAllWindows())
                   },
-                })
+                )
               },
             },
             {
@@ -1409,6 +1413,7 @@ if (gotTheLock) {
                     pendingRunDrainActive = false
                   }
                 }
+                wakePendingRunScheduler = () => void launchPendingRuns()
                 const resumePendingRunScheduler = () => {
                   if (!pendingRunTimer)
                     pendingRunTimer = setInterval(() => void launchPendingRuns(), 500)

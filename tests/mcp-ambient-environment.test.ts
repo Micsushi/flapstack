@@ -22,6 +22,7 @@ describe("third-party MCP ambient environment", () => {
       PGPASSFILE: "/tmp/pgpass",
       GOOGLE_APPLICATION_CREDENTIALS: "/tmp/google.json",
       FLAPSTACK_MCP_CHAT_ID: "trusted-chat",
+      FLAPSTACK_MCP_CHILD_LIVE_KEY: "test-child-key",
       FLAPSTACK_MCP_RUN_ID: "trusted-run",
       FLAPSTACK_DB_PATH: "/tmp/agents.db",
       FLAPSTACK_PRODUCT_MCP_INVALIDATION_ENDPOINT: "/tmp/control.sock",

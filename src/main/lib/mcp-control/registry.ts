@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { liveControlTools } from "./live-control-contract"
 import { randomUUID } from "node:crypto"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
 import type { AppendMcpAuditRecord, McpAuditStatus, McpDispatchBlock } from "./audit-storage"
@@ -41,6 +42,7 @@ export type McpInvocationDependencies = {
   taskProposalControls?: McpTaskProposalService
   /** Single post-gate dispatch hook for future mutation handlers. */
   execute?: (input: {
+    context: { invocationId: string; approved: boolean; desktopApproved?: boolean }
     tool: McpControlTool
     caller: McpCallerIdentity
     rawInput: unknown
@@ -58,6 +60,7 @@ export type McpAuditWriter = {
 }
 
 export const mcpControlTools: McpControlTool[] = [
+  ...liveControlTools,
   {
     name: "ping",
     description: "Check Flapstack app-control server health.",
@@ -656,6 +659,7 @@ export async function invokeMcpControlTool(
       invocationId,
       startedAt,
       true,
+      decision.source === "user",
     )
   }
 
@@ -725,11 +729,13 @@ async function auditedDispatch(
   invocationId: string,
   startedAt: number,
   approved: boolean,
+  desktopApproved = false,
 ): Promise<McpControlResponse> {
   try {
     const response = await dispatch(tool, caller, input, readService, dependencies, {
       invocationId,
       approved,
+      desktopApproved,
     })
     const terminalAuditPersisted = audit(dependencies, {
       invocationId,
@@ -836,10 +842,10 @@ function dispatch(
   input: unknown,
   readService: McpReadService | undefined,
   dependencies: McpInvocationDependencies,
-  context: { invocationId: string; approved: boolean },
+  context: { invocationId: string; approved: boolean; desktopApproved?: boolean },
 ): McpControlResponse | Promise<McpControlResponse> {
   return (
-    dependencies.execute?.({ tool, caller, rawInput: input }) ??
+    dependencies.execute?.({ tool, caller, rawInput: input, context }) ??
     executeImplementedTool(
       tool.name,
       caller,
@@ -863,7 +869,7 @@ function executeImplementedTool(
   projectVaults?: McpProjectVaultService,
   automationControls?: McpAutomationService,
   taskProposalControls?: McpTaskProposalService,
-  context: { invocationId: string; approved: boolean } = {
+  context: { invocationId: string; approved: boolean; desktopApproved?: boolean } = {
     invocationId: "untracked",
     approved: false,
   },

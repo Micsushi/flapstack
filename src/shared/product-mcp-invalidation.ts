@@ -225,6 +225,16 @@ export function invalidationForProductMcpMutation(
     }
     case "add_attachment":
       return event(["attachments"], { chatIds: compactIds(chatId) })
+    case "answer_agent_question":
+    case "respond_to_approval":
+      return event(["approvals", "runs"], { runIds: compactIds(stringValue(result.runId)) })
+    case "retry_run":
+    case "steer_run":
+    case "stop_run":
+      return event(["runs", "chats"], {
+        chatIds: compactIds(stringValue(result.chatId)),
+        runIds: compactIds(stringValue(request.runId), stringValue(result.runId)),
+      })
     case "launch_run":
       return event(["runs", "chats"], {
         chatIds: compactIds(chatId),

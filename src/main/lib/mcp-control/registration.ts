@@ -2,6 +2,8 @@ import { dirname, join } from "node:path"
 import { PRODUCT_MCP_INVALIDATION_ENDPOINT_ENV } from "../../../shared/product-mcp-invalidation"
 import { getProductMcpInvalidationEndpoint } from "./invalidation-bridge"
 
+import { CHILD_LIVE_KEY, childLiveKey } from "./child-live-key"
+
 export const FLAPSTACK_MCP_SERVER_NAME = "flapstack"
 export const FLAPSTACK_THIRD_PARTY_COLLISION_NAME = "flapstack-third-party"
 
@@ -69,6 +71,7 @@ export function buildMcpStdioRegistration(
     env: {
       ELECTRON_RUN_AS_NODE: "1",
       FLAPSTACK_MCP_CHAT_ID: identity.chatId,
+      [CHILD_LIVE_KEY]: childLiveKey(identity.chatId, identity.runId),
       FLAPSTACK_MCP_RUN_ID: identity.runId,
       FLAPSTACK_MCP_PERMISSION_MODE: identity.permissionMode,
       FLAPSTACK_DB_PATH: runtime.databasePath,

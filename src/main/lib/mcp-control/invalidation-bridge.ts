@@ -11,6 +11,8 @@ import {
   type ProductMcpRendererInvalidation,
 } from "../../../shared/product-mcp-invalidation"
 
+import { readProductMcpRuntimePointer } from "./live-discovery"
+
 const MAX_EVENT_BYTES = 16_384
 let activeProductMcpInvalidationEndpoint: string | null = null
 
@@ -39,6 +41,7 @@ export async function startProductMcpInvalidationBridge(options: {
   if (process.platform !== "win32") rmSync(endpoint, { force: true })
   const server = createServer((socket) => {
     let buffered = ""
+    socket.on("error", () => socket.destroy())
     socket.setEncoding("utf8")
     socket.on("data", (chunk) => {
       buffered += chunk
@@ -86,7 +89,8 @@ export async function startProductMcpInvalidationBridge(options: {
 /** Best-effort post-commit notification. Database state remains authoritative. */
 export async function publishProductMcpInvalidation(
   event: ProductMcpRendererInvalidation,
-  endpoint = process.env[PRODUCT_MCP_INVALIDATION_ENDPOINT_ENV],
+  endpoint = getProductMcpInvalidationEndpoint() ??
+    readProductMcpRuntimePointer()?.invalidationEndpoint,
 ): Promise<boolean> {
   const safe = parseProductMcpRendererInvalidation(event)
   if (!endpoint || !safe) return false

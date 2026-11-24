@@ -140,6 +140,7 @@ describe("Flapstack MCP per-chat exposure", () => {
       env: {
         ELECTRON_RUN_AS_NODE: "1",
         FLAPSTACK_MCP_CHAT_ID: "chat-1",
+        FLAPSTACK_MCP_CHILD_LIVE_KEY: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
         FLAPSTACK_MCP_RUN_ID: "run-1",
         FLAPSTACK_MCP_PERMISSION_MODE: "ask-before-edits",
         FLAPSTACK_DB_PATH: "/user/data/agents.db",

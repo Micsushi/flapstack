@@ -2391,6 +2391,7 @@ ${prompt}
                     async () => {
                       const createdAt = Date.now()
                       const request: AgentInputRequest = {
+                        kind: "permission",
                         requestId: options.toolUseID,
                         chatId: input.subChatId,
                         runId: agentRunId ?? input.runId ?? streamId,

@@ -759,7 +759,7 @@ function isReasoningEffort(
   return ["minimal", "low", "medium", "high", "xhigh"].includes(String(value))
 }
 
-function findPrompt(messagesValue: unknown, promptMessageId: unknown): string {
+export function findPrompt(messagesValue: unknown, promptMessageId: unknown): string {
   if (typeof messagesValue !== "string" || typeof promptMessageId !== "string") return ""
   try {
     const messages = JSON.parse(messagesValue) as Array<Record<string, unknown>>
