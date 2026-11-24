@@ -195,6 +195,25 @@ describe("live app control", () => {
           expect.objectContaining({ chatId: "target", prompt: "Live pickup" }),
         ),
       )
+      const childRun = await client.callTool({
+        name: "spawn_thread",
+        arguments: {
+          targetHarness: "claude-code",
+          scope: { kind: "global" },
+          permission: { mode: "read-only" },
+          worktree: { strategy: "none" },
+          launch: { initialPrompt: "Child pickup without polling" },
+        },
+      })
+      expect(childRun.structuredContent).toMatchObject({ ok: true })
+      await vi.waitFor(() =>
+        expect(launch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            harness: "claude-code",
+            prompt: "Child pickup without polling",
+          }),
+        ),
+      )
     } finally {
       await client.close()
       await receiver.stop()
