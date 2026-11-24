@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest"
+import { invokeDesktopProjectTool } from "../src/main/lib/mcp-control/desktop-project-actions"
 import { createMcpMutationService } from "../src/main/lib/mcp-control/mutation-service"
 import {
   invokeMcpControlTool,
@@ -50,6 +51,59 @@ describe("canonical Records MCP bridge", () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.code).toBe("permission-denied")
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it("requires an owner grant or an exact desktop decision before using the desktop Records connection", async () => {
+    vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_MODE", "connected")
+    vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_URL", "http://127.0.0.1:47839")
+    vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_TOKEN", "isolated-test-token")
+    const request = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            path: "lanes/candidate/tasks.md",
+            recordId: "R-test",
+            revision: "a".repeat(64),
+          }),
+          { status: 200 },
+        ),
+    )
+    vi.stubGlobal("fetch", request)
+    const input = {
+      projectId: "candidate",
+      name: "Canonical task",
+      records: { projectId: "candidate", requestId: "scoped-test" },
+    }
+    const context = { invocationId: "fixture", approved: true }
+    for (const forged of [
+      input,
+      { ...input, desktopApproved: true },
+      { ...input, callerKind: "external-owner" },
+    ]) {
+      expect(await invokeDesktopProjectTool("create_task", caller, forged, context)).toMatchObject({
+        ok: false,
+      })
+    }
+    expect(request).not.toHaveBeenCalled()
+    expect(
+      await invokeDesktopProjectTool("create_task", caller, input, {
+        ...context,
+        desktopApproved: true,
+      }),
+    ).toMatchObject({ ok: true, data: { authority: "records", id: "R-test" } })
+    expect(
+      await invokeDesktopProjectTool(
+        "create_task",
+        {
+          callerKind: "external-owner",
+          chatId: "external-owner:fixture",
+          permissionMode: "full-access",
+        },
+        input,
+        { invocationId: "owner", approved: false },
+      ),
+    ).toMatchObject({ ok: true, data: { id: "R-test" } })
+    expect(request).toHaveBeenCalledTimes(2)
   })
 
   it("does not advertise unavailable Records authority in tool discovery or describe", async () => {
