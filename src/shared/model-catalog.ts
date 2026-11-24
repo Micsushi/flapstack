@@ -114,7 +114,44 @@ export const CLAUDE_MODEL_ID_MAP: Record<string, string> = {
 }
 
 export type CodexAuthSurface = "chatgpt" | "api-key"
-export type CodexReasoningLevel = "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+export type CodexReasoningLevel = ReasoningEffort
+
+const codexEffortAliases = new Map<string, string[]>([
+  ["none", ["minimal", "low"]],
+  ["minimal", ["low"]],
+  ["max", ["xhigh"]],
+  ["ultra", ["max", "xhigh"]],
+])
+
+/** Prefer a model's native level. Resolve older saved values only to advertised equivalents. */
+export function resolveCodexReasoningEffort(
+  requested: string,
+  levels: readonly string[],
+  model: string,
+): string {
+  if (levels.includes(requested)) return requested
+  const supported = codexEffortAliases.get(requested)?.find((level) => levels.includes(level))
+  if (supported) return supported
+  throw new Error(`Codex does not offer ${requested} reasoning for ${model}.`)
+}
+
+export function resolveCodexAcpModel(modelId: string, available: readonly string[]): string {
+  const split = /^(.*)\[(none|minimal|low|medium|high|xhigh|max|ultra)\]$/.exec(modelId)
+  if (!split || available.includes(modelId)) return modelId
+  const [, base, requested] = split
+  // Older ACP sessions can omit their entire model catalog. Keep their former wire levels.
+  if (!available.length) {
+    if (requested === "max" || requested === "ultra") return `${base}[xhigh]`
+    if (requested === "none" || requested === "minimal") return `${base}[low]`
+    return modelId
+  }
+  const prefix = base + "["
+  const levels = available
+    .filter((id) => id.startsWith(prefix) && id.endsWith("]"))
+    .map((id) => id.slice(prefix.length, -1))
+  if (!levels.length) return modelId
+  return `${base}[${resolveCodexReasoningEffort(requested, levels, base)}]`
+}
 
 const CODEX_STANDARD_REASONING_LEVELS: readonly CodexReasoningLevel[] = [
   "low",

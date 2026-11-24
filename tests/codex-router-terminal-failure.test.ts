@@ -217,6 +217,47 @@ describe("Codex router terminal provider failure", () => {
     expect(readVisibleTranscript()).toEqual(["A", "A-response", "B", "B-response"])
   })
 
+  it.each([
+    ["older", "none", "older[minimal]"],
+    ["older", "ultra", "older[xhigh]"],
+    ["new", "ultra", "new[ultra]"],
+  ] as const)(
+    "selects %s/%s against the actual ACP session before submitting the prompt",
+    async (model, reasoningEffort, chosen) => {
+      const provider = {
+        cleanup: vi.fn(),
+        getSessionId: () => null,
+        languageModel: vi.fn(() => ({})),
+        initSession: vi.fn(async () => ({
+          models: {
+            availableModels: ["older[minimal]", "older[xhigh]", "new[ultra]"].map((modelId) => ({
+              modelId,
+            })),
+          },
+        })),
+        setModel: vi.fn(async () => undefined),
+      }
+      mocks.createACPProvider.mockReturnValue(provider)
+      await collectStream(
+        await codexRouter.createCaller({ getWindow: () => null }).chat({
+          runId: "run-auth",
+          chatId: "chat-auth",
+          subChatId: "sub-auth",
+          prompt: "Test effort",
+          cwd: directory,
+          mode: "write",
+          model,
+          reasoningEffort,
+        }),
+      )
+      expect(provider.setModel).toHaveBeenCalledWith(chosen)
+      expect(provider.languageModel.mock.calls.at(-1)?.[0]).toBe(chosen)
+      expect(provider.setModel.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.streamText.mock.invocationCallOrder[0]!,
+      )
+    },
+  )
+
   it("enforces task-resolved skill and MCP policy for a direct Codex launch", async () => {
     seedCodexExtensionPolicy()
 

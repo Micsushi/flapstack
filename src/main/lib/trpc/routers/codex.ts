@@ -26,6 +26,7 @@ import {
   DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING,
   DEFAULT_CODEX_MODEL_WITH_REASONING,
   formatCodexModelForAcp,
+  resolveCodexAcpModel,
 } from "../../../../shared/model-catalog"
 import {
   applyChatModeInstruction,
@@ -1394,7 +1395,10 @@ function buildCodexProviderEnv(
     model_supports_reasoning_summaries: reasoningEnabled,
     show_raw_agent_reasoning: false,
     hide_agent_reasoning: !reasoningEnabled,
-    ...(reasoningEffort ? { model_reasoning_effort: reasoningEffort } : {}),
+    // Compatibility levels are selected against this ACP session's models before prompting.
+    ...(reasoningEffort && !["none", "minimal", "max", "ultra"].includes(reasoningEffort)
+      ? { model_reasoning_effort: reasoningEffort }
+      : {}),
     ...(serviceTier ? { service_tier: serviceTier } : {}),
   }
   env.CODEX_CONFIG = JSON.stringify(
@@ -2116,7 +2120,11 @@ export const codexRouter = router({
               modelId: requestedModelId,
               authConfig,
             })
-            const acpModelId = formatCodexModelForAcp(selectedModelId)
+            const requestedEffort = chatProfile?.launch.reasoningEffort ?? input.reasoningEffort
+            const pickerModel = formatCodexModelForAcp(selectedModelId)
+            let acpModelId = requestedEffort
+              ? `${pickerModel.replace(/\[(none|minimal|low|medium|high|xhigh|max|ultra)\]$/, "")}[${requestedEffort}]`
+              : pickerModel
             const metadataModel = selectedModelId
             const persistedRunSnapshot = db
               .select({
@@ -2446,8 +2454,18 @@ export const codexRouter = router({
             }
 
             timing.once("spawn-start")
+            const acpMode = mapCodexAcpModeId(permissionMode)
+            if (/\[(none|minimal|max|ultra)\]$/.test(acpModelId)) {
+              provider.languageModel(undefined, acpMode)
+              const session = await provider.initSession()
+              acpModelId = resolveCodexAcpModel(
+                acpModelId,
+                session.models?.availableModels.map((model) => model.modelId) ?? [],
+              )
+              await provider.setModel(acpModelId)
+            }
             const result = streamText({
-              model: provider.languageModel(acpModelId, mapCodexAcpModeId(permissionMode)),
+              model: provider.languageModel(acpModelId, acpMode),
               messages: [
                 {
                   role: "user",

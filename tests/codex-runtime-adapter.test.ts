@@ -373,27 +373,47 @@ describe("direct Codex Runtime adapter", () => {
   })
 
   it.each([
-    ["minimal", "low"],
-    ["ultra", "max"],
-  ])("maps shared %s effort to Codex App Server %s", async (requested, sent) => {
-    const client = new FakeCodexProtocolClient()
-    const adapter = createCodexRuntimeAdapterFactory({
-      appendActivity: collectActivity().append,
-      resolveThreadParams: () => ({ cwd: "/worktree" }),
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient: () => client,
-    })()
-    const context = runtimeContext()
-    context.launch.controls.modelEffort = requested
+    ["minimal", "low", []],
+    ["ultra", "max", []],
+    ["none", "minimal", ["minimal", "low"]],
+    ["none", "low", ["low", "high"]],
+    ["none", "none", ["none", "low"]],
+    ["max", "xhigh", ["low", "xhigh"]],
+    ["ultra", "xhigh", ["low", "xhigh"]],
+    ["ultra", "max", ["low", "xhigh", "max"]],
+    ["max", "max", ["low", "xhigh", "max", "ultra"]],
+    ["ultra", "ultra", ["low", "xhigh", "max", "ultra"]],
+  ] as [string, string, string[]][])(
+    "maps shared %s effort to Codex App Server %s for advertised levels %j",
+    async (requested, sent, advertised) => {
+      const client = new FakeCodexProtocolClient()
+      client.responses.set("model/list", {
+        data: [
+          {
+            id: "gpt-5.4",
+            model: "gpt-5.4",
+            supportedReasoningEfforts: advertised.map((reasoningEffort) => ({ reasoningEffort })),
+          },
+        ],
+      })
+      const adapter = createCodexRuntimeAdapterFactory({
+        appendActivity: collectActivity().append,
+        resolveThreadParams: () => ({ cwd: "/worktree" }),
+        resolveCommand: () => "/fake/codex",
+        getBinaryVersion: async () => "0.166.0-alpha.6",
+        createClient: () => client,
+      })()
+      const context = runtimeContext()
+      context.launch.controls.modelEffort = requested
 
-    const session = await adapter.startSession(context)
-    await adapter.startTurn(context, session, "PROMPT")
+      const session = await adapter.startSession(context)
+      await adapter.startTurn(context, session, "PROMPT")
 
-    expect(
-      client.requests.find((request) => request.method === "turn/start")?.params,
-    ).toMatchObject({ effort: sent })
-  })
+      expect(
+        client.requests.find((request) => request.method === "turn/start")?.params,
+      ).toMatchObject({ effort: sent })
+    },
+  )
 
   it("archives hidden Codex threads after a completed response", async () => {
     const client = new FakeCodexProtocolClient()

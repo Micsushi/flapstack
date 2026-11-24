@@ -4,7 +4,12 @@ import { CodexFileChangeApprovals } from "./file-change-approval"
 import { CodexReadinessConnection } from "./readiness"
 import { promisify } from "node:util"
 import type { AgentActivityAppend } from "../../../../shared/agent-activity"
-import type { LiveCodexModel, CodexReasoningLevel } from "../../../../shared/model-catalog"
+import {
+  REASONING_EFFORTS,
+  resolveCodexReasoningEffort,
+  type LiveCodexModel,
+  type CodexReasoningLevel,
+} from "../../../../shared/model-catalog"
 import type {
   HarnessAdapter,
   HarnessAdapterFactory,
@@ -623,7 +628,9 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       if (!account.account)
         throw new Error("[codex-runtime] Codex account authentication unavailable.")
       const models = await discoverModels(client)
-      const selected = models.find((model) => model.id === context.launch.model)
+      const selected = context.launch.model
+        ? models.find((model) => model.id === context.launch.model)
+        : models.find((model) => model.isDefault)
       if (context.launch.model && !selected) {
         throw new Error(
           `[codex-runtime] Requested Codex model is unavailable: ${context.launch.model}`,
@@ -631,10 +638,11 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       }
       const requested = context.launch.controls.modelEffort
       if (requested && selected?.reasoningLevels.length) {
-        if (selected.reasoningLevels.some((level) => level === requested)) state.effort = requested
-        else if (!selected.reasoningLevels.some((level) => level === state.effort)) {
-          throw new Error(`Codex does not offer ${requested} reasoning for ${selected.name}.`)
-        }
+        state.effort = resolveCodexReasoningEffort(
+          requested,
+          selected.reasoningLevels,
+          selected.name,
+        )
       }
       return state
     } catch (error) {
@@ -889,9 +897,7 @@ async function discoverModels(client: CodexProtocolClient): Promise<LiveCodexMod
       const reasoningLevels = array(model.supportedReasoningEfforts)
         .map((entry) => string(record(entry).reasoningEffort))
         .filter((level): level is CodexReasoningLevel =>
-          Boolean(
-            level && ["none", "low", "medium", "high", "xhigh", "max", "ultra"].includes(level),
-          ),
+          Boolean(REASONING_EFFORTS.some((effort) => effort === level)),
         )
       models.set(id, {
         id,

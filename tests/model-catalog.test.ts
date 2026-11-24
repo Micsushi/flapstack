@@ -12,7 +12,20 @@ import {
   formatCodexModelForAcp,
   formatModelDisplayName,
   normalizeOpencodeModelId,
+  resolveCodexAcpModel,
 } from "../src/shared/model-catalog"
+
+it("uses the selected ACP model's own effort levels when opening older chats", () => {
+  const offered = ["older[minimal]", "older[xhigh]", "new[max]", "new[ultra]"]
+  expect(resolveCodexAcpModel("older[none]", offered)).toBe("older[minimal]")
+  expect(resolveCodexAcpModel("older[max]", offered)).toBe("older[xhigh]")
+  expect(resolveCodexAcpModel("older[ultra]", offered)).toBe("older[xhigh]")
+  expect(resolveCodexAcpModel("new[max]", offered)).toBe("new[max]")
+  expect(resolveCodexAcpModel("new[ultra]", offered)).toBe("new[ultra]")
+  expect(resolveCodexAcpModel("older[none]", [])).toBe("older[low]")
+  expect(resolveCodexAcpModel("older[ultra]", [])).toBe("older[xhigh]")
+  expect(() => resolveCodexAcpModel("older[high]", offered)).toThrow("does not offer high")
+})
 
 it("uses the live Codex default for a fresh composer and preserves an explicit model choice", () => {
   const fallback = { id: "previous", name: "Previous", reasoningLevels: [] }
