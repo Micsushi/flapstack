@@ -21,6 +21,11 @@ import {
   verifyExternalMcpProof,
 } from "../src/main/lib/mcp-control/external-grant"
 import { readMcpLaunch } from "../src/main/lib/mcp-control/identity"
+import {
+  appendMcpAuditRecord,
+  listMcpDispatchRecoveryClaims,
+} from "../src/main/lib/mcp-control/audit-storage"
+import * as schema from "../src/main/lib/db/schema"
 
 const directories: string[] = []
 const entryPoint = resolve("src/main/mcp-control-stdio.ts")
@@ -124,8 +129,19 @@ describe("external owner credentials", () => {
       stderr: "pipe",
     })
     const client = new Client({ name: "external-owner-test", version: "1" })
+    const otherConnection = new Database(databasePath)
+    const audit = drizzle(otherConnection, { schema })
     try {
       await client.connect(transport)
+      // Another client has begun a request and is still producing its response.
+      appendMcpAuditRecord(audit, {
+        invocationId: "active-describe",
+        status: "dispatch-started",
+        caller: { chatId: "external-owner:" + issued.grantId, permissionMode: "read-only" },
+        toolName: "describe",
+        tier: 0,
+        input: {},
+      })
       const ping = () => client.callTool({ name: "ping", arguments: {} })
       expect((await ping()).structuredContent).toMatchObject({
         ok: true,
@@ -133,12 +149,16 @@ describe("external owner credentials", () => {
           caller: { chatId: "external-owner:" + issued.grantId, permissionMode: "read-only" },
         },
       })
+      expect(listMcpDispatchRecoveryClaims(audit)).toEqual([
+        expect.objectContaining({ invocationId: "active-describe", state: "dispatch-started" }),
+      ])
       unlinkSync(issued.grantPath)
       expect((await ping()).structuredContent).toMatchObject({
         ok: false,
         error: { code: "stale-caller" },
       })
     } finally {
+      otherConnection.close()
       await client.close()
       await transport.close()
     }

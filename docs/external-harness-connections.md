@@ -12,6 +12,8 @@ In the running Flapstack profile you want to control, open the Flapstack applica
 | Claude Code | Run `claude --strict-mcp-config --mcp-config "<generated directory>/mcp.json"`.                                                             |
 | Antigravity | Change the working directory to the generated directory and start `agy`. Its workspace configuration is in `.agents/mcp_config.json`.       |
 
+Antigravity prompts before using a newly connected MCP tool. For a headless connection check, pass `--settings` with `{"permissions":{"allow":["mcp(flapstack-app-control/ping)","mcp(flapstack-app-control/describe)"]}}`. This allows those two read-only calls for that session. [Antigravity CLI permissions](https://antigravity.google/docs/cli-permissions)
+
 Each registration uses the desktop executable and bundled stdio entrypoint for the selected installation. Create a new connection if you move the installation. The generated environment selects this profile explicitly. For a standard profile the server also accepts `--external --profile <absolute user-data directory>` with the owner-issued credential and derives `data/agents.db`. The permission mode comes from the grant kept by the desktop.
 
 To revoke access, reopen **External Harness Connections**, select **Revoke a connection**, and select the grant with the matching connection ID. The next tool call from that client will fail, including on an existing connection. You can then remove the generated client directory. Register again to issue a fresh credential.
