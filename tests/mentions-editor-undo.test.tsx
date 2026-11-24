@@ -2,7 +2,10 @@
 import React, { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { AgentsMentionsEditor } from "../src/renderer/features/agents/mentions/agents-mentions-editor"
+import {
+  AgentsMentionsEditor,
+  type AgentsMentionsEditorHandle,
+} from "../src/renderer/features/agents/mentions/agents-mentions-editor"
 
 vi.mock("../src/renderer/features/agents/mentions/agents-file-mention", () => ({
   createFileIconElement: () => document.createElement("span"),
@@ -21,6 +24,26 @@ beforeEach(async () => {
   )
   editor = container.querySelector("[contenteditable]")!
 })
+it("identifies the same composer after a provider catalog redraw and a new composer after navigation", async () => {
+  const ref = React.createRef<AgentsMentionsEditorHandle>()
+  async function render(key: string) {
+    await act(async () =>
+      root.render(
+        <AgentsMentionsEditor key={key} ref={ref} onTrigger={() => {}} onCloseTrigger={() => {}} />,
+      ),
+    )
+  }
+  await render("first")
+  const first = ref.current!
+  await act(async () => first.setValue("send once"))
+  await render("first")
+  expect(ref.current).not.toBe(first)
+  expect(ref.current?.element).toBe(first.element)
+  expect(ref.current?.getValue()).toBe("send once")
+  await render("second")
+  expect(ref.current?.element).not.toBe(first.element)
+})
+
 afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()

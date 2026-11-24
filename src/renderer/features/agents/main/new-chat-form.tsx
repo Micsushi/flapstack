@@ -1379,8 +1379,8 @@ export function NewChatForm({
       toast.error(modelBlockedReason)
       return
     }
-    const originalEditor = editorRef.current
-    const original = originalEditor?.getValue()
+    const originalEditor = editorRef.current?.element
+    const original = editorRef.current?.getValue()
     if (newChatHarness === "claude-code" && !hasCustomClaudeConfig && !availableModels.isOffline) {
       const issue = await availableModels.verifyModel(profile?.model ?? lastSelectedModelId)
       if (issue) {
@@ -1399,7 +1399,8 @@ export function NewChatForm({
         return
       }
     }
-    if (editorRef.current !== originalEditor || editorRef.current?.getValue() !== original) return
+    if (editorRef.current?.element !== originalEditor || editorRef.current?.getValue() !== original)
+      return
     if (!agentProfileSelection && selectedAgent.id === "local" && !localModelPicker.canLaunch) {
       toast.error("Choose a refreshed, chat-capable local model before launch.")
       setSettingsActiveTab("local-models")

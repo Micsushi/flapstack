@@ -52,6 +52,7 @@ type TriggerPayload = {
 export type SlashTriggerPayload = TriggerPayload
 
 export type AgentsMentionsEditorHandle = {
+  readonly element: HTMLDivElement | null
   focus: () => void
   blur: () => void
   insertMention: (option: FileMentionOption) => void
@@ -1124,6 +1125,7 @@ export const AgentsMentionsEditor = memo(
     useImperativeHandle(
       ref,
       () => ({
+        element: editorRef.current,
         focus: () => {
           const editor = editorRef.current
           if (!editor) return

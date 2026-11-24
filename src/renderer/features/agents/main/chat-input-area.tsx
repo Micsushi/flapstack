@@ -1751,8 +1751,8 @@ export const ChatInputArea = memo(function ChatInputArea({
         toast.error(modelBlockedReason)
         return
       }
-      const originalEditor = editorRef.current
-      const original = originalEditor?.getValue()
+      const originalEditor = editorRef.current?.element
+      const original = editorRef.current?.getValue()
       if (provider === "claude-code" && !hasCustomClaudeConfig && !availableModels.isOffline) {
         const issue = await availableModels.verifyModel(selectedSubChatModelId)
         if (issue) {
@@ -1771,7 +1771,11 @@ export const ChatInputArea = memo(function ChatInputArea({
           return
         }
       }
-      if (editorRef.current !== originalEditor || editorRef.current?.getValue() !== original) return
+      if (
+        editorRef.current?.element !== originalEditor ||
+        editorRef.current?.getValue() !== original
+      )
+        return
       if (localModelMissing) {
         toast.error("Choose a local model before sending.")
         return
