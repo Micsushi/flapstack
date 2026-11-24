@@ -1,11 +1,15 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
-import { readMcpCallerIdentity } from "./lib/mcp-control/identity"
-import { connectMcpControlServer } from "./lib/mcp-control/server"
+import { readMcpLaunch } from "./lib/mcp-control/identity"
 
 async function main(): Promise<void> {
+  // stdout is reserved for newline-delimited MCP messages.
+  console.log = console.error
+  const { caller, resolveExternal } = readMcpLaunch(process.argv.slice(2))
+  const { connectMcpControlServer } = await import("./lib/mcp-control/server")
   const connection = await connectMcpControlServer(
-    readMcpCallerIdentity(),
+    caller,
     new StdioServerTransport(),
+    resolveExternal,
   )
   const shutdown = (): void => {
     void connection.close().finally(() => process.exit(0))

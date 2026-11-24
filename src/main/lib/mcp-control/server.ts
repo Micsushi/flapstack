@@ -30,7 +30,15 @@ import {
 } from "../beta-features/settings"
 import { isFrozenAgentProfileToolAllowed } from "../agent-profiles/runtime-authority"
 
-export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
+export function createMcpControlServer(
+  caller: McpCallerIdentity,
+  resolveExternal?: () => McpCallerIdentity,
+): McpServer {
+  const callerStore = createSqliteMcpCallerStore()
+  const resolveCaller =
+    resolveExternal ??
+    ((identity: McpCallerIdentity) => resolveTrustedMcpCaller(identity, callerStore))
+  const startupCaller = resolveCaller(caller)
   recoverMcpDispatchClaims(getDatabase())
   const server = new McpServer(
     { name: "flapstack-app-control", version: "0.1.0" },
@@ -45,12 +53,10 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
     createSqliteMcpApprovalCoordinator(getDatabase, publishApprovalChange),
     publishApprovalChange,
   )
-  const callerStore = createSqliteMcpCallerStore()
   const mutations = createMcpMutationService()
   const projectVaults = createMcpProjectVaultService()
   const automationControls = createMcpAutomationService()
   const taskProposalControls = createMcpTaskProposalService()
-  const startupCaller = resolveTrustedMcpCaller(caller, callerStore)
   const startupProfileAuthority = startupCaller.profileRuntimeAuthority ?? null
 
   const betaToolRegistrations = new Map<string, { enable(): void; disable(): void }>()
@@ -97,7 +103,7 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
             projectVaults,
             automationControls,
             taskProposalControls,
-            resolveCaller: (launchIdentity) => resolveTrustedMcpCaller(launchIdentity, callerStore),
+            resolveCaller,
           })
           const invalidation = invalidationForProductMcpMutation(tool.name, toolInput, response)
           if (invalidation) publish(invalidation)
@@ -137,8 +143,9 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
 export async function connectMcpControlServer(
   caller: McpCallerIdentity,
   transport: Transport,
+  resolveExternal?: () => McpCallerIdentity,
 ): Promise<{ close: () => Promise<void> }> {
-  const server = createMcpControlServer(caller)
+  const server = createMcpControlServer(caller, resolveExternal)
   await server.connect(transport)
   let closed = false
   return {

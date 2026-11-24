@@ -1,0 +1,19 @@
+# External harness connections
+
+In the running Flapstack profile you want to control, open the Flapstack application menu and choose **External Harness Connections**. The shortcut is Ctrl+Alt+Shift+M on Windows and Linux or Command+Option+Shift+M on macOS.
+
+1. Select Codex, Claude Code, or Antigravity. Choose **Read only** for inspection, **Ask before edits** to approve changes in Flapstack, or **Full access** to allow changes and launches across all projects in this profile.
+2. Choose a private folder where only your OS account has access. Flapstack creates a fresh client configuration there and shows its location and connection ID. Keep that directory outside shared workspaces, including directories opened by Flapstack agents. Its configuration contains the private key for this connection.
+3. Start the external client using the settings below. Ask it to call `ping` on `flapstack-app-control`. The result includes the connection's `external-owner:` identifier and permission mode. Leave Flapstack running for live UI updates and run pickup.
+
+| Client      | How to use the generated configuration                                                                                                      |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex       | Set `CODEX_HOME` in the external terminal to the generated directory, then start `codex`. Sign in to this dedicated Codex home if prompted. |
+| Claude Code | Run `claude --strict-mcp-config --mcp-config "<generated directory>/mcp.json"`.                                                             |
+| Antigravity | Change the working directory to the generated directory and start `agy`. Its workspace configuration is in `.agents/mcp_config.json`.       |
+
+Each registration uses the desktop executable and bundled stdio entrypoint for the selected installation. Create a new connection if you move the installation. The generated environment selects this profile explicitly. For a standard profile the server also accepts `--external --profile <absolute user-data directory>` with the owner-issued credential and derives `data/agents.db`. The permission mode comes from the grant kept by the desktop.
+
+To revoke access, reopen **External Harness Connections**, select **Revoke a connection**, and select the grant with the matching connection ID. The next tool call from that client will fail, including on an existing connection. You can then remove the generated client directory. Register again to issue a fresh credential.
+
+Agents launched inside Flapstack receive a separate chat- and run-scoped registration. Keep external client configurations private and separate from any provider homes and projects used by those agents.

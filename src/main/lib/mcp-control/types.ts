@@ -14,6 +14,8 @@ export type McpControlTool = {
 }
 
 export type McpCallerIdentity = {
+  /** Set only after the profile owner grant has been verified. */
+  callerKind?: "external-owner"
   chatId: string
   runId?: string
   projectId?: string | null

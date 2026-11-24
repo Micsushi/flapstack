@@ -1,4 +1,8 @@
-import type Database from "better-sqlite3"
+import { dirname, isAbsolute, join } from "node:path"
+import { realpathSync } from "node:fs"
+import { parseArgs } from "node:util"
+import { signExternalMcpProof, verifyExternalMcpGrant } from "./external-grant"
+import { PRODUCT_MCP_INVALIDATION_ENDPOINT_ENV } from "../../../shared/product-mcp-invalidation"
 import { openAppDatabase } from "../db/access"
 import { z } from "zod"
 import { parseCustomPermissionToggles, parsePermissionMode } from "../permissions"
@@ -24,6 +28,58 @@ export function readMcpCallerIdentity(
     runId: parsed.data.FLAPSTACK_MCP_RUN_ID,
     permissionMode: parsePermissionMode(parsed.data.FLAPSTACK_MCP_PERMISSION_MODE) ?? undefined,
   }
+}
+
+let signDesktopRequest: ((payload: string) => { grantId: string; signature: string }) | undefined
+
+export function signLaunchedExternalMcpProof(payload: string) {
+  if (!signDesktopRequest) throw new Error("External MCP signing credential is unavailable.")
+  return signDesktopRequest(payload)
+}
+
+/** Returns a resolver which rechecks the original grant, including after an approval wait. */
+export function readMcpLaunch(
+  args: string[],
+  environment: NodeJS.ProcessEnv = process.env,
+): { caller: McpCallerIdentity; resolveExternal?: () => McpCallerIdentity } {
+  const { values } = parseArgs({
+    args,
+    options: { external: { type: "boolean" }, profile: { type: "string" } },
+  })
+  if (!values.external && environment.FLAPSTACK_MCP_CALLER_MODE !== "external")
+    return { caller: readMcpCallerIdentity(environment) }
+  if (
+    environment.FLAPSTACK_MCP_CHAT_ID !== undefined ||
+    environment.FLAPSTACK_MCP_RUN_ID !== undefined
+  )
+    throw new Error("A Flapstack child identity cannot use external MCP mode.")
+  const token = environment.FLAPSTACK_MCP_OWNER_TOKEN
+  if (!token) throw new Error("External MCP requires an owner-issued credential.")
+  const profile = values.profile
+  if (profile && !isAbsolute(profile))
+    throw new Error("External MCP profile must be an absolute path.")
+  const database =
+    environment.FLAPSTACK_DB_PATH ||
+    (profile
+      ? join(profile, "data", "agents.db")
+      : environment.FLAPSTACK_CONFIG_DIR
+        ? join(environment.FLAPSTACK_CONFIG_DIR, "agents.db")
+        : undefined)
+  if (!database || !isAbsolute(database))
+    throw new Error("Select a Flapstack profile with --profile or FLAPSTACK_CONFIG_DIR.")
+  const databasePath = realpathSync.native(database)
+  if (profile && realpathSync.native(join(profile, "data", "agents.db")) !== databasePath)
+    throw new Error("The requested profile and database do not match.")
+  const configDir = realpathSync.native(environment.FLAPSTACK_CONFIG_DIR || dirname(databasePath))
+  const resolveExternal = () => verifyExternalMcpGrant(databasePath, token, configDir)
+  const caller = resolveExternal()
+  delete environment.FLAPSTACK_MCP_OWNER_TOKEN
+  if (environment === process.env)
+    signDesktopRequest = (payload) => signExternalMcpProof(token, payload)
+  environment.FLAPSTACK_DB_PATH = databasePath
+  environment.FLAPSTACK_CONFIG_DIR = configDir
+  delete environment[PRODUCT_MCP_INVALIDATION_ENDPOINT_ENV]
+  return { caller, resolveExternal }
 }
 
 export function resolveTrustedMcpCaller(

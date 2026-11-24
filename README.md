@@ -48,6 +48,8 @@ requires Full access. To see approval requests from Antigravity, turn on
 already permit some actions. When Gemini opens a question form, answer with
 text, a choice, multiple choices, or yes/no to continue the same turn.
 
+External clients can connect to the running app with [external harness connections](docs/external-harness-connections.md).
+
 Gemini can connect to project MCP servers listed in `.agents/mcp_config.json`.
 Review that file when Flapstack asks to connect. **Allow once** applies to this
 run. **Allow for this session** remembers the same configuration for this chat

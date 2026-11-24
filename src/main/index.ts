@@ -875,6 +875,22 @@ if (gotTheLock) {
                 }
               },
             },
+            {
+              label: "External Harness Connections…",
+              accelerator: "CmdOrCtrl+Alt+Shift+M",
+              click: async () => {
+                try {
+                  const { manageExternalMcpRegistration } =
+                    await import("./lib/mcp-control/external-registration-menu")
+                  await manageExternalMcpRegistration(getDatabasePath(), __dirname)
+                } catch (error) {
+                  dialog.showErrorBox(
+                    "External harness connection",
+                    error instanceof Error ? error.message : "Could not change this connection.",
+                  )
+                }
+              },
+            },
             ...(!IS_PREVIEW
               ? ([
                   { type: "separator" },
