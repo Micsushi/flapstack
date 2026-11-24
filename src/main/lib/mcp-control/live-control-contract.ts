@@ -75,7 +75,7 @@ export const liveControlTools: McpControlTool[] = [
     status: "implemented",
   },
 ]
-export const liveControlInputShapes = Object.fromEntries(
+export const liveControlInputShapes: Record<string, z.ZodRawShape | undefined> = Object.fromEntries(
   Object.entries(liveControlSchemas).map(([name, schema]) => [name, schema.shape]),
 )
 

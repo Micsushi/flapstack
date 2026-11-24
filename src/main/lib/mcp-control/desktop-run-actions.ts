@@ -106,7 +106,7 @@ function listPending(
     }))
   const codex = listPendingCodexPermissionRequests({ runId: input.runId })
     .filter((row) => visible(row.runId))
-    .map((row) => ({ kind: "codex", ...row }))
+    .map(({ kind: toolKind, ...row }) => ({ ...row, kind: "codex", toolKind }))
   const opencode = listPendingOpencodeApprovals(input.runId)
     .filter((row) => visible(row.runId))
     .map((row) => ({
@@ -222,7 +222,12 @@ export async function invokeDesktopRunTool(
     }
     if (name !== "stop_run" && name !== "steer_run" && name !== "retry_run")
       return fail("tool-not-found", "Unknown desktop run control.")
-    const input = liveControlSchemas[name].parse(rawInput)
+    const input =
+      name === "stop_run"
+        ? ({ kind: name, ...liveControlSchemas.stop_run.parse(rawInput) } as const)
+        : name === "steer_run"
+          ? ({ kind: name, ...liveControlSchemas.steer_run.parse(rawInput) } as const)
+          : ({ kind: name, ...liveControlSchemas.retry_run.parse(rawInput) } as const)
     const target = visibleRun(db, caller, input.runId)
     if (!target) return stale()
     if (target.id === caller.runId || (name !== "stop_run" && target.chat_id === caller.chatId))
@@ -230,7 +235,7 @@ export async function invokeDesktopRunTool(
         "forbidden-loop",
         "Cannot control the current caller run or enqueue work into its own conversation.",
       )
-    if (name === "stop_run") {
+    if (input.kind === "stop_run") {
       if (!["pending", "running"].includes(target.status)) return stale()
       const stopped = await getMainRuntimeLaunchService(getDatabasePath()).cancel(
         target.id,
@@ -243,7 +248,7 @@ export async function invokeDesktopRunTool(
     }
     if (!mcpTargetPermissionAllowed(caller, target.permission_mode, target.custom_permissions))
       return fail("permission-denied", "Target run exceeds the caller's permissions.")
-    if ("message" in input) {
+    if (input.kind === "steer_run") {
       if (target.status !== "running") return stale()
       if (input.delivery === "steer") {
         try {
@@ -276,7 +281,7 @@ export async function invokeDesktopRunTool(
         ? { ok: true, data: { ...queued, delivery: "queued", chatId: target.chat_id } }
         : fail(queued.code, queued.message)
     }
-    if (!("idempotencyKey" in input) || !["cancelled", "failure"].includes(target.status))
+    if (!["cancelled", "failure"].includes(target.status))
       return fail(
         "stale-target",
         "Retry requires a failed or cancelled run with a persisted prompt.",
