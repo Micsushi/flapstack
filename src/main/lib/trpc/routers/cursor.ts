@@ -250,6 +250,8 @@ async function completeCursorRun(params: {
   return completeAgentRun(getDatabase(), { ...params, logLabel: "cursor" })
 }
 
+let cursorSignIn: { child: ReturnType<typeof spawn>; owner?: string } | undefined
+
 export const cursorRouter = router({
   getIntegration: publicProcedure.query(async () => {
     return await getCursorIntegration(getUsageSecret("cursor.api_key"))
@@ -281,59 +283,85 @@ export const cursorRouter = router({
     }
   }),
 
-  startLogin: publicProcedure.mutation(async () => {
-    const binary = resolveCursorAgentBinary()
-    if (!binary) throw new CursorAgentNotFoundError()
+  cancelLogin: publicProcedure
+    .input(z.object({ loginId: z.string().uuid() }))
+    .mutation(({ input }) => {
+      if (cursorSignIn?.owner === input.loginId) cursorSignIn.child.kill()
+    }),
 
-    // cursor-agent login opens a browser OAuth flow. NO_OPEN_BROWSER lets the
-    // renderer surface the URL instead; here we let it open and report exit.
-    const child = spawn(binary, ["login"], {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: buildCursorEnv(),
-      windowsHide: true,
-    })
-
-    let output = ""
-    child.stdout.on("data", (chunk) => {
-      output += chunk.toString("utf8")
-    })
-    child.stderr.on("data", (chunk) => {
-      output += chunk.toString("utf8")
-    })
-
-    const loginStart = await new Promise<{ url: string | null; error?: string }>(
-      (resolvePromise) => {
-        let settled = false
-        const finish = (result: { url: string | null; error?: string }) => {
-          if (settled) return
-          settled = true
-          clearTimeout(timer)
-          resolvePromise(result)
+  startLogin: publicProcedure
+    .input(z.object({ loginId: z.string().uuid() }).optional())
+    .mutation(async ({ input }) => {
+      if (cursorSignIn) {
+        return {
+          started: true,
+          url: null,
+          note: "Complete the open Cursor sign-in, then re-check status.",
         }
-        const timer = setTimeout(() => finish({ url: null }), 8_000)
-        const check = () => {
-          const match = output.match(/https?:\/\/[^\s]+/)
-          if (match) finish({ url: match[0] })
-        }
-        child.stdout.on("data", check)
-        child.stderr.on("data", check)
-        child.once("error", (error) => finish({ url: null, error: error.message }))
-        child.once("close", (code) => {
-          if (code !== 0)
-            finish({
-              url: null,
-              error: output.trim() || `cursor-agent login exited with code ${code}`,
-            })
-        })
-      },
-    )
+      }
+      const binary = resolveCursorAgentBinary()
+      if (!binary) throw new CursorAgentNotFoundError()
 
-    return {
-      started: !loginStart.error,
-      url: loginStart.url,
-      note: loginStart.error || "Complete the browser login, then re-check status.",
-    }
-  }),
+      // cursor-agent login opens a browser OAuth flow. NO_OPEN_BROWSER lets the
+      // renderer surface the URL instead; here we let it open and report exit.
+      const child = spawn(binary, ["login"], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: buildCursorEnv(),
+        windowsHide: true,
+      })
+
+      const active = { child, owner: input?.loginId }
+      cursorSignIn = active
+      const expiry = setTimeout(() => child.kill(), 240_000)
+      child.once("close", () => {
+        clearTimeout(expiry)
+        if (cursorSignIn === active) cursorSignIn = undefined
+      })
+
+      let output = ""
+      child.stdout.on("data", (chunk) => {
+        output = (output + chunk.toString("utf8")).slice(-8192)
+      })
+      child.stderr.on("data", (chunk) => {
+        output = (output + chunk.toString("utf8")).slice(-8192)
+      })
+
+      const loginStart = await new Promise<{ url: string | null; error?: string }>(
+        (resolvePromise) => {
+          let settled = false
+          const finish = (result: { url: string | null; error?: string }) => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            resolvePromise(result)
+          }
+          const timer = setTimeout(() => finish({ url: null }), 8_000)
+          const check = () => {
+            const match = output.match(/https?:\/\/[^\s]+/)
+            if (match) finish({ url: match[0] })
+          }
+          child.stdout.on("data", check)
+          child.stderr.on("data", check)
+          child.once("error", (error) => finish({ url: null, error: error.message }))
+          child.once("close", (code) => {
+            finish(
+              code === 0
+                ? { url: null }
+                : {
+                    url: null,
+                    error: "Cursor sign-in ended without confirmation.",
+                  },
+            )
+          })
+        },
+      )
+
+      return {
+        started: !loginStart.error,
+        url: loginStart.url,
+        note: loginStart.error || "Complete the browser login, then re-check status.",
+      }
+    }),
 
   chat: publicProcedure
     .input(

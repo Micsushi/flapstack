@@ -96,7 +96,10 @@ class AsyncNotificationQueue implements AsyncIterable<CodexProtocolNotification>
   }
 }
 
+export class CodexProtocolResponseError extends Error {}
+
 export type SpawnCodexProtocolClientOptions = {
+  disableInheritedMcp?: boolean
   command: string
   cwd?: string
   env?: NodeJS.ProcessEnv
@@ -121,6 +124,7 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
   private readonly pending = new Map<number, PendingRequest>()
   private readonly requestTimeoutMs: number
   private readonly shutdownTimeoutMs: number
+  private readonly disableInheritedMcp: boolean
   private nextRequestId = 1
   private activeServerRequests = 0
   private requestHandler: CodexProtocolRequestHandler = async () => {
@@ -134,6 +138,7 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
   private closing: Promise<void> | null = null
 
   constructor(options: SpawnCodexProtocolClientOptions) {
+    this.disableInheritedMcp = options.disableInheritedMcp ?? false
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS
     this.child = (options.spawnProcess ?? defaultSpawn)(options.command, ["app-server"], {
@@ -189,7 +194,7 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
       const response = await this.request("config/read", { cwd, includeLayers: true })
       const config = isRecord(params?.config) ? { ...params.config } : {}
       const servers = isRecord(config.mcp_servers) ? config.mcp_servers : {}
-      const disabled = disabledCodexMcpServers(response, servers)
+      const disabled = disabledCodexMcpServers(response, servers, this.disableInheritedMcp)
       if (Object.keys(disabled).length) config.mcp_servers = { ...servers, ...disabled }
       if (process.platform === "win32" && params?.sandbox !== "danger-full-access") {
         const current = isRecord(response) && isRecord(response.config) ? response.config : {}
@@ -368,7 +373,7 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
       clearTimeout(pending.timeout)
       if (isRecord(message.error)) {
         pending.reject(
-          new Error(
+          new CodexProtocolResponseError(
             `[codex-runtime] ${pending.method} failed: ${stringValue(message.error.message, "JSON-RPC error")}`,
           ),
         )

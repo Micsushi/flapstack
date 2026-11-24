@@ -3,10 +3,13 @@ import {
   ndJsonStream,
   RequestError,
   type ClientCapabilities,
+  type InitializeResponse,
   type ContentBlock,
   type RequestPermissionRequest,
+  type SessionConfigOption,
 } from "@agentclientprotocol/sdk"
 import { execFile, spawn } from "node:child_process"
+import { randomBytes } from "node:crypto"
 import { existsSync, mkdtempSync } from "node:fs"
 import { rmdir } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
@@ -32,10 +35,15 @@ import {
 import { projectMcpServers } from "./project-mcp"
 import { AntigravityEvents } from "./events"
 import { answerAntigravityForm, type AskAntigravityQuestion } from "./questions"
-import { antigravityEffortVariants } from "../../../../shared/antigravity-models"
-import { antigravityPermissions } from "../../../../shared/antigravity-permissions"
+import {
+  antigravityEffortVariants,
+  type AntigravityModelOption,
+} from "../../../../shared/antigravity-models"
+import { REASONING_EFFORTS, type ReasoningEffort } from "../../../../shared/model-catalog"
+import { providerProbeKey, ProviderProbeCache } from "../probe-cache"
+import { antigravityPermissionDecision } from "./permissions"
 
-function executable() {
+export function resolveAntigravityBinary() {
   const name = process.platform === "win32" ? "agy.exe" : "agy"
   for (const dir of [
     join(homedir(), ".local", "bin"),
@@ -43,41 +51,173 @@ function executable() {
   ]) {
     if (isAbsolute(dir) && existsSync(join(dir, name))) return join(dir, name)
   }
-  throw new Error("Install Antigravity CLI and sign in with agy before starting this chat.")
+  return null
 }
 
-type ModelOption = { id: string; name: string }
-let catalog: { expires: number; value: Promise<ModelOption[]> } | undefined
-
-export function antigravityModels(): Promise<ModelOption[]> {
-  if (catalog && Date.now() < catalog.expires) return catalog.value
-  const value = fetchModels().catch((error) => {
-    if (catalog?.value === value) catalog = undefined
-    throw error
-  })
-  catalog = { expires: Date.now() + 30_000, value }
-  return value
+function executable() {
+  const binary = resolveAntigravityBinary()
+  if (!binary) throw new Error("Install Antigravity CLI and sign in before starting this chat.")
+  return binary
 }
 
-async function fetchModels() {
-  const { stdout } = await promisify(execFile)(executable(), ["models"], {
+const catalog = new ProviderProbeCache<AntigravityModelOption[]>(30_000)
+const cliCatalog = new ProviderProbeCache<AntigravityModelOption[]>(30_000)
+
+export function supportsOpenAntigravityModels(version: string | null | undefined) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:$|\s|\+)/.exec(version?.trim() ?? "")
+  if (!match) return false
+  const [, major, minor, patch] = match.map(Number)
+  return major! > 1 || (major === 1 && (minor! > 5 || (minor === 5 && patch! >= 1)))
+}
+
+export function antigravityModels(): Promise<AntigravityModelOption[]> {
+  const command = executable()
+  const key = providerProbeKey(command)
+  return catalog
+    .get(key, () => fetchModelCatalog(command))
+    .catch(() => cliCatalog.get(key, () => fetchCliModelCatalog(command)))
+}
+
+async function fetchModels(command = executable(), version?: string) {
+  const exec = promisify(execFile)
+  const options = {
+    env: childHarnessEnvironment(process.env),
     windowsHide: true,
     timeout: 12_000,
     maxBuffer: 256_000,
-  }).catch((cause) => {
-    throw new Error(
-      "Antigravity could not list Gemini models. Check your CLI sign-in and refresh the list.",
-      { cause },
-    )
+  }
+  const { stdout } = await exec(command, ["models"], options).catch((cause) => {
+    throw new Error("Antigravity could not list models. Check CLI sign-in and refresh the list.", {
+      cause,
+    })
   })
+  const openModels = supportsOpenAntigravityModels(version)
   const models = stdout.split(/\r?\n/).flatMap((line) => {
     const [id, name] = line.trim().split("\t")
-    // Third-party models are restricted to specific ACP clients by Antigravity.
-    return id?.startsWith("gemini-") && name ? [{ id, name }] : []
+    return id && name && (openModels || id.startsWith("gemini-")) ? [{ id, name }] : []
   })
-  if (!models.length)
-    throw new Error("Antigravity returned no available models. Check your CLI sign-in.")
+  if (!models.length) throw new Error("Antigravity returned no models. Check CLI sign-in.")
   return models
+}
+
+export async function antigravityIntegration() {
+  if (!resolveAntigravityBinary()) return { state: "not_installed" as const }
+  try {
+    await fetchModels()
+    return { state: "connected" as const }
+  } catch (error) {
+    const stderr = eventRecord(eventRecord(error).cause).stderr
+    const needsLogin =
+      typeof stderr === "string" &&
+      /not (logged|signed) in|auth(?:entication)? required|please (log|sign) in/i.test(stderr)
+    return { state: needsLogin ? ("not_logged_in" as const) : ("unknown" as const) }
+  }
+}
+
+function configOptions(config: SessionConfigOption) {
+  return config.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options))
+}
+
+function modelConfig(config: SessionConfigOption[] | null | undefined) {
+  return config?.find((option) => option.id === "model" || option.category === "model")
+}
+
+function thinkingConfig(config: SessionConfigOption[] | null | undefined) {
+  return config?.find((option) => option.category === "thought_level")
+}
+
+function thinkingEfforts(config: SessionConfigOption) {
+  return configOptions(config).flatMap(({ value, name }) =>
+    (REASONING_EFFORTS as readonly string[]).includes(value)
+      ? [{ value: value as ReasoningEffort, name }]
+      : [],
+  )
+}
+
+async function fetchCliModelCatalog(command: string) {
+  const version = await promisify(execFile)(command, ["--version"], {
+    env: childHarnessEnvironment(process.env),
+    windowsHide: true,
+    timeout: 5_000,
+  }).then(
+    ({ stdout }) => stdout.trim(),
+    () => "",
+  )
+  return fetchModels(command, version)
+}
+
+async function fetchModelCatalog(command: string): Promise<AntigravityModelOption[]> {
+  const directory = mkdtempSync(join(tmpdir(), "flapstack-agy-catalog-"))
+  const child = spawn(command, ["acp"], {
+    cwd: directory,
+    env: childHarnessEnvironment(process.env),
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "ignore"],
+  })
+  child.once("close", () => void rmdir(directory).catch(() => {}))
+  const interruption = new Promise<never>((_, reject) => {
+    child.once("error", reject)
+    child.once("exit", () => reject(new Error("Antigravity closed during the catalog probe.")))
+  })
+  const connection = new ClientSideConnection(
+    () => ({
+      async sessionUpdate() {},
+      async requestPermission() {
+        return { outcome: { outcome: "cancelled" } }
+      },
+    }),
+    ndJsonStream(
+      Writable.toWeb(child.stdin),
+      Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+    ),
+  )
+  const probe = async () => {
+    const init = await connection.initialize({
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "Flapstack", version: "1" },
+    })
+    if (init.protocolVersion !== 1) throw new Error("Incompatible Antigravity ACP version.")
+    const session = await connection.newSession({ cwd: directory, mcpServers: [] })
+    const model = modelConfig(session.configOptions)
+    if (!model) throw new Error("Antigravity ACP did not expose its model configuration.")
+    const advertised = configOptions(model).filter(
+      ({ value }) =>
+        supportsOpenAntigravityModels(init.agentInfo?.version) || value.startsWith("gemini-"),
+    )
+    if (!advertised.length) throw new Error("Antigravity ACP did not advertise any usable models.")
+    const results: AntigravityModelOption[] = []
+    for (const { value, name } of advertised) {
+      const config =
+        value === model.currentValue
+          ? session.configOptions
+          : (
+              await connection.setSessionConfigOption({
+                sessionId: session.sessionId,
+                configId: model.id,
+                value,
+              })
+            ).configOptions
+      const thinking = thinkingConfig(config)
+      results.push({
+        id: value,
+        name,
+        ...(thinking
+          ? {
+              nativeEfforts: thinkingEfforts(thinking),
+              defaultEffort: thinking.currentValue,
+            }
+          : {}),
+      })
+    }
+    return results
+  }
+  try {
+    return await bounded(Promise.race([probe(), interruption]), "catalog", 20_000)
+  } finally {
+    child.stdin.end()
+    child.kill()
+  }
 }
 
 type Dependencies = {
@@ -152,28 +292,31 @@ async function bounded<T>(
   }
 }
 
+function activityStream() {
+  const events = new PassThrough({ objectMode: true })
+  // Setup may fail before attachment of the activity iterator.
+  events.on("error", () => {})
+  return events
+}
+
 function connect(context: RuntimeAdapterContext, deps: Dependencies) {
-  const permissions = antigravityPermissions(context.launch.permission.mode)
-  if (!permissions.applied) throw new Error(permissions.reason)
-  const args =
-    context.launch.controls.antigravityNativeApprovals === true
-      ? ["acp"]
-      : ["acp", "--dangerously-skip-permissions"]
   const command = executable()
   const handshakeDirectory = mkdtempSync(join(tmpdir(), "flapstack-acp-"))
-  const child = spawn(command, args, {
+  const child = spawn(command, ["acp"], {
     cwd: handshakeDirectory,
     env: childHarnessEnvironment(process.env),
     windowsHide: true,
     stdio: ["pipe", "pipe", "ignore"],
   })
   child.once("close", () => void rmdir(handshakeDirectory).catch(() => {}))
-  const events = new PassThrough({ objectMode: true })
-  // An early process failure may precede attachment of the activity iterator.
-  events.on("error", () => {})
   const state = {
     child,
-    events,
+    context,
+    events: activityStream(),
+    initialized: null as InitializeResponse | null,
+    cwd: "",
+    hadProjectMcp: false,
+    productMcpName: null as string | null,
     sessionId: "",
     mapper: null as AntigravityEvents | null,
     prompt: "",
@@ -181,20 +324,20 @@ function connect(context: RuntimeAdapterContext, deps: Dependencies) {
     completed: false,
   }
   function stop(error: Error) {
-    events.destroy(error)
+    state.events.destroy(error)
     child.kill()
   }
   child.once("error", stop)
   child.once("exit", (code, signal) => {
-    if (!events.writableEnded && !events.destroyed)
-      events.destroy(new Error(`Antigravity exited (${signal ?? code ?? "unknown"}).`))
+    if (!state.events.writableEnded && !state.events.destroyed)
+      state.events.destroy(new Error(`Antigravity exited (${signal ?? code ?? "unknown"}).`))
   })
   const connection = new ClientSideConnection(
     () => ({
       async sessionUpdate({ sessionId, update }) {
         if (!state.collecting || state.sessionId !== sessionId || !state.mapper) return
         try {
-          for (const event of state.mapper.update(update)) events.write(event)
+          for (const event of state.mapper.update(update)) state.events.write(event)
         } catch (error) {
           stop(antigravityError("activity processing", error))
         }
@@ -202,34 +345,62 @@ function connect(context: RuntimeAdapterContext, deps: Dependencies) {
       async extMethod(method, params) {
         if (method !== "elicitation/create") throw RequestError.methodNotFound(method)
         if (params.sessionId !== state.sessionId || !state.collecting) return { action: "cancel" }
-        return answerAntigravityForm(context, params, deps.ask)
+        return answerAntigravityForm(state.context, params, deps.ask)
       },
       async requestPermission(request: RequestPermissionRequest) {
         const cancelled = { outcome: { outcome: "cancelled" as const } }
-        if (request.sessionId !== state.sessionId || !state.collecting || context.signal.aborted)
-          return cancelled
+        const context = state.context
+        const isCurrent = () =>
+          context === state.context &&
+          !context.signal.aborted &&
+          state.collecting &&
+          request.sessionId === state.sessionId
+        if (!isCurrent()) return cancelled
         const { toolCall, options } = request
         const allowOnce = options.find((option) => option.kind === "allow_once")
         if (!allowOnce) return cancelled
-        const input = eventRecord(toolCall.rawInput)
-        const path = toolCall.locations?.[0]?.path ?? input.Path
-        const result = await deps.permission(context.runId, {
-          provider: "antigravity",
-          toolName: toolCall.title || toolCall.kind || "Antigravity tool",
-          toolInput: { file_path: path, command: input.CommandLine },
-          params: { cwd: deps.cwd(context) },
-        })
-        if (context.signal.aborted || !state.collecting || state.sessionId !== request.sessionId)
+        let decision: "allow" | "ask" | "deny"
+        try {
+          const { mode } = context.launch.permission
+          const scoped = mode === "auto-edit-project-only" || mode === "custom"
+          const cwd =
+            scoped && toolCall.kind && ["edit", "delete", "move"].includes(toolCall.kind)
+              ? deps.cwd(context)
+              : state.cwd
+          if (cwd !== state.cwd) return cancelled
+          decision = antigravityPermissionDecision(
+            context.launch.permission,
+            toolCall,
+            cwd,
+            state.productMcpName,
+          )
+        } catch {
           return cancelled
-        const decision = eventRecord(result)
-        const allowed = decision.decision === "accept"
-        const selected = allowed
-          ? allowOnce
-          : options.find((option) => option.kind === "reject_once")
-        state.mapper?.setFileChangeDeclined(
-          toolCall,
-          selected?.kind === "reject_once" && decision.userDeclined === true,
-        )
+        }
+        let userDeclined = decision === "deny"
+        if (decision === "ask") {
+          const input = eventRecord(toolCall.rawInput)
+          const paths = toolCall.locations?.map(({ path }) => path)
+          const result = eventRecord(
+            await deps
+              .permission(context.runId, {
+                provider: "antigravity",
+                toolName: toolCall.title || toolCall.kind || "Antigravity tool",
+                toolInput: {
+                  file_path: paths?.length ? paths.join("\n") : input.Path,
+                  command: input.CommandLine ?? input.command ?? input.cmd,
+                },
+                params: { cwd: state.cwd },
+              })
+              .catch(() => null),
+          )
+          decision = result.decision === "accept" ? "allow" : "deny"
+          userDeclined = result.userDeclined === true
+        }
+        if (!isCurrent()) return cancelled
+        const selected =
+          decision === "allow" ? allowOnce : options.find((option) => option.kind === "reject_once")
+        state.mapper?.setFileChangeDeclined(toolCall, userDeclined)
         return selected
           ? { outcome: { outcome: "selected" as const, optionId: selected.optionId } }
           : cancelled
@@ -244,63 +415,129 @@ function connect(context: RuntimeAdapterContext, deps: Dependencies) {
 }
 
 export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<AgentActivityAppend> {
-  const runs = new Map<string, ReturnType<typeof connect>>()
+  type Connection = ReturnType<typeof connect>
+  const runs = new Map<string, Connection>()
+  const idle = new Map<string, { run: Connection; timer: ReturnType<typeof setTimeout> }>()
   const projectApprovals = new Map<string, string>()
-  async function open(context: RuntimeAdapterContext, previous?: RuntimeAdapterSession) {
-    if (context.outputSchema)
-      throw new Error("Antigravity ACP does not support structured result schemas.")
-    const run = connect(context, deps)
-    runs.set(context.runId, run)
-    const { state, connection } = run
+  let closing = false
+
+  function close({ state }: Connection) {
+    state.events.destroy()
+    state.child.stdin.end()
+    state.child.kill()
+  }
+
+  async function initialize(run: Connection) {
+    if (run.state.initialized) return run.state.initialized
     // SDK 0.14.1 forwards draft ACP capabilities and requests through extMethod.
     const clientCapabilities: ClientCapabilities & { elicitation: { form: object } } = {
       elicitation: { form: {} },
     }
-    const init = await bounded(
-      connection.initialize({
+    const info = await bounded(
+      run.connection.initialize({
         protocolVersion: 1,
         clientCapabilities,
         clientInfo: { name: "Flapstack", version: "1" },
       }),
       "initialization",
     )
-    if (init.protocolVersion !== 1)
+    if (info.protocolVersion !== 1)
       throw new Error("Antigravity returned an incompatible ACP version.")
+    run.state.initialized = info
+    return info
+  }
+
+  async function open(
+    context: RuntimeAdapterContext,
+    previous?: RuntimeAdapterSession,
+    useIdle = true,
+  ): Promise<RuntimeAdapterSession> {
+    if (context.outputSchema)
+      throw new Error("Antigravity ACP does not support structured result schemas.")
+    if (previous && !previous.providerSessionId)
+      throw new Error("Cannot resume Antigravity without its saved session ID.")
+    const key = context.subChatId ?? context.chatId
+    const entry = useIdle ? idle.get(key) : undefined
+    let warm = false
+    let run: Connection | undefined
+    if (entry) {
+      idle.delete(key)
+      clearTimeout(entry.timer)
+      const { state } = entry.run
+      if (
+        previous?.providerSessionId === state.sessionId &&
+        context.chatId === state.context.chatId &&
+        state.child.exitCode == null &&
+        state.child.signalCode == null
+      ) {
+        run = entry.run
+        Object.assign(state, {
+          context,
+          events: activityStream(),
+          prompt: "",
+          mapper: null,
+          completed: false,
+          productMcpName: null,
+        })
+        warm = true
+      } else close(entry.run)
+    }
+    run ??= connect(context, deps)
+    runs.set(context.runId, run)
+    const { state, connection } = run
+    const init = await initialize(run)
     // Only the protocol handshake runs before the checkpoint. A session can load project hooks.
     await context.waitForWorkspace?.()
     context.signal.throwIfAborted()
     const cwd = deps.cwd(context)
-    const mcpServers = await projectMcpServers(
-      cwd,
-      init.agentCapabilities?.mcpCapabilities?.http === true,
-      context,
-      projectApprovals,
-      deps.permission,
-      (message) =>
-        deps.append(context.runId, [
-          {
-            provider: "antigravity",
-            kind: "warning",
-            phase: "updated",
-            displayClass: "status",
-            privacyClass: "public",
-            payload: { message, code: "gemini-project-mcp" },
-          },
-        ]),
-    )
+    if (warm && cwd !== state.cwd) {
+      close(run)
+      return open(context, previous, false)
+    }
+    state.cwd = cwd
+    const mode = context.launch.permission.mode
+    const allowsProjectMcp = mode === "full-access" || mode === "ask-before-edits"
+    if (warm && state.hadProjectMcp && !allowsProjectMcp) {
+      // The provider may cache a previously authorized third-party process.
+      close(run)
+      return open(context, previous, false)
+    }
+    const mcpServers = allowsProjectMcp
+      ? await projectMcpServers(
+          cwd,
+          init.agentCapabilities?.mcpCapabilities?.http === true,
+          context,
+          projectApprovals,
+          deps.permission,
+          (message) =>
+            deps.append(context.runId, [
+              {
+                provider: "antigravity",
+                kind: "warning",
+                phase: "updated",
+                displayClass: "status",
+                privacyClass: "public",
+                payload: { message, code: "gemini-project-mcp" },
+              },
+            ]),
+        )
+      : []
+    state.hadProjectMcp = mcpServers.length > 0
     context.signal.throwIfAborted()
     const product = deps.registration?.(context.runId)
     if (product) {
       renameProductMcpServerCollisions(mcpServers)
+      // ACP can load MCP servers from outside the launcher's registration list and
+      // can identify a tool only by its flattened title. Use a fresh name for each run.
+      const name = FLAPSTACK_MCP_SERVER_NAME + randomBytes(10).toString("hex")
+      state.productMcpName = name
       mcpServers.push({
-        name: FLAPSTACK_MCP_SERVER_NAME,
+        name,
         command: product.command,
         args: product.args,
         env: Object.entries(product.env).map(([name, value]) => ({ name, value })),
       })
     }
-    if (previous && !previous.providerSessionId)
-      throw new Error("Cannot resume Antigravity without its saved session ID.")
     const session = previous?.providerSessionId
       ? await bounded(
           connection.unstable_resumeSession({
@@ -309,7 +546,10 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
             mcpServers,
           }),
           "resume",
-        )
+        ).catch((error) => {
+          if (!warm || context.signal.aborted) throw error
+          return null
+        })
       : await bounded(
           createAntigravitySession(
             () => connection.newSession({ cwd, mcpServers }),
@@ -317,28 +557,80 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
           ),
           "session setup",
         )
+    if (session === null) {
+      // Some releases cannot reattach an already loaded session to refresh its run-bound MCP server.
+      close(run)
+      return open(context, previous, false)
+    }
     const sessionId =
       previous?.providerSessionId || ("sessionId" in session && String(session.sessionId))
     if (!sessionId) throw new Error("Antigravity returned no session ID.")
     state.sessionId = sessionId
     state.mapper = new AntigravityEvents(sessionId, context.launch.controls.reasoningDisplay)
-    let selected = context.launch.model
     const effort = context.launch.controls.modelEffort
-    if (effort) {
-      const options = await antigravityModels()
-      const variants = antigravityEffortVariants(options, selected ?? options[0]?.id)
-      const variant = variants.efforts.find((option) => option.label === effort)
-      if (!variant)
-        throw new Error(`Antigravity does not offer ${effort} effort for this Gemini model.`)
-      selected = variant.id
+    const model = modelConfig(session.configOptions)
+    let selected = context.launch.model ?? (effort ? model?.currentValue : undefined)
+    if (
+      selected &&
+      !selected.startsWith("gemini-") &&
+      !supportsOpenAntigravityModels(init.agentInfo?.version)
+    ) {
+      throw new Error("This version of Antigravity only exposes Gemini models to Flapstack.")
+    }
+    if (model && selected && configOptions(model).some((option) => option.value === selected)) {
+      let config = session.configOptions
+      if (selected !== model.currentValue) {
+        const selection = await bounded(
+          connection.setSessionConfigOption({ sessionId, configId: model.id, value: selected }),
+          "model selection",
+        )
+        config = selection.configOptions
+      }
+      const thinking = thinkingConfig(config)
+      if (effort && thinking) {
+        if (!thinkingEfforts(thinking).some(({ value }) => value === effort))
+          throw new Error("Antigravity does not offer that reasoning effort for this model.")
+        const verified = await bounded(
+          connection.setSessionConfigOption({ sessionId, configId: thinking.id, value: effort }),
+          "reasoning effort selection",
+        )
+        if (thinkingConfig(verified.configOptions)?.currentValue !== effort)
+          throw new Error("Antigravity did not confirm the selected reasoning effort.")
+      } else if (effort) {
+        const options = await antigravityModels()
+        const variants = antigravityEffortVariants(options, selected)
+        const variant = variants.efforts.find((option) => option.label === effort)
+        if (!variant)
+          throw new Error("Antigravity does not offer that reasoning effort for this model.")
+        if (variant.id !== selected) {
+          selected = variant.id
+          await bounded(
+            connection.unstable_setSessionModel({ sessionId, modelId: selected }),
+            "model selection",
+          )
+        }
+      }
+    } else if (selected || effort) {
+      if (effort) {
+        const options = await antigravityModels()
+        const variant = antigravityEffortVariants(options, selected ?? options[0]?.id).efforts.find(
+          (option) => option.label === effort,
+        )
+        if (!variant)
+          throw new Error("Antigravity does not offer that reasoning effort for this model.")
+        selected = variant.id
+      }
+      if (
+        selected &&
+        (selected.startsWith("gemini-") || supportsOpenAntigravityModels(init.agentInfo?.version))
+      ) {
+        await bounded(
+          connection.unstable_setSessionModel({ sessionId, modelId: selected }),
+          "model selection",
+        )
+      }
     }
     if (selected) {
-      if (!selected.startsWith("gemini-"))
-        throw new Error("Choose an available Gemini model for Antigravity.")
-      await bounded(
-        connection.unstable_setSessionModel({ sessionId, modelId: selected }),
-        "model selection",
-      )
       await deps.append(context.runId, [
         {
           provider: "flapstack",
@@ -367,9 +659,11 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
     preparesSessionBeforeWorkspace: true,
     async probe(harness): Promise<RuntimeAdapterProbe> {
       let error: string | null = null
+      let nativeThinking = false
       try {
         if (harness !== "antigravity") throw new Error("Wrong harness for Antigravity.")
-        await antigravityModels()
+        const models = await antigravityModels()
+        nativeThinking = models.some((model) => Boolean(model.nativeEfforts?.length))
       } catch (cause) {
         error = antigravityError("availability check", cause).message
       }
@@ -394,9 +688,10 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
           capturedAt: new Date().toISOString(),
           controls: {
             modelThinking: {
-              supported: false,
-              reason:
-                "Gemini effort is selected with the model. ACP has no separate thinking switch.",
+              supported: nativeThinking,
+              reason: nativeThinking
+                ? null
+                : "This Antigravity catalog encodes effort in the model selection.",
             },
             reasoningDisplay: { supported: true, reason: null },
             subagentActivity: {
@@ -421,7 +716,7 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
             },
           },
           limitations: [
-            "Only Full access is supported. Native approval requests follow Antigravity's rules. Form questions support text, choices and yes/no answers.",
+            "Flapstack enforces Antigravity ACP tool requests. Workspace scopes do not authorize shell commands.",
           ],
           unavailableReason: reason,
         },
@@ -511,12 +806,68 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
     },
     async cleanup(context) {
       const run = runs.get(context.runId)
-      if (run) {
-        run.state.events.destroy()
-        run.state.child.stdin.end()
-        run.state.child.kill()
-        runs.delete(context.runId)
+      if (!run) return
+      runs.delete(context.runId)
+      const { state } = run
+      if (
+        closing ||
+        !state.completed ||
+        context.signal.aborted ||
+        state.child.exitCode != null ||
+        state.child.signalCode != null
+      ) {
+        close(run)
+        return
       }
+      const sessionCapabilities = eventRecord(
+        state.initialized?.agentCapabilities?.sessionCapabilities,
+      )
+      if (sessionCapabilities.close) {
+        try {
+          // Release run-bound MCP processes while keeping agy available for session/resume.
+          await bounded(
+            run.connection.extMethod("session/close", { sessionId: state.sessionId }),
+            "release of the completed session",
+            2_000,
+          )
+        } catch {
+          close(run)
+          return
+        }
+      }
+      if (closing) {
+        close(run)
+        return
+      }
+      const key = context.subChatId ?? context.chatId
+      const previous = idle.get(key)
+      if (previous) {
+        clearTimeout(previous.timer)
+        close(previous.run)
+      }
+      const timer = setTimeout(() => {
+        if (idle.get(key)?.run === run) idle.delete(key)
+        close(run)
+      }, 120_000)
+      timer.unref()
+      idle.set(key, { run, timer })
+      if (idle.size > 4) {
+        const oldest = idle.entries().next().value
+        if (oldest) {
+          const [chat, entry] = oldest
+          idle.delete(chat)
+          clearTimeout(entry.timer)
+          close(entry.run)
+        }
+      }
+    },
+    closeIdleSessions() {
+      closing = true
+      for (const { run, timer } of idle.values()) {
+        clearTimeout(timer)
+        close(run)
+      }
+      idle.clear()
     },
   }
 }

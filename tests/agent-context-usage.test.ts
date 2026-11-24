@@ -7,6 +7,7 @@ function usageEvent(
   subChatId: string,
   payload: Extract<AgentActivityEvent, { kind: "usage" }>["payload"],
   phase: AgentActivityEvent["phase"] = "snapshot",
+  harness: AgentActivityEvent["harness"] = "codex",
 ): AgentActivityEvent {
   return {
     storageId,
@@ -15,7 +16,7 @@ function usageEvent(
     chatId: "chat-1",
     subChatId,
     runtime: "codex",
-    harness: "codex",
+    harness,
     provider: "codex-app-server",
     sequence: storageId,
     kind: "usage",
@@ -31,57 +32,28 @@ function usageEvent(
 }
 
 describe("context usage", () => {
-  it("shows native context occupancy without counting it as billable Gemini input", () => {
-    const result = resolveContextUsage(
-      [usageEvent(1, "chat-view", { contextUsed: 912, contextWindow: 32768 })],
-      "chat-view",
-      "antigravity",
-    )
-    expect(result).toMatchObject({
-      inputTokens: undefined,
-      contextTokens: 912,
-      contextWindow: 32768,
+  it("shows a provider-reported threshold and never borrows a different provider's limit", () => {
+    const events = [
+      usageEvent(
+        1,
+        "sub-1",
+        { contextUsed: 912, contextWindow: 32_768 },
+        "snapshot",
+        "antigravity",
+      ),
+      usageEvent(2, "sub-1", {
+        contextUsed: 5_000,
+        autoCompactThreshold: 117_000,
+        autoCompactEnabled: true,
+      }),
+    ]
+    expect(resolveContextUsage(events, "sub-1", "codex")).toMatchObject({
+      contextTokens: 5_000,
+      autoCompactThreshold: 117_000,
+      autoCompactEnabled: true,
     })
-  })
-
-  it("uses latest native snapshot and Codex-reported window", () => {
-    const result = resolveContextUsage(
-      [
-        usageEvent(1, "sub-1", { inputTokens: 10_000, contextWindow: 258_400 }),
-        usageEvent(2, "other", { inputTokens: 99_000, contextWindow: 1_000_000 }),
-        usageEvent(3, "sub-1", { reasoningTokens: 50 }, "updated"),
-        usageEvent(4, "sub-1", { inputTokens: 42_057, contextWindow: 258_400 }),
-      ],
-      "sub-1",
-      "codex",
+    expect(resolveContextUsage(events, "sub-1", "antigravity")).not.toHaveProperty(
+      "autoCompactThreshold",
     )
-
-    expect(result).toEqual({
-      runId: "run-1",
-      inputTokens: 42_057,
-      outputTokens: 0,
-      cachedTokens: 0,
-      reasoningTokens: 0,
-      contextTokens: 42_057,
-      contextWindow: 258_400,
-    })
-  })
-
-  it("includes Claude cached input in current context", () => {
-    const result = resolveContextUsage(
-      [usageEvent(1, "sub-1", { inputTokens: 2, cachedTokens: 22_077 })],
-      "sub-1",
-      "claude-code",
-    )
-
-    expect(result).toEqual({
-      runId: "run-1",
-      inputTokens: 2,
-      outputTokens: 0,
-      cachedTokens: 22_077,
-      reasoningTokens: 0,
-      contextTokens: 22_079,
-      contextWindow: undefined,
-    })
   })
 })

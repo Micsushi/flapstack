@@ -29,6 +29,7 @@ import {
   projects,
   subChats,
   tasks,
+  withDatabaseOperation,
 } from "../../db"
 import { applyAutomaticChatTags, CHAT_TAG_COLORS, CHAT_TAG_ICONS } from "../../chat-tags"
 import { listUndoneRunIds } from "../../run-change-undo"
@@ -39,6 +40,11 @@ import { updateChatAssignmentSchema } from "../../../../shared/chat-assignment"
 import { dismissFailedChatWait, listAgentChatWaits } from "../../chat-waits"
 import { restoreCheckpoint } from "../../checkpoints"
 import { withSubChatRewindGuard } from "../../sub-chat-rewind-guard"
+import {
+  codexRewindTargets,
+  filterCodexDiscardedMessages,
+  rewindCodexToUserMessage,
+} from "../../agent-runtime/codex/rewind"
 import {
   createWorktreeForChat,
   fetchGitHubPRStatus,
@@ -1803,55 +1809,75 @@ export const chatsRouter = router({
       }
 
       // 7. Create a new sidebar chat with one internal conversation row.
-      const { newChat, newSubChat } = db.transaction((tx) => {
-        const newChat = tx
-          .insert(chats)
-          .values({
-            name: forkName,
-            projectId: sourceChat.projectId,
-            taskId: sourceChat.taskId,
-            scope: sourceChat.scope,
-            permissionMode: sourceChat.permissionMode,
-            customPermissions: sourceChat.customPermissions,
-            mcpExposureEnabled: sourceChat.mcpExposureEnabled,
-            harness: sourceChat.harness,
-            model: sourceChat.model,
-            runtimePreference: sourceChat.runtimePreference,
-            reasoningEffort: sourceChat.reasoningEffort,
-            worktreePath: sourceChat.worktreePath,
-            branch: sourceChat.branch,
-            baseBranch: sourceChat.baseBranch,
-          })
-          .returning()
-          .get()
-        const newSubChat = tx
-          .insert(subChats)
-          .values({
-            chatId: newChat.id,
-            name: forkName,
-            mode: sourceSubChat.mode,
-            harness: sourceSubChat.harness,
-            model: sourceSubChat.model,
-            reasoningEffort: sourceSubChat.reasoningEffort,
-            needsProviderHandoff: sourceSubChat.needsProviderHandoff,
-            permissionMode: sourceSubChat.permissionMode,
-            worktreePath: sourceSubChat.worktreePath,
-            messages: JSON.stringify(forkedMessages),
-            sessionId: sourceSubChat.sessionId,
-          })
-          .returning()
-          .get()
-        const binding = tx
-          .select()
-          .from(agentProfileChatBindings)
-          .where(eq(agentProfileChatBindings.chatId, sourceChat.id))
-          .get()
-        if (binding)
-          tx.insert(agentProfileChatBindings)
-            .values({ ...binding, chatId: newChat.id, boundAt: new Date(), frozenAt: null })
-            .run()
-        return { newChat, newSubChat }
-      })
+      const { newChat, newSubChat } = db.transaction(
+        (tx) => {
+          const current = tx
+            .select({
+              sessionId: subChats.sessionId,
+              messages: subChats.messages,
+              rewindIntent: subChats.codexRewindIntent,
+            })
+            .from(subChats)
+            .where(eq(subChats.id, sourceSubChat.id))
+            .get()
+          if (current?.rewindIntent)
+            throw new Error("Confirm the pending Codex rewind before forking this conversation.")
+          if (
+            !current ||
+            current.sessionId !== sourceSubChat.sessionId ||
+            current.messages !== sourceSubChat.messages
+          )
+            throw new Error("The conversation changed. Select the message again.")
+          const newChat = tx
+            .insert(chats)
+            .values({
+              name: forkName,
+              projectId: sourceChat.projectId,
+              taskId: sourceChat.taskId,
+              scope: sourceChat.scope,
+              permissionMode: sourceChat.permissionMode,
+              customPermissions: sourceChat.customPermissions,
+              mcpExposureEnabled: sourceChat.mcpExposureEnabled,
+              harness: sourceChat.harness,
+              model: sourceChat.model,
+              runtimePreference: sourceChat.runtimePreference,
+              reasoningEffort: sourceChat.reasoningEffort,
+              worktreePath: sourceChat.worktreePath,
+              branch: sourceChat.branch,
+              baseBranch: sourceChat.baseBranch,
+            })
+            .returning()
+            .get()
+          const newSubChat = tx
+            .insert(subChats)
+            .values({
+              chatId: newChat.id,
+              name: forkName,
+              mode: sourceSubChat.mode,
+              harness: sourceSubChat.harness,
+              model: sourceSubChat.model,
+              reasoningEffort: sourceSubChat.reasoningEffort,
+              needsProviderHandoff: sourceSubChat.needsProviderHandoff,
+              permissionMode: sourceSubChat.permissionMode,
+              worktreePath: sourceSubChat.worktreePath,
+              messages: JSON.stringify(forkedMessages),
+              sessionId: sourceSubChat.sessionId,
+            })
+            .returning()
+            .get()
+          const binding = tx
+            .select()
+            .from(agentProfileChatBindings)
+            .where(eq(agentProfileChatBindings.chatId, sourceChat.id))
+            .get()
+          if (binding)
+            tx.insert(agentProfileChatBindings)
+              .values({ ...binding, chatId: newChat.id, boundAt: new Date(), frozenAt: null })
+              .run()
+          return { newChat, newSubChat }
+        },
+        { behavior: "immediate" },
+      )
 
       // 8. Copy .jsonl session files to the new isolated config dir
       if (sourceSubChat.sessionId) {
@@ -1905,12 +1931,29 @@ export const chatsRouter = router({
     .input(z.object({ id: z.string(), messages: z.string() }))
     .mutation(({ input }) => {
       const db = getDatabase()
-      return db
-        .update(subChats)
-        .set({ messages: input.messages, updatedAt: new Date() })
-        .where(eq(subChats.id, input.id))
-        .returning()
-        .get()
+      return db.transaction(
+        (tx) => {
+          const current = tx
+            .select({ discarded: subChats.codexRewindDiscarded })
+            .from(subChats)
+            .where(eq(subChats.id, input.id))
+            .get()
+          if (!current) return undefined
+          if (filterCodexDiscardedMessages(current.discarded, input.messages) !== input.messages) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "This transcript includes rewound messages. Reload the chat before saving.",
+            })
+          }
+          return tx
+            .update(subChats)
+            .set({ messages: input.messages, updatedAt: new Date() })
+            .where(eq(subChats.id, input.id))
+            .returning()
+            .get()
+        },
+        { behavior: "immediate" },
+      )
     }),
 
   mergeRuntimeSubChatMessages: publicProcedure
@@ -1920,7 +1963,10 @@ export const chatsRouter = router({
       return db.transaction((tx) => {
         const current = tx.select().from(subChats).where(eq(subChats.id, input.id)).get()
         if (!current) throw new Error("Sub-chat not found")
-        const messages = mergeRuntimeMessages(current.messages, input.messages)
+        const messages = mergeRuntimeMessages(
+          current.messages,
+          filterCodexDiscardedMessages(current.codexRewindDiscarded, input.messages),
+        )
         return tx
           .update(subChats)
           .set({ messages, updatedAt: new Date() })
@@ -1928,6 +1974,31 @@ export const chatsRouter = router({
           .returning()
           .get()
       })
+    }),
+
+  codexRewindTargets: publicProcedure
+    .input(z.object({ subChatId: z.string().min(1).max(256) }))
+    .query(({ input }) => codexRewindTargets(getSqliteDatabase(), input.subChatId)),
+
+  rewindCodexToUserMessage: publicProcedure
+    .input(
+      z.object({
+        subChatId: z.string().min(1).max(256),
+        userMessageId: z.string().min(1).max(256),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      try {
+        const result = await withDatabaseOperation(() =>
+          rewindCodexToUserMessage(getSqliteDatabase(), input),
+        )
+        return { ...result, messages: result.messages as any[] }
+      } catch (error) {
+        return {
+          success: false as const,
+          error: error instanceof Error ? error.message : "Codex rewind could not be confirmed.",
+        }
+      }
     }),
 
   /**
@@ -1942,6 +2013,11 @@ export const chatsRouter = router({
         const db = getDatabase()
         const subChat = db.select().from(subChats).where(eq(subChats.id, input.subChatId)).get()
         if (!subChat) throw new TRPCError({ code: "NOT_FOUND", message: "Chat not found" })
+        if (subChat.codexRewindIntent)
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Confirm the pending Codex rewind first.",
+          })
 
         const activeRun = db
           .select({ id: agentRuns.id })
@@ -2059,6 +2135,8 @@ export const chatsRouter = router({
           if (!subChat) {
             return { success: false, error: "Sub-chat not found" }
           }
+          if (subChat.codexRewindIntent)
+            return { success: false, error: "Confirm the pending Codex rewind first." }
 
           // 2. Parse messages and find the target message by sdkMessageUuid
           const messages = JSON.parse(subChat.messages || "[]")

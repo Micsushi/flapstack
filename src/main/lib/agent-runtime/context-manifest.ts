@@ -7,7 +7,14 @@ import {
   type RuntimeCompositionPreview,
   type VisibleContextManifest,
 } from "../../../shared/runtime-composition"
-import type { HandoffConversation, HandoffMessage } from "../chat-handoff"
+import {
+  handoffByteBudget,
+  utf8Prefix,
+  type HandoffBudget,
+  type HandoffConversation,
+  type HandoffMessage,
+} from "../chat-handoff"
+import { omitTextAttachmentReferences } from "../attachments/pasted-reference"
 import { PORTABLE_SECRET_PLACEHOLDER, redactText } from "../portability/secrets"
 
 type OmissionClass = VisibleContextManifest["omissions"][number]["class"]
@@ -24,6 +31,7 @@ export function buildVisibleContextManifest(input: {
   conversations: readonly HandoffConversation[]
   selection?: VisibleContextSelection
   compact?: boolean
+  budget?: HandoffBudget
 }): { contextText: string; manifest: VisibleContextManifest } {
   const selectedIds = input.selection?.messageIds ? new Set(input.selection.messageIds) : null
   const omissions = new Map<OmissionClass, number>()
@@ -36,6 +44,11 @@ export function buildVisibleContextManifest(input: {
   ]
   if (input.compact) sections.splice(0, sections.length, "# Conversation handoff", "")
   const selected: VisibleContextManifest["selected"] = []
+  const candidates: Array<{
+    heading: string
+    body: string
+    ref: Omit<VisibleContextManifest["selected"][number], "contentDigest" | "byteLength">
+  }> = []
 
   for (const conversation of input.conversations) {
     // Keep the original request and the two latest exchanges. Only public conversation
@@ -81,8 +94,6 @@ export function buildVisibleContextManifest(input: {
         addOmission(omissions, "unselected-message")
         continue
       }
-      const body =
-        input.compact && visible.length > 1200 ? visible.slice(0, 1199).trimEnd() + "…" : visible
       const heading = input.compact
         ? messageIndex === original
           ? "Original request"
@@ -90,18 +101,65 @@ export function buildVisibleContextManifest(input: {
             ? "Recent request"
             : "Assistant update"
         : role + " · " + conversationLabel + " · " + messageId
-      sections.push("## " + heading, "", body || "_(No transferable visible content)_", "")
-      selected.push({
-        sourceSubChatId: conversation.subChatId,
-        messageId,
-        role,
-        partIndexes: rendered.parts.map((part) => part.index),
-        contentDigest: sha256(body),
-        byteLength: Buffer.byteLength(body),
+      candidates.push({
+        heading,
+        body: visible,
+        ref: {
+          sourceSubChatId: conversation.subChatId,
+          messageId,
+          role,
+          partIndexes: rendered.parts.map((part) => part.index),
+        },
       })
     }
   }
 
+  const budgetNote = "Some earlier or oversized messages were omitted to fit this handoff."
+  const marker = "\n[Message excerpt]"
+  let remaining =
+    handoffByteBudget(input.budget) - Buffer.byteLength(sections.join("\n") + budgetNote + "\n\n")
+  const included = new Map<number, string>()
+  const latestUser = candidates.findLastIndex((item) => item.ref.role === "user")
+  const latestAssistant = candidates.findLastIndex((item) => item.ref.role === "assistant")
+  const original = candidates.findIndex((item) => item.ref.role === "user")
+  const priority = new Set([
+    latestUser,
+    latestAssistant,
+    original,
+    ...candidates.map((_, index) => candidates.length - 1 - index),
+  ])
+  for (const index of priority) {
+    const candidate = candidates[index]
+    if (!candidate) continue
+    const overhead = Buffer.byteLength("## " + candidate.heading + "\n\n\n\n")
+    const body = candidate.body || "_(No transferable visible content)_"
+    const cost = overhead + Buffer.byteLength(body)
+    if (cost <= remaining) {
+      included.set(index, body)
+      remaining -= cost
+    } else if ((index === latestUser || index === latestAssistant) && remaining > overhead + 128) {
+      const allowance = Math.min(remaining, Math.max(overhead + 128, Math.floor(remaining / 2)))
+      const snippet = utf8Prefix(body, allowance - overhead - Buffer.byteLength(marker)).trimEnd()
+      if (snippet) {
+        const excerpt = snippet + marker
+        included.set(index, excerpt)
+        remaining -= overhead + Buffer.byteLength(excerpt)
+      }
+      addOmission(omissions, "context-budget")
+    } else {
+      addOmission(omissions, "context-budget")
+    }
+  }
+  if (omissions.has("context-budget")) sections.push(budgetNote, "")
+  for (const [index, body] of [...included].sort(([left], [right]) => left - right)) {
+    const candidate = candidates[index]!
+    sections.push("## " + candidate.heading, "", body, "")
+    selected.push({
+      ...candidate.ref,
+      contentDigest: sha256(body),
+      byteLength: Buffer.byteLength(body),
+    })
+  }
   if (input.compact && !selected.length)
     throw new Error("No transferable conversation text is available for this handoff.")
   const contextText = sections.join("\n").trimEnd() + "\n"
@@ -207,7 +265,11 @@ function renderMessage(
       addOmission(omissions, "secret-or-credential")
       return { parts: [] }
     }
-    return { parts: message.content.trim() ? [{ index: 0, text: message.content }] : [] }
+    return {
+      parts: message.content.trim()
+        ? [{ index: 0, text: withoutTextAttachments(message.content, omissions) }]
+        : [],
+    }
   }
   const parts = message.parts ?? (Array.isArray(message.content) ? message.content : [])
   return {
@@ -237,7 +299,8 @@ function renderMessage(
           addOmission(omissions, "secret-or-credential")
           return []
         }
-        return [{ index, text: type === "data-user-steer" ? "You steered: " + text : text }]
+        const safe = withoutTextAttachments(text, omissions)
+        return [{ index, text: type === "data-user-steer" ? "You steered: " + safe : safe }]
       }
       if (type === "tool-AskUserQuestion") {
         const visible = visibleQuestionAnswers(part).filter((text) => {
@@ -248,7 +311,9 @@ function renderMessage(
         if (Object.keys(part).some((key) => !["type", "input", "result", "output"].includes(key))) {
           addOmission(omissions, "hidden-tool-state")
         }
-        return visible.length ? [{ index, text: visible.join("\n") }] : []
+        return visible.length
+          ? [{ index, text: withoutTextAttachments(visible.join("\n"), omissions) }]
+          : []
       }
       if (type === "tool-call" || type.startsWith("tool-")) {
         addOmission(omissions, "hidden-tool-state")
@@ -262,6 +327,12 @@ function renderMessage(
       return []
     }),
   }
+}
+
+function withoutTextAttachments(text: string, omissions: Map<OmissionClass, number>) {
+  const safe = omitTextAttachmentReferences(text)
+  if (safe !== text) addOmission(omissions, "unselected-attachment")
+  return safe
 }
 
 function visibleQuestionAnswers(part: Record<string, unknown>): string[] {

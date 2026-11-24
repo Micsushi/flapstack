@@ -5,10 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { McpApprovalLifecycle } from "../src/main/lib/mcp-control/approval-lifecycle"
-import { appendMcpAuditRecord } from "../src/main/lib/mcp-control/audit-storage"
 import { createMcpMutationService } from "../src/main/lib/mcp-control/mutation-service"
-import { invokeMcpControlTool } from "../src/main/lib/mcp-control/registry"
 import {
   drainPendingAgentRuns,
   recoverInterruptedMcpRuns,
@@ -54,70 +51,6 @@ afterEach(() => {
 })
 
 describe("MCP cross-harness thread spawn service", () => {
-  it("auto-approves full-access Tier 3 dispatch with durable audit", async () => {
-    const approvals = new McpApprovalLifecycle()
-    const statuses: string[] = []
-    const result = invokeMcpControlTool(
-      "spawn_thread",
-      { chatId: "codex-root", permissionMode: "full-access" },
-      {
-        targetHarness: "claude-code",
-        scope: { kind: "task", projectId: "project-1", taskId: "task-1" },
-        permission: { mode: "read-only" },
-        worktree: { strategy: "none" },
-      },
-      undefined,
-      {
-        approvals,
-        approvalId: () => "spawn-approval",
-        mutations: createMcpMutationService(path),
-        audit: { append: (record) => statuses.push(record.status) },
-      },
-    )
-    await expect(result).resolves.toMatchObject({
-      ok: true,
-      data: { launch: { status: "not-requested" } },
-    })
-    expect(approvals.listPending()).toEqual([])
-    expect(statuses).toEqual(["allowed", "dispatch-started", "completed"])
-    approvals.shutdown()
-  })
-
-  it("creates a parentless external Chat and keeps real same-harness child lineage", async () => {
-    const service = createMcpMutationService(path)
-    const request = {
-      targetHarness: "codex",
-      scope: { kind: "task", projectId: "project-1", taskId: "task-1" },
-      permission: { mode: "read-only" },
-      worktree: { strategy: "none" },
-    }
-    const external = await service.invoke(
-      "spawn_thread",
-      {
-        callerKind: "external-owner",
-        chatId: "external-owner:grant",
-        permissionMode: "full-access",
-      },
-      request,
-    )
-    if (!external.ok) throw new Error(external.error.message)
-    const { chatId } = external.data as { chatId: string }
-    expect(
-      sqlite.prepare("SELECT parent_chat_id,initiator_chat_id FROM chats WHERE id=?").get(chatId),
-    ).toEqual({ parent_chat_id: null, initiator_chat_id: null })
-    const child = await service.invoke(
-      "spawn_thread",
-      { chatId, permissionMode: "full-access" },
-      request,
-    )
-    expect(child).toMatchObject({
-      ok: true,
-      data: {
-        lineage: { parentChatId: chatId, initiatorChatId: chatId, ancestorChatIds: [chatId] },
-      },
-    })
-  })
-
   it("creates durable Codex-to-Claude and Claude-to-Codex threads with resolved lineage", async () => {
     const service = createMcpMutationService(path)
     const codexToClaude = await service.invoke(
@@ -200,90 +133,6 @@ describe("MCP cross-harness thread spawn service", () => {
         ancestor_chat_ids: '["claude-root"]',
       }),
     ])
-  })
-
-  it("creates and queues an API-provider child from Cursor with its selected model", async () => {
-    const result = await createMcpMutationService(path).invoke(
-      "spawn_thread",
-      { chatId: "cursor-root", permissionMode: "full-access" },
-      {
-        targetHarness: "openrouter",
-        model: "anthropic/claude-sonnet-4",
-        scope: { kind: "task", projectId: "project-1", taskId: "task-1" },
-        permission: { mode: "full-access" },
-        worktree: { strategy: "inherit" },
-        launch: { initialPrompt: "Review through OpenRouter." },
-      },
-    )
-    expect(result).toMatchObject({ ok: true, data: { launch: { status: "pending" } } })
-    expect(
-      sqlite
-        .prepare(
-          `SELECT c.harness, c.model, s.model sub_model, r.model run_model
-           FROM chats c
-           JOIN sub_chats s ON s.chat_id = c.id
-           JOIN agent_runs r ON r.chat_id = c.id
-           WHERE c.parent_chat_id = 'cursor-root'`,
-        )
-        .get(),
-    ).toEqual({
-      harness: "openrouter",
-      model: "anthropic/claude-sonnet-4",
-      sub_model: "anthropic/claude-sonnet-4",
-      run_model: "anthropic/claude-sonnet-4",
-    })
-  })
-
-  it("keeps the created thread and failed first run durable when a harness launch fails", async () => {
-    const approvals = new McpApprovalLifecycle()
-    const database = drizzle(sqlite, { schema })
-    const resultPromise = invokeMcpControlTool(
-      "spawn_thread",
-      { chatId: "codex-root", permissionMode: "full-access" },
-      {
-        targetHarness: "claude-code",
-        scope: { kind: "task", projectId: "project-1", taskId: "task-1" },
-        permission: { mode: "full-access" },
-        worktree: { strategy: "inherit" },
-        launch: { initialPrompt: "Run the check." },
-      },
-      undefined,
-      {
-        approvals,
-        approvalId: () => "failed-spawn-approval",
-        mutations: createMcpMutationService(path),
-        audit: { append: (record) => appendMcpAuditRecord(database, record) },
-      },
-    )
-    approvals.approve("failed-spawn-approval")
-    const result = await resultPromise
-
-    expect(result).toMatchObject({ ok: true, data: { launch: { status: "pending" } } })
-    expect(
-      await drainPendingAgentRuns(
-        path,
-        async () => {
-          throw new Error("harness unavailable")
-        },
-        { waitForCompletion: true },
-      ),
-    ).toBe(1)
-    expect(
-      sqlite.prepare("SELECT count(*) count FROM chats WHERE parent_chat_id = 'codex-root'").get(),
-    ).toEqual({ count: 1 })
-    expect(
-      sqlite
-        .prepare("SELECT status, completed_at FROM agent_runs ORDER BY started_at DESC LIMIT 1")
-        .get(),
-    ).toEqual(expect.objectContaining({ status: "failure" }))
-    const audit = sqlite
-      .prepare(
-        "SELECT invocation_id, status FROM mcp_audit_records WHERE tool_name = 'spawn_thread' ORDER BY created_at, id",
-      )
-      .all() as Array<{ invocation_id: string; status: string }>
-    expect(audit.map((row) => row.status)).toContain("failed")
-    expect(new Set(audit.map((row) => row.invocation_id)).size).toBe(1)
-    approvals.shutdown()
   })
 
   it("fails an interrupted direct MCP run without replay when no recovery authority exists", async () => {

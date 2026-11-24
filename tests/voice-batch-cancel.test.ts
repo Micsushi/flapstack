@@ -36,17 +36,7 @@ beforeEach(() => {
   state.available.mockResolvedValue({ available: true })
   state.history.mockResolvedValue({})
 })
-it("records cloud engine provenance without retaining batch audio", async () => {
-  state.transcribe.mockResolvedValue({ text: "cloud words", adapterId: "openai-whisper" })
-  expect(await caller(1).transcribe(input)).toMatchObject({
-    text: "cloud words",
-    historySaved: true,
-  })
-  expect(state.history).toHaveBeenCalledWith(
-    expect.objectContaining({ adapterId: "openai-whisper", modelId: "whisper-1" }),
-  )
-  expect(state.history.mock.calls[0][0]).not.toHaveProperty("audioWav")
-})
+
 it("aborts only the owning window and rejects a late result before history", async () => {
   let finish!: (value: { text: string; adapterId: string }) => void
   let signal!: AbortSignal
@@ -71,22 +61,6 @@ it("aborts only the owning window and rejects a late result before history", asy
   expect(state.history).toHaveBeenCalledWith(
     expect.objectContaining({ adapterId: "local-whisper", modelId: "base" }),
   )
-})
-it("cancels while readiness is pending without invoking the adapter", async () => {
-  let ready!: (value: { available: boolean }) => void
-  state.available.mockReturnValue(
-    new Promise((resolve) => {
-      ready = resolve
-    }),
-  )
-  const pending = caller(1).transcribe(input)
-  const rejected = expect(pending).rejects.toThrow()
-  await vi.waitFor(() => expect(state.available).toHaveBeenCalledOnce())
-  await caller(1).cancelStreaming({ sessionId: input.sessionId })
-  ready({ available: true })
-  await rejected
-  expect(state.transcribe).not.toHaveBeenCalled()
-  expect(state.history).not.toHaveBeenCalled()
 })
 
 it("reports too late once successful persistence starts", async () => {

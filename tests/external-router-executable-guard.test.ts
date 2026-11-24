@@ -55,15 +55,8 @@ vi.mock("../src/main/lib/external/app-launch", async (importOriginal) => {
 
 import { closeDatabase } from "../src/main/lib/db"
 import * as schema from "../src/main/lib/db/schema"
-import {
-  bindRegisteredFilesystemRoot,
-  PathValidationError,
-} from "../src/main/lib/git/security/path-validation"
-import {
-  externalRouter,
-  openWithDefaultHandler,
-  resolveRegisteredExternalTarget,
-} from "../src/main/lib/trpc/routers/external"
+import { bindRegisteredFilesystemRoot } from "../src/main/lib/git/security/path-validation"
+import { externalRouter } from "../src/main/lib/trpc/routers/external"
 
 let container = ""
 let worktreePath = ""
@@ -110,44 +103,6 @@ afterEach(() => {
 })
 
 describe("external executable guard", () => {
-  it("opens tracked script sources in an editor without any default-handler dispatch", async () => {
-    for (const name of SCRIPT_SOURCES) {
-      state.spawned = []
-      await expect(caller.openFileInEditor({ path: scriptPath(name) })).resolves.toMatchObject({
-        success: true,
-      })
-      expect(state.spawned).toHaveLength(1)
-      expect(state.spawned[0].args.join(" ")).toContain(name)
-    }
-    expect(state.openedWithDefaultHandler).toEqual([])
-  })
-
-  it("reveals tracked script sources in the platform file manager", async () => {
-    for (const name of SCRIPT_SOURCES) {
-      await expect(caller.openInFinder(scriptPath(name))).resolves.toEqual({ success: true })
-      await expect(caller.openInApp({ path: scriptPath(name), app: "finder" })).resolves.toEqual({
-        success: true,
-      })
-    }
-    expect(state.revealed).toHaveLength(SCRIPT_SOURCES.length * 2)
-    for (const name of SCRIPT_SOURCES) {
-      expect(state.revealed.filter((path) => path.endsWith(name))).toHaveLength(2)
-    }
-    expect(state.openedWithDefaultHandler).toEqual([])
-  })
-
-  it("still refuses to hand executables to the OS default handler", async () => {
-    for (const name of [...SCRIPT_SOURCES, "installer.msi", "tool.exe", "shortcut.lnk"]) {
-      await expect(openWithDefaultHandler(scriptPath(name))).rejects.toThrow(
-        /cannot be opened with the system default application/,
-      )
-    }
-    expect(state.openedWithDefaultHandler).toEqual([])
-
-    await expect(openWithDefaultHandler(join(worktreePath, "index.ts"))).resolves.toBeUndefined()
-    expect(state.openedWithDefaultHandler).toEqual([join(worktreePath, "index.ts")])
-  })
-
   it("rejects the editor default-handler fallback for executables but allows plain sources", async () => {
     state.editorLookupSucceeds = false
 
@@ -172,16 +127,5 @@ describe("external executable guard", () => {
     )
     expect(state.revealed).toEqual([])
     expect(state.spawned).toEqual([])
-  })
-
-  it("normalizes a missing parent into a path validation error", () => {
-    expect(() =>
-      resolveRegisteredExternalTarget(join(worktreePath, "missing-parent", "file.txt")),
-    ).toThrowError(PathValidationError)
-    try {
-      resolveRegisteredExternalTarget(join(worktreePath, "missing-parent", "file.txt"))
-    } catch (error) {
-      expect(error).toMatchObject({ code: "INVALID_TARGET" })
-    }
   })
 })

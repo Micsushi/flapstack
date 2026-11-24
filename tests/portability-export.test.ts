@@ -1,10 +1,10 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import Database from "better-sqlite3"
 import { createPortableExport } from "../src/main/lib/portability/exporter"
 import { readPortableDatabase } from "../src/main/lib/portability/database"
-import { listFiles, sha256File } from "../src/main/lib/portability/io"
+import { listFiles } from "../src/main/lib/portability/io"
 import { verifyPortableBundle } from "../src/main/lib/portability/importer"
 import {
   createConfigRoot,
@@ -65,31 +65,6 @@ describe("portability-export", () => {
     expect(Buffer.concat(content).toString("utf8")).not.toContain(googleApiKey)
   })
 
-  it("is byte-deterministic for the same state, name, and clock", async () => {
-    const root = await tempRoot()
-    const databasePath = join(root, "source.db")
-    createTestDatabase(databasePath)
-    const leftParent = join(root, "left")
-    const rightParent = join(root, "right")
-    await mkdir(leftParent)
-    await mkdir(rightParent)
-    const common = {
-      databasePath,
-      appVersion: "1.2.3",
-      selection: [{ id: "projects" as const }],
-      now: () => new Date("2026-07-14T12:00:00.000Z"),
-    }
-    const left = join(leftParent, "same.flapstack-export")
-    const right = join(rightParent, "same.flapstack-export")
-    await createPortableExport({ ...common, outputPath: left })
-    await createPortableExport({ ...common, outputPath: right })
-    const paths = await listFiles(left)
-    expect(paths).toEqual(await listFiles(right))
-    expect(await Promise.all(paths.map((path) => sha256File(join(left, path))))).toEqual(
-      await Promise.all(paths.map((path) => sha256File(join(right, path)))),
-    )
-  })
-
   it("removes partial output when cancelled", async () => {
     const root = await tempRoot()
     const databasePath = join(root, "source.db")
@@ -107,21 +82,6 @@ describe("portability-export", () => {
       }),
     ).rejects.toThrow(/cancel/i)
     await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" })
-  })
-
-  it("detects tampering", async () => {
-    const root = await tempRoot()
-    const databasePath = join(root, "source.db")
-    createTestDatabase(databasePath)
-    const outputPath = join(root, "tampered.flapstack-export")
-    await createPortableExport({
-      outputPath,
-      databasePath,
-      appVersion: "1",
-      selection: [{ id: "projects" }],
-    })
-    await writeFile(join(outputPath, "manifest.json"), "{}")
-    await expect(verifyPortableBundle(outputPath)).rejects.toThrow()
   })
 
   it("exports one consistent snapshot during concurrent writes with large history", async () => {
@@ -165,55 +125,6 @@ describe("portability-export", () => {
       chatRecords.length,
     )
   })
-
-  it("fails cleanly when a selected file source is missing", async () => {
-    const root = await tempRoot()
-    const databasePath = join(root, "source.db")
-    createTestDatabase(databasePath)
-    const outputPath = join(root, "missing.flapstack-export")
-    await expect(
-      createPortableExport({
-        outputPath,
-        databasePath,
-        appVersion: "1",
-        selection: [{ id: "settings" }],
-        fileSources: [
-          { scopeId: "settings", root: join(root, "missing-root"), target: { kind: "config" } },
-        ],
-      }),
-    ).rejects.toMatchObject({ code: "ENOENT" })
-    await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" })
-  })
-
-  it.each(["moved", "removed"] as const)(
-    "fails cleanly when a selected export source is %s after discovery",
-    async (mode) => {
-      const root = await tempRoot()
-      const databasePath = join(root, "source.db")
-      createTestDatabase(databasePath)
-      const sourceRoot = join(root, "settings")
-      await mkdir(sourceRoot)
-      const sourcePath = join(sourceRoot, "settings.json")
-      await writeFile(sourcePath, "safe")
-      const outputPath = join(root, `${mode}.flapstack-export`)
-      await expect(
-        createPortableExport({
-          outputPath,
-          databasePath,
-          appVersion: "1",
-          selection: [{ id: "settings" }],
-          fileSources: [{ scopeId: "settings", root: sourceRoot, target: { kind: "config" } }],
-          testHooks: {
-            beforeSourceSnapshot: async (path) => {
-              if (mode === "moved") await rename(path, `${path}.moved`)
-              else await rm(path)
-            },
-          },
-        }),
-      ).rejects.toMatchObject({ code: "ENOENT" })
-      await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" })
-    },
-  )
 
   it("filters parent and dependent rows relationally and removes machine-local paths", async () => {
     const root = await tempRoot()

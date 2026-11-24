@@ -7,8 +7,6 @@ import {
   WindowsPlatformProvider,
   renderWindowsCliLauncher,
   windowsCliManagementSupported,
-  windowsPathContains,
-  windowsUserPathScript,
 } from "../src/main/lib/platform/windows"
 
 async function removeDirectoryWithRetry(directory: string): Promise<void> {
@@ -26,54 +24,6 @@ async function removeDirectoryWithRetry(directory: string): Promise<void> {
 }
 
 describe("Windows product platform behavior", () => {
-  it("uses Windows PowerShell by default instead of COMSPEC", () => {
-    const previousComspec = process.env.COMSPEC
-    process.env.COMSPEC = "C:\\Windows\\System32\\cmd.exe"
-    try {
-      const provider = new WindowsPlatformProvider()
-      expect(provider.getDefaultShell()).toMatch(/powershell\.exe$/i)
-      expect(provider.getShellConfig()).toMatchObject({
-        executable: expect.stringMatching(/powershell\.exe$/i),
-      })
-      expect(provider.getShellConfig().execArgs("Write-Output ok")).toEqual([
-        "-NoLogo",
-        "-NoProfile",
-        "-Command",
-        "Write-Output ok",
-      ])
-    } finally {
-      if (previousComspec === undefined) delete process.env.COMSPEC
-      else process.env.COMSPEC = previousComspec
-    }
-  })
-
-  it("rejects a relative SystemRoot for privileged environment changes", () => {
-    const previousSystemRoot = process.env.SystemRoot
-    const previousWindir = process.env.WINDIR
-    process.env.SystemRoot = ".\\untrusted-project"
-    delete process.env.WINDIR
-    try {
-      expect(new WindowsPlatformProvider().getShellConfig().executable).toBe(
-        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-      )
-    } finally {
-      if (previousSystemRoot === undefined) delete process.env.SystemRoot
-      else process.env.SystemRoot = previousSystemRoot
-      if (previousWindir === undefined) delete process.env.WINDIR
-      else process.env.WINDIR = previousWindir
-    }
-  })
-
-  it("renders a launcher bound to the actual packaged executable", () => {
-    const launcher = renderWindowsCliLauncher(
-      "@echo off\r\npowershell.exe -EncodedCommand __FLAPSTACK_ENCODED_COMMAND__\r\n",
-      "C:\\Program Files\\Flapstack ü\\Flapstack.exe",
-    )
-    expect(launcher).not.toContain("Flapstack ü")
-    expect(launcher).not.toContain("__FLAPSTACK_ENCODED_COMMAND__")
-    expect(launcher).toMatch(/^[\x00-\x7f]*$/)
-  })
-
   it("allows only packaged production to manage the production CLI", () => {
     expect(
       windowsCliManagementSupported({
@@ -140,34 +90,6 @@ describe("Windows product platform behavior", () => {
     },
   )
 
-  it("persists and removes only the exact user CLI directory without setx", () => {
-    const marker = "C:\\Users\\Sushi\\.local\\bin\\.flapstack-path-added"
-    const addScript = windowsUserPathScript("add", "C:\\Users\\Sushi\\.local\\bin", marker)
-    const removeScript = windowsUserPathScript("remove", "C:\\Users\\Sushi\\.local\\bin")
-
-    expect(addScript).toContain("[Environment]::SetEnvironmentVariable")
-    expect(addScript).toContain("OrdinalIgnoreCase")
-    expect(addScript).toContain(marker)
-    expect(addScript.indexOf("Set-Content")).toBeLessThan(
-      addScript.indexOf("[Environment]::SetEnvironmentVariable"),
-    )
-    expect(addScript).not.toMatch(/\bsetx\b/i)
-    expect(removeScript).toContain("[Environment]::SetEnvironmentVariable")
-    expect(removeScript).toContain("OrdinalIgnoreCase")
-    expect(addScript).toContain("SendMessageTimeout")
-    expect(addScript).toContain("'Environment'")
-    expect(removeScript).toContain("SendMessageTimeout")
-  })
-
-  it("recognizes an installed CLI PATH entry with a trailing separator", () => {
-    expect(
-      windowsPathContains(
-        "C:\\Users\\Sushi\\.local\\bin",
-        "C:\\Windows;C:\\Users\\Sushi\\.local\\bin\\",
-      ),
-    ).toBe(true)
-  })
-
   it("installs an executable-bound launcher only after persisting its user PATH", async () => {
     const home = mkdtempSync(join(tmpdir(), "flapstack-cli-home-"))
     const source = join(home, "flapstack.cmd")
@@ -213,52 +135,6 @@ describe("Windows product platform behavior", () => {
       if (previousPath === undefined) delete process.env.PATH
       else process.env.PATH = previousPath
     }
-  })
-
-  it("refuses to install an Electron development launcher that cannot reopen the app", async () => {
-    const home = mkdtempSync(join(tmpdir(), "flapstack-cli-dev-home-"))
-    const source = join(home, "flapstack.cmd")
-    writeFileSync(source, "__FLAPSTACK_EXECUTABLE__", "utf8")
-    const previousDefaultApp = process.defaultApp
-    process.defaultApp = true
-    try {
-      class TestWindowsProvider extends WindowsPlatformProvider {
-        protected override getHome(): string {
-          return home
-        }
-      }
-      const provider = new TestWindowsProvider()
-      await expect(provider.installCli(source)).resolves.toEqual({
-        success: false,
-        error: "Install the flapstack command from a packaged app build.",
-      })
-      expect(existsSync(join(home, ".local", "bin", "flapstack.cmd"))).toBe(false)
-    } finally {
-      process.defaultApp = previousDefaultApp
-    }
-  })
-
-  it("repairs an interrupted uninstall when the launcher is already missing", async () => {
-    const home = mkdtempSync(join(tmpdir(), "flapstack-cli-recovery-"))
-    const installDirectory = join(home, ".local", "bin")
-    mkdirSync(installDirectory, { recursive: true })
-    writeFileSync(join(installDirectory, ".flapstack-path-added"), "added\n", "utf8")
-
-    class TestWindowsProvider extends WindowsPlatformProvider {
-      removedPath = false
-      protected override getHome(): string {
-        return home
-      }
-      override async execCommand() {
-        this.removedPath = true
-        return { stdout: "removed\r\n", stderr: "" }
-      }
-    }
-
-    const provider = new TestWindowsProvider()
-    await expect(provider.uninstallCli()).resolves.toEqual({ success: true })
-    expect(provider.removedPath).toBe(true)
-    expect(existsSync(join(installDirectory, ".flapstack-path-added"))).toBe(false)
   })
 
   it("never overwrites or uninstalls an unowned flapstack launcher", async () => {

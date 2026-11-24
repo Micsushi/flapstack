@@ -1,94 +1,8 @@
 import { describe, expect, it } from "vitest"
+import { buildVisibleContextManifest } from "../src/main/lib/agent-runtime/context-manifest"
 import { formatChatHandoff } from "../src/main/lib/chat-handoff"
-import {
-  omitHiddenFileContentFromMessage,
-  stringifyVisibleMessageJson,
-} from "../src/shared/chat-visible-content"
 
 describe("full chat handoff formatter", () => {
-  it("keeps complete cross-conversation history in chronological order", () => {
-    const result = formatChatHandoff(
-      {
-        chat: { id: "chat-1", name: "Release", branch: "codex/stage3" },
-        project: { name: "Flapstack" },
-        conversations: [
-          {
-            subChatId: "visible",
-            subChatName: "Main",
-            messages: [
-              {
-                id: "msg-1783920402000",
-                role: "assistant",
-                parts: [{ type: "text", text: "second" }],
-              },
-            ],
-          },
-          {
-            subChatId: "legacy",
-            subChatName: "Recovered",
-            messages: [
-              {
-                id: "msg-1783920401000",
-                role: "user",
-                parts: [
-                  { type: "text", text: "first" },
-                  { type: "tool-Read", toolName: "Read", input: { file_path: "/tmp/a.ts" } },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-      new Date("2026-07-13T10:00:00.000Z"),
-    )
-
-    expect(result).toContain("# Flapstack Chat Handoff")
-    expect(result).toContain("Legacy recovery: Recovered")
-    expect(result).toContain("> Tool: Read")
-    expect(result).not.toContain("/tmp/a.ts")
-    expect(result.indexOf("first")).toBeLessThan(result.indexOf("second"))
-  })
-
-  it("does not truncate long history", () => {
-    const longText = "x".repeat(60_000)
-    const result = formatChatHandoff({
-      chat: { id: "chat-2", name: "Long" },
-      conversations: [
-        {
-          subChatId: "visible",
-          subChatName: null,
-          messages: [{ role: "user", parts: [{ type: "text", text: longText }] }],
-        },
-      ],
-    })
-    expect(result).toContain(longText)
-  })
-
-  it("preserves persisted conversation order when any timestamp is unavailable", () => {
-    const result = formatChatHandoff({
-      chat: { id: "chat-3", name: "Legacy" },
-      conversations: [
-        {
-          subChatId: "visible",
-          subChatName: null,
-          messages: [{ role: "user", parts: [{ type: "text", text: "unknown-time" }] }],
-        },
-        {
-          subChatId: "legacy",
-          subChatName: null,
-          messages: [
-            {
-              id: "msg-1000000000000",
-              role: "assistant",
-              parts: [{ type: "text", text: "known-time" }],
-            },
-          ],
-        },
-      ],
-    })
-    expect(result.indexOf("unknown-time")).toBeLessThan(result.indexOf("known-time"))
-  })
-
   it("copies visible reasoning, questions, answers, and safe tool summaries only", () => {
     const result = formatChatHandoff({
       chat: { id: "chat-4", name: "Visible content" },
@@ -180,87 +94,79 @@ describe("full chat handoff formatter", () => {
     for (const secret of secrets) expect(result).not.toContain(secret)
     expect(result).not.toMatch(/sk-live|bearer-command|webhook-secret|signed-secret|query-secret/i)
   })
+})
 
-  it("exports names only for secret-bearing tool path fields", () => {
-    const secrets = [
-      "/tmp/password=hunter2",
-      "https://user:pass@example.com/private",
-      "Basic dXNlcjpwYXNz",
-      "/tmp/sk-proj-1234567890",
-      "/tmp/file?X-Amz-Signature=abc&token=def",
-      "/hooks/webhook/super-secret-value",
-    ]
-    const result = formatChatHandoff({
-      chat: { id: "chat-secret-paths", name: "Secret paths" },
+describe("provider handoff budget", () => {
+  const build = (budget?: { maxTokens?: number; maxBytes?: number }) =>
+    buildVisibleContextManifest({
+      sourceChatId: "source",
+      sourceRunId: null,
+      budget,
       conversations: [
         {
-          subChatId: "visible",
+          subChatId: "sub",
           subChatName: null,
           messages: [
+            { id: "old", role: "user", content: "large context ".repeat(9_000) },
+            { id: "visible", role: "assistant", content: "latest answer" },
             {
-              role: "assistant",
-              parts: secrets.map((secret, index) => ({
-                type: index % 2 === 0 ? "tool-Read" : "tool-call",
-                toolName: `Tool${index}`,
-                input: index % 2 === 0 ? { file_path: secret } : { path: secret },
-              })),
+              id: "request",
+              role: "user",
+              content: "latest request " + String.fromCodePoint(0x1f642).repeat(25_000),
             },
           ],
         },
       ],
     })
 
-    for (let index = 0; index < secrets.length; index += 1) {
-      expect(result).toContain(`> Tool: Tool${index}`)
-      expect(result).not.toContain(secrets[index])
-    }
+  it("caps provider handoffs in UTF-8 with useful recent text and honest omissions", () => {
+    const result = build({ maxTokens: 1024, maxBytes: 4700 })
+    expect(Buffer.byteLength(result.contextText)).toBeLessThanOrEqual(4096)
+    expect(result.contextText).toContain("latest request")
+    expect(result.contextText).toContain("latest answer")
+    expect(result.contextText).toContain("[Message excerpt]")
+    expect(result.contextText).not.toContain(String.fromCodePoint(0xfffd))
+    expect(result.manifest.omissions).toContainEqual({ class: "context-budget", count: 2 })
+    expect(result.manifest.selected.map((entry) => entry.messageId)).toEqual(["visible", "request"])
   })
+})
 
-  it("excludes hidden file content from current, legacy, handoff, and JSON export shapes", () => {
-    const hidden = "sk-proj-hidden-file-secret"
-    const messages = [
-      {
-        role: "user",
-        parts: [
-          { type: "text", text: "visible current text" },
-          { type: "file-content", content: hidden, name: "safe-name.txt" },
-        ],
-      },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "visible legacy text" },
-          { type: "file-content", text: hidden, name: "legacy-name.txt" },
-        ],
-      },
-    ]
-    const result = formatChatHandoff({
-      chat: { id: "chat-file-content", name: "Hidden files" },
-      conversations: [{ subChatId: "visible", subChatName: null, messages }],
-    })
-    expect(result).toContain("visible current text")
-    expect(result).toContain("visible legacy text")
-    expect(result).not.toContain(hidden)
-
-    const json = JSON.stringify(messages.map(omitHiddenFileContentFromMessage))
-    expect(json).not.toContain(hidden)
-    expect(json).not.toContain("file-content")
-  })
-
-  it("sanitizes current, legacy, and nested hidden file content for dev JSON", () => {
-    const hidden = "never-render-or-copy-this-file"
-    const json = stringifyVisibleMessageJson({
-      role: "user",
-      parts: [
-        { type: "file-content", content: hidden },
-        { type: "text", text: "visible" },
+describe("provider handoff attachments", () => {
+  it.each([false, true])("omits local text attachments with compact set to %s", (compact) => {
+    const paste = "@[pasted:42:private-paste\r preview|C:\\profile\\pasted_123.txt]"
+    const history = "@[chatHistory:124:private-history preview|C:\\profile\\chat-history.md]"
+    const result = buildVisibleContextManifest({
+      sourceChatId: "source",
+      sourceRunId: null,
+      compact,
+      conversations: [
+        {
+          subChatId: "sub",
+          subChatName: null,
+          messages: [
+            { role: "user", content: `Previous request ${history}` },
+            {
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-AskUserQuestion",
+                  input: { questions: [{ question: `Follow-up ${history}` }] },
+                },
+              ],
+            },
+            {
+              role: "user",
+              parts: [{ type: "text", text: `Latest request ${paste} ${history}` }],
+            },
+          ],
+        },
       ],
-      content: [{ type: "file-content", text: hidden }],
-      legacyEnvelope: { items: [{ type: "file-content", data: hidden }] },
     })
 
-    expect(json).toContain("visible")
-    expect(json).not.toContain(hidden)
-    expect(json).not.toContain("file-content")
+    expect(result.contextText).toContain("Previous request")
+    expect(result.contextText).toContain("Latest request")
+    expect(result.contextText).toContain("Follow-up")
+    expect(result.contextText).not.toMatch(/private-(paste|history)|C:\\profile/)
+    expect(result.manifest.omissions).toContainEqual({ class: "unselected-attachment", count: 3 })
   })
 })

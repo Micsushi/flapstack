@@ -20,11 +20,7 @@ vi.mock("../src/renderer/lib/trpc", () => ({
 vi.mock("../src/renderer/contexts/TRPCProvider", () => ({ getQueryClient: () => null }))
 vi.mock("sonner", () => ({ toast: { error: toastError } }))
 
-import {
-  createDirectRuntimeStream,
-  hasClaudeRuntimeAuthenticationFailure,
-  isClaudeRuntimeAuthenticationError,
-} from "../src/renderer/features/agents/lib/direct-runtime-chat-transport"
+import { createDirectRuntimeStream } from "../src/renderer/features/agents/lib/direct-runtime-chat-transport"
 import { pendingAuthRetryMessageAtom } from "../src/renderer/features/agents/atoms"
 import { agentsLoginModalOpenAtom, claudeLoginModalConfigAtom } from "../src/renderer/lib/atoms"
 import { appStore } from "../src/renderer/lib/jotai-store"
@@ -81,42 +77,6 @@ describe("direct Claude Runtime authentication", () => {
       hideCustomModelSettingsLink: true,
       autoStartAuth: true,
     })
-  })
-
-  it("does not recast unrelated Runtime failures as authentication failures", async () => {
-    prepare.mockRejectedValueOnce(new Error("Worktree is missing"))
-
-    await expect(createDirectRuntimeStream(input)).rejects.toThrow("Worktree is missing")
-    expect(appStore.get(pendingAuthRetryMessageAtom)).toBeNull()
-    expect(toastError).not.toHaveBeenCalled()
-  })
-
-  it("recognizes provider auth activity without matching unrelated errors", () => {
-    for (const payload of [
-      { code: "auth-error", message: "Session expired" },
-      { code: "authentication_failed", message: "Authentication failed" },
-      { code: "claude-result-error", message: "OAuth token has expired" },
-      { code: "claude-result-error", message: "API Error: 401" },
-      { code: "claude-result-error", message: "Please run `/login`" },
-    ]) {
-      expect(
-        hasClaudeRuntimeAuthenticationFailure([{ kind: "warning", phase: "failed", payload }]),
-      ).toBe(true)
-    }
-    expect(
-      hasClaudeRuntimeAuthenticationFailure([
-        {
-          kind: "subagent",
-          phase: "completed",
-          payload: {
-            state: "message:reviewer",
-            message: "The login page displays authentication required.",
-          },
-        },
-      ]),
-    ).toBe(false)
-    expect(isClaudeRuntimeAuthenticationError(new Error("Claude is not logged in"))).toBe(true)
-    expect(isClaudeRuntimeAuthenticationError(new Error("Network connection failed"))).toBe(false)
   })
 
   it("cancels a mid-run Claude authentication failure before exposing retry", async () => {

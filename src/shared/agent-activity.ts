@@ -174,6 +174,8 @@ const payloadSchemas = {
       reasoningTokens: finiteNonNegative.nullable().optional(),
       contextWindow: finiteNonNegative.nullable().optional(),
       contextUsed: finiteNonNegative.nullable().optional(),
+      autoCompactThreshold: z.number().int().positive().optional(),
+      autoCompactEnabled: z.boolean().optional(),
       costUsd: finiteNonNegative.nullable().optional(),
     })
     .strict(),

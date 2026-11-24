@@ -74,6 +74,9 @@ export function buildMcpStdioRegistration(
       [CHILD_LIVE_KEY]: childLiveKey(identity.chatId, identity.runId),
       FLAPSTACK_MCP_RUN_ID: identity.runId,
       FLAPSTACK_MCP_PERMISSION_MODE: identity.permissionMode,
+      ...(process.env.FLAPSTACK_MCP_TOOL_EXPOSURE === "direct"
+        ? { FLAPSTACK_MCP_TOOL_EXPOSURE: "direct" }
+        : {}),
       FLAPSTACK_DB_PATH: runtime.databasePath,
       FLAPSTACK_CONFIG_DIR: process.env.FLAPSTACK_CONFIG_DIR || dirname(runtime.databasePath),
       ...(invalidationEndpoint

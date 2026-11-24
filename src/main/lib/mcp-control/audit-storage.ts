@@ -1,8 +1,10 @@
 import { mcpAuditRecords } from "../db/schema"
 import { createHash, randomUUID } from "node:crypto"
+import { isAbsolute } from "node:path"
 import { and, desc, eq, gte, isNull, lt, lte, or } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../db/schema"
+import { resolveCanonicalProjectPath } from "../projects/project-path"
 import type { McpCallerIdentity, McpRiskTier } from "./types"
 import { createOrchestrationInputSchema } from "../../../shared/agent-orchestration"
 
@@ -26,6 +28,7 @@ const safeAuditKeys = new Set([
   "byteLength",
   "capabilityFlags",
   "caller",
+  "canonicalPath",
   "chatId",
   "completionCriteria",
   "content",
@@ -61,6 +64,7 @@ const safeAuditKeys = new Set([
   "ok",
   "outcome",
   "overwrite",
+  "path",
   "permissionMode",
   "pinned",
   "productMcpRead",
@@ -242,7 +246,11 @@ export function appendMcpAuditRecord(database: AuditDatabase, record: AppendMcpA
       runSnapshot: redactMcpAuditSummary(
         orchestrationContext ?? summarizeSnapshot(record.runSnapshot),
       ),
-      inputSummary: redactMcpAuditSummary(summarizeMcpAuditInput(record.toolName, record.input)),
+      inputSummary: redactMcpAuditSummary(
+        record.status === "dispatch-started"
+          ? summarizeMcpDispatchInput(record.toolName, record.input)
+          : summarizeMcpAuditInput(record.toolName, record.input),
+      ),
       resultSummary: redactMcpAuditSummary(summarizeMcpAuditResult(record.result)),
       durationMs: Math.max(0, Math.floor(record.durationMs ?? 0)),
       ...(record.createdAt ? { createdAt: record.createdAt } : {}),
@@ -258,6 +266,21 @@ function orchestrationAuditContext(record: AppendMcpAuditRecord): unknown | null
   const taskId = orchestration?.taskId
   if (result?.ok !== true || typeof taskId !== "string" || !taskId) return null
   return { contextHash: createHash("sha256").update(taskId).digest("hex") }
+}
+
+/** Resolve the folder only for an authorized dispatch, using registration's identity. */
+function summarizeMcpDispatchInput(toolName: string, input: unknown): unknown {
+  if (toolName === "create_project") {
+    const path = asRecord(input)?.path
+    if (typeof path === "string" && isAbsolute(path)) {
+      try {
+        return { canonicalPath: summarizeText(resolveCanonicalProjectPath(path)) }
+      } catch {
+        // An unavailable directory cannot be reliably matched by its spelling.
+      }
+    }
+  }
+  return summarizeMcpAuditInput(toolName, input)
 }
 
 /** Operation-specific allowlist. Arbitrary content is represented only by size and hash. */
@@ -287,6 +310,8 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
   }
 
   switch (toolName) {
+    case "create_project":
+      return { path: textDigest("path") }
     case "create_chat":
       return {
         ...safe("scope", "projectId", "taskId", "harness", "model", "reasoningEffort"),
@@ -819,6 +844,9 @@ export function findUnresolvedMcpDispatch(
   database: RecoveryDatabase,
   lookup: McpDispatchLookup,
 ): McpDispatchBlock | null {
+  const inputSummary = redactMcpAuditSummary(
+    summarizeMcpDispatchInput(lookup.toolName, lookup.input),
+  )
   return database.transaction((tx) => {
     const rows = tx
       .select()
@@ -834,10 +862,12 @@ export function findUnresolvedMcpDispatch(
       )
       .orderBy(desc(mcpAuditRecords.createdAt), desc(mcpAuditRecords.id))
       .all()
-    const inputSummary = redactMcpAuditSummary(
-      summarizeMcpAuditInput(lookup.toolName, lookup.input),
+    const claim = activeRecoveryClaims(rows).find(
+      (row) =>
+        row.inputSummary === inputSummary ||
+        // Older claims retained the spelling's hash or just its field names.
+        (lookup.toolName === "create_project" && !row.inputSummary.startsWith('{"canonicalPath":')),
     )
-    const claim = activeRecoveryClaims(rows).find((row) => row.inputSummary === inputSummary)
     if (!claim) return null
     if (claim.state === "retry-authorized" && claim.invocationId !== lookup.invocationId) {
       appendRecoveryEvent(tx, claim, "retry-consumed", {

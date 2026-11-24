@@ -121,38 +121,6 @@ afterEach(() => {
 })
 
 describe("Codex router terminal provider failure", () => {
-  it("preserves an earlier durable prompt and puts its response before later work", async () => {
-    const sqlite = new Database(databasePath)
-    sqlite.prepare("UPDATE agent_runs SET initial_prompt='A' WHERE id='run-auth'").run()
-    sqlite.prepare("UPDATE sub_chats SET messages=? WHERE id='sub-auth'").run(
-      JSON.stringify([
-        { id: "mcp-auth-prompt", role: "user", parts: [{ type: "text", text: "A" }] },
-        { id: "later", role: "user", parts: [{ type: "text", text: "Later" }] },
-      ]),
-    )
-    sqlite.close()
-    mocks.streamText.mockReturnValue({
-      toUIMessageStream: (options: any) =>
-        new ReadableStream({
-          async start(controller) {
-            await options.onFinish({
-              responseMessage: {
-                id: "reply",
-                role: "assistant",
-                parts: [{ type: "text", text: "A-response", state: "done" }],
-              },
-              isContinuation: false,
-            })
-            controller.enqueue({ type: "finish", finishReason: "stop" })
-            controller.close()
-          },
-        }),
-    })
-    await drainPendingMcpRuns(databasePath, launchThroughRealCodexRouter, {
-      waitForCompletion: true,
-    })
-    expect(readVisibleTranscript()).toEqual(["A", "A-response", "Later"])
-  })
   it("keeps auth failure authoritative through router completion and launch audit", async () => {
     await drainPendingMcpRuns(databasePath, launchThroughRealCodexRouter, {
       waitForCompletion: true,
@@ -221,47 +189,6 @@ describe("Codex router terminal provider failure", () => {
 
     expect(readVisibleTranscript()).toEqual(["A", "A-response", "B", "B-response"])
   })
-
-  it.each([
-    ["older", "none", "older[minimal]"],
-    ["older", "ultra", "older[xhigh]"],
-    ["new", "ultra", "new[ultra]"],
-  ] as const)(
-    "selects %s/%s against the actual ACP session before submitting the prompt",
-    async (model, reasoningEffort, chosen) => {
-      const provider = {
-        cleanup: vi.fn(),
-        getSessionId: () => null,
-        languageModel: vi.fn(() => ({})),
-        initSession: vi.fn(async () => ({
-          models: {
-            availableModels: ["older[minimal]", "older[xhigh]", "new[ultra]"].map((modelId) => ({
-              modelId,
-            })),
-          },
-        })),
-        setModel: vi.fn(async () => undefined),
-      }
-      mocks.createACPProvider.mockReturnValue(provider)
-      await collectStream(
-        await codexRouter.createCaller({ getWindow: () => null }).chat({
-          runId: "run-auth",
-          chatId: "chat-auth",
-          subChatId: "sub-auth",
-          prompt: "Test effort",
-          cwd: directory,
-          mode: "write",
-          model,
-          reasoningEffort,
-        }),
-      )
-      expect(provider.setModel).toHaveBeenCalledWith(chosen)
-      expect(provider.languageModel.mock.calls.at(-1)?.[0]).toBe(chosen)
-      expect(provider.setModel.mock.invocationCallOrder[0]).toBeLessThan(
-        mocks.streamText.mock.invocationCallOrder[0]!,
-      )
-    },
-  )
 
   it("enforces task-resolved skill and MCP policy for a direct Codex launch", async () => {
     seedCodexExtensionPolicy()

@@ -1,6 +1,3 @@
-export { AnthropicOnboardingPage } from "./anthropic-onboarding-page"
-export { ApiKeyOnboardingPage } from "./api-key-onboarding-page"
 export { BillingMethodPage } from "./billing-method-page"
-export { CodexOnboardingPage } from "./codex-onboarding-page"
 export { SelectRepoPage } from "./select-repo-page"
 export { FeatureVisibilityOnboardingPage } from "./feature-visibility-onboarding-page"

@@ -165,6 +165,14 @@ export function getPermissionEligibility(
   }
 
   if (mode === "auto-edit-project-only") {
+    if (harness === "antigravity") {
+      return {
+        selectable: true,
+        enforcement: "conservative",
+        reason:
+          "Antigravity file mutations are checked against the selected checkout. Shell commands are blocked.",
+      }
+    }
     if (harness === "codex") {
       return {
         selectable: true,

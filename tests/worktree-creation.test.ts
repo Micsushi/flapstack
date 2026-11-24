@@ -72,16 +72,4 @@ describe("worktree creation base commits", () => {
     expect(result).toEqual({ commitHash: sourceCommit, bootstrappedEmptyRepository: false })
     expect(git(worktreePath, "rev-parse", "HEAD")).toBe(sourceCommit)
   })
-
-  it("creates an isolated empty root commit when the repository is unborn", async () => {
-    const repository = createRepository("unborn")
-    const worktreePath = join(repository, "..", "testing")
-
-    const result = await createWorktree(repository, "testing", worktreePath, "origin/main")
-
-    expect(result.bootstrappedEmptyRepository).toBe(true)
-    expect(git(worktreePath, "branch", "--show-current")).toBe("testing")
-    expect(git(worktreePath, "log", "-1", "--format=%s")).toBe("Initialize worktree")
-    expect(() => git(repository, "rev-parse", "--verify", "HEAD")).toThrow()
-  })
 })

@@ -78,6 +78,7 @@ interface IsolatedMessageGroupProps {
   sandboxSetupError?: string
   onRetrySetup?: () => void
   onRollback?: (msg: any) => void
+  codexRewind?: { messageIds: string[]; pendingMessageId: string | null }
   onEditLatest?: (msg: any, text: string) => Promise<boolean>
   onFork?: (messageId: string) => void
   // Components passed from parent - must be stable references
@@ -114,6 +115,7 @@ function areGroupPropsEqual(
     prev.sandboxSetupError === next.sandboxSetupError &&
     prev.onRetrySetup === next.onRetrySetup &&
     prev.onRollback === next.onRollback &&
+    prev.codexRewind === next.codexRewind &&
     prev.onEditLatest === next.onEditLatest &&
     prev.onFork === next.onFork &&
     prev.UserBubbleComponent === next.UserBubbleComponent &&
@@ -133,6 +135,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
   sandboxSetupError,
   onRetrySetup,
   onRollback,
+  codexRewind,
   onEditLatest,
   onFork,
   UserBubbleComponent,
@@ -201,8 +204,21 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
   }, [])
 
   // Show rollback button only when this user turn has a valid rollback target.
-  const canRollback = onRollback && !!rollbackTargetSdkUuid && !isStreaming
-  const canEditLatest = onEditLatest && isLastGroup && !isStreaming && !isRollingBack
+  const codexTarget = codexRewind?.messageIds.includes(userMsgId)
+  const pendingRewind = codexRewind?.pendingMessageId
+  const rewindLabel =
+    pendingRewind === userMsgId
+      ? "Check Codex rewind"
+      : codexTarget
+        ? "Rewind Codex conversation"
+        : "Rollback to here"
+  const canRollback =
+    onRollback &&
+    (codexTarget || !!rollbackTargetSdkUuid) &&
+    !isStreaming &&
+    (!pendingRewind || pendingRewind === userMsgId)
+  const canEditLatest =
+    onEditLatest && isLastGroup && !isStreaming && !isRollingBack && !pendingRewind
   const canFork = !!onFork
 
   // Extract user message content
@@ -267,7 +283,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                 onClick={() => onRollback(userMsg)}
                 disabled={isRollingBack}
                 className="rounded-md p-1.5 hover:bg-accent"
-                aria-label="Rollback to here"
+                aria-label={rewindLabel}
               >
                 <IconTextUndo className="h-3.5 w-3.5 text-muted-foreground" />
               </button>
@@ -484,7 +500,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">
-                      {isRollingBack ? "Rolling back..." : "Rollback to here"}
+                      {isRollingBack ? "Rewinding..." : rewindLabel}
                     </TooltipContent>
                   </Tooltip>
                 )}

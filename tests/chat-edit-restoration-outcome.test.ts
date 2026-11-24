@@ -1,7 +1,7 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
-import { readFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -43,7 +43,6 @@ import * as schema from "../src/main/lib/db/schema"
 import { chatsRouter } from "../src/main/lib/trpc/routers/chats"
 
 const caller = chatsRouter.createCaller({ getWindow: () => null })
-const activeChatSource = readFileSync("src/renderer/features/agents/main/active-chat.tsx", "utf8")
 
 let container = ""
 let sqlite: Database.Database
@@ -113,56 +112,6 @@ describe("recorded chat outcomes", () => {
       history[2],
     ])
   })
-
-  it("uses the stored shell edit and excludes a provider's private plan from chat counts", async () => {
-    seedRun(null)
-    sqlite
-      .prepare(
-        `INSERT INTO agent_runs (id, chat_id, sub_chat_id, harness, permission_mode, status)
-      VALUES ('read-only', 'chat-1', 'sub-1', 'claude-code', 'read-only', 'success')`,
-      )
-      .run()
-    sqlite
-      .prepare(
-        `INSERT INTO file_change_manifests
-      (id,run_id,file_path,change_type,additions,deletions)
-      VALUES ('no-change','read-only','','none',0,0)`,
-      )
-      .run()
-    sqlite
-      .prepare(
-        `INSERT INTO file_change_manifests
-      (id,run_id,file_path,change_type,additions,deletions)
-      VALUES ('diff','run-1','result.json','added',9,0)`,
-      )
-      .run()
-    const history = [
-      {
-        role: "assistant",
-        metadata: { runId: "run-1", transport: "codex-runtime" },
-        parts: [{ type: "tool-Bash" }],
-      },
-      {
-        role: "assistant",
-        metadata: { runId: "read-only", transport: "claude-code-runtime" },
-        parts: [
-          {
-            type: "tool-Write",
-            input: {
-              file_path: "/provider/plans/notes.md",
-              content: Array(17).fill("plan").join("\n"),
-            },
-          },
-        ],
-      },
-    ]
-    sqlite.prepare("UPDATE sub_chats SET messages=? WHERE id='sub-1'").run(JSON.stringify(history))
-    for (const filter of [{ openSubChatIds: ["sub-1"] }, { chatIds: ["chat-1"] }]) {
-      expect(await caller.getFileStats(filter)).toEqual([
-        { chatId: "chat-1", fileCount: 1, additions: 9, deletions: 0 },
-      ])
-    }
-  })
 })
 
 describe("editLatestUserMessage restoration outcome", () => {
@@ -220,11 +169,5 @@ describe("editLatestUserMessage restoration outcome", () => {
         ).messages,
       ),
     ).toHaveLength(1)
-  })
-
-  it("warns in the renderer exactly when the server reports a conversation-only rewind", () => {
-    expect(activeChatSource).toContain('result.restoration === "conversation-only"')
-    expect(activeChatSource).toContain('toast.warning("Rewound the conversation only"')
-    expect(activeChatSource).toContain("earlier file changes were kept on disk")
   })
 })

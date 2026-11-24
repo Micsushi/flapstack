@@ -172,7 +172,7 @@ export interface ChatInputAreaProps {
   onSend: (inputValueOverride?: string, intent?: "queue" | "steer") => void
   onForceSend: () => void // Opt+Enter: stop stream and send immediately, bypassing queue
   onStop: () => Promise<void>
-  onCompact: () => void
+  onCompact?: () => void
   onModeChange?: (newMode: AgentMode) => void
   // State from parent
   isStreaming: boolean
@@ -364,6 +364,10 @@ function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaPr
     prevProps.messageTokenData.totalOutputTokens !== nextProps.messageTokenData.totalOutputTokens ||
     prevProps.messageTokenData.totalChatTokens !== nextProps.messageTokenData.totalChatTokens ||
     prevProps.messageTokenData.contextWindow !== nextProps.messageTokenData.contextWindow ||
+    prevProps.messageTokenData.autoCompactThreshold !==
+      nextProps.messageTokenData.autoCompactThreshold ||
+    prevProps.messageTokenData.autoCompactEnabled !==
+      nextProps.messageTokenData.autoCompactEnabled ||
     prevProps.messageTokenData.messageCount !== nextProps.messageTokenData.messageCount
   ) {
     return false
@@ -844,7 +848,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   const contextTokenData = useMemo(
     () => ({
       ...messageTokenData,
-      contextWindow: messageTokenData.contextWindow ?? selectedModelContextWindow,
+      contextWindow: selectedModelContextWindow ?? messageTokenData.contextWindow,
     }),
     [messageTokenData, selectedModelContextWindow],
   )
@@ -1912,7 +1916,7 @@ export const ChatInputArea = memo(function ChatInputArea({
             return
           case "compact":
             // Trigger context compaction
-            onCompact()
+            onCompact?.()
             return
         }
       }
@@ -2489,7 +2493,6 @@ export const ChatInputArea = memo(function ChatInputArea({
                       }}
                     />
                     <AgentModelTuningSelector
-                      showAntigravityApprovals={effectivePermissionMode === "full-access"}
                       antigravity={antigravity}
                       selectedAgentId={provider}
                       reasoningEnabled={reasoningOutputEnabled}
@@ -3037,6 +3040,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                       className="h-7 w-7"
                       isCompacting={isCompacting}
                       disabled={isStreaming}
+                      onCompact={onCompact}
                     />
                   )}
                   {!isVoiceRecording && !isTranscribing && (
@@ -3237,6 +3241,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         position={slashPosition}
         projectPath={projectPath}
         mode={subChatMode}
+        disabledCommands={onCompact ? undefined : ["compact"]}
       />
 
       <AlertDialog

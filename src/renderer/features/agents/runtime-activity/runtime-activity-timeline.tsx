@@ -1,5 +1,6 @@
 "use client"
 
+import { preserveDisclosurePosition } from "../lib/disclosure-anchor"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   memo,
@@ -112,6 +113,7 @@ function RuntimeActivityRowView({
   onSelect: () => void
   onElement: (element: HTMLElement | null) => void
 }) {
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false)
   const timestamp = formatTimestamp(row.timestamp)
   const duration = formatDuration(row.durationMs)
   const lifecycle =
@@ -216,21 +218,26 @@ function RuntimeActivityRowView({
           ))}
         </div>
       )}
-      <details className="mt-2 text-xs text-muted-foreground">
+      <details
+        className="mt-2 text-xs text-muted-foreground"
+        onToggle={(event) => setShowTechnicalDetails(event.currentTarget.open)}
+      >
         <summary className="cursor-pointer rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
           Technical details
         </summary>
-        <div className="mt-2 space-y-1 whitespace-pre-wrap break-all">
-          <div>
-            {row.provenance} / {row.label} / {row.kind} / {row.status}
+        {showTechnicalDetails && (
+          <div className="mt-2 space-y-1 whitespace-pre-wrap break-all">
+            <div>
+              {row.provenance} / {row.label} / {row.kind} / {row.status}
+            </div>
+            {timestamp && <div>{new Date(row.timestamp!).toISOString()}</div>}
+            {row.parentId && <div>Child of {row.parentId}</div>}
+            {row.identity.map((identity) => (
+              <div key={identity}>{identity}</div>
+            ))}
+            {lifecycle && <div>{row.content}</div>}
           </div>
-          {timestamp && <div>{new Date(row.timestamp!).toISOString()}</div>}
-          {row.parentId && <div>Child of {row.parentId}</div>}
-          {row.identity.map((identity) => (
-            <div key={identity}>{identity}</div>
-          ))}
-          {lifecycle && <div>{row.content}</div>}
-        </div>
+        )}
       </details>
     </article>
   )
@@ -261,6 +268,14 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const manualExpansionRef = useRef(new Map<string, boolean>())
   const viewportRef = useRef<HTMLDivElement>(null)
+  const releaseDisclosureAnchor = useRef<(() => void) | undefined>(undefined)
+  useEffect(() => () => releaseDisclosureAnchor.current?.(), [])
+  const anchorDisclosure = useCallback((target: HTMLElement) => {
+    if (!viewportRef.current) return
+    releaseDisclosureAnchor.current?.()
+    releaseDisclosureAnchor.current = preserveDisclosurePosition(viewportRef.current, target)
+  }, [])
+
   const rowElementsRef = useRef(new Map<string, HTMLElement>())
   const pendingFocusKeyRef = useRef<string | null>(null)
   const focusedRowKeyRef = useRef<string | null>(null)
@@ -408,6 +423,7 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
         event.preventDefault()
         event.stopPropagation()
         pendingFocusKeyRef.current = activeKey
+        anchorDisclosure(targetRow)
         setExpandedKeys((currentKeys) => {
           const next = new Set(currentKeys)
           const expanded = !next.has(activeKey)
@@ -418,7 +434,7 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
         })
       }
     },
-    [filteredRows, rowVirtualizer, selectedKey, shouldVirtualize],
+    [anchorDisclosure, filteredRows, rowVirtualizer, selectedKey, shouldVirtualize],
   )
 
   const stateMessage =
@@ -508,6 +524,13 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
       {filteredRows.length > 0 && (
         <div
           ref={viewportRef}
+          onClickCapture={(event) => {
+            const target =
+              event.target instanceof Element
+                ? event.target.closest<HTMLElement>("[aria-expanded], summary")
+                : null
+            if (target && event.currentTarget.contains(target)) anchorDisclosure(target)
+          }}
           role="feed"
           aria-label="Runtime activity"
           aria-busy={status === "loading"}

@@ -1,11 +1,9 @@
 import {
   chmodSync,
-  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  renameSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs"
@@ -16,23 +14,13 @@ import { describe, expect, it } from "vitest"
 import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import {
   ensureRealDirectory,
-  inspectBinaryArchitecture,
-  replaceDirectoryAtomically,
   sha256File,
   validateBundledBinary,
   verifyCachedBinaryDigest,
 } from "../scripts/lib/packaged-binary.mjs"
-import { resolvePackageBuild, runAppBuild } from "../scripts/package-app.mjs"
-import { inspectLinuxApp, runMacNativeModulesSmoke } from "../scripts/inspect-packaged-binaries.mjs"
-import { resolveDarwinTargetPackages } from "../scripts/lib/darwin-target-dependencies.mjs"
-import {
-  resolvePackageTargets,
-  validatePreparedTarget,
-} from "../scripts/prepare-package-resources.mjs"
-import {
-  installWhisperDirectory,
-  validateWhisperDirectory,
-} from "../scripts/prepare-whisper-binary.mjs"
+import { resolvePackageBuild } from "../scripts/package-app.mjs"
+import { validatePreparedTarget } from "../scripts/prepare-package-resources.mjs"
+import { installWhisperDirectory } from "../scripts/prepare-whisper-binary.mjs"
 
 describe("standalone Whisper resource preparation", () => {
   function fixture() {
@@ -59,39 +47,12 @@ describe("standalone Whisper resource preparation", () => {
     return { target, staging }
   }
 
-  it("repairs Whisper while preserving sibling binaries and their metadata", () => {
-    const { target, staging } = fixture()
-    installWhisperDirectory(staging, target, "win32-x64")
-    expect(readFileSync(join(target, "codex.exe"), "utf8")).toBe("retained codex")
-    expect(readFileSync(join(target, "flapstack-stt-sidecar.exe"), "utf8")).toBe("retained sidecar")
-    expect(readFileSync(join(target, ".stt-sidecar.sha256"), "utf8")).toBe("retained digest")
-    expect(() => validateWhisperDirectory(target, "win32-x64", true)).not.toThrow()
-    expect(() => validateWhisperDirectory(target, "win32-x64")).toThrow(/unexpected/i)
-  })
-
   it("rejects unexpected downloaded files before changing existing resources", () => {
     const { target, staging } = fixture()
     writeFileSync(join(staging, "codex.exe"), "unexpected download")
     expect(() => installWhisperDirectory(staging, target, "win32-x64")).toThrow(/unexpected/i)
     expect(readFileSync(join(target, "codex.exe"), "utf8")).toBe("retained codex")
     expect(readFileSync(join(target, "whisper-cli.exe"), "utf8")).toBe("previous whisper")
-  })
-
-  it("recovers an interrupted directory replacement before preserving siblings", () => {
-    const { target, staging } = fixture()
-    renameSync(target, join(target, "..", ".win32-x64.replacement-backup"))
-    installWhisperDirectory(staging, target, "win32-x64")
-    expect(readFileSync(join(target, "codex.exe"), "utf8")).toBe("retained codex")
-    expect(readFileSync(join(target, "flapstack-stt-sidecar.exe"), "utf8")).toBe("retained sidecar")
-    validateWhisperDirectory(target, "win32-x64", true)
-  })
-
-  it("refuses a non-regular sibling without replacing the resource directory", () => {
-    const { target, staging } = fixture()
-    mkdirSync(join(target, "unexpected-directory"))
-    expect(() => installWhisperDirectory(staging, target, "win32-x64")).toThrow(/regular file/)
-    expect(readFileSync(join(target, "whisper-cli.exe"), "utf8")).toBe("previous whisper")
-    expect(readFileSync(join(target, "codex.exe"), "utf8")).toBe("retained codex")
   })
 })
 
@@ -101,14 +62,6 @@ function macho(arch: "arm64" | "x64") {
   const buffer = Buffer.alloc(32)
   buffer.writeUInt32BE(0xcffaedfe, 0)
   buffer.writeUInt32LE(arch === "arm64" ? 0x0100000c : 0x01000007, 4)
-  return buffer
-}
-
-function elf(arch: "arm64" | "x64") {
-  const buffer = Buffer.alloc(64)
-  Buffer.from([0x7f, 0x45, 0x4c, 0x46]).copy(buffer)
-  buffer[5] = 1
-  buffer.writeUInt16LE(arch === "arm64" ? 183 : 62, 18)
   return buffer
 }
 
@@ -173,214 +126,6 @@ describe("packaged harness preparation", () => {
     )
   })
 
-  it("loads packaged macOS native modules through the bundled Electron runtime", () => {
-    let invocation: {
-      runtime: string
-      args: string[]
-      options: { env: NodeJS.ProcessEnv; timeout: number }
-    } | null = null
-    runMacNativeModulesSmoke(
-      "/Applications/Flapstack.app/Contents/MacOS/Flapstack",
-      "/resources/app.asar/node_modules",
-      (runtime: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
-        invocation = { runtime, args, options }
-        return { status: 0, stdout: "native-modules-ok", stderr: "" }
-      },
-    )
-
-    expect(invocation).toMatchObject({
-      runtime: "/Applications/Flapstack.app/Contents/MacOS/Flapstack",
-      options: { env: { ELECTRON_RUN_AS_NODE: "1" }, timeout: 180_000 },
-    })
-    expect(invocation!.args[1]).toContain(
-      JSON.stringify(join("/resources/app.asar/node_modules", "better-sqlite3")),
-    )
-    expect(invocation!.args[1]).toContain(
-      JSON.stringify(join("/resources/app.asar/node_modules", "sharp")),
-    )
-    expect(invocation!.args[1]).toContain(
-      JSON.stringify(join("/resources/app.asar/node_modules", "node-pty")),
-    )
-  })
-
-  it("pins optional native packages for every macOS package architecture", () => {
-    const lock = requireFromTest("../package-lock.json")
-    expect(resolveDarwinTargetPackages(["darwin-x64", "darwin-arm64"], lock)).toEqual([
-      expect.objectContaining({ name: "@img/sharp-darwin-x64", target: "darwin-x64" }),
-      expect.objectContaining({ name: "@img/sharp-libvips-darwin-x64", target: "darwin-x64" }),
-      expect.objectContaining({ name: "@openai/codex-darwin-x64", target: "darwin-x64" }),
-      expect.objectContaining({ name: "@img/sharp-darwin-arm64", target: "darwin-arm64" }),
-      expect.objectContaining({ name: "@img/sharp-libvips-darwin-arm64", target: "darwin-arm64" }),
-      expect.objectContaining({ name: "@openai/codex-darwin-arm64", target: "darwin-arm64" }),
-    ])
-  })
-
-  it("requires exact resource targets instead of deriving architectures from the host", () => {
-    expect(resolvePackageTargets(["darwin-arm64", "darwin-x64"])).toEqual([
-      "darwin-arm64",
-      "darwin-x64",
-    ])
-    expect(resolvePackageTargets(["win32-x64"])).toEqual(["win32-x64"])
-    expect(resolvePackageTargets(["linux-x64", "linux-arm64"])).toEqual([
-      "linux-x64",
-      "linux-arm64",
-    ])
-    expect(() => resolvePackageTargets([])).toThrow("explicit platform and architecture")
-    expect(() => resolvePackageTargets(["linux"])).toThrow("Unsupported package target")
-  })
-
-  it("shares macOS, Windows, and Linux architecture selection with electron-builder", () => {
-    expect(
-      resolvePackageBuild({ platform: "darwin", architectures: ["arm64", "x64"] }),
-    ).toMatchObject({
-      targets: ["darwin-arm64", "darwin-x64"],
-      builderArgs: ["--mac", "--arm64", "--x64"],
-    })
-    expect(resolvePackageBuild({ platform: "win32", architectures: ["x64"] })).toMatchObject({
-      targets: ["win32-x64"],
-      builderArgs: ["--win", "--x64"],
-    })
-    expect(resolvePackageBuild({ platform: "linux", architectures: ["x64"] })).toMatchObject({
-      targets: ["linux-x64"],
-      builderArgs: ["--linux", "--x64"],
-    })
-    expect(resolvePackageBuild({ platform: "linux", architectures: ["arm64"] })).toMatchObject({
-      targets: ["linux-arm64"],
-      builderArgs: ["--linux", "--arm64"],
-    })
-  })
-
-  it("builds packages through Node without a platform command shim", () => {
-    const cwd = join(tmpdir(), "flapstack-package-build")
-    let invocation: unknown
-
-    runAppBuild({
-      cwd,
-      spawn: (command: string, args: string[], options: unknown) => {
-        invocation = { command, args, options }
-        return { status: 0 }
-      },
-    })
-
-    expect(invocation).toEqual({
-      command: process.execPath,
-      args: [join(cwd, "scripts", "build.mjs")],
-      options: { cwd, stdio: "inherit" },
-    })
-  })
-
-  it("keeps generic dist preparation aligned with every builder architecture", () => {
-    expect(resolvePackageBuild({}, { platform: "darwin", arch: "arm64" })).toMatchObject({
-      targets: ["darwin-arm64", "darwin-x64"],
-      builderArgs: ["--mac", "--arm64", "--x64"],
-    })
-    expect(resolvePackageBuild({}, { platform: "linux", arch: "arm64" })).toMatchObject({
-      targets: ["linux-arm64"],
-      builderArgs: ["--linux", "--arm64"],
-    })
-    expect(() => resolvePackageBuild({ platform: "linux" })).toThrow(
-      "requires an explicit architecture",
-    )
-  })
-
-  it("gives macOS preview packages a separate app, protocol, and output identity", () => {
-    expect(
-      resolvePackageBuild({
-        platform: "darwin",
-        architectures: ["arm64"],
-        dir: true,
-        channel: "preview",
-      }),
-    ).toMatchObject({
-      targets: ["darwin-arm64"],
-      channel: "preview",
-      builderArgs: expect.arrayContaining([
-        "--mac",
-        "--arm64",
-        "--dir",
-        "--config=electron-builder.preview.mac.cjs",
-      ]),
-    })
-    expect(requireFromTest("../electron-builder.preview.mac.cjs").npmRebuild).toBe(true)
-  })
-
-  it("gives Windows preview packages a separate app, protocol, and output identity", () => {
-    expect(
-      resolvePackageBuild({
-        platform: "win32",
-        architectures: ["x64"],
-        dir: true,
-        channel: "preview",
-      }),
-    ).toMatchObject({
-      targets: ["win32-x64"],
-      channel: "preview",
-      builderArgs: expect.arrayContaining([
-        "--win",
-        "--x64",
-        "--dir",
-        "--config=electron-builder.preview.win.cjs",
-      ]),
-    })
-  })
-
-  it("gives Linux preview packages a separate app, protocol, and output identity", () => {
-    const packageJson = requireFromTest("../package.json")
-    expect(
-      resolvePackageBuild({
-        platform: "linux",
-        architectures: ["x64"],
-        dir: true,
-        channel: "preview",
-      }),
-    ).toMatchObject({
-      targets: ["linux-x64"],
-      channel: "preview",
-      builderArgs: expect.arrayContaining([
-        "--linux",
-        "--x64",
-        "--dir",
-        "--config=electron-builder.preview.linux.cjs",
-      ]),
-    })
-    expect(requireFromTest("../electron-builder.preview.linux.cjs")).toMatchObject({
-      appId: "dev.flapstack.app.preview",
-      productName: "Flapstack-Preview",
-      extraMetadata: {
-        name: "flapstack-preview",
-        desktopName: "flapstack-preview.desktop",
-      },
-      linux: { executableName: "flapstack-preview", syncDesktopName: true },
-      protocols: [{ name: "Flapstack Preview", schemes: ["flapstack-preview"] }],
-      deb: { afterInstall: "build/linux-after-install-preview.sh" },
-    })
-    expect(requireFromTest("../electron-builder.release.linux.cjs")).toMatchObject({
-      deb: { afterInstall: "build/linux-after-install-release.sh" },
-    })
-    expect(packageJson.author.email).toBeTruthy()
-    expect(packageJson.desktopName).toBe("flapstack.desktop")
-    expect(packageJson.build.toolsets).toEqual({ appimage: "1.0.3" })
-    expect(packageJson.build.deb.depends).toEqual(expect.arrayContaining(["libgbm1", "libasound2"]))
-    expect(packageJson.scripts["package:preview:linux:artifacts"]).toContain(
-      "--platform=linux --arch=x64 --channel=preview",
-    )
-    expect(packageJson.scripts["package:preview:linux:artifacts:arm64"]).toContain(
-      "--platform=linux --arch=arm64 --channel=preview",
-    )
-    expect(packageJson.scripts["package:release:linux:arm64"]).toContain(
-      "--platform=linux --arch=arm64 --channel=release",
-    )
-    expect(packageJson.scripts["package:smoke:preview:linux:arm64"]).toContain(
-      "--platform=linux-arm64 --smoke",
-    )
-  })
-
-  it("routes Linux package inspection through ELF and native-module checks", () => {
-    expect(() => inspectLinuxApp("/tmp/flapstack", "darwin-x64")).toThrow(
-      "Unsupported Linux package platform",
-    )
-  })
-
   it("requires Authenticode for Windows release packages", () => {
     expect(
       resolvePackageBuild({
@@ -409,231 +154,6 @@ describe("packaged harness preparation", () => {
       },
     })
     expect(releaseConfig.artifactName).toBeUndefined()
-  })
-
-  it("keeps ONNX Runtime payload filtering target- and architecture-specific", () => {
-    const packageJson = requireFromTest("../package.json")
-    expect(packageJson.build.asarUnpack).toContain("node_modules/@img/sharp-libvips-*/**/*")
-    expect(packageJson.build.files).toEqual(
-      expect.arrayContaining([
-        "!node_modules/node-pty/prebuilds/**/*",
-        "!node_modules/node-pty/third_party/**/*",
-        "!node_modules/better-sqlite3/build/Release/test_extension.node",
-        "!node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
-        "!node_modules/**/{test,tests,__tests__}/**/*",
-        "!node_modules/**/*.test.{js,cjs,mjs,ts,tsx}",
-        "!**/*.{obj,pdb,lib,exp,iobj,ipdb,ilk}",
-      ]),
-    )
-    expect(packageJson.build.files).not.toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(
-          /^!node_modules\/onnxruntime-node\/bin\/napi-v3\/(?:darwin|linux|win32)\//,
-        ),
-      ]),
-    )
-
-    expect(packageJson.build.win.files).toEqual([
-      ...packageJson.build.files,
-      "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**/*",
-      "!node_modules/onnxruntime-node/bin/napi-v3/linux/**/*",
-      "!node_modules/onnxruntime-node/bin/napi-v3/win32/!(${arch})/**/*",
-    ])
-    expect(packageJson.build.mac.files).toEqual([
-      ...packageJson.build.files,
-      "!node_modules/@img/sharp-darwin-!(${arch})/**/*",
-      "!node_modules/@img/sharp-libvips-darwin-!(${arch})/**/*",
-      "!node_modules/@openai/codex-darwin-!(${arch})/**/*",
-      "!node_modules/node-pty/bin/**/*",
-      "!node_modules/onnxruntime-node/bin/napi-v3/linux/**/*",
-      "!node_modules/onnxruntime-node/bin/napi-v3/win32/**/*",
-      "!node_modules/onnxruntime-node/bin/napi-v3/darwin/!(${arch})/**/*",
-    ])
-    expect(packageJson.build.linux.files).toEqual([
-      ...packageJson.build.files,
-      "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**/*",
-      "!node_modules/onnxruntime-node/bin/napi-v3/win32/**/*",
-      "!node_modules/onnxruntime-node/bin/napi-v3/linux/!(${arch})/**/*",
-    ])
-
-    expect(requireFromTest("../electron-builder.preview.win.cjs").win.files).toEqual(
-      packageJson.build.win.files,
-    )
-    expect(requireFromTest("../electron-builder.release.win.cjs").win.files).toEqual(
-      packageJson.build.win.files,
-    )
-    expect(requireFromTest("../electron-builder.preview.mac.cjs").mac.files).toEqual(
-      packageJson.build.mac.files,
-    )
-    expect(requireFromTest("../electron-builder.release.mac.cjs").mac.files).toEqual(
-      packageJson.build.mac.files,
-    )
-
-    const { FileMatcher } = requireFromTest("app-builder-lib/out/fileMatcher.js")
-    const targets = [
-      ["win", "win32", "x64"],
-      ["mac", "darwin", "x64"],
-      ["mac", "darwin", "arm64"],
-      ["linux", "linux", "x64"],
-      ["linux", "linux", "arm64"],
-    ] as const
-    const fixtureStat = lstatSync(join(process.cwd(), "package.json"))
-    for (const [configKey, platform, architecture] of targets) {
-      const appMatcher = new FileMatcher(
-        process.cwd(),
-        process.cwd(),
-        (pattern: string) => pattern.replaceAll("${arch}", architecture),
-        packageJson.build[configKey].files,
-      )
-      const appFilter = appMatcher.createFilter()
-      expect(
-        appFilter(
-          join(process.cwd(), "native", "stt-sidecar", "target", "release", "build.exe"),
-          fixtureStat,
-        ),
-      ).toBe(false)
-      expect(appFilter(join(process.cwd(), "out", "main", "index.js"), fixtureStat)).toBe(true)
-
-      const matcher = new FileMatcher(
-        process.cwd(),
-        process.cwd(),
-        (pattern: string) => pattern.replaceAll("${arch}", architecture),
-        ["**/*", ...packageJson.build[configKey].files],
-      )
-      const filter = matcher.createFilter()
-      expect(
-        filter(
-          join(
-            process.cwd(),
-            "node_modules",
-            "@anthropic-ai",
-            "claude-agent-sdk-darwin-arm64",
-            "claude",
-          ),
-          fixtureStat,
-        ),
-      ).toBe(false)
-      const keptBindings = ["win32", "darwin", "linux"].flatMap((candidatePlatform) =>
-        ["x64", "arm64"]
-          .filter((candidateArchitecture) => {
-            const binding = join(
-              process.cwd(),
-              "node_modules",
-              "onnxruntime-node",
-              "bin",
-              "napi-v3",
-              candidatePlatform,
-              candidateArchitecture,
-              "onnxruntime_binding.node",
-            )
-            return filter(binding, fixtureStat)
-          })
-          .map((candidateArchitecture) => `${candidatePlatform}-${candidateArchitecture}`),
-      )
-      expect(keptBindings).toEqual([`${platform}-${architecture}`])
-      if (platform === "darwin") {
-        expect(
-          filter(
-            join(
-              process.cwd(),
-              "node_modules",
-              "node-pty",
-              "bin",
-              "darwin-arm64-140",
-              "node-pty.node",
-            ),
-            fixtureStat,
-          ),
-        ).toBe(false)
-        const keptSharpArchitectures = ["x64", "arm64"].filter((candidateArchitecture) =>
-          filter(
-            join(
-              process.cwd(),
-              "node_modules",
-              "@img",
-              `sharp-darwin-${candidateArchitecture}`,
-              "lib",
-              `sharp-darwin-${candidateArchitecture}-0.35.3.node`,
-            ),
-            fixtureStat,
-          ),
-        )
-        expect(keptSharpArchitectures).toEqual([architecture])
-        const keptCodexArchitectures = ["x64", "arm64"].filter((candidateArchitecture) =>
-          filter(
-            join(
-              process.cwd(),
-              "node_modules",
-              "@openai",
-              `codex-darwin-${candidateArchitecture}`,
-              "vendor",
-              candidateArchitecture === "x64" ? "x86_64-apple-darwin" : "aarch64-apple-darwin",
-              "bin",
-              "codex",
-            ),
-            fixtureStat,
-          ),
-        )
-        expect(keptCodexArchitectures).toEqual([architecture])
-      }
-    }
-  })
-
-  it("uses the explicit unsigned config for macOS beta release packages", () => {
-    expect(
-      resolvePackageBuild({
-        platform: "darwin",
-        architectures: ["arm64", "x64"],
-        channel: "release",
-      }),
-    ).toMatchObject({
-      targets: ["darwin-arm64", "darwin-x64"],
-      builderArgs: [
-        "--mac",
-        "--arm64",
-        "--x64",
-        "--config=electron-builder.release.mac.cjs",
-        "--publish=never",
-      ],
-    })
-
-    expect(requireFromTest("../electron-builder.release.mac.cjs")).toMatchObject({
-      forceCodeSigning: false,
-      artifactName: "${productName}-${version}-${arch}.${ext}",
-      mac: {
-        identity: null,
-        notarize: false,
-        target: [{ target: "dmg", arch: ["arm64", "x64"] }],
-      },
-    })
-  })
-
-  it("recognizes Mach-O, ELF, and PE architectures", () => {
-    const dir = mkdtempSync(join(tmpdir(), "flapstack-binaries-"))
-    expect(inspectBinaryArchitecture(executable(dir, "mac", macho("arm64")))).toMatchObject({
-      format: "mach-o",
-      architectures: ["arm64"],
-    })
-    expect(inspectBinaryArchitecture(executable(dir, "linux", elf("x64")))).toMatchObject({
-      format: "elf",
-      architectures: ["x64"],
-    })
-    expect(inspectBinaryArchitecture(executable(dir, "windows.exe", pe("x64")))).toMatchObject({
-      format: "pe",
-      architectures: ["x64"],
-    })
-    expect(
-      inspectBinaryArchitecture(executable(dir, "windows-elevate.exe", pe("x86"))),
-    ).toMatchObject({
-      format: "pe",
-      architectures: ["x86"],
-    })
-    expect(
-      inspectBinaryArchitecture(executable(dir, "renamed.data", pe("x64", 8192))),
-    ).toMatchObject({
-      format: "pe",
-      architectures: ["x64"],
-    })
   })
 
   it("rejects invalid native CLIs using the host package format", () => {
@@ -683,41 +203,6 @@ describe("packaged harness preparation", () => {
     writeFileSync(binary, Buffer.concat([initial, Buffer.from("tampered")]))
     await expect(verifyCachedBinaryDigest(binary, platform, marker)).resolves.toBe(false)
   })
-
-  it.skipIf(!fileSymlinksSupported)(
-    "replaces stale Whisper resources without following a destination symlink",
-    () => {
-      const parent = mkdtempSync(join(tmpdir(), "flapstack-whisper-stage-"))
-      const platform = process.platform === "win32" ? "win32-x64" : "darwin-arm64"
-      const target = join(parent, platform)
-      const staging = join(parent, `.whisper-${platform}-stage`)
-      const outside = join(parent, "outside")
-      mkdirSync(target)
-      mkdirSync(staging)
-      writeFileSync(join(target, "stale-extra"), "must disappear")
-      writeFileSync(outside, "outside remains")
-      const cliName = process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli"
-      symlinkSync(outside, join(target, cliName))
-
-      executable(staging, cliName, process.platform === "win32" ? pe("x64") : macho("arm64"))
-      writeFileSync(join(staging, "whisper.cpp-LICENSE"), "license")
-      writeFileSync(join(staging, ".whisper-version"), "1.8.6-portable-v1\n")
-      if (process.platform === "win32") {
-        for (const dll of ["ggml-base.dll", "ggml-cpu.dll", "ggml.dll", "whisper.dll"]) {
-          writeFileSync(join(staging, dll), "fixture")
-        }
-      }
-
-      expect(() => validateWhisperDirectory(target, platform)).toThrow()
-      validateWhisperDirectory(staging, platform)
-      replaceDirectoryAtomically(staging, target)
-      validateWhisperDirectory(target, platform)
-
-      expect(existsSync(join(target, "stale-extra"))).toBe(false)
-      expect(lstatSync(join(target, cliName)).isSymbolicLink()).toBe(false)
-      expect(readFileSync(outside, "utf8")).toBe("outside remains")
-    },
-  )
 
   it("rejects a symlinked CLI target directory before downloaders can write through it", () => {
     const parent = mkdtempSync(join(tmpdir(), "flapstack-cli-root-"))

@@ -50,6 +50,7 @@ import {
   runtimeSnapshotSqlValues,
 } from "../agent-runtime/snapshot"
 import { queueChatRun } from "../run-launch-service"
+import { planProviderTransition } from "../../../shared/provider-transition"
 import { registerChatWait } from "../chat-waits"
 import { VisualArtifactStore } from "../visual-capture/artifact-store"
 import { canonicalMcpChatScope } from "./scope"
@@ -167,12 +168,12 @@ function refuseUnboundRecordsCaller(): McpControlResponse {
 
 type Row = Record<string, unknown>
 /**
- * The stdio MCP child cannot call renderer tRPC. This is the shared, main-free
- * mutation layer used by its registry and deliberately opens a short-lived DB
- * connection for every call, matching the caller revalidation model.
+ * Live calls use the desktop's active database. A verified offline owner can
+ * use the same operations through a short-lived standalone connection.
  */
 export function createMcpMutationService(
   databasePath = process.env.FLAPSTACK_DB_PATH,
+  activeDatabase?: () => Database.Database,
 ): McpMutationService {
   if (!databasePath) throw new Error("FLAPSTACK_DB_PATH is required for MCP mutations.")
   return {
@@ -193,10 +194,12 @@ export function createMcpMutationService(
         !validateChatDestination(input.data as z.infer<typeof schemas.create_chat>)
       )
         return fail("invalid-input", "Scope identity must match the chat destination.")
-      const db = openAppDatabase(databasePath)
+      const db = activeDatabase?.() ?? openAppDatabase(databasePath)
       try {
-        db.pragma("foreign_keys = ON")
-        db.pragma("busy_timeout = 5000")
+        if (!activeDatabase) {
+          db.pragma("foreign_keys = ON")
+          db.pragma("busy_timeout = 5000")
+        }
         const scope = callerScope(db, caller)
         switch (operation) {
           case "create_project": {
@@ -334,7 +337,7 @@ export function createMcpMutationService(
         if (error instanceof AgentOrchestrationError) return fail(error.code, error.message)
         return fail("internal-error", message)
       } finally {
-        db.close()
+        if (!activeDatabase) db.close()
       }
     },
   }
@@ -546,14 +549,16 @@ function updateChatSettings(
     .prepare("SELECT * FROM sub_chats WHERE chat_id = ? ORDER BY created_at, id LIMIT 1")
     .get(input.chatId) as Row | undefined
   if (!sub) return fail("stale-target", "Chat conversation is missing.")
-  if (
-    (input.harness !== undefined ||
-      input.chatMode !== undefined ||
-      input.permissionMode !== undefined ||
-      input.customPermissions !== undefined) &&
+  const active = Boolean(
     db
       .prepare("SELECT 1 FROM agent_runs WHERE chat_id = ? AND status IN ('running','pending')")
-      .get(input.chatId)
+      .get(input.chatId),
+  )
+  if (
+    active &&
+    (input.chatMode !== undefined ||
+      input.permissionMode !== undefined ||
+      input.customPermissions !== undefined)
   ) {
     return fail(
       "conflict",
@@ -622,6 +627,24 @@ function updateChatSettings(
       "The selected settings are fixed by this chat's bound Agent Profile.",
     )
   }
+  const transition = planProviderTransition({
+    current: {
+      harness: stringOrNull(previousHarness),
+      model: stringOrNull(sub.model ?? chat.model),
+      reasoningEffort: stringOrNull(sub.reasoning_effort ?? chat.reasoning_effort),
+    },
+    target: {
+      harness: stringOrNull(harness),
+      model: stringOrNull(model),
+      reasoningEffort: stringOrNull(effort),
+    },
+    active,
+    hasHistory: Boolean(
+      sub.session_id ||
+      db.prepare("SELECT 1 FROM agent_runs WHERE sub_chat_id = ? LIMIT 1").get(sub.id),
+    ),
+  })
+  if (transition.type === "reject") return fail("conflict", transition.reason)
   db.prepare(
     "UPDATE chats SET harness = ?, model = ?, reasoning_effort = ?, permission_mode = ?, custom_permissions = ?, runtime_preference = CASE WHEN ? THEN NULL ELSE runtime_preference END, updated_at = unixepoch() WHERE id = ?",
   ).run(
@@ -642,13 +665,14 @@ function updateChatSettings(
     permission,
     input.chatMode ?? sub.mode,
     Number(changedHarness),
-    Number(changedHarness),
+    Number(transition.type === "create_with_handoff"),
     sub.id,
   )
   return {
     ok: true,
     data: {
       chatId: input.chatId,
+      transition: transition.type,
       harness,
       model,
       reasoningEffort: effort,

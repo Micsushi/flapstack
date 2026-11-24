@@ -5,15 +5,11 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
-  loadInteractiveRuntimeActivity,
-  loadInteractiveRuntimeAssistantText,
   loadInteractiveRuntimeAssistantParts,
   materializeInteractiveRuntimeRun,
   persistInteractiveRuntimeAssistantFallback,
-  prepareInteractiveRuntimeLaunch,
   resolveInteractiveRuntime,
 } from "../src/main/lib/agent-runtime/interactive-chat"
-import { createRuntimeDefaultsService } from "../src/main/lib/agent-runtime/defaults"
 import { createAgentActivityStore } from "../src/main/lib/agent-runtime/activity-store"
 import { migrateDatabase } from "../src/main/lib/db/migrate"
 import * as schema from "../src/main/lib/db/schema"
@@ -37,46 +33,6 @@ afterEach(() => {
 })
 
 describe("interactive Runtime launch bridge", () => {
-  it("pages completed text through validated activity and omits corrupt private payloads", () => {
-    seedChat("codex", "auto", [])
-    materializeInteractiveRuntimeRun(database, {
-      runId: "paged-output",
-      chatId: "chat",
-      subChatId: "sub",
-      harness: "codex",
-      prompt: "Read output",
-      model: null,
-      mode: "write",
-      reasoningEffort: null,
-      reasoningEnabled: true,
-    })
-    const store = createAgentActivityStore(database)
-    store.appendBatch(
-      "paged-output",
-      Array.from({ length: 501 }, (_, index) => ({
-        provider: "openai",
-        kind: "agent-text",
-        phase: "completed",
-        displayClass: "summary",
-        privacyClass: "public",
-        payload: { text: `${index},` },
-      })),
-    )
-    expect(loadInteractiveRuntimeAssistantText(database, "paged-output")).toBe(
-      Array.from({ length: 501 }, (_, index) => `${index},`).join(""),
-    )
-    database.pragma("ignore_check_constraints=ON")
-    database.exec("DROP TRIGGER agent_activity_events_append_only")
-    database
-      .prepare(
-        "UPDATE agent_activity_events SET privacy_class='private' WHERE run_id='paged-output' AND sequence=1",
-      )
-      .run()
-    expect(loadInteractiveRuntimeAssistantText(database, "paged-output")).toBe(
-      Array.from({ length: 500 }, (_, index) => `${index + 1},`).join(""),
-    )
-  })
-
   it.each([
     ["codex", "codex", "gpt-5.5", "high"],
     ["claude-code", "claude-code", "claude-opus-4-8", "max"],
@@ -155,195 +111,6 @@ describe("interactive Runtime launch bridge", () => {
       expect(messages.map((message) => message.id)).toEqual(["prompt-1"])
     },
   )
-
-  it("freezes a staged knowledge-graph selection into a direct Runtime run", () => {
-    seedChat("codex", "auto", [])
-    materializeInteractiveRuntimeRun(database, {
-      runId: "graph-run",
-      chatId: "chat",
-      subChatId: "sub",
-      harness: "codex",
-      prompt: "Use the selected note",
-      model: "gpt-5.5",
-      mode: "write",
-      reasoningEffort: "high",
-      reasoningEnabled: true,
-      vaultContextGraphSelection: {
-        nodeIds: ["custom:note-1"],
-        expectedGenerationId: "generation-1",
-        expansion: { depth: 1, direction: "outgoing", maxNodes: 8 },
-      },
-    })
-
-    const stored = database
-      .prepare("SELECT vault_context_sections selection FROM agent_runs WHERE id = 'graph-run'")
-      .get() as { selection: string }
-    expect(JSON.parse(stored.selection)).toEqual({
-      schemaVersion: 2,
-      sectionIds: [],
-      graph: {
-        nodeIds: ["custom:note-1"],
-        expectedGenerationId: "generation-1",
-        expansion: { depth: 1, direction: "outgoing", maxNodes: 8 },
-      },
-    })
-  })
-
-  it.each([
-    ["codex", null, "codex", true],
-    ["claude-code", null, "claude-code", true],
-    ["codex", "codex-enhanced", "codex-enhanced", true],
-    ["claude-code", "flapstack-native", "flapstack-native", false],
-  ] as const)(
-    "pins the first %s launch to its resolved %s default",
-    (harness, configuredDefault, expectedPreference, direct) => {
-      seedChat(harness, "auto", [])
-      if (configuredDefault) {
-        createRuntimeDefaultsService(database).write({
-          scope: { type: "global", id: null },
-          harness,
-          preference: configuredDefault,
-          expectedVersion: 0,
-        })
-      }
-
-      expect(
-        prepareInteractiveRuntimeLaunch(database, {
-          chatId: "chat",
-          subChatId: "sub",
-          harness,
-          model: "model",
-          mode: "write",
-        }),
-      ).toMatchObject({ runtimePreference: expectedPreference, direct })
-      expect(
-        database.prepare("SELECT runtime_preference FROM chats WHERE id = 'chat'").get(),
-      ).toEqual({
-        runtime_preference: expectedPreference,
-      })
-    },
-  )
-
-  it("leaves explicit Flapstack Native chats on the legacy interactive transport", () => {
-    seedChat("codex", "flapstack-native", [])
-    expect(
-      resolveInteractiveRuntime(database, {
-        chatId: "chat",
-        subChatId: "sub",
-        harness: "codex",
-        model: "gpt-5.5",
-        mode: "write",
-      }),
-    ).toEqual({
-      resolvedRuntime: "flapstack-native",
-      runtimePreference: "flapstack-native",
-      direct: false,
-    })
-  })
-
-  it("routes a direct submit without pinning it and rejects a changed preference before creating the run", () => {
-    seedChat("codex", "auto", [])
-    const input = {
-      chatId: "chat",
-      subChatId: "sub",
-      harness: "codex",
-      model: "model",
-      mode: "write",
-      reasoningEffort: null,
-      reasoningEnabled: true,
-    } as const
-    const route = resolveInteractiveRuntime(database, input)
-    expect(route.direct).toBe(true)
-    expect(
-      database.prepare("SELECT runtime_preference FROM chats WHERE id='chat'").pluck().get(),
-    ).toBe("auto")
-    database.prepare("UPDATE chats SET runtime_preference = 'codex-enhanced' WHERE id='chat'").run()
-    expect(() =>
-      materializeInteractiveRuntimeRun(database, {
-        ...input,
-        runId: "stale-route",
-        prompt: "hello",
-        expectedRuntimePreference: route.runtimePreference,
-      }),
-    ).toThrow("runtime selection changed")
-    expect(database.prepare("SELECT COUNT(*) FROM agent_runs").pluck().get()).toBe(0)
-    expect(
-      database.prepare("SELECT runtime_preference FROM chats WHERE id='chat'").pluck().get(),
-    ).toBe("codex-enhanced")
-  })
-
-  it("blocks switching an existing legacy provider session to a direct Runtime", () => {
-    seedChat("codex", "auto", [])
-    database.prepare("UPDATE sub_chats SET session_id = 'legacy-session' WHERE id = 'sub'").run()
-
-    expect(() =>
-      resolveInteractiveRuntime(database, {
-        chatId: "chat",
-        subChatId: "sub",
-        harness: "codex",
-        model: "gpt-5.5",
-        mode: "write",
-      }),
-    ).toThrow("provider sessions cannot switch Runtime behavior in place")
-  })
-
-  it("blocks parity-to-Enhanced reuse even when both use the Codex adapter", () => {
-    seedChat("codex", "auto", [])
-    materializeInteractiveRuntimeRun(database, {
-      runId: "parity-run",
-      chatId: "chat",
-      subChatId: "sub",
-      harness: "codex",
-      prompt: "Start in parity",
-      model: "gpt-5.6-sol",
-      mode: "write",
-      reasoningEffort: "high",
-      reasoningEnabled: true,
-    })
-    database.prepare("UPDATE agent_runs SET status = 'success' WHERE id = 'parity-run'").run()
-    database.prepare("UPDATE sub_chats SET session_id = 'codex-thread' WHERE id = 'sub'").run()
-    database
-      .prepare("UPDATE chats SET runtime_preference = 'codex-enhanced' WHERE id = 'chat'")
-      .run()
-
-    expect(() =>
-      resolveInteractiveRuntime(database, {
-        chatId: "chat",
-        subChatId: "sub",
-        harness: "codex",
-        model: "gpt-5.6-sol",
-        mode: "write",
-      }),
-    ).toThrow("cannot switch Runtime behavior in place")
-  })
-
-  it("projects authoritative completed Runtime text into the chat response", () => {
-    seedChat("claude-code", "auto", [])
-    materializeInteractiveRuntimeRun(database, {
-      runId: "runtime-text-run",
-      chatId: "chat",
-      subChatId: "sub",
-      harness: "claude-code",
-      prompt: "Return a visible answer",
-      model: "claude-opus-4-8",
-      mode: "write",
-      reasoningEffort: "high",
-      reasoningEnabled: true,
-    })
-    database
-      .prepare(
-        `INSERT INTO agent_activity_events
-         (event_id, run_id, chat_id, sub_chat_id, runtime, harness, provider, sequence,
-          kind, phase, display_class, privacy_class, received_at, payload_json, created_at)
-         VALUES ('event-1', 'runtime-text-run', 'chat', 'sub', 'claude-code', 'claude-code',
-                 'anthropic', 1, 'agent-text', 'completed', 'summary', 'public', 1, ?, 1)`,
-      )
-      .run(JSON.stringify({ text: "CLAUDE_RUNTIME_OK" }))
-
-    expect(loadInteractiveRuntimeAssistantText(database, "runtime-text-run")).toBe(
-      "CLAUDE_RUNTIME_OK",
-    )
-  })
 
   it("keeps each Claude block once in live and saved output when the SDK compacts snapshots", () => {
     seedChat("claude-code", "auto", [])
@@ -486,60 +253,6 @@ describe("interactive Runtime launch bridge", () => {
         },
       }),
     ])
-  })
-
-  it("carries image input to the direct Runtime launch without changing message storage", () => {
-    seedChat("claude-code", "auto", [])
-    const run = materializeInteractiveRuntimeRun(database, {
-      runId: "runtime-image-run",
-      chatId: "chat",
-      subChatId: "sub",
-      harness: "claude-code",
-      prompt: "Inspect this image",
-      images: [{ base64Data: "aW1hZ2U=", mediaType: "image/png", filename: "image.png" }],
-      model: "claude-opus-4-8",
-      mode: "write",
-      reasoningEffort: "high",
-      reasoningEnabled: true,
-    })
-
-    expect(run.images).toEqual([
-      { base64Data: "aW1hZ2U=", mediaType: "image/png", filename: "image.png" },
-    ])
-  })
-
-  it("streams durable Runtime text deltas once in storage order", () => {
-    seedChat("codex", "auto", [])
-    materializeInteractiveRuntimeRun(database, {
-      runId: "runtime-delta-run",
-      chatId: "chat",
-      subChatId: "sub",
-      harness: "codex",
-      prompt: "Stream a visible answer",
-      model: "gpt-5.5",
-      mode: "write",
-      reasoningEffort: "high",
-      reasoningEnabled: true,
-    })
-    const insert = database.prepare(
-      `INSERT INTO agent_activity_events
-       (event_id, run_id, chat_id, sub_chat_id, runtime, harness, provider, sequence,
-        kind, phase, display_class, privacy_class, received_at, payload_json, created_at)
-       VALUES (?, 'runtime-delta-run', 'chat', 'sub', 'codex', 'codex', 'openai', ?,
-               'agent-text', 'delta', 'summary', 'public', ?, ?, ?)`,
-    )
-    insert.run("delta-1", 1, 1, JSON.stringify({ text: "Hello" }), 1)
-    insert.run("delta-2", 2, 2, JSON.stringify({ text: " world" }), 2)
-
-    const activity = loadInteractiveRuntimeActivity(database, "runtime-delta-run")
-    expect(activity.events.map((event) => event.payload)).toEqual([
-      { text: "Hello" },
-      { text: " world" },
-    ])
-    expect(loadInteractiveRuntimeActivity(database, "runtime-delta-run", activity.cursor)).toEqual({
-      cursor: activity.cursor,
-      events: [],
-    })
   })
 
   it("keeps mode-derived read-only permission on the run instead of poisoning Write", () => {

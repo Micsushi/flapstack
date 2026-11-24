@@ -26,3 +26,9 @@ Each registration uses the desktop executable and bundled stdio entrypoint for t
 To revoke access, reopen **External Harness Connections**, select **Revoke a connection**, and select the grant with the matching connection ID. The next tool call from that client will fail, including on an existing connection. You can then remove the generated client directory. Register again to issue a fresh credential.
 
 Agents launched inside Flapstack receive a separate credential scoped to their chat and active run. The running desktop verifies it at startup and on every tool call, including reads. Keep external client configurations private and separate from any provider homes and projects used by those agents.
+
+Flapstack shows a short initial tool list to agents it launches. Call \`tool_search\` with a tool name or purpose to load matching tools for that connection. Refresh the client's tool list to retrieve their schemas. If a client cannot refresh its tools, launch the MCP server with \`--tool-exposure direct\` or set \`FLAPSTACK_MCP_TOOL_EXPOSURE=direct\` in its MCP registration. External clients list their tools directly by default and can opt into discovery with \`--tool-exposure lazy\`.
+
+When Flapstack is open, the stdio launcher relays requests to the selected profile's authenticated loopback HTTP server. With the app closed, a verified external owner can still use offline database tools. App-launched agents require an active desktop and a valid run registration.
+
+Conversation, run activity, search, and diff responses are limited to 64 KiB. Follow \`nextCursor\` for conversation, run activity, and search pages. For a diff, pass \`nextOffset\` and the returned \`diffHash\` to continue the same snapshot. If a diff takes longer than the initial response window, use \`dispatch_status\` to collect its result using the supplied handle.

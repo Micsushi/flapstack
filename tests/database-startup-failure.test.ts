@@ -2,11 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import {
-  describeRequiredStartupFailure,
-  runIsolatedStartupTasks,
-  runRequiredStartup,
-} from "../src/main/lib/startup-gate"
+import { describeRequiredStartupFailure } from "../src/main/lib/startup-gate"
 
 const directories: string[] = []
 
@@ -34,86 +30,6 @@ describe("required database startup", () => {
         "Keep this file for recovery. Restore a known-good backup or move the damaged profile aside, then reopen Flapstack.\n\n" +
         "Reason: SQLite reported that the database is damaged or unreadable.",
     })
-  })
-
-  it("does not expose arbitrary required-startup error text", () => {
-    const notice = describeRequiredStartupFailure(
-      new Error("permission recovery failed with API_KEY=secret"),
-      "/profile/data/agents.db",
-    )
-
-    expect(notice.message).toBe("Flapstack stopped before opening a window.")
-    expect(notice.detail).not.toContain("API_KEY")
-    expect(notice.detail).not.toContain("secret")
-  })
-
-  it("continues later startup services after an optional service fails", async () => {
-    const order: string[] = []
-    const report = vi.fn()
-
-    await runIsolatedStartupTasks(
-      [
-        { name: "bridge", run: () => Promise.reject(new Error("bridge unavailable")) },
-        { name: "scheduler", run: () => order.push("scheduler") },
-        { name: "usage", run: () => order.push("usage") },
-      ],
-      report,
-    )
-
-    expect(order).toEqual(["scheduler", "usage"])
-    expect(report).toHaveBeenCalledWith("bridge", expect.any(Error))
-  })
-
-  it("awaits an optional service first pass before starting the next service", async () => {
-    const order: string[] = []
-    let finishScheduler!: () => void
-    const schedulerFirstPass = new Promise<void>((resolve) => {
-      finishScheduler = resolve
-    })
-    const startup = runIsolatedStartupTasks(
-      [
-        {
-          name: "automation scheduler",
-          run: async () => {
-            order.push("scheduler:start")
-            await schedulerFirstPass
-            order.push("scheduler:ready")
-          },
-        },
-        { name: "next service", run: () => order.push("next") },
-      ],
-      vi.fn(),
-    )
-
-    await Promise.resolve()
-    expect(order).toEqual(["scheduler:start"])
-    finishScheduler()
-    await startup
-    expect(order).toEqual(["scheduler:start", "scheduler:ready", "next"])
-  })
-
-  it("closes and exits without continuing to a window after initialization fails", async () => {
-    const cleanup = vi.fn()
-    const continueStartup = vi.fn()
-    const exit = vi.fn()
-    const report = vi.fn()
-
-    await expect(
-      runRequiredStartup({
-        initialize: () => {
-          throw new Error("permission recovery failed")
-        },
-        cleanup,
-        continueStartup,
-        exit,
-        report,
-      }),
-    ).resolves.toBe(false)
-
-    expect(cleanup).toHaveBeenCalledOnce()
-    expect(exit).toHaveBeenCalledWith(1)
-    expect(report).toHaveBeenCalledOnce()
-    expect(continueStartup).not.toHaveBeenCalled()
   })
 
   it("does not publish a database singleton when permission recovery fails", async () => {

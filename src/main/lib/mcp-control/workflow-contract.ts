@@ -47,6 +47,7 @@ export const workflowSchemas = {
       ...chat,
       path: z.string().min(1).max(4096).optional(),
       ...page,
+      diffHash: z.string().min(1).max(128).optional(),
       limit: z.number().int().min(1).max(32_000).default(16_000),
     })
     .strict(),

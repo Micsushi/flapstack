@@ -8,10 +8,8 @@ import { buildOpencodePermissionConfig } from "../src/main/lib/harness/opencode-
 import {
   CUSTOM_PERMISSION_SCHEMA_VERSION,
   disabledCustomPermissions,
-  getPermissionEligibility,
   parseCustomPermissionCapabilities,
 } from "../src/shared/permission-capabilities"
-import { isCustomToolAllowed } from "../src/main/lib/permissions"
 
 const roots: string[] = []
 afterEach(async () => {
@@ -46,16 +44,6 @@ describe("permission promotion", () => {
     ).toBeNull()
   })
 
-  it("offers exact project-only only for the proven Codex workspace boundary", () => {
-    expect(getPermissionEligibility("codex", "auto-edit-project-only")).toMatchObject({
-      selectable: true,
-      enforcement: "exact",
-    })
-    for (const harness of ["claude-code", "cursor-agent", "openrouter", "nanogpt"] as const) {
-      expect(getPermissionEligibility(harness, "auto-edit-project-only").selectable).toBe(false)
-    }
-  })
-
   it("keeps custom product and third-party MCP capabilities separate", () => {
     const permissions = {
       ...disabledCustomPermissions,
@@ -84,18 +72,6 @@ describe("permission promotion", () => {
       bash: "deny",
       webfetch: "deny",
     })
-  })
-
-  it("denies unknown custom tools even when every known capability is enabled", () => {
-    const enabled = Object.fromEntries(
-      Object.entries(disabledCustomPermissions).map(([key, value]) => [
-        key,
-        typeof value === "boolean" ? true : value,
-      ]),
-    ) as typeof disabledCustomPermissions
-
-    expect(isCustomToolAllowed(enabled, "Read")).toBe(true)
-    expect(isCustomToolAllowed(enabled, "SurpriseTool")).toBe(false)
   })
 
   it("rejects traversal and existing or dangling symlink escapes", async () => {

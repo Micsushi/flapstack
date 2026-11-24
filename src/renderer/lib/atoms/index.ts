@@ -817,6 +817,7 @@ export const isFullscreenAtom = atom<boolean | null>(null)
 // "custom-model" = use custom base URL and model (e.g. for proxies or alternative providers)
 // "codex-subscription" = use Codex via ChatGPT subscription login
 // "codex-api-key" = use Codex via app-managed API key
+// "configured-providers" = completed unified provider setup
 // "local-only" = skip cloud-provider setup and use local models/settings
 // null = not yet selected (show billing method selection screen)
 export type BillingMethod =
@@ -825,6 +826,7 @@ export type BillingMethod =
   | "custom-model"
   | "codex-subscription"
   | "codex-api-key"
+  | "configured-providers"
   | "local-only"
   | null
 

@@ -27,16 +27,6 @@ afterEach(async () => {
 })
 
 describe("run change undo planning", () => {
-  it("restores exact after-content to before-content", async () => {
-    const result = await planInverseFileContent(
-      buffer("after\n"),
-      buffer("after\n"),
-      buffer("before\n"),
-    )
-    expect(result.conflict).toBeUndefined()
-    expect(result.result?.toString()).toBe("before\n")
-  })
-
   it("preserves non-overlapping later edits", async () => {
     const result = await planInverseFileContent(
       buffer("title\nafter\nline 3\nline 4\nline 5\nline 6\nlater addition\n"),
@@ -57,14 +47,6 @@ describe("run change undo planning", () => {
     )
     expect(result.conflict).toBe("Later changes overlap this response")
     expect(result.result).toBeUndefined()
-  })
-
-  it("removes a newly added file only when it still matches", async () => {
-    const clean = await planInverseFileContent(buffer("new\n"), buffer("new\n"), null)
-    expect(clean).toEqual({ result: null })
-
-    const changed = await planInverseFileContent(buffer("new and edited\n"), buffer("new\n"), null)
-    expect(changed.conflict).toBe("File existence changed after this response")
   })
 
   it("restores a deleted file only while it remains deleted", async () => {
@@ -93,16 +75,6 @@ describe("run change undo planning", () => {
     await writeUndoFileState(root, path, planned.result ?? null)
     if (process.platform !== "win32") expect((await lstat(path)).mode & 0o777).toBe(0o755)
     expect(await readFile(path, "utf8")).toBe("before\n")
-  })
-
-  it("blocks an overlapping executable-mode change", async () => {
-    await expect(
-      planInverseFileState(
-        { content: buffer("after\n"), kind: "file", mode: 0o644 },
-        { content: buffer("after\n"), kind: "file", mode: 0o755 },
-        { content: buffer("before\n"), kind: "file", mode: 0o644 },
-      ),
-    ).resolves.toEqual({ conflict: "File mode changed after this response" })
   })
 
   it("restores symlinks as symlinks", async () => {

@@ -9,6 +9,7 @@ import { queryOrchestrationFleet } from "../agent-orchestration/fleet"
 import { isBetaFeatureEnabled } from "../beta-features/settings"
 import type { McpCallerIdentity } from "./types"
 import { canonicalMcpChatScope } from "./scope"
+import { budgetMcpPage } from "./response-budget"
 
 const PAGE_MAX = 50
 const pageShape = {
@@ -323,7 +324,7 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
         const input = historySchema.parse(rawInput)
         const v = visible(scope)
         const chat = store.get(
-          `SELECT c.id, c.name, c.scope, c.project_id projectId, c.task_id taskId,
+          `SELECT c.id, substr(c.name,1,256) name, c.scope, c.project_id projectId, c.task_id taskId,
              coalesce(s.harness,c.harness) harness, coalesce(s.model,c.model) model,
              coalesce(s.reasoning_effort,c.reasoning_effort) reasoningEffort,
              coalesce(s.permission_mode,c.permission_mode) permissionMode, c.custom_permissions customPermissions, s.mode chatMode
@@ -345,13 +346,13 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
             : undefined
         const rows = store.all(
           `SELECT m.key position, substr(m.value ->> '$.id',1,128) id, m.value ->> '$.role' role,
-             coalesce((SELECT substr(group_concat(piece,''),1,4096) FROM (
-               SELECT substr(part.value ->> '$.text',1,4096) piece
+             coalesce((SELECT substr(group_concat(piece,''),1,4097) FROM (
+               SELECT substr(part.value ->> '$.text',1,4097) piece
                FROM json_each(m.value,'$.parts') part WHERE part.type='object'
                  AND part.value ->> '$.type'='text' AND json_type(part.value,'$.text')='text'
                  AND (part.value ->> '$.providerMetadata.runtime.phase') IS NOT 'commentary'
                ORDER BY part.key LIMIT 64
-             )), CASE WHEN json_type(m.value,'$.content')='text' THEN substr(m.value ->> '$.content',1,4096) END,'') text,
+             )), CASE WHEN json_type(m.value,'$.content')='text' THEN substr(m.value ->> '$.content',1,4097) END,'') text,
              (SELECT substr(group_concat(piece,char(10)),1,1024) FROM (
                SELECT substr(part.value ->> '$.text',1,1024) piece FROM json_each(m.value,'$.parts') part
                WHERE part.type='object' AND part.value ->> '$.type'='text'
@@ -375,28 +376,24 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
             input.limit + 1,
           ],
         )
-        const nextCursor =
-          rows.length > input.limit
-            ? Buffer.from(String(rows[input.limit - 1]!.position)).toString("base64url")
-            : null
-        const items = rows
-          .slice(0, input.limit)
-          .reverse()
-          .map((row) => ({
-            id: row.id,
-            role: row.role,
-            text: sanitizeRuntimeText(String(row.text), { mode: "agent-content", maxLength: 4096 }),
-            ...(typeof row.commentary === "string"
-              ? {
-                  commentary: sanitizeRuntimeText(row.commentary, {
-                    mode: "agent-content",
-                    maxLength: 1024,
-                  }),
-                }
-              : {}),
-            tools: JSON.parse(String(row.tools)) as string[],
-          }))
-        return {
+        const items = rows.slice(0, input.limit).map((row) => ({
+          id: row.id,
+          role: row.role,
+          text: sanitizeRuntimeText(String(row.text), { mode: "agent-content", maxLength: 4096 }),
+          ...(typeof row.commentary === "string"
+            ? {
+                commentary: sanitizeRuntimeText(row.commentary, {
+                  mode: "agent-content",
+                  maxLength: 1024,
+                }),
+              }
+            : {}),
+          tools: JSON.parse(String(row.tools)) as string[],
+          ...(typeof row.text === "string" && row.text.length > 4096
+            ? { textTruncated: true }
+            : {}),
+        }))
+        return budgetMcpPage(items, (kept, truncated) => ({
           ...(name === "read_chat"
             ? {
                 chat: {
@@ -408,9 +405,13 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
                 },
               }
             : {}),
-          items,
-          nextCursor,
-        }
+          items: kept.reverse(),
+          nextCursor:
+            kept.length > 0 && (truncated || rows.length > input.limit)
+              ? Buffer.from(String(rows[kept.length - 1]!.position)).toString("base64url")
+              : null,
+          ...(truncated ? { truncated: true } : {}),
+        }))
       }
       if (name === "read_run") {
         const input = runSchema.parse(rawInput)
@@ -446,19 +447,24 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
           [input.runId, ...v.params],
         )
         const { started_at, completed_at, ...metadata } = run
-        return {
+        const activityItems = activity.items.map((item) => ({
+          ...item,
+          summary: typeof item.summary === "string" ? sanitizeRuntimeText(item.summary) : null,
+        }))
+        return budgetMcpPage(activityItems, (kept, truncated) => ({
           ...metadata,
           providerSettings: providerSettings ?? null,
           startedAt: timestamp(started_at),
           completedAt: timestamp(completed_at),
           activity: {
-            ...activity,
-            items: activity.items.reverse().map((item) => ({
-              ...item,
-              summary: typeof item.summary === "string" ? sanitizeRuntimeText(item.summary) : null,
-            })),
+            items: kept.reverse(),
+            nextCursor:
+              truncated && kept.length > 0
+                ? Buffer.from(String(offset(input.cursor) + kept.length)).toString("base64url")
+                : activity.nextCursor,
+            ...(truncated ? { truncated: true } : {}),
           },
-        }
+        }))
       }
       if (name === "list_runs") {
         const input = listRunsSchema.parse(rawInput)
@@ -599,24 +605,42 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
         }
         const result = queryPage(
           store,
-          `SELECT c.id, COALESCE(c.name,'Untitled chat') title, 'chat' type, c.project_id, p.name project_name, c.task_id, t.name task_name FROM chats c LEFT JOIN projects p ON p.id=c.project_id LEFT JOIN tasks t ON t.id=c.task_id WHERE ${conditions.join(" AND ")} ORDER BY c.updated_at DESC, c.id`,
+          `SELECT c.id, substr(COALESCE(c.name,'Untitled chat'),1,512) title, 'chat' type, c.project_id, substr(p.name,1,256) project_name, c.task_id, substr(t.name,1,256) task_name FROM chats c LEFT JOIN projects p ON p.id=c.project_id LEFT JOIN tasks t ON t.id=c.task_id WHERE ${conditions.join(" AND ")} ORDER BY c.updated_at DESC, c.id`,
           params,
           start,
           input.limit,
         )
-        return {
-          ...result,
-          items: result.items.map((r) => ({
-            type: r.type,
-            id: r.id,
-            title: r.title,
-            project: r.project_id ? { id: r.project_id, name: r.project_name } : null,
-            task: r.task_id ? { id: r.task_id, name: r.task_name } : null,
-          })),
-        }
+        const items = result.items.map((r) => ({
+          type: r.type,
+          id: r.id,
+          title: r.title,
+          project: r.project_id ? { id: r.project_id, name: r.project_name } : null,
+          task: r.task_id ? { id: r.task_id, name: r.task_name } : null,
+        }))
+        return budgetMcpPage(items, (kept, truncated) => ({
+          items: kept,
+          nextCursor:
+            truncated && kept.length > 0
+              ? Buffer.from(String(start + kept.length)).toString("base64url")
+              : result.nextCursor,
+          ...(truncated ? { truncated: true } : {}),
+        }))
       }
       fail("invalid-input", `Unsupported read operation: ${name}`)
     },
+  }
+}
+
+export function readMcpDatabase(active: () => Database.Database): McpReadStore {
+  return {
+    get: (sql, params) =>
+      active()
+        .prepare(sql)
+        .get(...params) as Row,
+    all: (sql, params) =>
+      active()
+        .prepare(sql)
+        .all(...params) as Row[],
   }
 }
 

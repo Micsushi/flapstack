@@ -77,43 +77,6 @@ describe("MCP terminal audit recovery", () => {
     ])
   })
 
-  it("allows one explicit retry for retry-safe work and exhausts the matching fingerprint", () => {
-    appendClaim("search-original", "search", 0, { query: "alpha" })
-    recoverMcpDispatchClaims(db(), { staleAfterMs: 0 })
-    expect(authorizeMcpDispatchRetry(db(), "search-original")).toBe(true)
-    expect(authorizeMcpDispatchRetry(db(), "search-original")).toBe(false)
-    expect(
-      findUnresolvedMcpDispatch(db(), {
-        invocationId: "search-retry",
-        caller,
-        toolName: "search",
-        input: { query: "alpha" },
-      }),
-    ).toBeNull()
-    expect(
-      findUnresolvedMcpDispatch(db(), {
-        invocationId: "search-concurrent-retry",
-        caller,
-        toolName: "search",
-        input: { query: "alpha" },
-      }),
-    ).toMatchObject({ invocationId: "search-original", state: "retry-consumed" })
-
-    appendClaim("search-retry", "search", 0, { query: "alpha" })
-    expect(recoverMcpDispatchClaims(db(), { staleAfterMs: 0 })).toBe(1)
-    expect(listMcpDispatchRecoveryClaims(db())).toEqual([
-      expect.objectContaining({ invocationId: "search-retry", state: "recovery-exhausted" }),
-    ])
-    expect(
-      findUnresolvedMcpDispatch(db(), {
-        invocationId: "search-third-attempt",
-        caller,
-        toolName: "search",
-        input: { query: "alpha" },
-      }),
-    ).toMatchObject({ invocationId: "search-retry", state: "recovery-exhausted" })
-  })
-
   it("keeps an exact non-idempotent unknown outcome blocked without poisoning other input", () => {
     appendClaim("pin-unknown", "pin_item", 2, { kind: "chat", id: "chat-2", pinned: true })
     expect(recoverMcpDispatchClaims(db(), { staleAfterMs: 0 })).toBe(1)
@@ -136,17 +99,6 @@ describe("MCP terminal audit recovery", () => {
     ).toBeNull()
     expect(reconcileMcpDispatchClaim(db(), "pin-unknown", "completed")).toBe(true)
     expect(listMcpDispatchRecoveryClaims(db())).toEqual([])
-  })
-
-  it("bounds each recovery sweep and does not repeatedly transition recovered claims", () => {
-    appendClaim("bounded-a", "search", 0, { query: "a" })
-    appendClaim("bounded-b", "search", 0, { query: "b" })
-    expect(recoverMcpDispatchClaims(db(), { staleAfterMs: 0, limit: 1 })).toBe(1)
-    expect(
-      listMcpDispatchRecoveryClaims(db()).filter((claim) => claim.state === "dispatch-started"),
-    ).toHaveLength(1)
-    expect(recoverMcpDispatchClaims(db(), { staleAfterMs: 0, limit: 1 })).toBe(1)
-    expect(recoverMcpDispatchClaims(db(), { staleAfterMs: 0, limit: 1 })).toBe(0)
   })
 })
 

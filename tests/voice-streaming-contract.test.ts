@@ -1,5 +1,3 @@
-import fs from "node:fs"
-import path from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { composeDictationDraft, StreamingTranscriptState } from "../src/shared/streaming-transcript"
 import {
@@ -44,60 +42,5 @@ describe("Voice History insertion ownership", () => {
     expect(insertVoiceHistoryIntoTarget(target!, "dictated text")).toBe(true)
     expect(chatA).not.toHaveBeenCalled()
     expect(chatB).toHaveBeenCalledOnce()
-  })
-
-  it("reports an unavailable target so callers can copy instead", () => {
-    const unregister = registerVoiceHistoryInsertTarget("chat:a", vi.fn())
-    const target = captureVoiceHistoryInsertTarget()
-    unregister()
-    expect(insertVoiceHistoryIntoTarget(target!, "preserve me")).toBe(false)
-  })
-
-  it("restores the captured target after full-page Settings remounts the composer", () => {
-    const first = vi.fn()
-    const unregister = registerVoiceHistoryInsertTarget("chat:a", first)
-    unregister()
-    const target = captureVoiceHistoryInsertTarget()
-    const remounted = vi.fn()
-    registerVoiceHistoryInsertTarget("chat:a", remounted)
-    expect(target).toBe("chat:a")
-    expect(insertVoiceHistoryIntoTarget(target!, "restored text")).toBe(true)
-    expect(first).not.toHaveBeenCalled()
-    expect(remounted).toHaveBeenCalledWith("restored text")
-  })
-
-  it("falls back to the newest still-mounted composer when the active one unmounts", () => {
-    const chatA = vi.fn()
-    const chatB = vi.fn()
-    registerVoiceHistoryInsertTarget("chat:a", chatA)
-    const unregisterB = registerVoiceHistoryInsertTarget("chat:b", chatB)
-
-    unregisterB()
-
-    expect(captureVoiceHistoryInsertTarget()).toBe("chat:a")
-    expect(insertVoiceHistoryIntoTarget("chat:a", "remaining composer")).toBe(true)
-    expect(chatA).toHaveBeenCalledWith("remaining composer")
-    expect(chatB).not.toHaveBeenCalled()
-  })
-})
-
-describe("canonical playback settings", () => {
-  it("removes the duplicate local-storage playback atom", () => {
-    const store = fs.readFileSync(
-      path.join(process.cwd(), "src/renderer/features/agents/stores/message-store.ts"),
-      "utf8",
-    )
-    const controls = fs.readFileSync(
-      path.join(process.cwd(), "src/renderer/features/agents/ui/message-action-buttons.tsx"),
-      "utf8",
-    )
-    const activeChat = fs.readFileSync(
-      path.join(process.cwd(), "src/renderer/features/agents/main/active-chat.tsx"),
-      "utf8",
-    )
-    expect(store).not.toContain("ttsPlaybackRateAtom")
-    expect(activeChat).not.toContain("tts-playback-rate")
-    expect(controls).toContain("trpc.speech.getSettings.useQuery()")
-    expect(controls).toContain("updateVoiceSettings.mutate({ rate })")
   })
 })

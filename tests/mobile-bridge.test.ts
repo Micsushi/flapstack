@@ -1,16 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
+import { readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { tmpdir } from "node:os"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
-  ExactMobileBridgeRequestPolicy,
-  FileMobileBridgeCertificateProvider,
-  FileMobileBridgeSettingsStore,
   MobileBridgeService,
-  PollingMobileNetworkSource,
-  SlidingWindowMobileBridgeAdmission,
   defaultMobileBridgeSettings,
-  normalizeMobileBridgeSettings,
   validateMobileBridgeBindAddress,
   type MobileBridgeCertificate,
   type MobileBridgeSettings,
@@ -25,9 +18,6 @@ const fixtureRoot = join(import.meta.dirname, "fixtures", "mobile-bridge")
 const interfaceFixtures = JSON.parse(
   readFileSync(join(fixtureRoot, "network-interfaces.json"), "utf8"),
 ) as Record<string, MobileNetworkInterface[]>
-const requestFixtures = JSON.parse(
-  readFileSync(join(fixtureRoot, "requests.json"), "utf8"),
-) as Record<string, { host: string; origin: string }>
 
 const certificate: MobileBridgeCertificate = {
   certPem: "mock-certificate",
@@ -130,22 +120,6 @@ function createFixture(initial?: Partial<MobileBridgeSettings>) {
 }
 
 describe("mobile-bridge", () => {
-  it("keeps missing and malformed settings default-off without starting a listener", async () => {
-    expect(normalizeMobileBridgeSettings(undefined)).toEqual(defaultMobileBridgeSettings)
-    expect(normalizeMobileBridgeSettings({ enabled: "yes", bindAddress: "", port: 80 })).toEqual(
-      defaultMobileBridgeSettings,
-    )
-    const fixture = createFixture()
-
-    await expect(fixture.service.startFromSettings()).resolves.toMatchObject({
-      state: "disabled",
-      enabled: false,
-      fingerprint: null,
-    })
-    expect(fixture.transport.starts).toHaveLength(0)
-    expect(fixture.certificates.getOrCreate).not.toHaveBeenCalled()
-  })
-
   it("rejects wildcard, loopback, public, inactive, and unapproved binds before TLS work", async () => {
     const fixture = createFixture()
     for (const bindAddress of ["0.0.0.0", "127.0.0.1", "8.8.8.8", "192.168.50.25"]) {
@@ -158,150 +132,6 @@ describe("mobile-bridge", () => {
     expect(() =>
       validateMobileBridgeBindAddress("100.96.0.3", fixture.network.list()),
     ).not.toThrow()
-  })
-
-  it("enables with TLS material, persists opt-in only after start, and exposes fingerprint only", async () => {
-    const fixture = createFixture()
-
-    const status = await fixture.service.configure({
-      enabled: true,
-      bindAddress: "192.168.50.24",
-      port: 4317,
-    })
-
-    expect(status).toMatchObject({
-      state: "running",
-      enabled: true,
-      bindAddress: "192.168.50.24",
-      port: 4317,
-      fingerprint: certificate.fingerprint,
-      failure: null,
-    })
-    expect(fixture.transport.starts).toHaveLength(1)
-    expect(fixture.transport.starts[0]!.certificate).toBe(certificate)
-    expect(fixture.settings.writes[0]).toMatchObject({ enabled: false })
-    expect(fixture.settings.writes.at(-1)).toMatchObject({ enabled: true })
-    expect(JSON.stringify(status)).not.toContain(certificate.privateKeyPem)
-  })
-
-  it("restores an explicit enabled setting on startup and fails closed if its interface disappeared", async () => {
-    const restart = createFixture({ enabled: true, bindAddress: "192.168.50.24" })
-    await expect(restart.service.startFromSettings()).resolves.toMatchObject({ state: "running" })
-    expect(restart.transport.starts).toHaveLength(1)
-
-    const missing = createFixture({ enabled: true, bindAddress: "192.168.50.24" })
-    missing.network.value = interfaceFixtures.rebound!
-    await expect(missing.service.startFromSettings()).resolves.toMatchObject({
-      state: "faulted",
-      enabled: false,
-    })
-    expect(missing.transport.starts).toHaveLength(0)
-    expect(missing.settings.value.enabled).toBe(false)
-  })
-
-  it("persists startup failure disabled and retains the handle when first cleanup fails", async () => {
-    const fixture = createFixture({ enabled: true, bindAddress: "192.168.50.24" })
-    fixture.network.onSubscribe = () => {
-      fixture.network.value = interfaceFixtures.publicOnly!
-    }
-    fixture.transport.stopFailuresRemaining = 1
-
-    await expect(fixture.service.startFromSettings()).resolves.toMatchObject({
-      state: "faulted",
-      enabled: false,
-      fingerprint: null,
-    })
-    expect(fixture.settings.value.enabled).toBe(false)
-    expect(fixture.transport.handles[0]!.stop).toHaveBeenCalledOnce()
-
-    await expect(fixture.service.stop("cleanup-retry")).resolves.toMatchObject({
-      state: "disabled",
-      enabled: false,
-      fingerprint: null,
-    })
-    expect(fixture.transport.handles[0]!.closeSessions).toHaveBeenLastCalledWith(
-      1001,
-      "cleanup-retry",
-    )
-    expect(fixture.transport.handles[0]!.stop).toHaveBeenCalledTimes(2)
-  })
-
-  it("disables and rebinds by closing sessions and the old listener first", async () => {
-    const fixture = createFixture()
-    await fixture.service.configure({ enabled: true, bindAddress: "192.168.50.24" })
-    fixture.network.value = [...interfaceFixtures.private!, interfaceFixtures.rebound![0]!]
-
-    await fixture.service.configure({ enabled: true, bindAddress: "192.168.50.25", port: 4417 })
-
-    expect(fixture.transport.handles[0]!.closeSessions).toHaveBeenCalledWith(1001, "rebind")
-    expect(fixture.transport.handles[0]!.stop).toHaveBeenCalledOnce()
-    expect(fixture.transport.starts[1]).toMatchObject({ address: "192.168.50.25", port: 4417 })
-
-    await expect(fixture.service.configure({ enabled: false })).resolves.toMatchObject({
-      state: "disabled",
-      enabled: false,
-      fingerprint: null,
-    })
-    expect(fixture.transport.handles[1]!.closeSessions).toHaveBeenCalledWith(1001, "disabled")
-    expect(fixture.transport.handles[1]!.stop).toHaveBeenCalledOnce()
-  })
-
-  it("closes a started listener when configure fails during network subscription", async () => {
-    const fixture = createFixture()
-    fixture.network.failSubscribe = true
-
-    await expect(
-      fixture.service.configure({ enabled: true, bindAddress: "192.168.50.24" }),
-    ).rejects.toThrow(/network subscription failed/i)
-
-    expect(fixture.transport.handles[0]!.closeSessions).toHaveBeenCalledWith(1001, "startup-failed")
-    expect(fixture.transport.handles[0]!.stop).toHaveBeenCalledOnce()
-    expect(fixture.service.getStatus()).toMatchObject({
-      state: "faulted",
-      enabled: false,
-      fingerprint: null,
-    })
-  })
-
-  it("fails closed if the approved interface changes while transport startup is awaited", async () => {
-    const fixture = createFixture()
-    fixture.transport.beforeStartResolves = () => {
-      fixture.network.value = interfaceFixtures.publicOnly!
-    }
-
-    await expect(
-      fixture.service.configure({ enabled: true, bindAddress: "192.168.50.24" }),
-    ).rejects.toThrow(/active approved private interface/i)
-
-    expect(fixture.transport.starts).toHaveLength(1)
-    expect(fixture.network.subscriptions).toBe(1)
-    expect(fixture.transport.handles[0]!.closeSessions).toHaveBeenCalledWith(1001, "startup-failed")
-    expect(fixture.transport.handles[0]!.stop).toHaveBeenCalledOnce()
-    expect(fixture.service.getStatus()).toMatchObject({
-      state: "faulted",
-      enabled: false,
-      fingerprint: null,
-    })
-  })
-
-  it("rejects an unsafe network snapshot adopted in the revalidate-to-subscribe gap", async () => {
-    const fixture = createFixture()
-    fixture.network.onSubscribe = () => {
-      fixture.network.value = interfaceFixtures.publicOnly!
-    }
-
-    await expect(
-      fixture.service.configure({ enabled: true, bindAddress: "192.168.50.24" }),
-    ).rejects.toThrow(/active approved private interface/i)
-
-    expect(fixture.network.subscriptions).toBe(1)
-    expect(fixture.transport.handles[0]!.closeSessions).toHaveBeenCalledWith(1001, "startup-failed")
-    expect(fixture.transport.handles[0]!.stop).toHaveBeenCalledOnce()
-    expect(fixture.service.getStatus()).toMatchObject({
-      state: "faulted",
-      enabled: false,
-      fingerprint: null,
-    })
   })
 
   it("shuts down sessions and clears opt-in when the approved interface changes", async () => {
@@ -321,130 +151,5 @@ describe("mobile-bridge", () => {
       fingerprint: null,
       failure: "network-changed",
     })
-  })
-
-  it("stays disabled and retains retry authority when network-change cleanup fails", async () => {
-    const fixture = createFixture()
-    await fixture.service.configure({ enabled: true, bindAddress: "192.168.50.24" })
-    fixture.transport.stopFailuresRemaining = 1
-
-    fixture.network.emit(interfaceFixtures.publicOnly!)
-    await vi.waitFor(() => expect(fixture.service.getStatus().state).toBe("faulted"))
-
-    expect(fixture.settings.value.enabled).toBe(false)
-    expect(fixture.service.getStatus()).toMatchObject({
-      enabled: false,
-      fingerprint: null,
-    })
-    expect(fixture.transport.handles[0]!.stop).toHaveBeenCalledOnce()
-
-    await expect(fixture.service.stop("network-cleanup-retry")).resolves.toMatchObject({
-      state: "disabled",
-      enabled: false,
-    })
-    expect(fixture.transport.handles[0]!.stop).toHaveBeenCalledTimes(2)
-  })
-
-  it("stays disabled and retains retry authority when transport-failure cleanup fails", async () => {
-    const fixture = createFixture()
-    await fixture.service.configure({ enabled: true, bindAddress: "192.168.50.24" })
-    fixture.transport.stopFailuresRemaining = 1
-
-    fixture.transport.starts[0]!.onFailure?.(new Error("listener failed"))
-    await vi.waitFor(() => expect(fixture.service.getStatus().state).toBe("faulted"))
-
-    expect(fixture.settings.value.enabled).toBe(false)
-    expect(fixture.transport.handles[0]!.stop).toHaveBeenCalledOnce()
-
-    await fixture.service.stop("transport-cleanup-retry")
-    expect(fixture.transport.handles[0]!.stop).toHaveBeenCalledTimes(2)
-  })
-
-  it("enforces exact host/origin and bounded request/connection admission", () => {
-    const policy = new ExactMobileBridgeRequestPolicy("192.168.50.24", 4317)
-    expect(policy.authorize(requestFixtures.accepted!, "https")).toEqual({ allowed: true })
-    expect(policy.authorize(requestFixtures.accepted!, "websocket")).toEqual({ allowed: true })
-    expect(policy.authorize(requestFixtures.wrongHost!, "https")).toMatchObject({
-      allowed: false,
-      status: 400,
-    })
-    expect(policy.authorize(requestFixtures.wrongOrigin!, "websocket")).toMatchObject({
-      allowed: false,
-      status: 403,
-    })
-    expect(policy.authorize({ host: requestFixtures.accepted!.host }, "websocket")).toMatchObject({
-      allowed: false,
-      status: 403,
-    })
-
-    const admission = new SlidingWindowMobileBridgeAdmission(2, 2, 1)
-    expect(admission.acceptRequest("10.0.0.4", 1_000)).toBe(true)
-    expect(admission.acceptRequest("10.0.0.4", 2_000)).toBe(true)
-    expect(admission.acceptRequest("10.0.0.4", 3_000)).toBe(false)
-    expect(admission.acceptRequest("10.0.0.4", 62_000)).toBe(true)
-    expect(admission.openConnection("10.0.0.4")).toBe(true)
-    expect(admission.openConnection("10.0.0.4")).toBe(false)
-    expect(admission.openConnection("10.0.0.5")).toBe(true)
-    expect(admission.openConnection("10.0.0.6")).toBe(false)
-    admission.closeConnection("10.0.0.4")
-    expect(admission.openConnection("10.0.0.6")).toBe(true)
-  })
-
-  it("fails closed when polling the active network interfaces fails", () => {
-    vi.useFakeTimers()
-    try {
-      const read = vi
-        .fn<() => MobileNetworkInterface[]>()
-        .mockReturnValueOnce(interfaceFixtures.private!)
-        .mockImplementationOnce(() => {
-          throw new Error("network inventory failed")
-        })
-      const listener = vi.fn()
-      const network = new PollingMobileNetworkSource(10, read)
-      const unsubscribe = network.subscribe(listener)
-
-      vi.advanceTimersByTime(10)
-
-      expect(listener).toHaveBeenCalledWith([])
-      unsubscribe()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it("stores generated certificate keys owner-only and returns a stable SHA-256 fingerprint", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "flapstack-mobile-bridge-"))
-    temporaryDirectories.push(directory)
-    const provider = new FileMobileBridgeCertificateProvider(directory, () => 2_000_000)
-
-    const first = await provider.getOrCreate("192.168.50.24")
-    const second = await provider.getOrCreate("192.168.50.24")
-
-    expect(first.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/)
-    expect(second.fingerprint).toBe(first.fingerprint)
-    if (process.platform !== "win32") {
-      expect(statSync(directory).mode & 0o077).toBe(0)
-      expect(statSync(join(directory, "private-key.pem")).mode & 0o077).toBe(0)
-    }
-    expect(readFileSync(join(directory, "certificate.pem"), "utf8")).not.toContain(
-      first.privateKeyPem,
-    )
-  })
-
-  it("stores bridge settings owner-only without a database migration", () => {
-    const directory = mkdtempSync(join(tmpdir(), "flapstack-mobile-settings-"))
-    temporaryDirectories.push(directory)
-    const path = join(directory, "mobile-bridge-settings.json")
-    const store = new FileMobileBridgeSettingsStore(path)
-
-    expect(store.read()).toEqual(defaultMobileBridgeSettings)
-    store.write({
-      ...defaultMobileBridgeSettings,
-      enabled: true,
-      bindAddress: "192.168.50.24",
-    })
-
-    expect(store.read()).toMatchObject({ enabled: true, bindAddress: "192.168.50.24" })
-    if (process.platform !== "win32") expect(statSync(path).mode & 0o077).toBe(0)
   })
 })

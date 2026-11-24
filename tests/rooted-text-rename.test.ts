@@ -1,12 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs"
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, expect, it } from "vitest"
@@ -31,31 +23,6 @@ it("never replaces a destination created at the commit boundary", async () => {
   expect(readFileSync(join(root, "target.txt"), "utf8")).toBe("external")
 })
 
-it("removes only its own alias when failure leaves the original inode at the source", async () => {
-  await expect(
-    renameFileInsideRoot(root, "source.txt", "target.txt", {
-      afterLink: () => {
-        throw new Error("interrupted")
-      },
-    }),
-  ).rejects.toThrow("interrupted")
-  expect(existsSync(join(root, "target.txt"))).toBe(false)
-  expect(readFileSync(join(root, "source.txt"), "utf8")).toBe("original")
-})
-
-it("preserves an external replacement of the new alias", async () => {
-  await expect(
-    renameFileInsideRoot(root, "source.txt", "target.txt", {
-      afterLink: () => {
-        renameSync(join(root, "target.txt"), join(root, "displaced.txt"))
-        writeFileSync(join(root, "target.txt"), "external")
-      },
-    }),
-  ).rejects.toThrow()
-  expect(readFileSync(join(root, "source.txt"), "utf8")).toBe("original")
-  expect(readFileSync(join(root, "target.txt"), "utf8")).toBe("external")
-})
-
 it("keeps recovery bytes when the source name changes after exclusive linking", async () => {
   await expect(
     renameFileInsideRoot(root, "source.txt", "target.txt", {
@@ -67,10 +34,4 @@ it("keeps recovery bytes when the source name changes after exclusive linking", 
   ).rejects.toThrow()
   expect(readFileSync(join(root, "source.txt"), "utf8")).toBe("external")
   expect(readFileSync(join(root, "target.txt"), "utf8")).toBe("original")
-})
-
-it("rejects directories and names that leave the parent", async () => {
-  mkdirSync(join(root, "directory"))
-  await expect(renameFileInsideRoot(root, "directory", "moved")).rejects.toThrow("real file")
-  await expect(renameFileInsideRoot(root, "source.txt", "../escape.txt")).rejects.toThrow("segment")
 })

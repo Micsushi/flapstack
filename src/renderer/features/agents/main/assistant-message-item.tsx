@@ -339,7 +339,7 @@ function groupTaskTools(parts: any[], nestedToolIds: Set<string>): any[] {
 
 // Collapsible steps component
 interface ReasoningTimelineProps {
-  children: React.ReactNode
+  renderDetails: () => React.ReactNode
   isStreaming: boolean
   wasStopped: boolean
   wasInterrupted: boolean
@@ -350,7 +350,7 @@ interface ReasoningTimelineProps {
 }
 
 function ReasoningTimeline({
-  children,
+  renderDetails,
   isStreaming,
   wasStopped,
   wasInterrupted,
@@ -423,7 +423,7 @@ function ReasoningTimeline({
           />
         )}
       </button>
-      {hasDetails && isExpanded && <div className="space-y-1.5 px-1 py-3">{children}</div>}
+      {hasDetails && isExpanded && <div className="space-y-1.5 px-1 py-3">{renderDetails()}</div>}
     </div>
   )
 }
@@ -1189,9 +1189,8 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             }
             durationMs={msgMetadata?.durationMs}
             startedAt={reasoningStartedAtRef.current}
-          >
-            {stepParts.map((part, index) => renderPart(part, index, false))}
-          </ReasoningTimeline>
+            renderDetails={() => stepParts.map((part, index) => renderPart(part, index, false))}
+          />
         )}
         {!isStreaming && <AgentChangedFilesCard runId={msgMetadata?.runId} />}
         {!isStreaming &&

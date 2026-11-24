@@ -338,6 +338,13 @@ export function useCodexLoginFlow() {
     }
   }, [sessionId, state])
 
+  useEffect(() => {
+    return () => {
+      const requestId = activeStartRequestRef.current
+      if (requestId !== null) cancelledStartRequestsRef.current.add(requestId)
+    }
+  }, [])
+
   const setMethodAndResetError = useCallback(
     (nextMethod: CodexAuthMethod) => {
       setMethod(nextMethod)

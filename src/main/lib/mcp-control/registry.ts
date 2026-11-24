@@ -61,9 +61,32 @@ export type McpAuditWriter = {
   }) => McpDispatchBlock | null
 }
 
+export const sessionMcpTools = {
+  tool_search: {
+    name: "tool_search",
+    description:
+      "Find available Flapstack tools by name or purpose. Matching tools become available for this session. Refresh the tool list to see their schemas.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  dispatch_status: {
+    name: "dispatch_status",
+    description: "Collect an asynchronous diff by its handle without dispatching it again.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+} as const satisfies Record<string, McpControlTool>
+
+export function isSessionMcpTool(name: string) {
+  return Object.hasOwn(sessionMcpTools, name)
+}
+
 export const mcpControlTools: McpControlTool[] = [
   ...liveControlTools,
   ...workflowTools,
+  ...Object.values(sessionMcpTools),
   {
     name: "ping",
     description: "Check Flapstack app-control server health.",
@@ -959,6 +982,15 @@ function executeImplementedTool(
     approved: false,
   },
 ): McpControlResponse | Promise<McpControlResponse> {
+  if (isSessionMcpTool(name)) {
+    return {
+      ok: false,
+      error: {
+        code: "tool-unavailable",
+        message: "Call this tool through the Flapstack MCP session.",
+      },
+    }
+  }
   if (name === "ping") {
     return { ok: true, data: { status: "ok", caller: snapshotCaller(caller) } }
   }

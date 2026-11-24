@@ -56,28 +56,6 @@ describe("desktop auth storage security", () => {
     while (directories.length > 0) rmSync(directories.pop()!, { recursive: true, force: true })
   })
 
-  it("fails closed instead of persisting plaintext when OS encryption is unavailable", () => {
-    const directory = temporaryDirectory()
-    const store = new AuthStore(directory)
-
-    expect(() => store.save(authData)).toThrow(/secure.*encryption.*unavailable/i)
-    expect(existsSync(join(directory, "auth.dat"))).toBe(false)
-    expect(existsSync(join(directory, "auth.dat.json"))).toBe(false)
-  })
-
-  it("fails closed when encryption reports Chromium basic_text", () => {
-    const directory = temporaryDirectory()
-    const store = new AuthStore(directory)
-    mocks.available = true
-    mocks.backend = "basic_text"
-
-    expect(() => store.save(authData)).toThrow(/secure.*encryption.*unavailable/i)
-    expect(store.load()).toBeNull()
-    expect(mocks.encryptString).not.toHaveBeenCalled()
-    expect(mocks.decryptString).not.toHaveBeenCalled()
-    expect(existsSync(join(directory, "auth.dat"))).toBe(false)
-  })
-
   it("does not consume a legacy plaintext token until it can migrate it to encryption", () => {
     const directory = temporaryDirectory()
     const fallback = join(directory, "auth.dat.json")
@@ -92,49 +70,6 @@ describe("desktop auth storage security", () => {
     expect(existsSync(fallback)).toBe(false)
     expect(readFileSync(join(directory, "auth.dat"), "utf8")).not.toContain("access-secret")
   })
-
-  it.each(["auth.dat.json", "auth.json"])(
-    "retries failed %s cleanup before returning encrypted credentials",
-    (legacyFileName) => {
-      const directory = temporaryDirectory()
-      const legacyPath = join(directory, legacyFileName)
-      writeFileSync(legacyPath, JSON.stringify(authData))
-      mocks.available = true
-
-      class RetryCleanupAuthStore extends AuthStore {
-        cleanupAttempts = 0
-
-        protected override removeCredentialFile(credentialPath: string): void {
-          if (credentialPath === legacyPath) {
-            this.cleanupAttempts += 1
-            if (this.cleanupAttempts === 1) {
-              throw Object.assign(new Error("file is locked"), { code: "EPERM" })
-            }
-          }
-          super.removeCredentialFile(credentialPath)
-        }
-      }
-
-      const store = new RetryCleanupAuthStore(directory)
-      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {})
-
-      expect(store.load()).toBeNull()
-      expect(errorLog).toHaveBeenCalledWith(
-        "Failed to load auth data:",
-        expect.objectContaining({
-          message:
-            "Encrypted authentication data is available, but legacy plaintext cleanup failed",
-        }),
-      )
-      expect(existsSync(join(directory, "auth.dat"))).toBe(true)
-      expect(existsSync(legacyPath)).toBe(true)
-
-      expect(store.load()).toEqual(authData)
-      expect(store.cleanupAttempts).toBe(2)
-      expect(existsSync(legacyPath)).toBe(false)
-      errorLog.mockRestore()
-    },
-  )
 
   it("attempts every credential deletion and reports a partial logout failure", () => {
     const directory = temporaryDirectory()

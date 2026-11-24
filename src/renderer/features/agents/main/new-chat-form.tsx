@@ -117,7 +117,11 @@ import {
   PromptInputActions,
   PromptInputContextItems,
 } from "../../../components/ui/prompt-input"
-import { agentsSidebarOpenAtom, agentsUnseenChangesAtom } from "../atoms"
+import {
+  agentsSidebarOpenAtom,
+  agentsUnseenChangesAtom,
+  antigravityEffortSelectionsAtom,
+} from "../atoms"
 import { AgentSendButton, AgentVoiceButton } from "../components/agent-send-button"
 import { AgentModeSelector } from "../components/agent-mode-selector"
 import { PermissionSelector } from "../components/permission-selector"
@@ -1270,7 +1274,11 @@ export function NewChatForm({
   // Create chat mutation (real tRPC)
   const utils = trpc.useUtils()
   const createChatMutation = trpc.chats.create.useMutation({
-    onMutate: () => ({ reasoningOutputEnabled, selectedClaudeEffort }),
+    onMutate: () => ({
+      reasoningOutputEnabled,
+      selectedClaudeEffort,
+      antigravityEffort: antigravity.nativeEffort,
+    }),
     onSuccess: (data, input, selection) => {
       appStore.set(
         lastMessagedProjectIdAtom,
@@ -1290,6 +1298,13 @@ export function NewChatForm({
         ids.push(firstSubChatId)
         setPendingInitialGenerationIds((prev) => new Set([...prev, firstSubChatId]))
         if (selection) {
+          if (input.harness === "antigravity" && input.model && selection.antigravityEffort) {
+            const effort = selection.antigravityEffort
+            appStore.set(antigravityEffortSelectionsAtom, (current) => ({
+              ...current,
+              [firstSubChatId + ":" + input.model]: effort,
+            }))
+          }
           appStore.set(
             subChatReasoningEnabledAtomFamily(firstSubChatId),
             selection.reasoningOutputEnabled,
@@ -2486,7 +2501,6 @@ export function NewChatForm({
                         }}
                       />
                       <AgentModelTuningSelector
-                        showAntigravityApprovals={newChatPermission === "full-access"}
                         antigravity={antigravity}
                         selectedAgentId={selectedAgent.id as AgentProviderId}
                         reasoningEnabled={reasoningOutputEnabled}

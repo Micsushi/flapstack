@@ -1728,6 +1728,8 @@ export const subChats = sqliteTable(
       .references(() => chats.id, { onDelete: "cascade" }),
     sessionId: text("session_id"), // Claude SDK session ID for resume
     streamId: text("stream_id"), // Track in-progress streams
+    codexRewindIntent: text("codex_rewind_intent"),
+    codexRewindDiscarded: text("codex_rewind_discarded"),
     mode: text("mode").notNull().default("write"), // "write" | "plan" | "read" | "review"
     harness: text("harness"),
     model: text("model"),

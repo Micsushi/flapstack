@@ -50,6 +50,7 @@ export type CheckpointStatusSnapshot = {
   treeCommit?: string
   indexTree?: string
   profileObjects?: boolean
+  excludePaths?: string[]
   originals?: Record<string, string | null>
   crlfPaths?: string[]
   fileCapture?: {
@@ -96,11 +97,139 @@ export async function hashWorktreeFile(
   }
 }
 
+function normalizeCheckpointExclusions(paths: readonly string[]) {
+  return [
+    ...new Set(
+      paths.map((path) => {
+        const segments = path.replaceAll("\\", "/").split("/")
+        if (
+          /^([/\\]|[a-z]:)/i.test(path) ||
+          segments.some(
+            (part) =>
+              !part ||
+              part === "." ||
+              part === ".." ||
+              /[\x00-\x1f]/.test(part) ||
+              part.toLowerCase() === ".git",
+          )
+        )
+          throw new Error("Invalid checkpoint exclusion")
+        return segments.join("/")
+      }),
+    ),
+  ]
+}
+
+function checkpointPathExcluded(path: string, exclusions: readonly string[]) {
+  const compare = process.platform === "win32" ? path.toLowerCase() : path
+  return exclusions.some((name) => {
+    const excluded = process.platform === "win32" ? name.toLowerCase() : name
+    return compare === excluded || compare.startsWith(excluded + "/")
+  })
+}
+
+function checkpointPathspecs(exclusions: readonly string[]) {
+  const magic = process.platform === "win32" ? "exclude,literal,icase" : "exclude,literal"
+  return exclusions.map((path) => ":(" + magic + ")" + path)
+}
+
+async function assertUntrackedExclusions(
+  git: SimpleGit,
+  exclusions: readonly string[],
+  head: string | null,
+) {
+  if (!exclusions.length) return
+  const paths = exclusions.map(
+    (path) => ":(" + (process.platform === "win32" ? "literal,icase" : "literal") + ")" + path,
+  )
+  const [indexed, committed] = await Promise.all([
+    git.raw(["ls-files", "--cached", "-z", "--", ...paths]),
+    head ? git.raw(["ls-tree", "-r", "--name-only", "-z", head]) : "",
+  ])
+  if (indexed || committed.split("\0").some((path) => checkpointPathExcluded(path, exclusions)))
+    throw new Error("Checkpoint exclusions must be outside tracked paths.")
+}
+
+async function findUntrackedNestedRepos(worktree: string, git: SimpleGit) {
+  const entries = await git.raw(["ls-files", "--others", "--exclude-standard", "-z"])
+  const directories = entries.split("\0").filter((path) => path.endsWith("/"))
+  const nested = await Promise.all(
+    directories.map(async (directory) => {
+      const name = normalizeCheckpointExclusions([directory.slice(0, -1)])[0]!
+      const marker = await lstat(join(worktree, name, ".git")).catch(() => null)
+      return marker?.isDirectory() || marker?.isFile() ? name : null
+    }),
+  )
+  return nested.filter((name): name is string => name !== null)
+}
+
+export async function resolveCleanHead(
+  worktreePath: string,
+  excludePaths: readonly string[] = [],
+): Promise<{ commit: string; tree: string } | null> {
+  const git = createGit(worktreePath)
+  const exclusions = normalizeCheckpointExclusions(excludePaths)
+  // Git's fast status can certify raw bytes only when no checkout normalization applies.
+  const autocrlf = await git.raw(["config", "--get", "core.autocrlf"]).catch(() => "")
+  if (autocrlf.trim() && autocrlf.trim().toLowerCase() !== "false") return null
+  const head = await git.revparse(["--verify", "HEAD"]).catch(() => null)
+  if (!head) return null
+  const commit = head.trim()
+  const results = await Promise.all([
+    new Promise<string>((done, fail) => {
+      // Use fixed argv so no configured fsmonitor hook participates in the proof.
+      execFile(
+        "git",
+        [
+          "--no-optional-locks",
+          "-c",
+          "core.fsmonitor=false",
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all",
+          "--ignore-submodules=none",
+          "--",
+          ".",
+          ...checkpointPathspecs(exclusions),
+        ],
+        {
+          cwd: worktreePath,
+          windowsHide: true,
+          timeout: GIT_TIMEOUTS.LOCAL,
+          maxBuffer: 8 * 1024 * 1024,
+        },
+        (error, stdout) => (error ? fail(error) : done(stdout)),
+      )
+    }),
+    git.raw(["ls-files", "-v", "--stage", "-z"]),
+    git.raw([
+      "ls-files",
+      "--cached",
+      "-z",
+      "--",
+      ":(attr:!text !eol !filter !working-tree-encoding !ident !crlf)",
+    ]),
+    git.revparse([commit + "^{tree}"]),
+  ])
+  const [status, index, plain, tree] = results
+  if (status) return null
+  const tracked = index.split("\0").filter(Boolean)
+  if (
+    tracked.length !== plain.split("\0").filter(Boolean).length ||
+    tracked.some((entry) => !/^H 100(?:644|755) [a-f0-9]+ 0\t/.test(entry)) ||
+    (await git.revparse(["--verify", "HEAD"])).trim() !== commit
+  )
+    return null
+  return { commit, tree: tree.trim() }
+}
+
 async function buildStatusSnapshot(
   worktreePath: string | null,
   db: AppDatabase,
   requireGitPreimage = false,
   protectedIndex?: string,
+  excludePaths: readonly string[] = [],
 ): Promise<{ gitCommit: string | null; snapshot: CheckpointStatusSnapshot }> {
   if (!worktreePath || !existsSync(worktreePath)) {
     if (protectedIndex) throw new Error("The checkpoint checkout no longer exists.")
@@ -116,42 +245,71 @@ async function buildStatusSnapshot(
 
   let confirmedGitWorktree = false
   try {
-    const git = createGit(worktreePath)
-    const isRepo = !!protectedIndex || (await git.checkIsRepo())
-    if (!isRepo) {
+    const root = await realpath(worktreePath)
+    const profile = checkpointProfile(db)
+    return await withPreparedOriginals(root, profile, async (prepared) => {
+      const git = createGit(root)
+      const isRepo = !!protectedIndex || (await git.checkIsRepo())
+      if (!isRepo) {
+        return {
+          gitCommit: null,
+          snapshot: {
+            available: false,
+            files: {},
+            error: "Worktree is not a git repository",
+          },
+        }
+      }
+
+      confirmedGitWorktree = true
+      let exclusions = normalizeCheckpointExclusions(excludePaths)
+      const [initialClean, head] = await Promise.all([
+        resolveCleanHead(root, exclusions),
+        git.revparse(["--verify", "HEAD"]).catch(() => null),
+      ])
+      let clean = initialClean
+      if (!clean && !exclusions.length) {
+        exclusions = await findUntrackedNestedRepos(root, git)
+        if (exclusions.length) clean = await resolveCleanHead(root, exclusions)
+      }
+      await assertUntrackedExclusions(git, exclusions, head?.trim() ?? null)
+      if (clean && clean.commit === head?.trim()) {
+        return {
+          gitCommit: clean.commit,
+          snapshot: {
+            available: true,
+            files: {},
+            treeCommit: clean.tree,
+            indexTree: clean.tree,
+            crlfPaths: [],
+            ...(exclusions.length ? { excludePaths: exclusions } : {}),
+          },
+        }
+      }
+      const [staged, { originals, fileCapture, crlfPaths, eagerTree }] = await Promise.all([
+        protectedIndex ? readIndexTree(worktreePath, protectedIndex) : git.raw(["write-tree"]),
+        collectOriginals(root, git, profile, prepared, undefined, exclusions),
+      ])
+      const gitCommit = head?.trim() ?? null
+      const indexTree = staged.trim()
+      const treeCommit = eagerTree
+        ? await captureEagerTree(root, git, profile, exclusions)
+        : indexTree
       return {
-        gitCommit: null,
+        gitCommit,
         snapshot: {
-          available: false,
+          available: true,
           files: {},
-          error: "Worktree is not a git repository",
+          treeCommit,
+          indexTree,
+          profileObjects: true,
+          originals,
+          crlfPaths,
+          fileCapture,
+          ...(exclusions.length ? { excludePaths: exclusions } : {}),
         },
       }
-    }
-
-    confirmedGitWorktree = true
-    const profile = checkpointProfile(db)
-    const [head, staged, { originals, fileCapture, crlfPaths, eagerTree }] = await Promise.all([
-      git.revparse(["--verify", "HEAD"]).catch(() => null),
-      protectedIndex ? readIndexTree(worktreePath, protectedIndex) : git.raw(["write-tree"]),
-      captureOriginals(worktreePath, git, profile),
-    ])
-    const gitCommit = head?.trim() ?? null
-    const indexTree = staged.trim()
-    const treeCommit = eagerTree ? await captureEagerTree(worktreePath, git, profile) : indexTree
-    return {
-      gitCommit,
-      snapshot: {
-        available: true,
-        files: {},
-        treeCommit,
-        indexTree,
-        profileObjects: true,
-        originals,
-        crlfPaths,
-        fileCapture,
-      },
-    }
+    })
   } catch (error) {
     if (requireGitPreimage && confirmedGitWorktree) throw error
     return {
@@ -382,17 +540,13 @@ async function serializeOriginalCopy(target: string, operation: () => Promise<vo
   }
 }
 
-async function captureOriginals(worktree: string, git: SimpleGit, profile: string) {
-  const root = await realpath(worktree)
-  return withPreparedOriginals(root, profile, (job) => collectOriginals(root, git, profile, job))
-}
-
 async function collectOriginals(
   worktree: string,
   git: SimpleGit,
   profile: string,
   prepared?: PreparedOriginals,
   warming?: PreparedOriginals,
+  exclusions: readonly string[] = [],
 ) {
   const files = join(profile, "checkpoint-files")
   const fromRepo = relative(worktree, files)
@@ -400,7 +554,17 @@ async function collectOriginals(
     throw new Error("The checkpoint profile must be outside the working repository")
   const started = Date.now()
   const [raw, stages, filtered] = await Promise.all([
-    git.raw(["ls-files", "-z", "--others", "--modified", "--deleted", "--exclude-standard"]),
+    git.raw([
+      "ls-files",
+      "-z",
+      "--others",
+      "--modified",
+      "--deleted",
+      "--exclude-standard",
+      "--",
+      ".",
+      ...checkpointPathspecs(exclusions),
+    ]),
     warming ? "" : git.raw(["ls-files", "--cached", "--stage", "-z"]),
     warming
       ? ""
@@ -604,7 +768,12 @@ async function initRawGitDir(worktree: string, temp: string) {
   return dir
 }
 
-async function captureEagerTree(worktree: string, git: SimpleGit, profile: string) {
+async function captureEagerTree(
+  worktree: string,
+  git: SimpleGit,
+  profile: string,
+  exclusions: readonly string[],
+) {
   const temp = await mkdtemp(join(tmpdir(), "flapstack-checkpoint-"))
   try {
     const index = join(temp, "index")
@@ -614,7 +783,7 @@ async function captureEagerTree(worktree: string, git: SimpleGit, profile: strin
     if (existsSync(source)) await copyFile(source, index)
     const privateGit = await privateWriter(worktree, worktree, index, profile)
     if (!existsSync(index)) await privateGit.raw(["read-tree", "--empty"])
-    await privateGit.raw(["add", "-A"])
+    await privateGit.raw(["add", "-A", "--", ".", ...checkpointPathspecs(exclusions)])
     return (await privateGit.raw(["write-tree"])).trim()
   } finally {
     await rm(temp, { recursive: true, force: true })
@@ -780,6 +949,7 @@ function parseCheckpointSnapshot(value: string | null): CheckpointStatusSnapshot
         treeCommit: parsed.treeCommit,
         indexTree: parsed.indexTree,
         profileObjects: parsed.profileObjects,
+        excludePaths: normalizeCheckpointExclusions(parsed.excludePaths ?? []),
         originals: parsed.originals,
         crlfPaths: parsed.crlfPaths,
         fileCapture: parsed.fileCapture,
@@ -960,9 +1130,10 @@ export async function captureCheckpoint(
   kind: CheckpointKind,
   db: AppDatabase = getDatabase(),
   protectedIndex?: string,
+  excludePaths?: readonly string[],
 ) {
   return withCheckpointFiles(db, () =>
-    captureLeasedCheckpoint(runId, worktreePath, kind, db, protectedIndex),
+    captureLeasedCheckpoint(runId, worktreePath, kind, db, protectedIndex, excludePaths),
   )
 }
 
@@ -972,6 +1143,7 @@ async function captureLeasedCheckpoint(
   kind: CheckpointKind,
   db: AppDatabase,
   protectedIndex?: string,
+  excludePaths?: readonly string[],
 ) {
   const started = Date.now()
   const run = db
@@ -990,6 +1162,7 @@ async function captureLeasedCheckpoint(
           db,
           kind === "before" || !!protectedIndex,
           protectedIndex,
+          excludePaths,
         )
 
   const checkpoint = db
@@ -1076,6 +1249,8 @@ async function restoreLeasedCheckpoint(checkpointId: string, db: AppDatabase): P
   }
 
   const git = checkpointReader(checkpoint.worktreePath, snapshot.profileObjects)
+  const exclusions = snapshot.excludePaths ?? []
+  await assertUntrackedExclusions(git, exclusions, checkpoint.gitCommit)
   const retainedRef = `refs/flapstack/checkpoints/${checkpoint.id}`
   const retainedIndexRef = `refs/flapstack/checkpoint-indexes/${checkpoint.id}`
   const retainedBase = (await git.raw(["rev-parse", "--verify", `${retainedRef}^{tree}`])).trim()
@@ -1103,7 +1278,13 @@ async function restoreLeasedCheckpoint(checkpointId: string, db: AppDatabase): P
         )
       : checkout
     await writer.raw(["checkout-index", "-a", "-f"])
-    await checkout.raw(["clean", "-fd"])
+    const protectedPaths = exclusions.flatMap((path) => [
+      "-e",
+      "/" + path.replace(/[\[\]*? ]/g, "\\$&"),
+    ])
+    const cleanConfig =
+      process.platform === "win32" && exclusions.length ? ["-c", "core.ignorecase=true"] : []
+    await checkout.raw([...cleanConfig, "clean", "-fd", ...protectedPaths])
   } finally {
     await rm(temporary, { recursive: true, force: true })
   }
@@ -1162,12 +1343,21 @@ async function captureLeasedManifest(
         .filter(Boolean)
         .forEach((path) => changed.add(path))
     }
+    const exclusions = [
+      ...(beforeSnapshot.excludePaths ?? []),
+      ...(afterSnapshot.excludePaths ?? []),
+    ]
+    for (const path of changed) {
+      if (checkpointPathExcluded(path, exclusions)) changed.delete(path)
+    }
     if (changed.size) {
       const [beforeTree, afterTree] = await Promise.all([
         projectedTree(worktreePath, beforeSnapshot, profile, changed),
         projectedTree(worktreePath, afterSnapshot, profile, changed),
       ])
-      entries = await treeManifest(worktreePath, beforeTree, afterTree, privateObjects, profile)
+      entries = (
+        await treeManifest(worktreePath, beforeTree, afterTree, privateObjects, profile)
+      ).filter((entry) => !checkpointPathExcluded(entry.filePath, exclusions))
       beforeSnapshot.reviewTree = beforeTree
       afterSnapshot.reviewTree = afterTree
     }

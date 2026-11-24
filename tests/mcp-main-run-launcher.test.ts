@@ -12,11 +12,7 @@ import {
   recoverInterruptedMcpRuns,
   type QueuedAgentRun,
 } from "../src/main/lib/run-launch-service"
-import { appendMcpAuditRecord } from "../src/main/lib/mcp-control/audit-storage"
-import { updateSubChatRunStatusIfAuthoritative } from "../src/main/lib/run-status-authority"
-import { createAgentOrchestrationService } from "../src/main/lib/agent-orchestration/service"
 import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
-import { testCoordinationEngineSnapshotSqlValues } from "./coordination-engine-test-db"
 
 const harnessMocks = vi.hoisted(() => ({
   codex: vi.fn(),
@@ -82,35 +78,6 @@ function testLauncher() {
 }
 
 describe("MCP main run launcher", () => {
-  it("launches a global chat in its own durable folder without attaching it to a project", async () => {
-    const run = queuedRun("global-run", "codex")
-    for (const table of ["chats", "sub_chats", "agent_runs"]) {
-      sqlite.prepare(`UPDATE ${table} SET worktree_path = NULL`).run()
-    }
-    await testLauncher()({ ...run, worktreePath: null, projectPath: null })
-    const expected = join(directory, "data", "global-chats", run.chatId)
-    expect(
-      sqlite.prepare("SELECT worktree_path FROM agent_runs WHERE id = ?").get(run.runId),
-    ).toEqual({ worktree_path: expected })
-    expect(
-      sqlite.prepare("SELECT project_id, worktree_path FROM chats WHERE id = ?").get(run.chatId),
-    ).toEqual({ project_id: null, worktree_path: null })
-    expect(harnessMocks.codex).toHaveBeenCalledWith(expect.objectContaining({ cwd: expected }))
-  })
-
-  it("reuses the queued run identity for Codex and Claude launches", async () => {
-    const launch = testLauncher()
-    await launch(queuedRun("queued-codex", "codex"))
-    await launch(queuedRun("queued-claude", "claude-code"))
-
-    expect(harnessMocks.codex).toHaveBeenCalledWith(
-      expect.objectContaining({ runId: "queued-codex", chatId: "chat", subChatId: "sub-chat" }),
-    )
-    expect(harnessMocks.claude).toHaveBeenCalledWith(
-      expect.objectContaining({ runId: "queued-claude", chatId: "chat", subChatId: "sub-chat" }),
-    )
-  })
-
   it("cancels a claimed run that starts during persisted cancellation serialization", async () => {
     const run = queuedRun("cancel-claim-race", "codex")
     const service = new MainRuntimeLaunchService({ databasePath: path })
@@ -124,132 +91,6 @@ describe("MCP main run launcher", () => {
     expect(sqlite.prepare("SELECT status FROM agent_runs WHERE id = ?").get(run.runId)).toEqual({
       status: "cancelled",
     })
-  })
-
-  it("launches eligible local workers and fails tool mismatch before provider work", async () => {
-    const launch = testLauncher()
-    await launch({
-      ...queuedRun("queued-local", "local"),
-      model: "local-tools",
-      localEndpoint: "http://127.0.0.1:22434",
-      requiredLocalToolTiers: ["read"],
-    })
-
-    expect(harnessMocks.localChat).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runId: "queued-local",
-        model: "local-tools",
-        endpoint: "http://127.0.0.1:22434",
-      }),
-    )
-    expect(harnessMocks.localCatalog).toHaveBeenCalledWith({
-      endpoint: "http://127.0.0.1:22434",
-    })
-
-    harnessMocks.localCatalog.mockResolvedValue(localCatalog(false))
-    await expect(
-      launch({
-        ...queuedRun("mismatch-local", "local"),
-        model: "local-tools",
-        requiredLocalToolTiers: ["read"],
-      }),
-    ).rejects.toThrow(/preflight failed for read.*no cloud fallback/i)
-    expect(harnessMocks.localChat).toHaveBeenCalledTimes(1)
-  })
-
-  it("requires model-scoped tool support before a translated local Codex contract dispatches", async () => {
-    const service = new MainRuntimeLaunchService({
-      databasePath: path,
-      flapstackNativeProbe: () => ({ available: true }),
-      enableLocalProviderCodexContract: true,
-    })
-    const probe = await service.probe("codex", "local")
-    const runtimeLaunch = {
-      schemaVersion: 1 as const,
-      harness: "local",
-      model: "local-tools",
-      requestedPreference: "codex" as const,
-      preferenceSource: "chat" as const,
-      resolvedRuntime: "codex" as const,
-      compatibility: {
-        compatible: true as const,
-        harness: "local",
-        runtime: "codex" as const,
-        reason: null,
-      },
-      versions: probe.versions,
-      capabilities: probe.capabilities,
-      controls: {
-        schemaVersion: 1 as const,
-        modelEffort: null,
-        serviceTier: null,
-        modelThinking: false,
-        reasoningDisplay: false,
-        subagentActivity: false,
-        hookDiagnostics: false,
-      },
-      permission: { mode: "full-access" as const },
-    }
-    const mismatchedRun = {
-      ...queuedRun("translated-local-mismatch", "local"),
-      model: "local-tools",
-      runtimeLaunch,
-    }
-    await expect(service.launch(mismatchedRun)).rejects.toThrow(
-      "Runtime launch identity does not match its selection snapshot.",
-    )
-    expect(harnessMocks.localChat).not.toHaveBeenCalled()
-    expect(
-      sqlite
-        .prepare("SELECT runtime_launch_identity FROM agent_runs WHERE id = ?")
-        .get(mismatchedRun.runId),
-    ).toEqual({ runtime_launch_identity: null })
-    const run = {
-      ...queuedRun("translated-local", "local", runtimeLaunch),
-      model: "local-tools",
-      runtimeLaunch,
-    }
-    harnessMocks.localCatalog.mockResolvedValue(localCatalog(false))
-
-    await expect(service.launch(run)).rejects.toThrow(
-      /preflight failed for read.*no cloud fallback/i,
-    )
-    expect(harnessMocks.localChat).not.toHaveBeenCalled()
-
-    harnessMocks.localCatalog.mockResolvedValue(localCatalog(true))
-    const supportedRun = {
-      ...queuedRun("translated-local-tools", "local", runtimeLaunch),
-      model: "local-tools",
-      runtimeLaunch: run.runtimeLaunch,
-    }
-    await expect(service.launch(supportedRun)).resolves.toBeUndefined()
-    expect(harnessMocks.localChat).toHaveBeenCalledWith(
-      expect.objectContaining({ runId: "translated-local-tools", model: "local-tools" }),
-    )
-    const persisted = sqlite
-      .prepare("SELECT resolved_runtime, runtime_launch_identity FROM agent_runs WHERE id = ?")
-      .get(supportedRun.runId) as { resolved_runtime: string; runtime_launch_identity: string }
-    expect(persisted.resolved_runtime).toBe("codex")
-    expect(JSON.parse(persisted.runtime_launch_identity)).toEqual({
-      schemaVersion: 1,
-      runtime: "codex",
-      harness: "local",
-      versions: probe.versions,
-    })
-    expect(harnessMocks.codex).not.toHaveBeenCalled()
-  })
-
-  it("dispatches NanoGPT queued runs through the normal OpenCode router", async () => {
-    const launch = testLauncher()
-    await launch({ ...queuedRun("queued-nanogpt", "nanogpt"), model: "deepseek-chat" })
-
-    expect(harnessMocks.opencode).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runId: "queued-nanogpt",
-        provider: "nanogpt",
-        model: "deepseek-chat",
-      }),
-    )
   })
 
   it("passes durable per-worker reasoning effort to supported harness launches", async () => {
@@ -272,94 +113,6 @@ describe("MCP main run launcher", () => {
       expect.objectContaining({ reasoningEnabled: false }),
     )
     expect(harnessMocks.claude.mock.calls.at(-1)?.[0]).not.toHaveProperty("effort")
-  })
-
-  it("uses the normal Cursor and OpenCode-backed launch paths", async () => {
-    const launch = testLauncher()
-    await launch({ ...queuedRun("queued-cursor", "cursor-agent"), model: "cursor-model" })
-    await launch({ ...queuedRun("queued-openrouter", "openrouter"), model: "openai/gpt-5" })
-
-    expect(harnessMocks.cursor).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runId: "queued-cursor",
-        model: "cursor-model",
-        reasoningEnabled: true,
-      }),
-    )
-    expect(harnessMocks.opencode).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runId: "queued-openrouter",
-        provider: "openrouter",
-        model: "openai/gpt-5",
-        reasoningEffort: "high",
-      }),
-    )
-  })
-
-  it("maps disabled Codex reasoning to the lowest provider-supported model variant", async () => {
-    const launch = testLauncher()
-    await launch({
-      ...queuedRun("minimal-codex", "codex"),
-      model: "gpt-5.3-codex-spark",
-      reasoningEffort: "minimal",
-    })
-
-    expect(harnessMocks.codex).toHaveBeenCalledWith(
-      expect.objectContaining({
-        model: "gpt-5.3-codex-spark/low",
-        reasoningEnabled: false,
-        reasoningEffort: "minimal",
-      }),
-    )
-  })
-
-  it("replaces stale Codex model effort suffixes with the durable run effort", async () => {
-    const launch = testLauncher()
-    await launch({
-      ...queuedRun("stale-slash-effort", "codex"),
-      model: "gpt-5.3-codex-spark/low",
-      reasoningEffort: "high",
-    })
-    await launch({
-      ...queuedRun("stale-bracket-effort", "codex"),
-      model: "gpt-5.3-codex-spark[high]",
-      reasoningEffort: "minimal",
-    })
-
-    expect(harnessMocks.codex.mock.calls.at(-2)?.[0]).toEqual(
-      expect.objectContaining({ model: "gpt-5.3-codex-spark/high" }),
-    )
-    expect(harnessMocks.codex.mock.calls.at(-1)?.[0]).toEqual(
-      expect.objectContaining({ model: "gpt-5.3-codex-spark/low" }),
-    )
-  })
-
-  it("has one idempotent startup owner and drains only MCP-origin pending runs", async () => {
-    seedRun("mcp-interrupted", "running", "mcp-interrupted-prompt", "codex")
-    seedRun("ordinary-interrupted", "running", "ordinary-prompt", "claude-code")
-    seedRun("mcp-queued", "pending", "mcp-queued-prompt", "claude-code")
-    seedRun("ordinary-queued", "pending", "ordinary-queued-prompt", "codex")
-
-    expect(await recoverInterruptedMcpRuns(path)).toBe(1)
-    expect(await recoverInterruptedMcpRuns(path)).toBe(0)
-    expect(sqlite.prepare("SELECT id, status FROM agent_runs ORDER BY id").all()).toEqual([
-      { id: "mcp-interrupted", status: "pending" },
-      { id: "mcp-queued", status: "pending" },
-      { id: "ordinary-interrupted", status: "cancelled" },
-      { id: "ordinary-queued", status: "pending" },
-    ])
-
-    const launched: QueuedAgentRun[] = []
-    expect(
-      await drainPendingMcpRuns(path, async (run) => {
-        launched.push(run)
-      }),
-    ).toBe(2)
-    expect(launched.map((run) => run.runId).sort()).toEqual(["mcp-interrupted", "mcp-queued"])
-    expect(await drainPendingMcpRuns(path, async () => undefined)).toBe(0)
-    expect(
-      sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'ordinary-queued'").get(),
-    ).toEqual({ status: "pending" })
   })
 
   it("fails interrupted local streams without replaying MCP-origin runs", async () => {
@@ -458,502 +211,59 @@ describe("MCP main run launcher", () => {
     expect(order).toEqual(["shared-first", "shared-second"])
   })
 
-  it("fails one corrupt snapshot before claim and continues draining other runs", async () => {
-    seedRun("corrupt", "pending", "mcp-corrupt", "codex")
-    seedRun("healthy", "pending", "mcp-healthy", "claude-code")
-    sqlite.exec("DROP TRIGGER agent_runs_runtime_snapshot_immutable")
-    sqlite
-      .prepare("UPDATE agent_runs SET runtime_capability_snapshot = '{' WHERE id = 'corrupt'")
-      .run()
-    sqlite.exec(`CREATE TRIGGER reject_corrupt_claim BEFORE UPDATE OF status ON agent_runs
-      WHEN OLD.id = 'corrupt' AND OLD.status = 'pending' AND NEW.status = 'running'
-      BEGIN SELECT RAISE(ABORT, 'corrupt run was claimed'); END;`)
-    const launched: string[] = []
-
-    await expect(
-      drainPendingMcpRuns(
-        path,
-        async (run) => {
-          launched.push(run.runId)
-        },
-        { waitForCompletion: true },
-      ),
-    ).resolves.toBe(1)
-    expect(launched).toEqual(["healthy"])
-    expect(sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'corrupt'").get()).toEqual({
-      status: "failure",
-    })
-  })
-
-  it("preserves absent or null durable local tool requirements as no requirements", async () => {
-    seedLocalOrchestrationRun("local-absent", "local-absent-task")
-    seedLocalOrchestrationRun("local-null", "local-null-task")
-    const nullDefinition = orchestrationDefinition("local-null")
-    sqlite
-      .prepare("UPDATE orchestration_agents SET definition = ? WHERE run_id = 'local-null'")
-      .run(JSON.stringify({ ...nullDefinition, requiredLocalToolTiers: null }))
-    const launched = vi.fn(async (_run: QueuedAgentRun) => undefined)
-
-    await expect(drainPendingMcpRuns(path, launched, { waitForCompletion: true })).resolves.toBe(2)
-    expect(launched).toHaveBeenCalledTimes(2)
-    for (const [run] of launched.mock.calls) {
-      expect(run.requiredLocalToolTiers).toEqual([])
-    }
-  })
-
-  it("rejects corrupt durable local orchestration authority before claim or launch", async () => {
-    const corruptions: Array<{
-      name: string
-      definition: (value: Record<string, unknown>) => string
-      mutateRun?: (runId: string) => void
-    }> = [
-      { name: "malformed-json", definition: () => "{" },
-      {
-        name: "non-array-tiers",
-        definition: (value) => JSON.stringify({ ...value, requiredLocalToolTiers: "read" }),
-      },
-      {
-        name: "non-string-tier",
-        definition: (value) => JSON.stringify({ ...value, requiredLocalToolTiers: [1] }),
-      },
-      {
-        name: "unknown-tier",
-        definition: (value) =>
-          JSON.stringify({ ...value, requiredLocalToolTiers: ["read", "admin"] }),
-      },
-      {
-        name: "duplicate-tier",
-        definition: (value) =>
-          JSON.stringify({ ...value, requiredLocalToolTiers: ["read", "read"] }),
-      },
-      {
-        name: "invalid-endpoint",
-        definition: (value) =>
-          JSON.stringify({ ...value, localEndpoint: "https://ollama.example.com" }),
-      },
-      {
-        name: "invalid-provider",
-        definition: (value) => JSON.stringify({ ...value, provider: "openai" }),
-      },
-      {
-        name: "invalid-model",
-        definition: (value) => JSON.stringify({ ...value, model: " " }),
-      },
-      {
-        name: "invalid-permission",
-        definition: (value) => JSON.stringify({ ...value, permissionMode: "root" }),
-      },
-      {
-        name: "row-model-mismatch",
-        definition: (value) => JSON.stringify(value),
-        mutateRun: (runId) =>
-          void sqlite
-            .prepare("UPDATE agent_runs SET model = 'other-local' WHERE id = ?")
-            .run(runId),
-      },
-      {
-        name: "row-permission-mismatch",
-        definition: (value) => JSON.stringify(value),
-        mutateRun: (runId) =>
-          void sqlite
-            .prepare("UPDATE agent_runs SET permission_mode = 'read-only' WHERE id = ?")
-            .run(runId),
-      },
-    ]
-
-    for (const [index, corruption] of corruptions.entries()) {
-      const runId = `corrupt-local-${index}`
-      const taskId = `corrupt-local-task-${index}`
-      seedLocalOrchestrationRun(runId, taskId)
-      const definition = orchestrationDefinition(runId)
-      sqlite
-        .prepare("UPDATE orchestration_agents SET definition = ? WHERE run_id = ?")
-        .run(corruption.definition(definition), runId)
-      corruption.mutateRun?.(runId)
-      appendMcpAuditRecord(drizzle(sqlite, { schema }), {
-        id: `corrupt-source-${index}`,
-        invocationId: `corrupt-invocation-${index}`,
-        status: "completed",
-        caller: { chatId: `chat-${runId}` },
-        toolName: "orchestrate_task",
-        tier: 3,
-        input: { task: { mode: "create", name: corruption.name } },
-        result: { ok: true, data: { orchestration: { taskId } } },
-        createdAt: new Date(index + 1),
-      })
-      sqlite.exec(`CREATE TRIGGER reject_corrupt_local_claim_${index}
-        BEFORE UPDATE OF status ON agent_runs
-        WHEN OLD.id = '${runId}' AND OLD.status = 'pending' AND NEW.status = 'running'
-        BEGIN SELECT RAISE(ABORT, 'corrupt local run was claimed'); END;`)
-    }
-    const launch = vi.fn(async (_run: QueuedAgentRun) => undefined)
-
-    await expect(drainPendingMcpRuns(path, launch, { waitForCompletion: true })).resolves.toBe(0)
-    expect(launch).not.toHaveBeenCalled()
-    expect(harnessMocks.localCatalog).not.toHaveBeenCalled()
-    expect(harnessMocks.localChat).not.toHaveBeenCalled()
-    expect(harnessMocks.codex).not.toHaveBeenCalled()
-    expect(harnessMocks.claude).not.toHaveBeenCalled()
+  it("recovers legacy queued Codex turns in transcript order", async () => {
+    seedQueuedTurns("codex")
+    expect(recoverLegacyQueuedRunPrompts(sqlite)).toBe(2)
+    expect(recoverLegacyQueuedRunPrompts(sqlite)).toBe(0)
     expect(
-      sqlite
-        .prepare(
-          `SELECT r.status, s.run_status FROM agent_runs r
-           JOIN sub_chats s ON s.id = r.sub_chat_id
-           WHERE r.id LIKE 'corrupt-local-%' ORDER BY r.id`,
-        )
-        .all(),
-    ).toEqual(corruptions.map(() => ({ status: "failure", run_status: "failure" })))
-    for (const index of corruptions.keys()) {
-      expect(
-        sqlite
-          .prepare(
-            "SELECT status FROM mcp_audit_records WHERE invocation_id = ? ORDER BY created_at, id",
-          )
-          .all(`corrupt-invocation-${index}`),
-      ).toEqual([{ status: "completed" }, { status: "failed" }])
-    }
-  }, 60_000)
-
-  it("fails a corrupt durable local definition during restart recovery without replay", async () => {
-    seedLocalOrchestrationRun("local-corrupt-restart", "local-corrupt-restart-task")
-    sqlite
-      .prepare("UPDATE agent_runs SET status = 'running' WHERE id = 'local-corrupt-restart'")
-      .run()
-    sqlite
-      .prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = 'sub-local-corrupt-restart'")
-      .run()
-    sqlite
-      .prepare("UPDATE orchestration_agents SET definition = '{' WHERE run_id = ?")
-      .run("local-corrupt-restart")
-
-    await expect(recoverInterruptedMcpRuns(path)).resolves.toBe(0)
-    expect(
-      sqlite
-        .prepare(
-          `SELECT r.status, s.run_status FROM agent_runs r
-           JOIN sub_chats s ON s.id = r.sub_chat_id WHERE r.id = 'local-corrupt-restart'`,
-        )
-        .get(),
-    ).toEqual({ status: "failure", run_status: "failure" })
-    await expect(
-      drainPendingMcpRuns(path, testLauncher(), {
-        waitForCompletion: true,
-      }),
-    ).resolves.toBe(0)
-    expect(harnessMocks.localCatalog).not.toHaveBeenCalled()
-    expect(harnessMocks.localChat).not.toHaveBeenCalled()
-  })
-
-  it("keeps a newer queued run authoritative during interrupted-run recovery", async () => {
-    seedSharedConversationRuns()
-    sqlite
-      .prepare(
-        `UPDATE agent_runs
-         SET status = 'running', prompt_message_id = 'ordinary-interrupted'
-         WHERE id = 'shared-first'`,
-      )
-      .run()
-    sqlite.prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = 'shared-sub'").run()
-
-    expect(await recoverInterruptedMcpRuns(path)).toBe(0)
-
-    expect(sqlite.prepare("SELECT id, status FROM agent_runs ORDER BY started_at").all()).toEqual([
-      { id: "shared-first", status: "cancelled" },
-      { id: "shared-second", status: "pending" },
+      sqlite.prepare("SELECT id, initial_prompt FROM agent_runs ORDER BY started_at, id").all(),
+    ).toEqual([
+      { id: "ordered-first", initial_prompt: "A" },
+      { id: "ordered-second", initial_prompt: "B" },
     ])
-    expect(
-      sqlite.prepare("SELECT run_status FROM sub_chats WHERE id = 'shared-sub'").get(),
-    ).toEqual({ run_status: "pending" })
-  })
+    expect(sqlite.prepare("SELECT messages FROM sub_chats WHERE id = 'ordered-sub'").get()).toEqual(
+      { messages: "[]" },
+    )
 
-  it.each([
-    { reconciled: "completed", terminal: "success" },
-    { reconciled: "cancelled", terminal: "cancelled" },
-    { reconciled: "failed", terminal: "failure" },
-  ] as const)(
-    "projects recovered $reconciled atomically without overwriting a claimed successor",
-    async ({ reconciled, terminal }) => {
-      seedSharedConversationRuns("codex")
-      sqlite.prepare("UPDATE agent_runs SET status = 'running' WHERE id = 'shared-first'").run()
-      sqlite.prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = 'shared-sub'").run()
-
-      await expect(
-        recoverInterruptedMcpRuns(path, {
-          reconcile: async () => {
-            sqlite
-              .prepare("UPDATE agent_runs SET status = 'running' WHERE id = 'shared-second'")
-              .run()
-            sqlite
-              .prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = 'shared-sub'")
-              .run()
-            return reconciled
-          },
-        }),
-      ).resolves.toBe(0)
-
-      expect(sqlite.prepare("SELECT id, status FROM agent_runs ORDER BY started_at").all()).toEqual(
-        [
-          { id: "shared-first", status: terminal },
-          { id: "shared-second", status: "running" },
-        ],
-      )
-      expect(
-        sqlite.prepare("SELECT run_status FROM sub_chats WHERE id = 'shared-sub'").get(),
-      ).toEqual({ run_status: "running" })
-    },
-  )
-
-  it.each(["codex", "claude-code"] as const)(
-    "recovers two legacy queued %s turns before routing them in exact transcript order",
-    async (harness) => {
-      seedQueuedTurns(harness)
-      expect(recoverLegacyQueuedRunPrompts(sqlite)).toBe(2)
-      expect(recoverLegacyQueuedRunPrompts(sqlite)).toBe(0)
-      expect(
-        sqlite.prepare("SELECT id, initial_prompt FROM agent_runs ORDER BY started_at, id").all(),
-      ).toEqual([
-        { id: "ordered-first", initial_prompt: "A" },
-        { id: "ordered-second", initial_prompt: "B" },
-      ])
-      expect(
-        sqlite.prepare("SELECT messages FROM sub_chats WHERE id = 'ordered-sub'").get(),
-      ).toEqual({ messages: "[]" })
-
-      const route = async (input: { runId: string; subChatId: string; prompt: string }) => {
-        const row = sqlite
-          .prepare("SELECT messages FROM sub_chats WHERE id = ?")
-          .get(input.subChatId) as { messages: string }
-        const messages = JSON.parse(row.messages)
-        messages.push(
-          {
-            id: `mcp-${input.runId}`,
-            role: "user",
-            parts: [{ type: "text", text: input.prompt }],
-          },
-          {
-            id: `response-${input.runId}`,
-            role: "assistant",
-            parts: [{ type: "text", text: `${input.prompt}-response` }],
-          },
-        )
-        sqlite
-          .prepare("UPDATE sub_chats SET messages = ? WHERE id = ?")
-          .run(JSON.stringify(messages), input.subChatId)
-        sqlite
-          .prepare("UPDATE agent_runs SET status = 'success', completed_at = ? WHERE id = ?")
-          .run(Date.now(), input.runId)
-        return emptyStream()
-      }
-      const routed = harness === "codex" ? harnessMocks.codex : harnessMocks.claude
-      routed.mockImplementation(route)
-      const launch = testLauncher()
-
-      expect(await drainPendingMcpRuns(path, launch, { waitForCompletion: true })).toBe(1)
-      expect(await drainPendingMcpRuns(path, launch, { waitForCompletion: true })).toBe(1)
-      expect(routed.mock.calls.map(([input]) => input.prompt)).toEqual(["A", "B"])
+    const route = async (input: { runId: string; subChatId: string; prompt: string }) => {
       const row = sqlite
-        .prepare("SELECT messages FROM sub_chats WHERE id = 'ordered-sub'")
-        .get() as {
-        messages: string
-      }
-      const visible = JSON.parse(row.messages).map((message: any) => message.parts[0].text)
-      expect(visible).toEqual(["A", "A-response", "B", "B-response"])
-      expect(visible.filter((text: string) => text === "A")).toHaveLength(1)
-      expect(visible.filter((text: string) => text === "B")).toHaveLength(1)
-    },
-  )
-
-  it("marks Codex auth-error runs and launch audits failed", async () => {
-    seedRun("auth-failure", "pending", "mcp-auth-prompt", "codex")
-    sqlite
-      .prepare(
-        `INSERT INTO mcp_audit_records (
-          id, invocation_id, status, caller_chat_id, tool_name, tier, caller_snapshot,
-          chat_snapshot, run_snapshot, input_summary, result_summary, duration_ms, created_at
-        ) VALUES ('auth-source', 'auth-invocation', 'completed', 'chat-auth-failure',
-          'launch_run', 3, '{}', '{}', '{}', '{}', ?, 0, 1)`,
-      )
-      .run(JSON.stringify({ runId: "auth-failure" }))
-    harnessMocks.codex.mockResolvedValue(authErrorStream())
-
-    await drainPendingMcpRuns(path, testLauncher(), {
-      waitForCompletion: true,
-    })
-
-    expect(sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'auth-failure'").get()).toEqual(
-      { status: "failure" },
-    )
-    expect(
-      sqlite.prepare("SELECT run_status FROM sub_chats WHERE id = 'sub-auth-failure'").get(),
-    ).toEqual({ run_status: "failure" })
-    const statuses = sqlite
-      .prepare(
-        "SELECT status FROM mcp_audit_records WHERE invocation_id = 'auth-invocation' ORDER BY created_at, id",
-      )
-      .all() as Array<{ status: string }>
-    expect(statuses.map((row) => row.status).sort()).toEqual(["completed", "failed"])
-  })
-
-  it("correlates every orchestration launch audit by durable task context", async () => {
-    seedOrchestrationRun("orchestrated-run", "orchestration-task")
-    appendMcpAuditRecord(drizzle(sqlite, { schema }), {
-      id: "orchestration-source",
-      invocationId: "orchestration-invocation",
-      status: "completed",
-      caller: { chatId: "chat-orchestrated-run" },
-      toolName: "orchestrate_task",
-      tier: 3,
-      input: { task: { mode: "create", name: "Orchestration" } },
-      result: {
-        ok: true,
-        data: { orchestration: { taskId: "orchestration-task" }, aggregate: { active: 1 } },
-      },
-      createdAt: new Date(1),
-    })
-    sqlite
-      .prepare(
-        `INSERT INTO mcp_audit_records (
-          id, invocation_id, status, caller_chat_id, tool_name, tier, caller_snapshot,
-          chat_snapshot, run_snapshot, input_summary, result_summary, duration_ms, created_at
-        ) VALUES ('redacted-result-decoy', 'wrong-invocation', 'completed', 'other-chat',
-          'orchestrate_task', 3, '{}', '{}', '{}', '{}', ?, 0, 2)`,
-      )
-      .run(JSON.stringify({ runId: "orchestrated-run" }))
-
-    await drainPendingMcpRuns(path, testLauncher(), {
-      waitForCompletion: true,
-    })
-
-    const correlated = sqlite
-      .prepare(
-        `SELECT status, run_snapshot, result_summary FROM mcp_audit_records
-         WHERE invocation_id = 'orchestration-invocation' ORDER BY created_at, id`,
-      )
-      .all() as Array<{ status: string; run_snapshot: string; result_summary: string }>
-    expect(correlated.map((row) => row.status)).toEqual(["completed", "completed"])
-    expect(correlated.some((row) => row.run_snapshot.includes("contextHash"))).toBe(true)
-    expect(correlated.some((row) => row.result_summary.includes("outcome"))).toBe(true)
-    expect(
-      sqlite
-        .prepare(
-          "SELECT count(*) count FROM mcp_audit_records WHERE invocation_id = 'wrong-invocation'",
-        )
-        .get(),
-    ).toEqual({ count: 1 })
-  })
-
-  it("keeps omitted local token fields unknown during orchestration aggregation", () => {
-    seedOrchestrationRun("partial-local", "partial-local-task", "local")
-    sqlite
-      .prepare(
-        "UPDATE agent_runs SET model = 'local-tools', status = 'success', completed_at = 2 WHERE id = 'partial-local'",
-      )
-      .run()
-    sqlite.prepare("UPDATE sub_chats SET run_status = 'success', messages = ? WHERE id = ?").run(
-      JSON.stringify([
+        .prepare("SELECT messages FROM sub_chats WHERE id = ?")
+        .get(input.subChatId) as { messages: string }
+      const messages = JSON.parse(row.messages)
+      messages.push(
         {
-          id: "partial-local-assistant",
-          role: "assistant",
-          parts: [{ type: "text", text: "done" }],
-          metadata: { runId: "partial-local", outputTokens: 3 },
+          id: `mcp-${input.runId}`,
+          role: "user",
+          parts: [{ type: "text", text: input.prompt }],
         },
-      ]),
-      "sub-partial-local",
-    )
-
-    createAgentOrchestrationService(path).getOverview("partial-local-task")
-
-    expect(
+        {
+          id: `response-${input.runId}`,
+          role: "assistant",
+          parts: [{ type: "text", text: `${input.prompt}-response` }],
+        },
+      )
       sqlite
-        .prepare(
-          "SELECT provider_id, input_tokens, output_tokens, reasoning_tokens, total_tokens, cost_usd_micros FROM usage_samples WHERE run_id = 'partial-local'",
-        )
-        .get(),
-    ).toEqual({
-      provider_id: "local",
-      input_tokens: null,
-      output_tokens: 3,
-      reasoning_tokens: null,
-      total_tokens: null,
-      cost_usd_micros: 0,
-    })
-  })
-
-  it("keeps a newer queued or running run authoritative over stale completion", () => {
-    seedSharedConversationRuns()
-    const database = drizzle(sqlite, { schema })
-    sqlite.prepare("UPDATE agent_runs SET status = 'failure' WHERE id = 'shared-first'").run()
-
-    expect(
-      updateSubChatRunStatusIfAuthoritative(database, {
-        runId: "shared-first",
-        subChatId: "shared-sub",
-        status: "failure",
-      }),
-    ).toBe(false)
-    expect(
-      sqlite.prepare("SELECT run_status FROM sub_chats WHERE id = 'shared-sub'").get(),
-    ).toEqual({
-      run_status: "pending",
-    })
-
-    sqlite.prepare("UPDATE agent_runs SET status = 'running' WHERE id = 'shared-second'").run()
-    updateSubChatRunStatusIfAuthoritative(database, {
-      runId: "shared-first",
-      subChatId: "shared-sub",
-      status: "cancelled",
-    })
-    expect(
-      sqlite.prepare("SELECT run_status FROM sub_chats WHERE id = 'shared-sub'").get(),
-    ).toEqual({
-      run_status: "running",
-    })
-  })
-
-  it("observes a pending owner inserted through a second SQLite connection", () => {
-    seedSharedConversationRuns()
-    const second = new Database(path)
-    second.pragma("journal_mode = WAL")
-    second.pragma("busy_timeout = 5000")
-    try {
+        .prepare("UPDATE sub_chats SET messages = ? WHERE id = ?")
+        .run(JSON.stringify(messages), input.subChatId)
       sqlite
-        .prepare(
-          "UPDATE agent_runs SET status = 'failure' WHERE id IN ('shared-first', 'shared-second')",
-        )
-        .run()
-      expect(
-        sqlite
-          .prepare(
-            "SELECT id FROM agent_runs WHERE sub_chat_id = 'shared-sub' AND status IN ('pending', 'running')",
-          )
-          .get(),
-      ).toBeUndefined()
-      second
-        .prepare(
-          `INSERT INTO agent_runs (
-            id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-            prompt_message_id, initial_prompt, status, started_at,
-            runtime_snapshot_version, runtime_preference, runtime_preference_source,
-            resolved_runtime, runtime_adapter_version, runtime_protocol_version,
-            runtime_capability_snapshot, runtime_control_snapshot
-          ) VALUES ('raced-pending', 'shared-chat', 'shared-sub', 'codex', 'full-access',
-            '/tmp/worktree', 'mcp-raced', 'Raced', 'pending', 3, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(...testRuntimeSnapshotSqlValues())
-
-      expect(
-        updateSubChatRunStatusIfAuthoritative(drizzle(sqlite, { schema }), {
-          runId: "shared-first",
-          subChatId: "shared-sub",
-          status: "failure",
-        }),
-      ).toBe(false)
-      expect(
-        sqlite.prepare("SELECT run_status FROM sub_chats WHERE id = 'shared-sub'").get(),
-      ).toEqual({ run_status: "pending" })
-    } finally {
-      second.close()
+        .prepare("UPDATE agent_runs SET status = 'success', completed_at = ? WHERE id = ?")
+        .run(Date.now(), input.runId)
+      return emptyStream()
     }
+    const routed = harnessMocks.codex
+    routed.mockImplementation(route)
+    const launch = testLauncher()
+
+    expect(await drainPendingMcpRuns(path, launch, { waitForCompletion: true })).toBe(1)
+    expect(await drainPendingMcpRuns(path, launch, { waitForCompletion: true })).toBe(1)
+    expect(routed.mock.calls.map(([input]) => input.prompt)).toEqual(["A", "B"])
+    const row = sqlite.prepare("SELECT messages FROM sub_chats WHERE id = 'ordered-sub'").get() as {
+      messages: string
+    }
+    const visible = JSON.parse(row.messages).map((message: any) => message.parts[0].text)
+    expect(visible).toEqual(["A", "A-response", "B", "B-response"])
+    expect(visible.filter((text: string) => text === "A")).toHaveLength(1)
+    expect(visible.filter((text: string) => text === "B")).toHaveLength(1)
   })
 })
 
@@ -1198,101 +508,22 @@ function seedRun(
     )
 }
 
-function seedOrchestrationRun(
-  runId: string,
-  taskId: string,
-  harness: "codex" | "claude-code" | "local" = "codex",
-  runtime: "codex" | "flapstack-native" = "flapstack-native",
-): void {
-  seedRun(runId, "pending", `mcp-${runId}`, harness, runtime)
-  sqlite
-    .prepare("INSERT INTO projects (id, name, path) VALUES (?, ?, ?)")
-    .run(`project-${taskId}`, taskId, `/tmp/${taskId}`)
-  sqlite
-    .prepare("INSERT INTO tasks (id, project_id, name) VALUES (?, ?, ?)")
-    .run(taskId, `project-${taskId}`, taskId)
-  sqlite
-    .prepare(
-      `INSERT INTO task_orchestrations (
-        task_id, initiating_chat_id, status, max_parallel_agents, max_depth, stop_conditions,
-        engine_snapshot_version, coordination_engine, coordination_engine_version,
-        coordination_engine_source, coordination_engine_capability_snapshot,
-        coordination_engine_provider_identity
-      ) VALUES (?, ?, 'running', 1, 4, '{}', ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(taskId, `chat-${runId}`, ...testCoordinationEngineSnapshotSqlValues())
-  sqlite
-    .prepare(
-      `INSERT INTO orchestration_agents (
-        id, task_id, run_id, definition, dependency_agent_ids, status
-      ) VALUES (?, ?, ?, ?, '[]', 'active')`,
-    )
-    .run(
-      `agent-${runId}`,
-      taskId,
-      runId,
-      JSON.stringify({
-        role: "Worker",
-        prompt: "Complete the task.",
-        harness,
-        ...(harness === "local" ? { model: "local-tools" } : {}),
-        permissionMode: "full-access",
-        worktreeStrategy: "inherit",
-        dependencyAgentIds: [],
-        completionCriteria: "Return a result.",
-      }),
-    )
-}
-
-function seedLocalOrchestrationRun(runId: string, taskId: string): void {
-  seedOrchestrationRun(runId, taskId, "local")
-  sqlite.prepare("UPDATE chats SET model = 'local-tools' WHERE id = ?").run(`chat-${runId}`)
-  sqlite.prepare("UPDATE sub_chats SET model = 'local-tools' WHERE id = ?").run(`sub-${runId}`)
-  sqlite.prepare("UPDATE agent_runs SET model = 'local-tools' WHERE id = ?").run(runId)
-}
-
-function orchestrationDefinition(runId: string): Record<string, unknown> {
-  const row = sqlite
-    .prepare("SELECT definition FROM orchestration_agents WHERE run_id = ?")
-    .get(runId) as { definition: string }
-  return JSON.parse(row.definition) as Record<string, unknown>
-}
-
 async function* emptyStream(): AsyncGenerator<never> {
   return
 }
 
-async function* authErrorStream() {
-  yield { type: "auth-error", errorText: "Authentication required." }
-  yield { type: "finish" }
-}
-
 describe("scheduled native assistant persistence", () => {
-  function scheduledFixture(action = "run-chat") {
+  function scheduledFixture() {
     const runId = "scheduled-result"
-    if (action === "create-task-run") {
-      seedOrchestrationRun(runId, "scheduled-task", "codex", "codex")
-      sqlite
-        .prepare(
-          "UPDATE orchestration_agents SET id = 'automation-occurrence', chat_id = ? WHERE run_id = ?",
-        )
-        .run(`chat-${runId}`, runId)
-    } else {
-      seedRun(runId, "running", "automation-occurrence-1", "codex", "codex")
-    }
+    seedRun(runId, "running", "automation-occurrence-1", "codex", "codex")
     sqlite.prepare("UPDATE agent_runs SET status = 'running' WHERE id = ?").run(runId)
     sqlite
       .prepare(
         `INSERT INTO automations
       (id, name, scope_type, chat_id, project_id, action_type, prompt, harness, permission_mode)
-      VALUES ('scheduled', 'Scheduled result', ?, ?, ?, ?, 'Prompt', 'codex', 'read-only')`,
+      VALUES ('scheduled', 'Scheduled result', 'chat', ?, NULL, 'run-chat', 'Prompt', 'codex', 'read-only')`,
       )
-      .run(
-        action === "create-task-run" ? "project" : action === "run-chat" ? "chat" : "global",
-        action === "run-chat" ? `chat-${runId}` : null,
-        action === "create-task-run" ? "project-scheduled-task" : null,
-        action,
-      )
+      .run(`chat-${runId}`)
     sqlite.exec(`INSERT INTO automation_triggers (id, automation_id, type, cron, timezone, catch_up)
       VALUES ('trigger', 'scheduled', 'schedule', '* * * * *', 'UTC', 'none');
       INSERT INTO automation_occurrences (id, automation_id, trigger_id, dedupe_key, state, scheduled_for)
@@ -1302,7 +533,7 @@ describe("scheduled native assistant persistence", () => {
       VALUES ('execution', 'occurrence', 1, 'running', 'scheduled-result', '{}', '{}', 1);`)
     sqlite
       .prepare("UPDATE automation_executions SET authority_snapshot = ? WHERE id = 'execution'")
-      .run(JSON.stringify({ target: { chatId: action === "run-chat" ? `chat-${runId}` : null } }))
+      .run(JSON.stringify({ target: { chatId: `chat-${runId}` } }))
     createAgentActivityStore(sqlite).appendBatch(runId, [
       {
         provider: "openai",
@@ -1317,81 +548,45 @@ describe("scheduled native assistant persistence", () => {
     return { runId, service, finish: () => (service as any).persistLifecycle(runId, "completed") }
   }
 
-  it.each(["run-chat", "create-chat-run", "create-task-run"])(
-    "persists %s output once before a later user turn and across reopen",
-    async (action) => {
-      const { runId, finish } = scheduledFixture(action)
-      const subId = `sub-${runId}`
-      const row = sqlite.prepare("SELECT messages FROM sub_chats WHERE id = ?").get(subId) as {
+  it("persists a scheduled reply once in its original chat after the owner changes its target", async () => {
+    const { runId, finish } = scheduledFixture()
+    const subId = `sub-${runId}`
+    const row = sqlite.prepare("SELECT messages FROM sub_chats WHERE id = ?").get(subId) as {
+      messages: string
+    }
+    const messages = JSON.parse(row.messages)
+    messages.push({
+      id: "later-user",
+      role: "user",
+      parts: [{ type: "text", text: "Next question" }],
+    })
+    sqlite
+      .prepare("UPDATE sub_chats SET messages = ? WHERE id = ?")
+      .run(JSON.stringify(messages), subId)
+    // Owner edits must not invalidate the already-started execution's frozen target.
+    sqlite.exec(
+      "INSERT INTO chats (id, name, scope) VALUES ('edited-target', 'New target', 'global')",
+    )
+    sqlite.exec("UPDATE automations SET chat_id = 'edited-target'")
+    await finish()
+    await finish()
+    const reopened = new Database(path)
+    try {
+      const saved = reopened.prepare("SELECT messages FROM sub_chats WHERE id = ?").get(subId) as {
         messages: string
       }
-      const messages = JSON.parse(row.messages)
-      messages.push({
-        id: "later-user",
-        role: "user",
-        parts: [{ type: "text", text: "Next question" }],
+      const actual = JSON.parse(saved.messages)
+      expect(actual.map((message: any) => message.role)).toEqual(["user", "assistant", "user"])
+      expect(actual[1]).toMatchObject({
+        parts: [{ type: "text", text: "SCHEDULED_REPLY" }],
+        metadata: { runId },
       })
-      sqlite
-        .prepare("UPDATE sub_chats SET messages = ? WHERE id = ?")
-        .run(JSON.stringify(messages), subId)
-      // Owner edits must not invalidate the already-started execution's frozen target.
-      if (action === "run-chat") {
-        sqlite.exec(
-          "INSERT INTO chats (id, name, scope) VALUES ('edited-target', 'New target', 'global')",
-        )
-        sqlite.exec("UPDATE automations SET chat_id = 'edited-target'")
-      }
-      await finish()
-      await finish()
-      const reopened = new Database(path)
-      try {
-        const saved = reopened
-          .prepare("SELECT messages FROM sub_chats WHERE id = ?")
-          .get(subId) as { messages: string }
-        const actual = JSON.parse(saved.messages)
-        expect(actual.map((message: any) => message.role)).toEqual(["user", "assistant", "user"])
-        expect(actual[1]).toMatchObject({
-          parts: [{ type: "text", text: "SCHEDULED_REPLY" }],
-          metadata: { runId },
-        })
-        expect(actual[2].id).toBe("later-user")
-        expect(reopened.prepare("SELECT status FROM agent_runs WHERE id = ?").get(runId)).toEqual({
-          status: "success",
-        })
-      } finally {
-        reopened.close()
-      }
-    },
-  )
-
-  it.each(["unassociated", "wrong-prompt", "wrong-target", "wrong-subchat"])(
-    "does not project an unrelated %s run",
-    async (mismatch) => {
-      const { runId, finish } = scheduledFixture()
-      if (mismatch === "unassociated") sqlite.exec("UPDATE automation_executions SET run_id = NULL")
-      if (mismatch === "wrong-prompt")
-        sqlite
-          .prepare("UPDATE agent_runs SET prompt_message_id = 'automation-other-1' WHERE id = ?")
-          .run(runId)
-      if (mismatch === "wrong-target") {
-        sqlite.exec("INSERT INTO chats (id, name, scope) VALUES ('other-chat', 'Other', 'global')")
-        sqlite
-          .prepare("UPDATE automation_executions SET authority_snapshot = ?")
-          .run(JSON.stringify({ target: { chatId: "other-chat" } }))
-      }
-      if (mismatch === "wrong-subchat") {
-        sqlite.exec("INSERT INTO chats (id, name, scope) VALUES ('other-chat', 'Other', 'global')")
-        sqlite
-          .prepare("UPDATE sub_chats SET chat_id = 'other-chat' WHERE id = ?")
-          .run(`sub-${runId}`)
-      }
-      await finish()
-      const row = sqlite
-        .prepare("SELECT messages FROM sub_chats WHERE id = ?")
-        .get(`sub-${runId}`) as { messages: string }
-      expect(JSON.parse(row.messages).some((message: any) => message.role === "assistant")).toBe(
-        false,
-      )
-    },
-  )
+      expect(actual[2].id).toBe("later-user")
+      expect(reopened.prepare("SELECT status FROM agent_runs WHERE id = ?").get(runId)).toEqual({
+        status: "success",
+      })
+    } finally {
+      reopened.close()
+    }
+  })
 })

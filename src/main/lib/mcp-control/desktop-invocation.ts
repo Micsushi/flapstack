@@ -14,21 +14,23 @@ import { needsDesktopMcp } from "./live-control-contract"
 import { trackRecordsTaskApproval } from "./records-approval-display"
 import { desktopProjectToolNames } from "./project-control-contract"
 import { desktopWorkflowToolNames } from "./workflow-contract"
-import { createMcpReadService, openReadStore } from "./read-service"
+import { createMcpReadService, readMcpDatabase } from "./read-service"
 import { createMcpProjectVaultService } from "./project-vault-service"
 import { createMcpAutomationService } from "./automation-service"
 import { createMcpTaskProposalService } from "./task-proposal-service"
 import { createMcpMutationService } from "./mutation-service"
 import { advertiseProductMcpRuntime } from "./live-discovery"
 import { startDesktopMcpTransport, type DesktopMcpInvoke } from "./live-transport"
+import { createSqliteMcpCallerStore } from "./identity"
+import { requireWorkflowChat } from "./workflow-targets"
 import { startProductMcpInvalidationBridge } from "./invalidation-bridge"
 
 export function desktopMcpInvoker(
   databasePath: string,
   notify: (event: ProductMcpRendererInvalidation) => void,
 ): DesktopMcpInvoke {
-  const reads = createMcpReadService(openReadStore(databasePath))
-  const mutations = createMcpMutationService(databasePath)
+  const reads = createMcpReadService(readMcpDatabase(getSqliteDatabase))
+  const mutations = createMcpMutationService(databasePath, getSqliteDatabase)
   const projectVaults = createMcpProjectVaultService(databasePath)
   const automationControls = createMcpAutomationService(databasePath)
   const taskProposalControls = createMcpTaskProposalService(databasePath)
@@ -131,6 +133,8 @@ export async function startProductMcpRuntime(
     const control = await startDesktopMcpTransport(
       databasePath,
       desktopMcpInvoker(databasePath, onInvalidation),
+      createSqliteMcpCallerStore(databasePath, getSqliteDatabase),
+      (caller, chatId) => requireWorkflowChat(getSqliteDatabase(), caller, chatId),
     )
     try {
       const withdraw = advertiseProductMcpRuntime(

@@ -12,11 +12,14 @@ export function resolveContextUsage(
   reasoningTokens: number
   contextTokens: number
   contextWindow: number | undefined
+  autoCompactThreshold?: number
+  autoCompactEnabled?: boolean
 } | null {
   const event = events.findLast(
     (candidate) =>
       candidate.subChatId === subChatId &&
       candidate.kind === "usage" &&
+      candidate.harness === provider &&
       candidate.phase === "snapshot" &&
       (candidate.payload.inputTokens != null || candidate.payload.contextUsed != null),
   )
@@ -33,5 +36,11 @@ export function resolveContextUsage(
       (event.payload.inputTokens ?? 0) +
         (provider === "claude-code" ? (event.payload.cachedTokens ?? 0) : 0),
     contextWindow: event.payload.contextWindow ?? undefined,
+    ...(event.payload.autoCompactThreshold !== undefined
+      ? { autoCompactThreshold: event.payload.autoCompactThreshold }
+      : {}),
+    ...(event.payload.autoCompactEnabled !== undefined
+      ? { autoCompactEnabled: event.payload.autoCompactEnabled }
+      : {}),
   }
 }

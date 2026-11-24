@@ -1,6 +1,15 @@
+import type { ReasoningEffort } from "./model-catalog"
+
+export type AntigravityModelOption = {
+  id: string
+  name: string
+  nativeEfforts?: { value: ReasoningEffort; name: string }[]
+  defaultEffort?: string
+}
+
 // ACP selects effort by sending a distinct provider-advertised model ID.
 export function antigravityEffortVariants(
-  models: readonly { id: string; name: string }[],
+  models: readonly AntigravityModelOption[],
   selectedId: string | null | undefined,
 ) {
   const pattern = /^(.*) \((minimal|none|low|medium|high|xhigh|max|ultra)\)$/i

@@ -1,3 +1,4 @@
+import { budgetMcpDiff } from "./response-budget"
 import { z } from "zod"
 import { getSqliteDatabase } from "../db"
 import { AgentProfileChatBindingService } from "../agent-profiles/chat-binding"
@@ -160,12 +161,12 @@ async function dispatch(name: string, caller: McpCallerIdentity, raw: unknown) {
       if (path && !files.length)
         throw new WorkflowError("not-found", "File has no uncommitted diff.")
       const text = files.map((file) => file.diffText).join("\n")
-      return {
-        diff: text.slice(input.offset, input.offset + input.limit),
-        total: text.length,
-        offset: input.offset,
-        diffHash: result.diffHash,
-      }
+      if ("diffHash" in input && input.diffHash && input.diffHash !== result.diffHash)
+        throw new WorkflowError("conflict", "The diff changed. Start again at offset 0.")
+      const start = text.charCodeAt(input.offset)
+      if (start >= 0xdc00 && start <= 0xdfff)
+        throw new WorkflowError("invalid-input", "The diff offset splits a Unicode character.")
+      return budgetMcpDiff(text, input.offset, input.limit, result.diffHash)
     }
     case "undo_run_changes": {
       const input = schemas.undo_run_changes.parse(raw)

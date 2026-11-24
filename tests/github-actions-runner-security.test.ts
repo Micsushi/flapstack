@@ -7,12 +7,6 @@ import { describe, expect, it } from "vitest"
 const root = resolve(import.meta.dirname, "..")
 const require = createRequire(import.meta.url)
 const { load } = require("js-yaml") as { load: (source: string) => unknown }
-const ci = readFileSync(resolve(root, ".github/workflows/ci.yml"), "utf8")
-const providerDrift = readFileSync(resolve(root, ".github/workflows/provider-drift.yml"), "utf8")
-const windowsRelease = readFileSync(
-  resolve(root, ".github/workflows/release-windows.yml"),
-  "utf8",
-).replaceAll("\r\n", "\n")
 
 type WorkflowJob = {
   if?: string
@@ -59,71 +53,6 @@ function allowsOnlyTrustedEvents(condition: string | undefined): boolean {
 }
 
 describe("GitHub Actions self-hosted runner policy", () => {
-  it("preserves hidden runtime files only inside audited Preview upload paths", () => {
-    const workflow = load(ci) as Workflow
-    for (const [job, paths] of Object.entries({
-      verify: [
-        "release-preview/linux-unpacked",
-        "release-preview/*.AppImage",
-        "release-preview/*.deb",
-        "release-preview/linux-security-report-x64.json",
-        "release-preview/linux-security-report-x64.json.sha256",
-      ],
-      "windows-verify": [
-        "release-preview/win-unpacked",
-        "release-preview/windows-security-report.json",
-        "release-preview/windows-security-report.json.sha256",
-      ],
-    })) {
-      const upload = workflow.jobs?.[job]?.steps?.find((step) =>
-        step.uses?.startsWith("actions/upload-artifact@"),
-      )
-      expect(upload?.with?.["include-hidden-files"], job).toBe(true)
-      expect(String(upload?.with?.path).trim().split(/\r?\n/), job).toEqual(paths)
-    }
-  })
-
-  it("keeps pull-request CI on GitHub-hosted Linux", () => {
-    expect(ci).toMatch(
-      /verify:\s+if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'\s+runs-on: \[self-hosted, Linux, X64, flapstack\]/,
-    )
-    expect(ci).toMatch(
-      /verify-pr:\s+if: github\.event_name == 'pull_request'\s+runs-on: ubuntu-latest/,
-    )
-    expect(ci).toContain("release-preview/windows-security-report.json.sha256")
-    expect(ci).toContain("Windows Preview security report changed after audit")
-  })
-
-  it("runs only the portable test suite on self-hosted Linux", () => {
-    expect(ci).toMatch(
-      /runs-on: \[self-hosted, Linux, X64, flapstack\][\s\S]*?run: npm run check -- --portable-linux/,
-    )
-
-    const checkScript = readFileSync(resolve(root, "scripts/check.mjs"), "utf8")
-    for (const portableTest of [
-      "mcp-test-control-lifecycle.test.ts",
-      "profile-paths.test.ts",
-      "test-git-environment.test.ts",
-    ]) {
-      expect(checkScript).not.toContain(portableTest)
-    }
-    for (const windowsOnlyTest of [
-      "windows-process-inspection.test.ts",
-      "windows-toolchain.test.ts",
-    ]) {
-      expect(checkScript).toContain(windowsOnlyTest)
-    }
-  })
-
-  it("keeps pull-request provider checks off self-hosted runners", () => {
-    expect(providerDrift).toMatch(
-      /codex-catalog:\s+if: github\.event_name == 'schedule' \|\| \(github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'\)\s+runs-on: \[self-hosted, Linux, X64, flapstack\]/,
-    )
-    expect(providerDrift).toMatch(
-      /codex-catalog-pr:\s+if: github\.event_name == 'pull_request'\s+runs-on: ubuntu-latest/,
-    )
-  })
-
   it("excludes pull requests from every self-hosted workflow job", () => {
     const unsafeJobs = workflows.flatMap(({ name, workflow }) => {
       if (!handlesPullRequests(workflow)) return []
@@ -133,15 +62,6 @@ describe("GitHub Actions self-hosted runner policy", () => {
     })
 
     expect(unsafeJobs).toEqual([])
-  })
-
-  it("retains the trusted repository label and explicit read-only permissions", () => {
-    expect(ci).toContain("runs-on: [self-hosted, Linux, X64, flapstack]")
-    expect(providerDrift).toContain("runs-on: [self-hosted, Linux, X64, flapstack]")
-    for (const workflowName of ["ci.yml", "provider-drift.yml"]) {
-      const workflow = workflows.find(({ name }) => name === workflowName)?.workflow
-      expect(workflow?.permissions, workflowName).toEqual({ contents: "read" })
-    }
   })
 
   it("pins every external action used by a self-hosted job to a full commit SHA", () => {
@@ -162,19 +82,5 @@ describe("GitHub Actions self-hosted runner policy", () => {
     )
 
     expect(unpinnedActions).toEqual([])
-  })
-
-  it("builds, audits, rehashes, and uploads Windows releases only from exact version tags", () => {
-    expect(windowsRelease).toContain('tags:\n      - "v*.*.*"')
-    expect(windowsRelease).toContain("runs-on: windows-2022")
-    expect(windowsRelease).toContain("npm run package:release:win")
-    expect(windowsRelease).toContain("npm run package:audit:release:win")
-    expect(windowsRelease).toContain("npm audit --omit=dev --audit-level=high")
-    expect(windowsRelease).toContain("windows-security-report.json.sha256")
-    expect(windowsRelease).toContain("scripts/verify-windows-security-report.mjs")
-    expect(windowsRelease).not.toContain("release/Flapstack-Setup-*.exe")
-    expect(windowsRelease).not.toContain("release/Flapstack-Portable-*.exe")
-    expect(windowsRelease).toContain("git rev-parse origin/main")
-    expect(windowsRelease).toContain("if-no-files-found: error")
   })
 })

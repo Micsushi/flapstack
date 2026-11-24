@@ -39,10 +39,11 @@ async function discover(provider: AgentHarness): Promise<Model[]> {
     case "antigravity": {
       const models = await antigravityModels()
       return models.map((model) => ({
-        ...model,
-        reasoningEfforts: antigravityEffortVariants(models, model.id).efforts.map(
-          (effort) => effort.label,
-        ),
+        id: model.id,
+        name: model.name,
+        reasoningEfforts:
+          model.nativeEfforts?.map(({ value }) => value) ??
+          antigravityEffortVariants(models, model.id).efforts.map((effort) => effort.label),
       }))
     }
     case "cursor-agent": {

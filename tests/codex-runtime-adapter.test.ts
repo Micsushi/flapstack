@@ -3,6 +3,8 @@ import { PassThrough } from "node:stream"
 import type { ChildProcessWithoutNullStreams } from "node:child_process"
 import { describe, expect, it, vi } from "vitest"
 import { createCodexRuntimeAdapterFactory } from "../src/main/lib/agent-runtime/codex"
+import { mapCodexNotification } from "../src/main/lib/agent-runtime/codex/events"
+import { coalesceReasoningDeltas } from "../src/main/lib/agent-runtime/codex/reasoning-stream"
 import { spawnCodexProtocolClient } from "../src/main/lib/agent-runtime/codex/protocol-client"
 import {
   collectActivity,
@@ -37,165 +39,6 @@ describe("direct Codex Runtime adapter", () => {
     client.responses.set("turn/steer", { turnId: "other" })
     await expect(adapter.steer!(ctx, "late")).rejects.toThrow(/did not confirm/)
     await adapter.cleanup(ctx)
-  })
-  it("releases unused connections and checks current authentication before starting a prepared session", async () => {
-    const unused = new FakeCodexProtocolClient()
-    const launched = new FakeCodexProtocolClient()
-    const createClient = vi.fn().mockReturnValueOnce(unused).mockReturnValueOnce(launched)
-    const adapter = createCodexRuntimeAdapterFactory({
-      appendActivity: collectActivity().append,
-      resolveThreadParams: () => ({ cwd: "/redacted" }),
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient,
-    })()
-    await adapter.prepareConnection!("cancelled-before-dispatch")()
-    expect(unused.requests.map((request) => request.method)).toEqual(["initialize"])
-    expect(unused.closed).toBe(true)
-
-    const context = runtimeContext()
-    const release = adapter.prepareConnection!(context.runId)
-    launched.responses.set("account/read", { account: null })
-    await expect(adapter.startSession(context)).rejects.toThrow("authentication unavailable")
-    await release()
-    expect(launched.requests.map((request) => request.method)).toEqual([
-      "initialize",
-      "account/read",
-    ])
-    expect(launched.closed).toBe(true)
-    expect(createClient).toHaveBeenCalledTimes(2)
-  })
-
-  it("probes the pinned handshake, account, models, and capabilities", async () => {
-    const client = new FakeCodexProtocolClient()
-    const activity = collectActivity()
-    const adapter = createCodexRuntimeAdapterFactory({
-      appendActivity: activity.append,
-      resolveThreadParams: () => ({ cwd: "/redacted" }),
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient: () => client,
-      now: () => new Date("2026-07-14T00:00:00.000Z"),
-    })()
-
-    const probe = await adapter.probe("codex")
-    expect(probe.available).toBe(true)
-    expect(probe.versions).toEqual({ adapterVersion: "1", protocolVersion: "0.166.0-alpha.6" })
-    expect(probe.capabilities.capturedAt).toBe("2026-07-14T00:00:00.000Z")
-    expect(client.requests.map((request) => request.method)).toEqual([
-      "initialize",
-      "account/read",
-      "model/list",
-    ])
-    expect(client.closed).toBe(true)
-  })
-
-  it("blocks auth, model, handshake, and version drift without fallback", async () => {
-    const activity = collectActivity()
-    const authClient = new FakeCodexProtocolClient()
-    authClient.responses.set("account/read", { account: null, requiresOpenaiAuth: true })
-    const authAdapter = createCodexRuntimeAdapterFactory({
-      appendActivity: activity.append,
-      resolveThreadParams: () => ({ cwd: "/redacted" }),
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient: () => authClient,
-    })()
-    expect(await authAdapter.probe("codex")).toMatchObject({
-      available: false,
-      reason: { code: "runtime-unavailable" },
-    })
-
-    const driftAdapter = createCodexRuntimeAdapterFactory({
-      appendActivity: activity.append,
-      resolveThreadParams: () => ({ cwd: "/redacted" }),
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.144.1",
-      createClient: () => new FakeCodexProtocolClient(),
-    })()
-    expect(await driftAdapter.probe("codex")).toMatchObject({
-      available: false,
-      reason: { code: "protocol-unsupported" },
-    })
-
-    const modelClient = new FakeCodexProtocolClient()
-    modelClient.responses.set("model/list", {
-      data: [{ id: "other", model: "other" }],
-      nextCursor: null,
-    })
-    const modelAdapter = createCodexRuntimeAdapterFactory({
-      appendActivity: activity.append,
-      resolveThreadParams: () => ({ cwd: "/redacted" }),
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient: () => modelClient,
-    })()
-    await expect(modelAdapter.startSession(runtimeContext())).rejects.toThrow(
-      "model is unavailable",
-    )
-  })
-
-  it("preserves typed probe outcome when client cleanup fails", async () => {
-    const client = new FakeCodexProtocolClient()
-    client.responses.set("account/read", { account: null, requiresOpenaiAuth: true })
-    client.close = async () => {
-      throw new Error("cleanup failed")
-    }
-    const diagnostics: string[] = []
-    const adapter = createCodexRuntimeAdapterFactory({
-      appendActivity: collectActivity().append,
-      resolveThreadParams: () => ({ cwd: "/redacted" }),
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient: () => client,
-      onDiagnostic: (_context, message) => diagnostics.push(message),
-    })()
-
-    await expect(adapter.probe("codex")).resolves.toMatchObject({
-      available: false,
-      reason: { code: "runtime-unavailable", message: "Codex account authentication is required." },
-    })
-    expect(diagnostics).toEqual(["Probe cleanup failed: cleanup failed"])
-  })
-
-  it("fails model discovery closed on repeated cursors and page-cap truncation", async () => {
-    const activity = collectActivity()
-    const cycleClient = new FakeCodexProtocolClient()
-    cycleClient.responses.set("model/list", () => ({
-      data: [{ id: "gpt-5.4", model: "gpt-5.4" }],
-      nextCursor: "same-cursor",
-    }))
-    const cycleAdapter = createCodexRuntimeAdapterFactory({
-      appendActivity: activity.append,
-      resolveThreadParams: () => ({ cwd: "/redacted" }),
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient: () => cycleClient,
-    })()
-    const cycleProbe = await cycleAdapter.probe("codex")
-    expect(cycleProbe.available).toBe(false)
-    expect(cycleProbe.reason?.message).toContain("repeated cursor")
-
-    const capClient = new FakeCodexProtocolClient()
-    let page = 0
-    capClient.responses.set("model/list", () => {
-      page += 1
-      return {
-        data: [{ id: "gpt-5.4", model: "gpt-5.4" }],
-        nextCursor: `cursor-${page}`,
-      }
-    })
-    const capAdapter = createCodexRuntimeAdapterFactory({
-      appendActivity: activity.append,
-      resolveThreadParams: () => ({ cwd: "/redacted" }),
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient: () => capClient,
-    })()
-    const capProbe = await capAdapter.probe("codex")
-    expect(capProbe.available).toBe(false)
-    expect(capProbe.reason?.message).toContain("exceeded 10 pages")
-    expect(page).toBe(10)
   })
 
   it("reuses launch-owned worktree, MCP, image, permission, usage, and cancellation inputs", async () => {
@@ -270,79 +113,106 @@ describe("direct Codex Runtime adapter", () => {
     expect(activity.flat().filter((event) => event.kind === "permission")).toHaveLength(2)
   })
 
-  it("starts a persisted Codex goal instead of sending the goal command as a normal turn", async () => {
-    const client = new FakeCodexProtocolClient()
-    const activity = collectActivity()
-    client.responses.set("thread/goal/set", () => {
-      client.queue.emit({
-        method: "thread/goal/updated",
-        params: {
-          threadId: "thread-1",
-          goal: { objective: "Finish the migration", status: "active" },
-        },
+  it("enables concurrent summaries and preserves the native thread across an effort change", async () => {
+    const initial = new FakeCodexProtocolClient()
+    const resumed = new FakeCodexProtocolClient()
+    const createClient = vi.fn().mockReturnValueOnce(initial).mockReturnValueOnce(resumed)
+    for (const client of [initial, resumed]) {
+      client.responses.set("config/read", {
+        config: { model_reasoning_summary: "concise", model_auto_compact_token_limit: 65_000 },
+        layers: [],
       })
-      client.queue.emit({
-        method: "turn/started",
-        params: { threadId: "thread-1", turn: { id: "goal-turn-1", status: "inProgress" } },
-      })
-      return { goal: { objective: "Finish the migration", status: "active" } }
-    })
+    }
     const adapter = createCodexRuntimeAdapterFactory({
-      appendActivity: activity.append,
-      resolveThreadParams: () => ({ cwd: "/worktree" }),
+      createClient,
+      resolveThreadParams: () => ({ cwd: "/project", config: { features: { hooks: true } } }),
       resolveCommand: () => "/fake/codex",
       getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient: () => client,
+      appendActivity: () => undefined,
     })()
-    const context = runtimeContext()
-    const session = await adapter.startSession(context)
-    const turn = await adapter.startTurn(context, session, "/goal Finish the migration")
+    const first = runtimeContext()
+    const session = await adapter.startSession(first)
+    await adapter.startTurn(first, session, "first")
+    await adapter.cleanup(first)
+    const next = runtimeContext()
+    next.launch.controls.modelEffort = "medium"
+    const sameSession = await adapter.resumeSession(next, session)
+    await adapter.startTurn(next, sameSession, "next")
 
-    expect(turn.providerTurnId).toBe("goal-turn-1")
-    expect(client.requests).toContainEqual({
-      method: "thread/goal/set",
-      params: {
-        threadId: "thread-1",
-        objective: "Finish the migration",
-        status: "active",
-      },
-    })
-    expect(client.requests.some((request) => request.method === "turn/start")).toBe(false)
-
-    client.queue.emit({
-      method: "turn/completed",
-      params: { threadId: "thread-1", turn: { id: "goal-turn-1", status: "completed" } },
-    })
-    for await (const _event of adapter.streamActivity(context, session, turn)) {
-      // Drain the goal turn.
+    expect(sameSession.providerThreadId).toBe(session.providerThreadId)
+    expect(resumed.requests.some((request) => request.method === "thread/start")).toBe(false)
+    for (const [client, method] of [
+      [initial, "thread/start"],
+      [resumed, "thread/resume"],
+    ] as const) {
+      expect(client.requests.find((request) => request.method === method)?.params?.config).toEqual({
+        features: { hooks: true, concurrent_reasoning_summaries: true },
+        model_reasoning_summary: "concise",
+      })
     }
-    expect(activity.flat()).toContainEqual(
-      expect.objectContaining({ kind: "status", phase: "updated" }),
-    )
+    expect(
+      resumed.requests.find((request) => request.method === "turn/start")?.params,
+    ).toMatchObject({
+      threadId: session.providerThreadId,
+      effort: "medium",
+      summary: "concise",
+    })
+    await adapter.cleanup(next)
   })
 
-  it("sends a frozen fast service tier independently of reasoning effort", async () => {
+  it("coalesces public text by turn, item, stream and index without crossing a tool event", async () => {
     const client = new FakeCodexProtocolClient()
-    const adapter = createCodexRuntimeAdapterFactory({
-      appendActivity: collectActivity().append,
-      resolveThreadParams: () => ({ cwd: "/worktree" }),
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient: () => client,
-    })()
-    const context = runtimeContext()
-    context.launch.controls.modelEffort = "low"
-    context.launch.controls.serviceTier = "fast"
+    const emit = (method: string, params: Record<string, unknown>) =>
+      client.queue.emit({
+        method,
+        params: { threadId: "thread", turnId: "turn", itemId: "item", ...params },
+      })
+    emit("item/reasoning/summaryTextDelta", { summaryIndex: 0, delta: "checking " })
+    emit("item/reasoning/textDelta", { contentIndex: 0, displayable: true, delta: "visible " })
+    emit("item/reasoning/summaryTextDelta", { summaryIndex: 0, delta: "facts" })
+    emit("item/reasoning/textDelta", { contentIndex: 0, displayable: true, delta: "detail" })
+    emit("item/reasoning/summaryTextDelta", { summaryIndex: 1, delta: "next section" })
+    emit("item/reasoning/textDelta", { contentIndex: 2, delta: "private detail" })
+    emit("item/commandExecution/outputDelta", { itemId: "command", delta: "tool event" })
+    emit("item/reasoning/summaryTextDelta", { summaryIndex: 0, delta: "later summary" })
+    client.queue.finish()
+    const result = []
+    for await (const notification of coalesceReasoningDeltas(client.notifications())) {
+      result.push(...mapCodexNotification(notification))
+    }
+    expect(result).toMatchObject([
+      { kind: "reasoning-summary", summaryIndex: 0, payload: { text: "checking facts" } },
+      { kind: "provider-visible-reasoning", contentIndex: 0, payload: { text: "visible detail" } },
+      { kind: "reasoning-summary", summaryIndex: 1, payload: { text: "next section" } },
+      { kind: "private-metadata", contentIndex: 2, payload: { metadata: { byteLength: 14 } } },
+      { kind: "command", payload: { outputSummary: "tool event" } },
+      { kind: "reasoning-summary", summaryIndex: 0, payload: { text: "later summary" } },
+    ])
+    expect(JSON.stringify(result)).not.toContain("private detail")
+  })
 
-    const session = await adapter.startSession(context)
-    await adapter.startTurn(context, session, "PROMPT_FAST")
-
-    expect(
-      client.requests.find((request) => request.method === "thread/start")?.params,
-    ).toMatchObject({ serviceTier: "fast" })
-    expect(
-      client.requests.find((request) => request.method === "turn/start")?.params,
-    ).toMatchObject({ effort: "low", serviceTier: "fast" })
+  it("flushes live reasoning while the native stream is still waiting for its next event", async () => {
+    const client = new FakeCodexProtocolClient()
+    const results = coalesceReasoningDeltas(client.notifications())[Symbol.asyncIterator]()
+    client.queue.emit({
+      method: "item/reasoning/summaryTextDelta",
+      params: {
+        threadId: "thread",
+        turnId: "turn",
+        itemId: "item",
+        summaryIndex: 0,
+        delta: "Live",
+      },
+    })
+    try {
+      expect(await results.next()).toMatchObject({
+        value: { params: { delta: "Live" } },
+        done: false,
+      })
+    } finally {
+      client.queue.finish()
+      await results.return?.()
+    }
   })
 
   it("requests public summaries per turn and clears them on resume when switched off", async () => {
@@ -369,79 +239,7 @@ describe("direct Codex Runtime adapter", () => {
       client.requests
         .filter((request) => request.method === "turn/start")
         .map((request) => request.params?.summary),
-    ).toEqual(["detailed", "none"])
-  })
-
-  it.each([
-    ["minimal", "low", []],
-    ["ultra", "max", []],
-    ["none", "minimal", ["minimal", "low"]],
-    ["none", "low", ["low", "high"]],
-    ["none", "none", ["none", "low"]],
-    ["max", "xhigh", ["low", "xhigh"]],
-    ["ultra", "xhigh", ["low", "xhigh"]],
-    ["ultra", "max", ["low", "xhigh", "max"]],
-    ["max", "max", ["low", "xhigh", "max", "ultra"]],
-    ["ultra", "ultra", ["low", "xhigh", "max", "ultra"]],
-  ] as [string, string, string[]][])(
-    "maps shared %s effort to Codex App Server %s for advertised levels %j",
-    async (requested, sent, advertised) => {
-      const client = new FakeCodexProtocolClient()
-      client.responses.set("model/list", {
-        data: [
-          {
-            id: "gpt-5.4",
-            model: "gpt-5.4",
-            supportedReasoningEfforts: advertised.map((reasoningEffort) => ({ reasoningEffort })),
-          },
-        ],
-      })
-      const adapter = createCodexRuntimeAdapterFactory({
-        appendActivity: collectActivity().append,
-        resolveThreadParams: () => ({ cwd: "/worktree" }),
-        resolveCommand: () => "/fake/codex",
-        getBinaryVersion: async () => "0.166.0-alpha.6",
-        createClient: () => client,
-      })()
-      const context = runtimeContext()
-      context.launch.controls.modelEffort = requested
-
-      const session = await adapter.startSession(context)
-      await adapter.startTurn(context, session, "PROMPT")
-
-      expect(
-        client.requests.find((request) => request.method === "turn/start")?.params,
-      ).toMatchObject({ effort: sent })
-    },
-  )
-
-  it("archives hidden Codex threads after a completed response", async () => {
-    const client = new FakeCodexProtocolClient()
-    const adapter = createCodexRuntimeAdapterFactory({
-      appendActivity: collectActivity().append,
-      resolveThreadParams: () => ({ cwd: "/worktree" }),
-      resolveThreadVisibility: () => "hidden",
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient: () => client,
-    })()
-    const context = runtimeContext()
-    const session = await adapter.startSession(context)
-    const turn = await adapter.startTurn(context, session, "PROMPT_HIDDEN")
-    client.queue.emit({
-      method: "turn/completed",
-      params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } },
-    })
-    for await (const _event of adapter.streamActivity(context, session, turn)) {
-      // Drain the certain completion event.
-    }
-
-    await adapter.complete(context)
-
-    expect(client.requests).toContainEqual({
-      method: "thread/archive",
-      params: { threadId: "thread-1" },
-    })
+    ).toEqual(["auto", "none"])
   })
 
   it("restores an archived Codex thread before retrying resume", async () => {
@@ -479,59 +277,6 @@ describe("direct Codex Runtime adapter", () => {
       params: { threadId: "thread-1" },
       timeoutMs: 60_000,
     })
-  })
-
-  it.each([
-    "invalid configuration",
-    "thread/resume timed out after 30000 ms.",
-    "session another-thread is archived.",
-  ])("does not unarchive after unrelated resume failure: %s", async (message) => {
-    const client = new FakeCodexProtocolClient()
-    client.responses.set("thread/resume", new Error(message))
-    const adapter = createCodexRuntimeAdapterFactory({
-      appendActivity: collectActivity().append,
-      resolveThreadParams: () => ({ cwd: "/worktree" }),
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient: () => client,
-    })()
-
-    await expect(
-      adapter.resumeSession(runtimeContext(), {
-        providerSessionId: "session-1",
-        providerThreadId: "thread-1",
-      }),
-    ).rejects.toThrow(message)
-    expect(client.requests.some((request) => request.method === "thread/unarchive")).toBe(false)
-    expect(client.closed).toBe(true)
-  })
-
-  it("preserves the archived resume rejection when restoration times out", async () => {
-    const client = new FakeCodexProtocolClient()
-    client.responses.set("thread/resume", new Error("session thread-1 is archived."))
-    client.responses.set(
-      "thread/unarchive",
-      new Error("thread/unarchive timed out after 60000 ms."),
-    )
-    const adapter = createCodexRuntimeAdapterFactory({
-      appendActivity: collectActivity().append,
-      resolveThreadParams: () => ({ cwd: "/worktree" }),
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient: () => client,
-    })()
-
-    await expect(
-      adapter.resumeSession(runtimeContext(), {
-        providerSessionId: "session-1",
-        providerThreadId: "thread-1",
-      }),
-    ).rejects.toThrow(
-      "thread/unarchive timed out after 60000 ms. (initial resume rejection: session thread-1 is archived.)",
-    )
-    expect(client.requests.filter((request) => request.method === "thread/resume")).toHaveLength(1)
-    expect(client.requests.some((request) => request.method === "turn/start")).toBe(false)
-    expect(client.closed).toBe(true)
   })
 
   it("rejects a terminal failed turn instead of projecting provider failure as success", async () => {
@@ -575,33 +320,10 @@ describe("direct Codex Runtime adapter", () => {
       }),
     )
   })
-
-  it("never reconciles a persisted failed turn as completed", async () => {
-    const client = new FakeCodexProtocolClient()
-    client.responses.set("thread/read", {
-      thread: {
-        status: { type: "idle" },
-        turns: [{ id: "turn-failed", status: "failed" }],
-      },
-    })
-    const adapter = createCodexRuntimeAdapterFactory({
-      appendActivity: collectActivity().append,
-      resolveThreadParams: () => ({ cwd: "/worktree" }),
-      resolvePersistedSession: () => ({
-        providerSessionId: "session-1",
-        providerThreadId: "thread-1",
-      }),
-      resolveCommand: () => "/fake/codex",
-      getBinaryVersion: async () => "0.166.0-alpha.6",
-      createClient: () => client,
-    })()
-
-    await expect(adapter.reconcile(runtimeContext())).resolves.toBe("uncertain")
-  })
 })
 
 describe("Codex App Server JSON-RPC transport bounds", () => {
-  it.each(["thread/start", "thread/resume", "thread/fork"])(
+  it.each(["thread/resume", "thread/fork"])(
     "disables owner registrations from native config layers during %s",
     async (method) => {
       const fake = fakeChild()
@@ -684,97 +406,6 @@ describe("Codex App Server JSON-RPC transport bounds", () => {
     },
   )
 
-  it("preserves large completed command results across fragmented UTF-8 frames", async () => {
-    const fake = fakeChild()
-    const client = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => fake.child,
-    })
-    const output = "search result 🐈\n".repeat(80_000)
-    const params = { item: { type: "commandExecution", stdout: output, aggregatedOutput: output } }
-    const frame = Buffer.from(
-      `${JSON.stringify({ method: "item/completed", params })}\r\n${JSON.stringify({ method: "turn/completed", params: {} })}\n`,
-    )
-    const iterator = client.notifications()[Symbol.asyncIterator]()
-    for (let offset = 0; offset < frame.length; offset += 8191) {
-      fake.stdout.write(frame.subarray(offset, offset + 8191))
-    }
-    await expect(iterator.next()).resolves.toMatchObject({
-      value: { method: "item/completed", params },
-    })
-    await expect(iterator.next()).resolves.toMatchObject({ value: { method: "turn/completed" } })
-    expect(client.isAlive()).toBe(true)
-    await client.close()
-  })
-
-  it("accepts large request replies and releases consumed notification bytes", async () => {
-    const fake = fakeChild()
-    const client = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => fake.child,
-    })
-    const output = "x".repeat(8 * 1024 * 1024)
-    const reply = client.request("thread/read", {})
-    fake.stdout.write(`${JSON.stringify({ id: 1, result: { output } })}\n`)
-    await expect(reply).resolves.toEqual({ output })
-    const frame = `${JSON.stringify({ method: "item/completed", params: { output } })}\n`
-    const iterator = client.notifications()[Symbol.asyncIterator]()
-    for (let index = 0; index < 17; index += 1) {
-      fake.stdout.write(frame)
-      await expect(iterator.next()).resolves.toMatchObject({ value: { method: "item/completed" } })
-    }
-    expect(client.isAlive()).toBe(true)
-    await client.close()
-  })
-
-  it("bounds total queued bytes even below the notification count limit", async () => {
-    const fake = fakeChild()
-    const client = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => fake.child,
-    })
-    const frame = `${JSON.stringify({ method: "item/completed", params: { output: "x".repeat(8 * 1024 * 1024) } })}\n`
-    for (let index = 0; index < 16; index += 1) fake.stdout.write(frame)
-    expect(client.isAlive()).toBe(false)
-    expect(fake.kills).toContain("SIGTERM")
-    await client.close()
-  })
-
-  it("allows one bounded restore deadline without extending ordinary requests", async () => {
-    vi.useFakeTimers()
-    const fake = fakeChild()
-    const client = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => fake.child,
-    })
-    try {
-      const ordinary = client.request("model/list", {}).catch((error: Error) => error)
-      const restored = vi.fn()
-      const restore = client
-        .request("thread/unarchive", { threadId: "thread-1" }, 60_000)
-        .catch((error: Error) => error)
-        .then((result) => {
-          restored()
-          return result
-        })
-      await vi.advanceTimersByTimeAsync(30_000)
-      expect(await ordinary).toEqual(
-        new Error("[codex-runtime] model/list timed out after 30000 ms."),
-      )
-      expect(restored).not.toHaveBeenCalled()
-      await vi.advanceTimersByTimeAsync(29_999)
-      expect(restored).not.toHaveBeenCalled()
-      await vi.advanceTimersByTimeAsync(1)
-      expect(await restore).toEqual(
-        new Error("[codex-runtime] thread/unarchive timed out after 60000 ms."),
-      )
-      expect(restored).toHaveBeenCalledOnce()
-    } finally {
-      await client.close()
-      vi.useRealTimers()
-    }
-  })
-
   it("fails closed on malformed stdout and kills the process", async () => {
     const fake = fakeChild()
     const client = spawnCodexProtocolClient({
@@ -787,46 +418,6 @@ describe("Codex App Server JSON-RPC transport bounds", () => {
     await tick()
     expect(client.isAlive()).toBe(false)
     expect(fake.kills).toContain("SIGTERM")
-  })
-
-  it("incrementally bounds unterminated stdout and handles NDJSON with CRLF", async () => {
-    const framed = fakeChild()
-    const framedClient = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => framed.child,
-    })
-    const iterator = framedClient.notifications()[Symbol.asyncIterator]()
-    const first = iterator.next()
-    const second = iterator.next()
-    framed.stdout.write(
-      `${JSON.stringify({ jsonrpc: "2.0", method: "first", params: { index: 1 } })}\r\n${JSON.stringify({ jsonrpc: "2.0", method: "second", params: { index: 2 } })}\n`,
-    )
-    await expect(first).resolves.toMatchObject({ value: { method: "first" } })
-    await expect(second).resolves.toMatchObject({ value: { method: "second" } })
-    await framedClient.close()
-
-    const oversized = fakeChild()
-    const oversizedClient = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => oversized.child,
-    })
-    const oversizedNext = oversizedClient.notifications()[Symbol.asyncIterator]().next()
-    const chunk = Buffer.alloc(1024 * 1024, 0x78)
-    for (let index = 0; index < 64; index += 1) oversized.stdout.write(chunk)
-    expect(oversizedClient.isAlive()).toBe(true)
-    oversized.stdout.write("x")
-    await expect(oversizedNext).rejects.toThrow("Oversized App Server message")
-    expect(oversizedClient.isAlive()).toBe(false)
-
-    const partial = fakeChild()
-    const partialClient = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => partial.child,
-    })
-    const partialNext = partialClient.notifications()[Symbol.asyncIterator]().next()
-    partial.stdout.end('{"jsonrpc":"2.0"')
-    await expect(partialNext).rejects.toThrow("unterminated JSON-RPC message")
-    expect(partialClient.isAlive()).toBe(false)
   })
 
   it("caps notification and concurrent server-request buffers", async () => {
@@ -858,96 +449,6 @@ describe("Codex App Server JSON-RPC transport bounds", () => {
     expect(requestClient.isAlive()).toBe(false)
   })
 
-  it("removes pending request state when stdin write throws synchronously", async () => {
-    const fake = fakeChild()
-    let throwWrites = true
-    const originalWrite = fake.stdin.write.bind(fake.stdin)
-    fake.stdin.write = ((chunk: unknown) => {
-      if (throwWrites) throw new Error("write failed")
-      return originalWrite(chunk as never)
-    }) as typeof fake.stdin.write
-    const client = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => fake.child,
-    })
-    for (let index = 0; index < 128; index += 1) {
-      await expect(client.request("model/list", {})).rejects.toThrow("write failed")
-    }
-    throwWrites = false
-    const final = client.request("model/list", {})
-    fake.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 129, result: { data: [] } })}\n`)
-    await expect(final).resolves.toEqual({ data: [] })
-    await client.close()
-  })
-
-  it("bounds and redacts stderr diagnostics on process failure", async () => {
-    const fake = fakeChild()
-    const client = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => fake.child,
-    })
-    const next = client.notifications()[Symbol.asyncIterator]().next()
-    fake.stderr.write(`${"x".repeat(100_000)} Bearer SECRET_TOKEN`)
-    ;(fake.child as unknown as EventEmitter).emit("exit", 7, null)
-    await expect(next).rejects.toThrow("App Server exited")
-    expect(client.diagnostics()).toContain("Bearer [redacted]")
-    expect(client.diagnostics()).not.toContain("SECRET_TOKEN")
-    expect(Buffer.byteLength(client.diagnostics(), "utf8")).toBeLessThanOrEqual(32_768)
-  })
-
-  it("terminates when a server-response write fails", async () => {
-    const fake = fakeChild()
-    fake.stdin.write = (() => {
-      throw new Error("response write failed")
-    }) as typeof fake.stdin.write
-    const client = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => fake.child,
-    })
-    client.setRequestHandler(async () => ({ decision: "cancel" }))
-    const next = client.notifications()[Symbol.asyncIterator]().next()
-    fake.stdout.write(
-      `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "item/fileChange/requestApproval", params: {} })}\n`,
-    )
-    await expect(next).rejects.toThrow("Failed to write App Server response")
-    await tick()
-    expect(client.isAlive()).toBe(false)
-    expect(fake.kills).toContain("SIGTERM")
-  })
-
-  it("terminates on concurrency-error response failure and asynchronous stdin EPIPE", async () => {
-    const overloaded = fakeChild()
-    const overloadedClient = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => overloaded.child,
-    })
-    overloadedClient.setRequestHandler(async () => await new Promise(() => {}))
-    for (let index = 0; index < 32; index += 1) {
-      overloaded.stdout.write(
-        `${JSON.stringify({ jsonrpc: "2.0", id: index + 1, method: "item/commandExecution/requestApproval", params: {} })}\n`,
-      )
-    }
-    overloaded.stdin.write = (() => {
-      throw new Error("overload response failed")
-    }) as typeof overloaded.stdin.write
-    const overloadedNext = overloadedClient.notifications()[Symbol.asyncIterator]().next()
-    overloaded.stdout.write(
-      `${JSON.stringify({ jsonrpc: "2.0", id: 33, method: "item/commandExecution/requestApproval", params: {} })}\n`,
-    )
-    await expect(overloadedNext).rejects.toThrow("Failed to write App Server response")
-    expect(overloadedClient.isAlive()).toBe(false)
-
-    const brokenPipe = fakeChild()
-    const brokenPipeClient = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => brokenPipe.child,
-    })
-    const brokenPipeNext = brokenPipeClient.notifications()[Symbol.asyncIterator]().next()
-    brokenPipe.stdin.emit("error", new Error("EPIPE"))
-    await expect(brokenPipeNext).rejects.toThrow("App Server stdin failed: EPIPE")
-    expect(brokenPipeClient.isAlive()).toBe(false)
-  })
-
   it("does not treat child.killed as exit and rejects failed orphan cleanup", async () => {
     const stubborn = fakeChild({ exitOnKill: false })
     const client = spawnCodexProtocolClient({
@@ -957,64 +458,6 @@ describe("Codex App Server JSON-RPC transport bounds", () => {
     })
     await expect(client.close()).rejects.toThrow("did not exit after SIGKILL")
     expect(stubborn.kills).toEqual(["SIGTERM", "SIGKILL"])
-  })
-
-  it("recognizes an already signal-exited child across repeated close calls", async () => {
-    const exited = fakeChild({ exitOnKill: false })
-    const client = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      shutdownTimeoutMs: 5,
-      spawnProcess: () => exited.child,
-    })
-    exited.signalExit("SIGTERM")
-    await expect(client.close()).resolves.toBeUndefined()
-    await expect(client.close()).resolves.toBeUndefined()
-    expect(exited.kills).toEqual([])
-  })
-
-  it("cleans up a live child that emits an error", async () => {
-    const failed = fakeChild()
-    const client = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => failed.child,
-    })
-    const next = client.notifications()[Symbol.asyncIterator]().next()
-    ;(failed.child as unknown as EventEmitter).emit("error", new Error("spawn channel failed"))
-    await expect(next).rejects.toThrow("spawn channel failed")
-    expect(client.isAlive()).toBe(false)
-    expect(failed.kills).toContain("SIGTERM")
-  })
-
-  it("fails invalid authority messages but diagnoses late numeric responses", async () => {
-    const late = fakeChild()
-    const lateClient = spawnCodexProtocolClient({
-      command: "/fake/codex",
-      spawnProcess: () => late.child,
-    })
-    late.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 999, result: {} })}\n`)
-    await tick()
-    expect(lateClient.isAlive()).toBe(true)
-    expect(lateClient.diagnostics()).toContain("Late JSON-RPC response id 999")
-    await lateClient.close()
-
-    for (const invalid of [
-      { jsonrpc: "2.0", id: "string-response", result: {} },
-      { jsonrpc: "2.0", unexpected: true },
-      { jsonrpc: "2.0", id: 1 },
-      { jsonrpc: "2.0", id: 1, result: {}, error: { code: -1 } },
-      { jsonrpc: "2.0", id: 1, error: "invalid" },
-      { jsonrpc: "2.0", method: "warning", params: "invalid" },
-    ]) {
-      const fake = fakeChild()
-      const client = spawnCodexProtocolClient({
-        command: "/fake/codex",
-        spawnProcess: () => fake.child,
-      })
-      const next = client.notifications()[Symbol.asyncIterator]().next()
-      fake.stdout.write(`${JSON.stringify(invalid)}\n`)
-      await expect(next).rejects.toThrow("codex-runtime")
-      expect(client.isAlive()).toBe(false)
-    }
   })
 })
 

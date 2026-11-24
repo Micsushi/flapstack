@@ -271,8 +271,18 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
               if (event.kind === "warning" && event.payload.code === "monthly-spend-limit")
                 state.failureDetail = event.payload.message
             }
+            const terminal = message.type === "result"
+            if (state.live && batch.some((event) => event.kind === "usage")) {
+              const policy = terminal
+                ? await state.live.compactionPolicy(/^\/compact(?:\s|$)/i.test(state.prompt ?? ""))
+                : state.live.knownCompactionPolicy
+              if (policy) {
+                for (const event of batch) {
+                  if (event.kind === "usage") Object.assign(event.payload, policy)
+                }
+              }
+            }
             await this.dependencies.appendActivity(context, batch)
-            const terminal = (message as { type?: string }).type === "result"
             if (terminal) {
               state.terminal = true
               state.failed = batch.some(

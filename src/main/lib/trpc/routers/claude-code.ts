@@ -3,6 +3,7 @@ import { app, safeStorage } from "electron"
 import { openExternalSafe } from "../../open-external"
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { randomUUID } from "node:crypto"
+import { existsSync } from "node:fs"
 import { promisify, stripVTControlCharacters } from "node:util"
 import { z } from "zod"
 import { getAuthManager } from "../../../index"
@@ -13,6 +14,8 @@ import { decryptClaudeCredential, encryptClaudeCredential } from "../../claude-c
 import { anthropicAccounts, anthropicSettings, claudeCodeCredentials, getDatabase } from "../../db"
 import { createId } from "../../db/utils"
 import { publicProcedure, router } from "../index"
+import { childHarnessEnvironment } from "../../mcp-control/child-registration"
+import { ProviderProbeCache, providerProbeKey } from "../../agent-runtime/probe-cache"
 import { sleep } from "../../../../shared/sleep"
 
 const execFileAsync = promisify(execFile)
@@ -88,30 +91,38 @@ function storeOAuthToken(oauthToken: string, setAsActive = true): string {
 }
 
 const CLAUDE_AUTH_STATUS_TTL_MS = 10_000
-let claudeAuthStatusCache: { checkedAt: number; loggedIn: boolean } | null = null
+type ClaudeCliAuthState = "connected" | "not_logged_in" | "not_installed" | "unknown"
+let claudeAuthStatusCache: { checkedAt: number; state: ClaudeCliAuthState } | null = null
 
-async function hasLoggedInClaudeCli(): Promise<boolean> {
+async function getClaudeCliAuthState(): Promise<ClaudeCliAuthState> {
   if (
     claudeAuthStatusCache &&
     Date.now() - claudeAuthStatusCache.checkedAt < CLAUDE_AUTH_STATUS_TTL_MS
-  ) {
-    return claudeAuthStatusCache.loggedIn
-  }
+  )
+    return claudeAuthStatusCache.state
 
-  let loggedIn = false
+  const binary = getBundledClaudeBinaryPath()
+  if (!existsSync(binary)) return "not_installed"
+  const shellEnv = getClaudeShellEnvironment()
+  const output = await execFileAsync(binary, ["auth", "status"], {
+    env: { ...process.env, ...shellEnv },
+    windowsHide: true,
+    timeout: 12_000,
+  }).catch((error: { stdout?: string }) => ({ stdout: error.stdout ?? "" }))
+  let state: ClaudeCliAuthState = "unknown"
   try {
-    const shellEnv = getClaudeShellEnvironment()
-    const { stdout } = await execFileAsync(getBundledClaudeBinaryPath(), ["auth", "status"], {
-      env: { ...process.env, ...shellEnv },
-      windowsHide: true,
-    })
-    const status = JSON.parse(stdout) as { loggedIn?: boolean }
-    loggedIn = status.loggedIn === true
+    const status = JSON.parse(output.stdout) as { loggedIn?: boolean }
+    if (status.loggedIn === true) state = "connected"
+    if (status.loggedIn === false) state = "not_logged_in"
   } catch {
-    loggedIn = false
+    // An unavailable status command cannot distinguish a signed-out CLI from a broken probe.
   }
-  claudeAuthStatusCache = { checkedAt: Date.now(), loggedIn }
-  return loggedIn
+  claudeAuthStatusCache = { checkedAt: Date.now(), state }
+  return state
+}
+
+async function hasLoggedInClaudeCli() {
+  return (await getClaudeCliAuthState()) === "connected"
 }
 
 type LocalClaudeAuthState =
@@ -288,47 +299,64 @@ function startLocalClaudeAuthSession(): LocalClaudeAuthStatus {
  * Claude Code OAuth router for desktop
  * Uses server only for sandbox creation, stores token locally
  */
+const claudeCatalog = new ProviderProbeCache<
+  {
+    id: string
+    alias: string
+    label: string
+    efforts: string[]
+  }[]
+>(30_000)
+
 export const claudeCodeRouter = router({
-  listModels: publicProcedure.query(async () => {
-    const { query } = await import("@anthropic-ai/claude-agent-sdk")
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 12_000)
-    async function* idle(): AsyncGenerator<never> {
-      if (!controller.signal.aborted)
-        await new Promise<void>((done) =>
-          controller.signal.addEventListener("abort", () => done(), { once: true }),
-        )
-    }
-    try {
-      const discovery = query({
-        prompt: idle(),
-        options: {
-          cwd: app.getPath("userData"),
-          pathToClaudeCodeExecutable: getBundledClaudeBinaryPath(),
-          abortController: controller,
-          tools: [],
-          mcpServers: {},
-          strictMcpConfig: true,
-          settings: { disableAllHooks: true },
-          settingSources: [],
-          persistSession: false,
-          permissionMode: "dontAsk",
-        },
-      })
-      try {
-        return (await discovery.supportedModels()).map((row) => ({
-          id: row.resolvedModel || row.value,
-          alias: row.value,
-          label: row.displayName,
-          efforts: row.supportedEffortLevels ?? [],
-        }))
-      } finally {
-        controller.abort()
-        discovery.close()
+  listModels: publicProcedure.query(() => {
+    const binary = getBundledClaudeBinaryPath()
+    const env = { ...process.env, ...getClaudeShellEnvironment() }
+    const key = providerProbeKey(binary, env, env.CLAUDE_CONFIG_DIR)
+    return claudeCatalog.get(key, async () => {
+      const { query } = await import("@anthropic-ai/claude-agent-sdk")
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 12_000)
+      async function* idle(): AsyncGenerator<never> {
+        if (!controller.signal.aborted)
+          await new Promise<void>((done) =>
+            controller.signal.addEventListener("abort", () => done(), { once: true }),
+          )
       }
-    } finally {
-      clearTimeout(timer)
-    }
+      try {
+        const discovery = query({
+          prompt: idle(),
+          options: {
+            cwd: app.getPath("userData"),
+            pathToClaudeCodeExecutable: binary,
+            env: childHarnessEnvironment(env),
+            abortController: controller,
+            tools: [],
+            mcpServers: {},
+            strictMcpConfig: true,
+            settings: { disableAllHooks: true },
+            settingSources: [],
+            persistSession: false,
+            permissionMode: "dontAsk",
+          },
+        })
+        try {
+          const models = await discovery.supportedModels()
+          if (!models.length) throw new Error("Claude Code returned no available models.")
+          return models.map((row) => ({
+            id: row.resolvedModel || row.value,
+            alias: row.value,
+            label: row.displayName,
+            efforts: row.supportedEffortLevels ?? [],
+          }))
+        } finally {
+          controller.abort()
+          discovery.close()
+        }
+      } finally {
+        clearTimeout(timer)
+      }
+    })
   }),
   /**
    * Check if user has existing CLI config (API key or proxy)
@@ -360,8 +388,10 @@ export const claudeCodeRouter = router({
     const db = getDatabase()
     const systemToken = getExistingClaudeToken()?.trim()
 
-    if (await hasLoggedInClaudeCli()) {
+    const cliAuthState = await getClaudeCliAuthState().catch(() => "unknown" as const)
+    if (cliAuthState === "connected") {
       return {
+        cliAuthState,
         isConnected: true,
         connectedAt: null,
         accountId: "system-claude-code",
@@ -394,6 +424,7 @@ export const claudeCodeRouter = router({
             }).trim()
           ) {
             return {
+              cliAuthState,
               isConnected: true,
               connectedAt: account.connectedAt?.toISOString() ?? null,
               accountId: account.id,
@@ -430,6 +461,7 @@ export const claudeCodeRouter = router({
     }
 
     return {
+      cliAuthState,
       isConnected: hasUsableStoredToken,
       connectedAt: cred?.connectedAt?.toISOString() ?? null,
       accountId: systemToken && !cred?.oauthToken ? "system-claude-code" : null,

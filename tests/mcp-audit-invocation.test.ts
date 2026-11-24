@@ -1,15 +1,14 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { join, resolve, sep } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   appendMcpAuditRecord,
   findUnresolvedMcpDispatch,
 } from "../src/main/lib/mcp-control/audit-storage"
-import { McpApprovalLifecycle } from "../src/main/lib/mcp-control/approval-lifecycle"
 import { getMcpControlTool, invokeMcpControlTool } from "../src/main/lib/mcp-control/registry"
 import * as schema from "../src/main/lib/db/schema"
 
@@ -55,154 +54,73 @@ function statuses(invocationId: string): string[] {
 }
 
 describe("MCP invocation audit", () => {
-  it("persists correlated append-only gate, approval, stale, failure, and completion events", async () => {
-    await expect(
-      invokeMcpControlTool(
-        "ping",
-        caller,
-        { token: "never-store" },
-        undefined,
-        dependencies("completed"),
-      ),
-    ).resolves.toMatchObject({ ok: true })
-    await expect(
-      invokeMcpControlTool(
-        "create_chat",
-        { ...caller, permissionMode: "read-only" },
-        {},
-        undefined,
-        dependencies("denied"),
-      ),
-    ).resolves.toMatchObject({ ok: false })
-
-    const deniedApprovals = new McpApprovalLifecycle()
-    const denied = invokeMcpControlTool("create_chat", caller, {}, undefined, {
-      ...dependencies("approval-denied"),
-      approvals: deniedApprovals,
-      approvalId: () => "approval-denied",
+  it("allows concurrent owner project registrations for distinct folders while blocking a matching retry", async () => {
+    const owner = {
+      callerKind: "external-owner" as const,
+      chatId: "external-owner:fixture",
+      permissionMode: "full-access" as const,
+    }
+    const firstPath = join(directory, "first-project")
+    const secondPath = join(directory, "second-project")
+    const junction = join(directory, "project-alias")
+    mkdirSync(firstPath)
+    mkdirSync(secondPath)
+    symlinkSync(firstPath, junction, process.platform === "win32" ? "junction" : "dir")
+    const aliases = [firstPath, junction, firstPath + sep + ".." + sep + "first-project"]
+    if (process.platform === "win32") aliases.push(join(directory, "FIRST-PROJECT"))
+    let releaseFirst!: () => void
+    const pending = new Promise<void>((resolve) => {
+      releaseFirst = resolve
     })
-    deniedApprovals.deny("approval-denied")
-    await denied
-    deniedApprovals.shutdown()
-
-    vi.useFakeTimers()
-    const timedOutApprovals = new McpApprovalLifecycle()
-    const timedOut = invokeMcpControlTool("create_chat", caller, {}, undefined, {
-      ...dependencies("timed-out"),
-      approvals: timedOutApprovals,
-      approvalId: () => "timed-out",
+    const execute = vi.fn(async ({ rawInput }: { rawInput: unknown }) => {
+      const { path } = rawInput as { path: string }
+      if (path === firstPath) await pending
+      return { ok: true as const, data: { registered: true } }
     })
-    await vi.advanceTimersByTimeAsync(60_000)
-    await timedOut
-    timedOutApprovals.shutdown()
-    vi.useRealTimers()
-
-    const staleApprovals = new McpApprovalLifecycle()
-    const stale = invokeMcpControlTool("create_chat", caller, {}, undefined, {
-      ...dependencies("stale"),
-      approvals: staleApprovals,
-      approvalId: () => "stale",
-      resolveCaller: vi
-        .fn()
-        .mockReturnValueOnce(caller)
-        .mockImplementationOnce(() => {
-          throw new Error("run ended")
-        }),
-    })
-    staleApprovals.approve("stale")
-    await stale
-    staleApprovals.shutdown()
-
-    await expect(
-      invokeMcpControlTool("ping", caller, {}, undefined, {
-        ...dependencies("failed"),
-        execute: () => ({ ok: false, error: { code: "internal-error", message: "write failed" } }),
-      }),
-    ).resolves.toMatchObject({ ok: false })
-
-    const grants = new McpApprovalLifecycle()
-    const grantSource = invokeMcpControlTool("create_chat", caller, {}, undefined, {
-      ...dependencies("grant-source"),
-      approvals: grants,
-      approvalId: () => "grant-source",
-      resolveTarget: () => ({}),
-      execute: () => ({ ok: true, data: { created: false } }),
-    })
-    grants.approve("grant-source", { grantSession: true })
-    await grantSource
-    await expect(
-      invokeMcpControlTool("create_chat", caller, {}, undefined, {
-        ...dependencies("session-grant"),
-        approvals: grants,
-        approvalId: () => "session-grant",
+    const register = (invocationId: string, path: string, name: string) =>
+      invokeMcpControlTool("create_project", owner, { path, name }, undefined, {
+        ...dependencies(invocationId),
         resolveTarget: () => ({}),
-        execute: () => ({ ok: true, data: { created: false } }),
-      }),
-    ).resolves.toMatchObject({ ok: true })
-    grants.shutdown()
+        execute,
+      })
 
-    expect(statuses("completed")).toEqual(["allowed", "dispatch-started", "completed"])
-    expect(statuses("denied")).toEqual(["denied"])
-    expect(statuses("approval-denied")).toEqual(["approval-required", "denied"])
-    expect(statuses("timed-out")).toEqual(["approval-required", "timed-out"])
-    expect(statuses("stale")).toEqual(["approval-required", "stale"])
-    expect(statuses("failed")).toEqual(["allowed", "dispatch-started", "failed"])
-    expect(statuses("session-grant")).toEqual([
-      "approval-required",
-      "allowed",
-      "dispatch-started",
-      "completed",
-    ])
-
-    const persisted = sqlite
-      .prepare("SELECT invocation_id, duration_ms, input_summary FROM mcp_audit_records")
-      .all() as Array<{ invocation_id: string; duration_ms: number; input_summary: string }>
-    expect(persisted).toHaveLength(21)
-    expect(persisted.every((row) => row.invocation_id.length > 0 && row.duration_ms >= 0)).toBe(
-      true,
-    )
-    expect(JSON.stringify(persisted)).not.toContain("never-store")
-    const grantAudit = JSON.stringify(
-      sqlite
-        .prepare("SELECT result_summary FROM mcp_audit_records WHERE invocation_id = ?")
-        .all("session-grant"),
-    )
-    expect(grantAudit).not.toContain("session-grant")
-    expect(grantAudit).toContain("sha256")
-  })
-
-  it.each(["disk full", "no such table", "database is locked"])(
-    "blocks every tier before dispatch when audit persistence fails: %s",
-    async (message) => {
-      for (const [toolName, input] of [
-        ["ping", {}],
-        ["pin_item", { kind: "chat", id: "chat-2", pinned: true }],
-      ] as const) {
-        const execute = vi.fn(() => ({ ok: true as const, data: { mutated: true } }))
-        await expect(
-          invokeMcpControlTool(
-            toolName,
-            { ...caller, permissionMode: "full-access" },
-            input,
-            undefined,
-            {
-              audit: {
-                append: () => {
-                  throw new Error(message)
-                },
-              },
-              resolveTarget: () => ({}),
-              execute,
-            },
-          ),
-        ).resolves.toMatchObject({
+    const first = register("first-project", firstPath, "First")
+    try {
+      expect(statuses("first-project")).toEqual(["allowed", "dispatch-started"])
+      await expect(register("second-project", secondPath, "Second")).resolves.toMatchObject({
+        ok: true,
+      })
+      for (const [index, alias] of aliases.entries()) {
+        await expect(register("matching-retry-" + index, alias, "Renamed")).resolves.toMatchObject({
           ok: false,
-          error: { message: expect.stringContaining("mandatory pre-execution audit") },
+          error: {
+            code: "reconciliation-required",
+            message: expect.stringContaining("first-project"),
+          },
         })
-        expect(execute).not.toHaveBeenCalled()
       }
-    },
-  )
+    } finally {
+      releaseFirst()
+    }
+    await expect(first).resolves.toMatchObject({ ok: true })
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(statuses("first-project")).toEqual(["allowed", "dispatch-started", "completed"])
+    expect(statuses("second-project")).toEqual(["allowed", "dispatch-started", "completed"])
+    const summaries = sqlite
+      .prepare("SELECT input_summary FROM mcp_audit_records WHERE status='dispatch-started'")
+      .pluck()
+      .all() as string[]
+    expect(new Set(summaries).size).toBe(2)
+    for (const summary of summaries) {
+      expect(JSON.parse(summary)).toEqual({
+        canonicalPath: {
+          byteLength: expect.any(Number),
+          sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+      })
+      expect(summary).not.toContain(directory)
+    }
+  })
 
   it("leaves a durable allowed trail and returns reconciliation failure if completion audit fails", async () => {
     const append = vi

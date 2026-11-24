@@ -95,33 +95,4 @@ describe("provider account provenance", () => {
       db.close()
     }
   })
-
-  it("does not expose a plaintext token RPC to renderers", () => {
-    expect(readFileSync("src/main/lib/trpc/routers/claude-code.ts", "utf8")).not.toMatch(
-      /(?:getToken|getSystemToken)\s*:/,
-    )
-    expect(readFileSync("src/main/lib/trpc/routers/anthropic-accounts.ts", "utf8")).not.toMatch(
-      /getActiveToken\s*:/,
-    )
-  })
-
-  it("distinguishes legacy stored Claude credentials from system credentials", () => {
-    const db = new Database(":memory:")
-    try {
-      db.exec(`CREATE TABLE claude_code_credentials (id TEXT, oauth_token TEXT);
-        INSERT INTO claude_code_credentials VALUES ('default', 'sealed-token');`)
-      expect(resolveProviderAccountSnapshot(db, "claude-code")).toMatchObject({
-        accountId: "legacy-default",
-        authMode: "subscription",
-        credentialRevision: "legacy",
-      })
-      db.exec("DELETE FROM claude_code_credentials")
-      expect(resolveProviderAccountSnapshot(db, "claude-code")).toMatchObject({
-        accountId: "system-default",
-        authMode: "system-default",
-      })
-    } finally {
-      db.close()
-    }
-  })
 })

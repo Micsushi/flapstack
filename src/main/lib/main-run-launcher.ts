@@ -1,3 +1,4 @@
+import { linkPastedText } from "./attachments/pasted-reference"
 import { buildVisibleContextManifest } from "./agent-runtime/context-manifest"
 import type { HandoffMessage } from "./chat-handoff"
 import { buildRecordTaskRunContext } from "./project-records/run-context"
@@ -61,6 +62,7 @@ import {
   RuntimeLaunchCoordinator,
 } from "./agent-runtime/launch-coordinator"
 import { AgentRuntimeRegistry, createAgentRuntimeRegistry } from "./agent-runtime/registry"
+import { providerProbeKey } from "./agent-runtime/probe-cache"
 import { createAgentActivityStore } from "./agent-runtime/activity-store"
 import { createCodexRuntimeAdapterFactory } from "./agent-runtime/codex"
 import { resolveCodexRuntimeCommand } from "./agent-runtime/codex/binary"
@@ -326,9 +328,6 @@ export class MainRuntimeLaunchService {
                     },
                   }
                 : {}),
-              model_reasoning_summary: context.launch.controls.reasoningDisplay
-                ? "detailed"
-                : "none",
             },
           }
         },
@@ -517,7 +516,7 @@ export class MainRuntimeLaunchService {
         }
       }
       const handoff = persistedSession ? null : this.loadProviderHandoff(run)
-      const prompt = resolveRuntimeTurnPrompt(
+      let prompt = resolveRuntimeTurnPrompt(
         {
           ...run,
           prompt: handoff
@@ -534,6 +533,13 @@ export class MainRuntimeLaunchService {
         },
         resolvedLaunch,
       )
+      if (
+        (resolvedLaunch.resolvedRuntime !== "flapstack-native" || run.harness === "antigravity") &&
+        prompt.includes("@[pasted:")
+      ) {
+        const { app } = await import("electron")
+        prompt = await linkPastedText(prompt, app.getPath("userData"), [run.chatId, run.subChatId])
+      }
       if (this.prelaunchCancellations.has(run.runId)) {
         throw new RuntimeLaunchCancelledError(run.runId)
       }
@@ -1943,9 +1949,18 @@ export async function probeClaudeRuntimeReadiness(
   }
   const binary = await dependencies.resolveBinaryPath()
   const binaryAvailable = dependencies.binaryExists(binary)
-  const authentication = binaryAvailable
-    ? await cachedClaudeAuthenticationProbe(binary, dependencies.probeAuthentication)
-    : null
+  let authentication: ClaudeAuthenticationProbe | null = null
+  if (binaryAvailable) {
+    const env = overrides.probeAuthentication
+      ? process.env
+      : { ...process.env, ...(await import("./claude")).getClaudeShellEnvironment() }
+    const key = providerProbeKey(binary, env, env.CLAUDE_CONFIG_DIR)
+    authentication = await cachedClaudeAuthenticationProbe(
+      key,
+      binary,
+      dependencies.probeAuthentication,
+    )
+  }
   return {
     available: binaryAvailable && authentication?.status === "authenticated",
     sdkVersion: CLAUDE_AGENT_SDK_VERSION,
@@ -2918,13 +2933,21 @@ function firstPermissionDetail(
   return ""
 }
 
-async function* claudeQuery(input: ClaudeRuntimeQueryInput) {
-  const { query } = await import("@anthropic-ai/claude-agent-sdk")
-  const stream = query({
-    prompt: input.prompt as Parameters<typeof query>[0]["prompt"],
-    options: input.options as Parameters<typeof query>[0]["options"],
-  })
-  yield* stream
+function claudeQuery(input: ClaudeRuntimeQueryInput) {
+  const stream = import("@anthropic-ai/claude-agent-sdk").then(({ query }) =>
+    query({
+      prompt: input.prompt as Parameters<typeof query>[0]["prompt"],
+      options: input.options as Parameters<typeof query>[0]["options"],
+    }),
+  )
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield* await stream
+    },
+    async getContextUsage() {
+      return (await stream).getContextUsage()
+    },
+  }
 }
 
 async function resolveBundledClaudePath(): Promise<string> {
@@ -2936,24 +2959,25 @@ const CLAUDE_AUTH_CONFIRMATION_TTL_MS = 10_000
 const CLAUDE_AUTH_FAILURE_TTL_MS = 1_000
 const CLAUDE_AUTH_STATUS_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 10_000
 let claudeAuthenticationCache: {
-  binary: string
+  key: string
   probe: (path: string) => Promise<ClaudeAuthenticationProbe>
   result: ClaudeAuthenticationProbe
   checkedAt: number
 } | null = null
 let claudeAuthenticationInFlight: {
-  binary: string
+  key: string
   probe: (path: string) => Promise<ClaudeAuthenticationProbe>
   promise: Promise<ClaudeAuthenticationProbe>
 } | null = null
 
 async function cachedClaudeAuthenticationProbe(
+  key: string,
   binary: string,
   probe: (path: string) => Promise<ClaudeAuthenticationProbe>,
 ): Promise<ClaudeAuthenticationProbe> {
   if (
     claudeAuthenticationCache &&
-    claudeAuthenticationCache.binary === binary &&
+    claudeAuthenticationCache.key === key &&
     claudeAuthenticationCache.probe === probe &&
     Date.now() - claudeAuthenticationCache.checkedAt <
       (claudeAuthenticationCache.result.status === "authenticated"
@@ -2961,17 +2985,14 @@ async function cachedClaudeAuthenticationProbe(
         : CLAUDE_AUTH_FAILURE_TTL_MS)
   )
     return claudeAuthenticationCache.result
-  if (
-    claudeAuthenticationInFlight?.binary === binary &&
-    claudeAuthenticationInFlight.probe === probe
-  ) {
+  if (claudeAuthenticationInFlight?.key === key && claudeAuthenticationInFlight.probe === probe) {
     return await claudeAuthenticationInFlight.promise
   }
   const promise = probe(binary).then((result) => {
-    claudeAuthenticationCache = { binary, probe, result, checkedAt: Date.now() }
+    claudeAuthenticationCache = { key, probe, result, checkedAt: Date.now() }
     return result
   })
-  claudeAuthenticationInFlight = { binary, probe, promise }
+  claudeAuthenticationInFlight = { key, probe, promise }
   try {
     return await promise
   } finally {

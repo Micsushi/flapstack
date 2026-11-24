@@ -14,6 +14,7 @@ import { trpc, trpcClient } from "../../../lib/trpc"
 import { getQueryKey } from "@trpc/react-query"
 import { getQueryClient } from "../../../contexts/TRPCProvider"
 import {
+  antigravityEffortSelectionsAtom,
   antigravityModelSelectionsAtom,
   pendingAuthRetryMessageAtom,
   subChatCodexModelIdAtomFamily,
@@ -166,12 +167,14 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
     if (this.provider === "antigravity") {
       const model =
         appStore.get(antigravityModelSelectionsAtom)[this.config.subChatId] ?? this.config.model
-      if (!model) throw new Error("Choose a Gemini model before sending.")
+      if (!model) throw new Error("Choose an Antigravity model before sending.")
       const stream = await createDirectRuntimeStream({
         ...directInput,
         harness: this.provider,
         model,
-        reasoningEffort: null,
+        reasoningEffort:
+          appStore.get(antigravityEffortSelectionsAtom)[this.config.subChatId + ":" + model] ??
+          null,
       })
       if (!stream) throw new Error("The Antigravity runtime is unavailable for this chat.")
       clearProjectVaultGraphSelection(this.config.projectId)

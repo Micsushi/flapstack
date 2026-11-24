@@ -166,14 +166,9 @@ type ModelGroup = {
 }
 
 interface AgentModelTuningSelectorProps {
-  showAntigravityApprovals?: boolean
   antigravity?: {
-    nativeApprovals: boolean
-    setNativeApprovals: (enabled: boolean) => void
-    efforts: { id: string; label: string }[]
+    efforts: { id: string; label: string; selected: boolean; onSelect: () => void }[]
     selectedEffort?: string
-    selectedModelId?: string | null
-    onSelectModel: (modelId: string) => void
   }
   selectedAgentId: AgentProviderId
   reasoningEnabled: boolean
@@ -200,7 +195,6 @@ interface AgentModelTuningSelectorProps {
 
 export function AgentModelTuningSelector({
   selectedAgentId,
-  showAntigravityApprovals,
   reasoningEnabled,
   onReasoningEnabledChange,
   claude,
@@ -259,8 +253,8 @@ export function AgentModelTuningSelector({
           ? antigravity?.efforts.map((effort) => ({
               value: effort.id,
               label: effort.label,
-              selected: effort.id === antigravity.selectedModelId,
-              onSelect: () => antigravity.onSelectModel(effort.id),
+              selected: effort.selected,
+              onSelect: effort.onSelect,
             }))
           : []
 
@@ -313,17 +307,6 @@ export function AgentModelTuningSelector({
             {option.selected && <CheckIcon className="h-3.5 w-3.5" />}
           </button>
         ))}
-        {selectedAgentId === "antigravity" && showAntigravityApprovals && antigravity && (
-          <label className="flex min-h-[32px] items-center justify-between gap-2 border-t border-border px-2 py-1.5 text-sm">
-            Ask when Antigravity requires approval
-            <Switch
-              aria-label="Ask when Antigravity requires approval"
-              checked={antigravity.nativeApprovals}
-              onCheckedChange={antigravity.setNativeApprovals}
-              className="shrink-0 scale-75"
-            />
-          </label>
-        )}
         {fastModeAvailable && (
           <>
             <div className="my-1 h-px bg-border" />

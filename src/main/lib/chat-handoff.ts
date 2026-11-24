@@ -86,3 +86,36 @@ export function formatChatHandoff(input: ChatHandoffInput, exportedAt = new Date
 
   return lines.join("\n").trimEnd() + "\n"
 }
+
+export type HandoffBudget = { maxTokens?: number; maxBytes?: number }
+
+export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000
+export const HARD_HANDOFF_BYTE_CAP = 64 * 1024
+
+function configuredPositiveInteger(value: number, fallback: number) {
+  return Number.isSafeInteger(value) && value >= 256 ? value : fallback
+}
+
+export function handoffByteBudget(budget: HandoffBudget = {}): number {
+  const tokens = configuredPositiveInteger(
+    budget.maxTokens ?? Number(process.env.FLAPSTACK_HANDOFF_TOKEN_CAP),
+    DEFAULT_HANDOFF_TOKEN_CAP,
+  )
+  const bytes = configuredPositiveInteger(
+    budget.maxBytes ?? Number(process.env.FLAPSTACK_HANDOFF_BYTE_CAP),
+    HARD_HANDOFF_BYTE_CAP,
+  )
+  // Provider-independent token estimate. The separate UTF-8 wire cap is exact.
+  return Math.min(HARD_HANDOFF_BYTE_CAP, bytes, tokens * 4)
+}
+
+export function utf8Prefix(text: string, maxBytes: number): string {
+  let end = 0
+  let bytes = 0
+  for (const character of text) {
+    bytes += Buffer.byteLength(character)
+    if (bytes > maxBytes) break
+    end += character.length
+  }
+  return text.slice(0, end)
+}

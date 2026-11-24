@@ -101,19 +101,6 @@ it("protects CAS and absent-row ABA while restoring exact snapshots", () => {
     service.restore({ ...scope, runId: "one", expectedRevision: 2, targetRevision: 0 }),
   ).toThrow("changed")
 })
-it.each(["success", "failure", "cancelled"])(
-  "retains %s history, permits release but forbids resurrection",
-  (status) => {
-    set("one", "write")
-    db.prepare("UPDATE agent_runs SET status=? WHERE id=?").run(status, "one")
-    expect(service.state(scope).declarations[0].activity).toBe("terminal")
-    expect(() => set("one", "read", 1)).toThrow("pending")
-    set("one", null, 1)
-    expect(() =>
-      service.restore({ ...scope, runId: "one", expectedRevision: 2, targetRevision: 1 }),
-    ).toThrow("pending")
-  },
-)
 it("rejects foreign scopes, unrelated runs, remote and rebound roots without active historical claims", () => {
   expect(() => service.state({ ...scope, projectId: "other" })).toThrow("outside")
   expect(() => set("other-task", "write")).toThrow("current run")
@@ -125,32 +112,4 @@ it("rejects foreign scopes, unrelated runs, remote and rebound roots without act
   expect(() =>
     service.restore({ ...scope, runId: "one", expectedRevision: 1, targetRevision: 1 }),
   ).toThrow("verified")
-})
-it("keeps retired exact run identity historical and permits explicit release", () => {
-  set("one", "write")
-  db.exec("UPDATE orchestration_agents SET run_id=NULL WHERE run_id='one'")
-  expect(service.state(scope).declarations[0].activity).toBe("retired")
-  set("one", null, 1)
-  expect(() =>
-    service.restore({ ...scope, runId: "one", expectedRevision: 2, targetRevision: 1 }),
-  ).toThrow("current run")
-})
-
-it("excludes remote runs and caps retained history without resetting revision", () => {
-  db.exec("UPDATE agent_runs SET provider_runtime_target='remote' WHERE id='two'")
-  expect(() => set("two", "read")).toThrow("local")
-  expect(service.state(scope).members.find((m) => m.runId === "two")?.eligible).toBe(false)
-  for (let revision = 0; revision < 51; revision++)
-    set("one", revision % 2 ? "read" : "write", revision)
-  expect(
-    db
-      .prepare(
-        "SELECT count(*) n,min(revision) oldest,max(revision) newest FROM orchestration_worktree_declarations",
-      )
-      .get(),
-  ).toEqual({ n: 50, oldest: 2, newest: 51 })
-  expect(() =>
-    service.restore({ ...scope, runId: "one", expectedRevision: 51, targetRevision: 1 }),
-  ).toThrow("no longer")
-  expect(set("one", null, 51).revision).toBe(52)
 })

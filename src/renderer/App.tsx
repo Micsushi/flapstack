@@ -22,13 +22,7 @@ import {
 import { useAgentSubChatStore } from "./features/agents/stores/sub-chat-store"
 import { AgentsLayout } from "./features/layout/agents-layout"
 import { DevTestControlBridge } from "./features/settings/dev-test-control-bridge"
-import {
-  AnthropicOnboardingPage,
-  ApiKeyOnboardingPage,
-  BillingMethodPage,
-  CodexOnboardingPage,
-  FeatureVisibilityOnboardingPage,
-} from "./features/onboarding"
+import { BillingMethodPage, FeatureVisibilityOnboardingPage } from "./features/onboarding"
 import { initAnalytics, shutdown, syncAnalyticsConsent } from "./lib/analytics"
 import {
   anthropicOnboardingCompletedAtom,
@@ -101,6 +95,7 @@ function AppContent() {
     codexOnboardingCompleted,
   )
   const [hadPersistedProviderSetup] = useState(hasProviderSetup)
+  const [migrateLegacyClaudeSetup] = useState(!billingMethod && anthropicOnboardingCompleted)
   const hasLegacyProviderSetup = hadPersistedProviderSetup || Boolean(cliConfig?.hasConfig)
   const featureVisibilityProfileKind = resolveFeatureVisibilityProfileKind({
     hasExistingProject: Boolean(selectedProject || projects?.length || archivedProjects?.length),
@@ -427,47 +422,38 @@ function AppContent() {
   // Migration: If user already completed Anthropic onboarding but has no billing method set,
   // automatically set it to "claude-subscription" (legacy users before billing method was added)
   useEffect(() => {
-    if (!billingMethod && anthropicOnboardingCompleted) {
+    if (migrateLegacyClaudeSetup) {
       setBillingMethod("claude-subscription")
     }
-  }, [billingMethod, anthropicOnboardingCompleted, setBillingMethod])
-
-  // Auto-select Claude Code only when its local login is actually connected.
-  // API keys and proxy settings remain explicit onboarding choices.
-  useEffect(() => {
-    if (claudeIntegration.data?.isConnected && !billingMethod) {
-      console.log("[App] Detected Claude Code login, auto-completing onboarding")
-      setBillingMethod("claude-subscription")
-      setAnthropicOnboardingCompleted(true)
-    }
-  }, [
-    claudeIntegration.data?.isConnected,
-    billingMethod,
-    setAnthropicOnboardingCompleted,
-    setBillingMethod,
-  ])
+  }, [migrateLegacyClaudeSetup, setBillingMethod])
 
   // Completion flags are navigation hints only. Keep them aligned with actual
   // local credentials so a removed or unreadable credential cannot masquerade
   // as a live provider connection.
   useEffect(() => {
-    if (!claudeIntegration.data) return
+    if (!billingMethod || !claudeIntegration.data) return
     setAnthropicOnboardingCompleted(claudeIntegration.data.isConnected)
-  }, [claudeIntegration.data, setAnthropicOnboardingCompleted])
+  }, [billingMethod, claudeIntegration.data, setAnthropicOnboardingCompleted])
 
   useEffect(() => {
-    if (!customClaudeCredential.data) return
+    if (!billingMethod || !customClaudeCredential.data) return
     setApiKeyOnboardingCompleted(customClaudeConnected)
-  }, [customClaudeCredential.data, customClaudeConnected, setApiKeyOnboardingCompleted])
+  }, [
+    billingMethod,
+    customClaudeCredential.data,
+    customClaudeConnected,
+    setApiKeyOnboardingCompleted,
+  ])
 
   useEffect(() => {
+    if (!billingMethod) return
     const state = codexIntegration.data?.state
     if (state === "connected_chatgpt" || state === "connected_api_key") {
       setCodexOnboardingCompleted(true)
     } else if (state === "not_logged_in") {
       setCodexOnboardingCompleted(false)
     }
-  }, [codexIntegration.data?.state, setCodexOnboardingCompleted])
+  }, [billingMethod, codexIntegration.data?.state, setCodexOnboardingCompleted])
 
   if (!billingMethod) {
     if (isLoadingCliConfig) return <ProviderCheckPage />
@@ -498,7 +484,7 @@ function AppContent() {
     !claudeSubscriptionConnected &&
     !claudeStatusFallback
   ) {
-    return <AnthropicOnboardingPage />
+    return <BillingMethodPage />
   }
 
   if (
@@ -506,7 +492,7 @@ function AppContent() {
     !codexMethodConnected &&
     !(codexIntegration.isError && codexOnboardingCompleted)
   ) {
-    return <CodexOnboardingPage />
+    return <BillingMethodPage />
   }
 
   if (
@@ -514,7 +500,7 @@ function AppContent() {
     !customClaudeConnected &&
     !(customClaudeCredential.isError && !customClaudeCredential.data && apiKeyOnboardingCompleted)
   ) {
-    return <ApiKeyOnboardingPage />
+    return <BillingMethodPage />
   }
 
   if (featureVisibility.isLoading) return <ProviderCheckPage />

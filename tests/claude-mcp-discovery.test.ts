@@ -16,8 +16,17 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 it.each(["http", "stdio"])(
-  "cancels %s discovery at the deadline and returns empty tools",
+  "discovers %s tools, releases its timer, and aborts a stalled discovery",
   async (kind) => {
+    const transport = mocks[kind as "http" | "stdio"]
+    const config = kind === "http" ? { url: "https://synthetic.invalid" } : { command: "synthetic" }
+    transport.mockResolvedValueOnce([{ name: "synthetic-tool" }])
+    await expect(fetchToolsForServer(config)).resolves.toEqual([{ name: "synthetic-tool" }])
+    expect(vi.getTimerCount()).toBe(0)
+    transport.mockRejectedValueOnce(new Error("synthetic failure"))
+    await expect(fetchToolsForServer(config)).resolves.toEqual([])
+    expect(vi.getTimerCount()).toBe(0)
+
     let received: AbortSignal | undefined
     const stalled = (...args: unknown[]) => {
       received = args.at(-1) as AbortSignal
@@ -25,10 +34,8 @@ it.each(["http", "stdio"])(
         received!.addEventListener("abort", () => reject(new Error("aborted"))),
       )
     }
-    mocks[kind as "http" | "stdio"].mockImplementation(stalled)
-    const pending = fetchToolsForServer(
-      kind === "http" ? { url: "https://synthetic.invalid" } : { command: "synthetic" },
-    )
+    transport.mockImplementation(stalled)
+    const pending = fetchToolsForServer(config)
     expect(received?.aborted).toBe(false)
     await vi.advanceTimersByTimeAsync(39_999)
     expect(received?.aborted).toBe(false)
@@ -38,17 +45,6 @@ it.each(["http", "stdio"])(
     expect(vi.getTimerCount()).toBe(0)
   },
 )
-
-it.each(["http", "stdio"])("clears the %s deadline after success or failure", async (kind) => {
-  const transport = mocks[kind as "http" | "stdio"]
-  const config = kind === "http" ? { url: "https://synthetic.invalid" } : { command: "synthetic" }
-  transport.mockResolvedValueOnce([{ name: "synthetic-tool" }])
-  await expect(fetchToolsForServer(config)).resolves.toEqual([{ name: "synthetic-tool" }])
-  expect(vi.getTimerCount()).toBe(0)
-  transport.mockRejectedValueOnce(new Error("synthetic failure"))
-  await expect(fetchToolsForServer(config)).resolves.toEqual([])
-  expect(vi.getTimerCount()).toBe(0)
-})
 
 it("uses hydrated transport values without moving hydration into transport code", async () => {
   const input = { command: "stored", env: { TOKEN: "reference" } }

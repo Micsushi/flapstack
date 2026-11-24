@@ -13,6 +13,7 @@ import {
   DEFAULT_OPENCODE_MODELS,
   type ClaudeEffortLevel,
   type CodexReasoningLevel,
+  type ReasoningEffort,
 } from "../../../../shared/model-catalog"
 import type { FileMentionOption } from "../mentions/agents-mentions-editor"
 import { CHAT_MODES, normalizeChatMode, type ChatMode } from "../../../../shared/chat-mode"
@@ -545,9 +546,9 @@ export const antigravityModelSelectionsAtom = atomWithStorage<Record<string, str
   undefined,
   { getOnInit: true },
 )
-export const antigravityNativeApprovalsAtom = atomWithStorage(
-  "agents:antigravityNativeApprovals",
-  false,
+export const antigravityEffortSelectionsAtom = atomWithStorage<Record<string, ReasoningEffort>>(
+  "agents:antigravityEfforts",
+  {},
   undefined,
   { getOnInit: true },
 )

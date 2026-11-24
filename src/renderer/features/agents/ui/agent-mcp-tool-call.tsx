@@ -249,8 +249,6 @@ export const AgentMcpToolCall = memo(function AgentMcpToolCall({
   const [isExpanded, setIsExpanded] = useState(false)
   const { isPending, isInterrupted } = getToolStatus(part, chatStatus)
 
-  const unwrappedOutput = useMemo(() => unwrapMcpOutput(part.output), [part.output])
-
   const title = useMemo(() => {
     if (part.state === "input-streaming") return `Preparing ${mcpInfo.displayName}`
     if (isPending) return getActiveTitle(mcpInfo)
@@ -259,8 +257,17 @@ export const AgentMcpToolCall = memo(function AgentMcpToolCall({
 
   const resultCount = useMemo(() => {
     if (isPending) return null
-    return getResultCount(unwrappedOutput)
-  }, [isPending, unwrappedOutput])
+    // Wrapper text can contain a large serialized payload. Parse it only if the row is open.
+    const output = part.output
+    if (isExpanded) return getResultCount(unwrapMcpOutput(output))
+    if (
+      typeof output === "string" ||
+      output?.type === "text" ||
+      (Array.isArray(output) && output[0]?.type === "text")
+    )
+      return null
+    return getResultCount(output)
+  }, [isExpanded, isPending, part.output])
 
   const subtitle = useMemo(() => {
     if (part.state === "input-streaming") return ""
@@ -268,9 +275,9 @@ export const AgentMcpToolCall = memo(function AgentMcpToolCall({
   }, [part.input, part.state])
 
   const displayOutput = useMemo(() => {
-    if (!part.output) return null
+    if (!isExpanded || !part.output) return null
     return formatOutputForDisplay(part.output)
-  }, [part.output])
+  }, [isExpanded, part.output])
 
   const hasExpandableContent =
     ((part.input && Object.keys(part.input).length > 0) || !!part.output) && !isPending
@@ -284,15 +291,18 @@ export const AgentMcpToolCall = memo(function AgentMcpToolCall({
   return (
     <div>
       {/* Header */}
-      <div
-        onClick={() => hasExpandableContent && setIsExpanded(!isExpanded)}
+      <button
+        type="button"
+        aria-expanded={hasExpandableContent ? isExpanded : undefined}
+        disabled={!hasExpandableContent}
+        onClick={() => setIsExpanded(!isExpanded)}
         className={cn(
-          "group flex items-start gap-1.5 py-0.5 px-2",
+          "group flex min-w-0 max-w-full items-start gap-1.5 px-2 py-0.5 text-left",
           hasExpandableContent && "cursor-pointer",
         )}
       >
-        <div className="flex-1 min-w-0 flex items-center gap-1.5">
-          <div className="text-xs text-muted-foreground flex items-center gap-1.5 min-w-0">
+        <span className="flex-1 min-w-0 flex items-center gap-1.5">
+          <span className="text-xs text-muted-foreground flex items-center gap-1.5 min-w-0">
             <span className="font-medium whitespace-nowrap flex-shrink-0">
               {isPending ? (
                 <TextShimmer
@@ -331,9 +341,9 @@ export const AgentMcpToolCall = memo(function AgentMcpToolCall({
                 )}
               />
             )}
-          </div>
-        </div>
-      </div>
+          </span>
+        </span>
+      </button>
 
       {/* Expanded content */}
       {isExpanded && hasExpandableContent && (

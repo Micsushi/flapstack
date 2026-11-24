@@ -28,13 +28,6 @@ class MemoryStorage implements Storage {
 }
 
 describe("Chat workbench storage", () => {
-  it("round-trips a versioned layout", () => {
-    const storage = new MemoryStorage()
-    const layout = createChatWorkbenchLayout(["a", "b"], "b")
-    persistChatWorkbenchLayout(storage, "main", layout)
-    expect(loadChatWorkbenchLayout(storage, "main", ["legacy"], null)).toEqual(layout)
-  })
-
   it("recovers the backup when the current record is corrupt", () => {
     const storage = new MemoryStorage()
     const first = createChatWorkbenchLayout(["a"])

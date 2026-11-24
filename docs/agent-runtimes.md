@@ -22,6 +22,12 @@ packaged-app, and cleanup checks passed there. Other operating systems remain
 gated until their package qualification passes. Adapter probes still reject a
 missing login, missing binary, or unsupported version instead of falling back.
 
+With the direct Codex Runtime, **Rewind Codex conversation** on a sent message
+removes that turn and later turns from the same native thread. The action applies
+to conversation history. Use run changes to inspect or restore edits to project
+files. If Flapstack could not confirm a rewind, choose **Check Codex rewind** on
+the same message before sending another turn.
+
 ## Select and continue
 
 New Chat exposes the short label **Runtime** beside model controls. Settings →
@@ -35,6 +41,12 @@ lineage, starts with no copied provider session identity, imports only visible
 history as labeled context, and starts one fresh provider session on the first
 new turn. Repeating the same request is idempotent.
 The source remains unchanged. An active run blocks the operation.
+
+For provider handoffs, Flapstack prioritizes recent requests and replies and
+marks omitted history. Set `FLAPSTACK_HANDOFF_TOKEN_CAP` or
+`FLAPSTACK_HANDOFF_BYTE_CAP` before starting the app to tune the budget.
+The default token estimate is 16,000 and the UTF-8 limit is always at most 64 KiB.
+The local transcript export remains complete.
 
 ## Transcript and privacy
 

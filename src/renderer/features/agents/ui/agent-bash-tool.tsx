@@ -141,6 +141,7 @@ export const AgentBashTool = memo(function AgentBashTool({
     >
       {/* Header - clickable to expand, fixed height to prevent layout shift */}
       <div
+        data-transcript-disclosure={!isPending || undefined}
         onClick={() => !isPending && setIsOutputExpanded(!isOutputExpanded)}
         className={cn(
           "flex items-center justify-between pl-2.5 pr-0.5 h-7",

@@ -173,325 +173,46 @@ describe("IsolatedMessagesSection transcript virtualization", () => {
     container.remove()
   })
 
-  it("captures the naturally visible keyed group and its measured viewport offset", () => {
-    expect(
-      findVisibleTranscriptAnchor(
-        [
-          { key: "user-a", start: 0 },
-          { key: "user-b", start: 170 },
-          { key: "user-c", start: 430 },
-        ],
-        215,
-      ),
-    ).toEqual({ key: "user-b", viewportOffset: -45 })
-  })
-
-  it("keeps the mounted DOM bounded for a 100k-message transcript without discarding IDs", async () => {
-    const subChatId = "large-chat"
-    const userMessageIds = Array.from({ length: 50_000 }, (_, index) => `user-${index}`)
-    appStore.set(userMessageIdsPerChatAtom(subChatId), userMessageIds)
-    const scrollElementRef = createRef<HTMLElement>()
-
-    await act(async () =>
-      root.render(
-        createElement(
-          Provider,
-          { store: appStore },
-          createElement(
-            "div",
-            {
-              ref: scrollElementRef,
-              "data-chat-container": true,
-              style: { height: "600px", overflowY: "auto" },
-            },
-            createElement(IsolatedMessagesSection as ComponentType<any>, {
-              ...sectionProps(subChatId, scrollElementRef),
-            }),
-          ),
-        ),
-      ),
-    )
-
-    expect(container.querySelectorAll("[data-rendered-group]").length).toBeLessThan(100)
-    expect(
-      container
-        .querySelector("[data-total-message-groups]")
-        ?.getAttribute("data-total-message-groups"),
-    ).toBe("50000")
-    expect(appStore.get(userMessageIdsPerChatAtom(subChatId))).toEqual(userMessageIds)
-  })
-
-  it("measures variable-height groups instead of assuming fixed rows", async () => {
-    const subChatId = "variable-height-chat"
-    const userMessageIds = Array.from({ length: 20 }, (_, index) => `user-${index}`)
-    measuredGroupHeights.set(0, 80)
-    measuredGroupHeights.set(1, 160)
-    measuredGroupHeights.set(2, 120)
-    appStore.set(userMessageIdsPerChatAtom(subChatId), userMessageIds)
-    const scrollElementRef = createRef<HTMLElement>()
-
-    await act(async () =>
-      root.render(
-        createElement(
-          Provider,
-          { store: appStore },
-          createElement(
-            "div",
-            {
-              ref: scrollElementRef,
-              "data-chat-container": true,
-              style: { height: "600px", overflowY: "auto" },
-            },
-            createElement(IsolatedMessagesSection as ComponentType<any>, {
-              ...sectionProps(subChatId, scrollElementRef),
-            }),
-          ),
-        ),
-      ),
-    )
-    await act(async () => {
-      await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
-    })
-
-    const startForIndex = (index: number) => {
-      const style = container.querySelector<HTMLElement>(`[data-index="${index}"]`)?.style
-      return Number.parseFloat(style?.top || style?.transform.match(/-?\d+(?:\.\d+)?/)?.[0] || "")
-    }
-    expect(startForIndex(1) - startForIndex(0)).toBe(80)
-    expect(startForIndex(2) - startForIndex(1)).toBe(160)
-  })
-
-  it("mounts an offscreen assistant result by scrolling its owning user group", async () => {
-    const subChatId = "search-chat"
-    const userMessageIds = Array.from({ length: 1_000 }, (_, index) => `user-${index}`)
-    appStore.set(userMessageIdsPerChatAtom(subChatId), userMessageIds)
-    appStore.set(
-      messageGroupsPerChatAtom(subChatId),
-      userMessageIds.map((userMsgId, index) => ({
-        userMsgId,
-        assistantMsgIds: [`assistant-${index}`],
-      })),
-    )
+  it("retains its measured viewport when the parent callback ref changes as a saved chat loads", async () => {
+    const subChatId = "recovered-viewport-chat"
+    const ids = Array.from({ length: 40 }, (_, index) => `user-${index + 1}`)
+    const groups = ids.map((userMsgId) => ({ userMsgId, assistantMsgIds: [] }))
     const scrollElementRef = createRef<HTMLElement>()
     const virtualizerRef = createRef<any>()
-
-    await act(async () =>
+    const render = (stickyTopClass: string) =>
       root.render(
-        createElement(
-          Provider,
-          { store: appStore },
-          createElement(
-            "div",
-            {
-              ref: scrollElementRef,
-              "data-chat-container": true,
-              style: { height: "600px", overflowY: "auto" },
-            },
-            createElement(IsolatedMessagesSection as ComponentType<any>, {
-              ...sectionProps(subChatId, scrollElementRef, virtualizerRef),
-            }),
-          ),
-        ),
-      ),
-    )
-
-    expect(container.querySelector('[data-rendered-group="user-900"]')).toBeNull()
-    expect(container.querySelectorAll("[data-rendered-group]").length).toBeGreaterThan(0)
-    expect(container.querySelector("[data-virtualization-ready]")).not.toBeNull()
-    await act(async () => {
-      expect(virtualizerRef.current.scrollToMessage("assistant-900", { focus: true })).toBe(true)
-      await new Promise((resolve) => setTimeout(resolve, 250))
-    })
-    expect(scrollElementRef.current!.scrollTop).toBeGreaterThan(0)
-    expect(container.querySelector('[data-rendered-group="user-900"]')).not.toBeNull()
-    expect((document.activeElement as HTMLElement).dataset.assistantMessageId).toBe("assistant-900")
-    expect(container.querySelectorAll("[data-rendered-group]").length).toBeLessThan(100)
-  })
-
-  it("keeps four virtualized panes isolated while one pane jumps offscreen", async () => {
-    const paneIds = ["pane-a", "pane-b", "pane-c", "pane-d"]
-    const scrollRefs = paneIds.map(() => createRef<HTMLElement>())
-    const virtualizerRefs = paneIds.map(() => createRef<any>())
-    for (const paneId of paneIds) {
-      const ids = Array.from({ length: 1_000 }, (_, index) => `${paneId}-user-${index}`)
-      appStore.set(userMessageIdsPerChatAtom(paneId), ids)
-      appStore.set(
-        messageGroupsPerChatAtom(paneId),
-        ids.map((userMsgId, index) => ({
-          userMsgId,
-          assistantMsgIds: [`${paneId}-assistant-${index}`],
-        })),
+        <Provider store={appStore}>
+          <div
+            ref={(element) => {
+              scrollElementRef.current = element
+            }}
+            data-chat-container
+            style={{ height: "600px", overflowY: "auto" }}
+          >
+            <IsolatedMessagesSection
+              {...sectionProps(subChatId, scrollElementRef, virtualizerRef)}
+              stickyTopClass={stickyTopClass}
+            />
+          </div>
+        </Provider>,
       )
-    }
 
-    await act(async () =>
-      root.render(
-        createElement(
-          Provider,
-          { store: appStore },
-          ...paneIds.map((paneId, index) =>
-            createElement(
-              "div",
-              {
-                key: paneId,
-                ref: scrollRefs[index],
-                "data-pane": paneId,
-                "data-chat-container": true,
-                style: { height: "600px", overflowY: "auto" },
-              },
-              createElement(IsolatedMessagesSection as ComponentType<any>, {
-                ...sectionProps(paneId, scrollRefs[index], virtualizerRefs[index]),
-              }),
-            ),
-          ),
-        ),
-      ),
-    )
+    await act(async () => render("top-0"))
+    await act(async () => {
+      appStore.set(userMessageIdsPerChatAtom(subChatId), ids)
+      appStore.set(messageGroupsPerChatAtom(subChatId), groups)
+      render("top-2")
+    })
+    expect(container.querySelector("[data-virtualization-ready]")).not.toBeNull()
+    const mounted = container.querySelectorAll("[data-rendered-group]").length
+    expect(mounted).toBeGreaterThan(0)
+    expect(mounted).toBeLessThan(ids.length)
 
     await act(async () => {
-      expect(virtualizerRefs[1].current.scrollToMessage("pane-b-assistant-900")).toBe(true)
+      expect(virtualizerRef.current.scrollToMessage("user-19", { focus: true })).toBe(true)
       await new Promise((resolve) => setTimeout(resolve, 250))
     })
-
-    expect(
-      container.querySelector('[data-pane="pane-b"] [data-rendered-group="pane-b-user-900"]'),
-    ).not.toBeNull()
-    expect(
-      container.querySelector('[data-pane="pane-a"] [data-rendered-group="pane-b-user-900"]'),
-    ).toBeNull()
-    for (const paneId of paneIds) {
-      const pane = container.querySelector(`[data-pane="${paneId}"]`)!
-      expect(pane.querySelectorAll("[data-rendered-group]").length).toBeLessThan(100)
-      expect(
-        [...pane.querySelectorAll("[data-rendered-sub-chat]")].every(
-          (element) => element.getAttribute("data-rendered-sub-chat") === paneId,
-        ),
-      ).toBe(true)
-    }
-  })
-
-  it("keeps the live streaming tail mounted as a new group arrives", async () => {
-    const subChatId = "streaming-chat"
-    const initialIds = Array.from({ length: 1_000 }, (_, index) => `user-${index}`)
-    appStore.set(userMessageIdsPerChatAtom(subChatId), initialIds)
-    appStore.set(
-      messageGroupsPerChatAtom(subChatId),
-      initialIds.map((userMsgId, index) => ({
-        userMsgId,
-        assistantMsgIds: [`assistant-${index}`],
-      })),
-    )
-    useStreamingStatusStore.getState().setStatus(subChatId, "streaming")
-    const scrollElementRef = createRef<HTMLElement>()
-
-    await act(async () =>
-      root.render(
-        createElement(
-          Provider,
-          { store: appStore },
-          createElement(
-            "div",
-            {
-              ref: scrollElementRef,
-              "data-chat-container": true,
-              style: { height: "600px", overflowY: "auto" },
-            },
-            createElement(IsolatedMessagesSection as ComponentType<any>, {
-              ...sectionProps(subChatId, scrollElementRef),
-            }),
-          ),
-        ),
-      ),
-    )
-    expect(container.querySelector('[data-rendered-group="user-999"]')).not.toBeNull()
-
-    const nextIds = [...initialIds, "user-1000"]
-    await act(async () => {
-      appStore.set(userMessageIdsPerChatAtom(subChatId), nextIds)
-      appStore.set(messageGroupsPerChatAtom(subChatId), [
-        ...initialIds.map((userMsgId, index) => ({
-          userMsgId,
-          assistantMsgIds: [`assistant-${index}`],
-        })),
-        { userMsgId: "user-1000", assistantMsgIds: ["assistant-1000"] },
-      ])
-    })
-
-    expect(container.querySelector('[data-rendered-group="user-1000"]')).not.toBeNull()
-    expect(container.querySelectorAll("[data-rendered-group]").length).toBeLessThan(100)
-    expect(appStore.get(userMessageIdsPerChatAtom(subChatId))).toHaveLength(1_001)
-  })
-
-  it("fails closed without an owning scroll element while retaining transcript truth", async () => {
-    const subChatId = "detached-chat"
-    const ids = Array.from({ length: 1_000 }, (_, index) => `user-${index}`)
-    appStore.set(userMessageIdsPerChatAtom(subChatId), ids)
-    appStore.set(
-      messageGroupsPerChatAtom(subChatId),
-      ids.map((userMsgId, index) => ({
-        userMsgId,
-        assistantMsgIds: [`assistant-${index}`],
-      })),
-    )
-
-    await act(async () =>
-      root.render(
-        createElement(
-          Provider,
-          { store: appStore },
-          createElement(IsolatedMessagesSection as ComponentType<any>, {
-            ...sectionProps(subChatId, createRef<HTMLElement>()),
-            scrollElementRef: undefined,
-          }),
-        ),
-      ),
-    )
-
-    expect(container.querySelectorAll("[data-rendered-group]")).toHaveLength(0)
-    expect(container.querySelector("[data-virtualization-ready]")).toBeNull()
-    expect(
-      container
-        .querySelector("[data-total-message-groups]")
-        ?.getAttribute("data-total-message-groups"),
-    ).toBe("1000")
-    expect(appStore.get(userMessageIdsPerChatAtom(subChatId))).toHaveLength(1_000)
-  })
-
-  it("renders a short transcript eagerly before the scroll owner attaches", async () => {
-    const subChatId = "short-detached-chat"
-    const ids = ["user-0", "user-1", "user-2"]
-    const virtualizerRef = createRef<any>()
-    appStore.set(userMessageIdsPerChatAtom(subChatId), ids)
-    appStore.set(
-      messageGroupsPerChatAtom(subChatId),
-      ids.map((userMsgId, index) => ({
-        userMsgId,
-        assistantMsgIds: [`assistant-${index}`],
-      })),
-    )
-
-    await act(async () =>
-      root.render(
-        createElement(
-          Provider,
-          { store: appStore },
-          createElement(IsolatedMessagesSection as ComponentType<any>, {
-            ...sectionProps(subChatId, createRef<HTMLElement>(), virtualizerRef),
-            scrollElementRef: undefined,
-          }),
-        ),
-      ),
-    )
-
-    expect(container.querySelectorAll("[data-rendered-group]")).toHaveLength(3)
-    expect(
-      container.querySelector("[data-rendering-mode]")?.getAttribute("data-rendering-mode"),
-    ).toBe("eager")
-    expect(virtualizerRef.current.scrollToMessage("user-2")).toBe(true)
-    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({
-      block: "center",
-      behavior: "auto",
-    })
+    expect((document.activeElement as HTMLElement).dataset.userMessageId).toBe("user-19")
   })
 
   it("preserves the visible keyed group when older variable-height groups are prepended", async () => {

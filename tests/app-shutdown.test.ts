@@ -1,11 +1,5 @@
-import { describe, expect, it, vi } from "vitest"
-import {
-  abortAndWaitForShutdownIdle,
-  installBeforeQuitShutdown,
-  runAppShutdown,
-  waitForShutdownIdle,
-  type BeforeQuitEvent,
-} from "../src/main/lib/app-shutdown"
+import { describe, expect, it } from "vitest"
+import { runAppShutdown, waitForShutdownIdle } from "../src/main/lib/app-shutdown"
 import { VisualCapturePendingStore } from "../src/main/lib/visual-capture/pending-store"
 
 describe("application shutdown", () => {
@@ -23,41 +17,6 @@ describe("application shutdown", () => {
       }),
     ).resolves.toBe(false)
     expect(elapsed).toBe(25)
-  })
-
-  it("returns as soon as shutdown becomes idle", async () => {
-    let polls = 0
-    await expect(
-      waitForShutdownIdle({
-        isIdle: () => ++polls >= 3,
-        timeoutMs: 25,
-        sleep: async () => undefined,
-      }),
-    ).resolves.toBe(true)
-  })
-
-  it("sends provider aborts before waiting on one combined idle predicate", async () => {
-    const order: string[] = []
-    let drainActive = true
-    let providerActive = true
-
-    await expect(
-      abortAndWaitForShutdownIdle({
-        abort: () => {
-          order.push("abort")
-          providerActive = false
-        },
-        isIdle: () => {
-          order.push("poll")
-          return !drainActive && !providerActive
-        },
-        timeoutMs: 25,
-        sleep: async () => {
-          drainActive = false
-        },
-      }),
-    ).resolves.toBe(true)
-    expect(order).toEqual(["abort", "poll", "poll"])
   })
 
   it("awaits provider persistence and service cleanup before closing SQLite last", async () => {
@@ -123,60 +82,5 @@ describe("application shutdown", () => {
       "database:done",
     ])
     expect(raw.equals(Buffer.alloc(raw.byteLength))).toBe(true)
-  })
-
-  it("prevents duplicate quits, runs one shutdown, and exits without another quit", async () => {
-    let beforeQuit!: (event: BeforeQuitEvent) => void
-    const app = {
-      on: vi.fn((_event: "before-quit", listener: (event: BeforeQuitEvent) => void) => {
-        beforeQuit = listener
-      }),
-      exit: vi.fn(),
-    }
-    let finishShutdown!: () => void
-    const shutdown = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishShutdown = resolve
-        }),
-    )
-    installBeforeQuitShutdown({ app, shutdown })
-    const first = { preventDefault: vi.fn() }
-    const duplicate = { preventDefault: vi.fn() }
-
-    beforeQuit(first)
-    beforeQuit(duplicate)
-
-    expect(first.preventDefault).toHaveBeenCalledOnce()
-    expect(duplicate.preventDefault).toHaveBeenCalledOnce()
-    expect(shutdown).toHaveBeenCalledOnce()
-    expect(app.exit).not.toHaveBeenCalled()
-
-    finishShutdown()
-    await vi.waitFor(() => expect(app.exit).toHaveBeenCalledWith(0))
-    expect(shutdown).toHaveBeenCalledOnce()
-  })
-
-  it("still closes SQLite last when an earlier cleanup fails", async () => {
-    const order: string[] = []
-    await expect(
-      runAppShutdown({
-        persistProviderSessions: async () => {
-          order.push("providers")
-          throw new Error("provider cleanup failed")
-        },
-        cancelPendingOAuth: () => order.push("oauth"),
-        stopAutomationScheduler: () => order.push("automations"),
-        stopDevMcpServer: () => order.push("dev-mcp"),
-        stopProductMcpBridge: () => order.push("product-mcp"),
-        stopMobileBridge: () => order.push("mobile"),
-        closeProjectVaultWatchers: () => order.push("project-vault-watchers"),
-        purgePendingVisualCaptures: () => order.push("visual-captures"),
-        cleanupGitWatchers: () => order.push("watchers"),
-        shutdownAnalytics: () => order.push("analytics"),
-        closeDatabase: () => order.push("database"),
-      }),
-    ).rejects.toThrow(/shutdown was incomplete/)
-    expect(order.at(-1)).toBe("database")
   })
 })

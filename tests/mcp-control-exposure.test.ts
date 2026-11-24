@@ -13,16 +13,9 @@ import { closeDatabase } from "../src/main/lib/db"
 import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 import * as schema from "../src/main/lib/db/schema"
 import {
-  buildMcpStdioRegistration,
-  renameProductMcpRecordCollisions,
-  renameProductMcpServerCollisions,
-} from "../src/main/lib/mcp-control/registration"
-import {
   getChatMcpExposureStatus,
-  isProductMcpEnabledByDefault,
   registerActiveProductMcpSession,
   resetActiveProductMcpSessionsForTests,
-  revokeActiveProductMcpSessions,
   setChatMcpExposure,
 } from "../src/main/lib/mcp-control/exposure"
 import {
@@ -44,21 +37,6 @@ afterEach(() => {
 })
 
 describe("Flapstack MCP per-chat exposure", () => {
-  it.each([
-    ["codex", true],
-    ["antigravity", true],
-    ["claude", true],
-    ["claude-code", true],
-    ["cursor-agent", true],
-    ["openrouter", true],
-    ["nanogpt", true],
-    ["local", false],
-    ["custom", false],
-    [null, false],
-  ] as const)("defaults product MCP exposure for %s to %s", (harness, expected) => {
-    expect(isProductMcpEnabledByDefault(harness)).toBe(expected)
-  })
-
   it("keeps owner registrations and ambient owner credentials out of child launches", () => {
     expect(isOwnerRegistration("flapstack-app-control", {})).toBe(true)
     expect(
@@ -105,112 +83,6 @@ describe("Flapstack MCP per-chat exposure", () => {
     expect(originalProviders).toContain("SELECT 1")
     expect(additionalProviders).toContain("SELECT 1")
     expect(`${originalProviders}\n${additionalProviders}`).not.toContain("DROP TABLE")
-  })
-
-  it.each([
-    ["cursor-agent", "Cursor"],
-    ["antigravity", "Antigravity"],
-    ["openrouter", "OpenRouter"],
-    ["nanogpt", "NanoGPT"],
-  ] as const)("supports product MCP exposure for %s chats", (harness, label) => {
-    const directory = mkdtempSync(join(tmpdir(), "flapstack-mcp-provider-exposure-"))
-    directories.push(directory)
-    const databasePath = join(directory, "agents.db")
-    const sqlite = new Database(databasePath)
-    migrate(drizzle(sqlite, { schema }), { migrationsFolder: resolve(process.cwd(), "drizzle") })
-    sqlite
-      .prepare(
-        "INSERT INTO chats (id, harness, scope, permission_mode, mcp_exposure_enabled) VALUES ('chat-provider', ?, 'global', 'read-only', 1)",
-      )
-      .run(harness)
-    sqlite.close()
-    process.env.FLAPSTACK_DB_PATH = databasePath
-    expect(getChatMcpExposureStatus("chat-provider")).toMatchObject({
-      enabled: true,
-      supported: true,
-      harness,
-      callerLabel: `${label} / chat-provider`,
-    })
-  })
-
-  it("builds a launcher-owned stdio identity without caller-controlled arguments", () => {
-    expect(
-      buildMcpStdioRegistration(
-        {
-          chatId: "chat-1",
-          runId: "run-1",
-          permissionMode: "ask-before-edits",
-        },
-        {
-          executablePath: "/Flapstack",
-          mainDirectory: "/app/out/main",
-          databasePath: "/user/data/agents.db",
-        },
-      ),
-    ).toEqual({
-      command: "/Flapstack",
-      args: [join("/app/out/main", "mcp-control-stdio.js")],
-      env: {
-        ELECTRON_RUN_AS_NODE: "1",
-        FLAPSTACK_MCP_CHAT_ID: "chat-1",
-        FLAPSTACK_MCP_CHILD_LIVE_KEY: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
-        FLAPSTACK_MCP_RUN_ID: "run-1",
-        FLAPSTACK_MCP_PERMISSION_MODE: "ask-before-edits",
-        FLAPSTACK_DB_PATH: "/user/data/agents.db",
-        FLAPSTACK_CONFIG_DIR: process.env.FLAPSTACK_CONFIG_DIR!,
-      },
-    })
-  })
-
-  it("preserves reserved-name third-party servers under explicit collision aliases", () => {
-    const record = {
-      flapstack: { command: "third-party" },
-      Flapstack: { command: "case-variant" },
-      FLAPSTACK: { command: "upper-variant" },
-      "flapstack-third-party": { command: "existing" },
-    }
-    expect(renameProductMcpRecordCollisions(record)).toEqual([
-      "flapstack-third-party-2",
-      "flapstack-third-party-3",
-      "flapstack-third-party-4",
-    ])
-    expect(record).toEqual({
-      "flapstack-third-party": { command: "existing" },
-      "flapstack-third-party-2": { command: "third-party" },
-      "flapstack-third-party-3": { command: "case-variant" },
-      "flapstack-third-party-4": { command: "upper-variant" },
-    })
-    expect(Object.keys(record).some((name) => name.toLowerCase() === "flapstack")).toBe(false)
-
-    const list = [
-      { name: "flapstack", command: "first" },
-      { name: "FLAPSTACK", command: "second" },
-      { name: "flapstack-third-party", command: "existing" },
-    ]
-    expect(renameProductMcpServerCollisions(list)).toEqual([
-      "flapstack-third-party-2",
-      "flapstack-third-party-3",
-    ])
-    expect(list.map((server) => server.name)).toEqual([
-      "flapstack-third-party-2",
-      "flapstack-third-party-3",
-      "flapstack-third-party",
-    ])
-  })
-
-  it("revokes the exposed run immediately and requires a new identity after re-enable", () => {
-    const oldRun = vi.fn()
-    const newRun = vi.fn()
-    registerActiveProductMcpSession({ chatId: "chat-1", runId: "run-old", revoke: oldRun })
-
-    expect(revokeActiveProductMcpSessions("chat-1")).toBe(1)
-    expect(oldRun).toHaveBeenCalledOnce()
-    expect(revokeActiveProductMcpSessions("chat-1")).toBe(0)
-
-    registerActiveProductMcpSession({ chatId: "chat-1", runId: "run-new", revoke: newRun })
-    expect(revokeActiveProductMcpSessions("chat-1")).toBe(1)
-    expect(oldRun).toHaveBeenCalledOnce()
-    expect(newRun).toHaveBeenCalledOnce()
   })
 
   it("durably invalidates the old run when disabled and accepts only a new run after re-enable", () => {

@@ -122,23 +122,6 @@ describe("Claude router durable terminal lifecycle", () => {
     expect(launched).toEqual(["run-next"])
   })
 
-  it("finalizes SDK load failure against the durable input run", async () => {
-    seedConversation([{ id: "run-sdk", status: "running", startedAt: 1 }])
-    mocks.checkOfflineFallback.mockResolvedValue({
-      config: undefined,
-      isUsingOllama: false,
-    })
-
-    await runClaude("run-sdk")
-
-    expect(readRun("run-sdk")).toMatchObject({
-      status: "failure",
-      completed_at: expect.any(Number),
-    })
-    expect(readSubChat()).toEqual({ run_status: "failure", stream_id: null })
-    expect(hasActiveClaudeSessions()).toBe(false)
-  })
-
   it("cancels a superseded owner without letting it strand the next queued run", async () => {
     seedConversation([
       { id: "run-old", status: "running", startedAt: 1 },

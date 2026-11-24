@@ -41,16 +41,21 @@ Plan/Kanban contracts are documented in [Plan and Kanban](docs/plan-and-kanban.m
 
 ### Using Gemini through Antigravity
 
-Install the Antigravity CLI and sign in with `agy`. In a chat, select Gemini
-and choose a model and effort from the options your account provides. Gemini
-requires Full access. To see approval requests from Antigravity, turn on
-**Ask when Antigravity requires approval** in the model menu. Antigravity may
-already permit some actions. When Gemini opens a question form, answer with
-text, a choice, multiple choices, or yes/no to continue the same turn.
+Connect Antigravity during onboarding or sign in through the installed CLI.
+In a chat, select Antigravity and choose a model and effort that your account
+offers. Antigravity 1.5.1 and newer can advertise models beyond Gemini.
+
+Flapstack answers Antigravity's tool permission requests using the chat's mode.
+Read only allows reading, searching, and thinking. Ask before edits shows
+approval prompts for changes and commands. Project-only edits checks file
+targets against the selected checkout and blocks shell commands. Full access
+allows the CLI's native tools. Custom mode uses the selected app permissions
+and confines file edits to the checkout. When Antigravity opens a question form,
+answer in Flapstack to continue the same turn.
 
 External clients can connect to the running app with [external harness connections](docs/external-harness-connections.md).
 
-Gemini can connect to project MCP servers listed in `.agents/mcp_config.json`.
+In Ask before edits and Full access, Antigravity can connect to project MCP servers listed in `.agents/mcp_config.json`.
 Review that file when Flapstack asks to connect. **Allow once** applies to this
 run. **Allow for this session** remembers the same configuration for this chat
 until Flapstack closes. Local commands and supported HTTP servers are available.

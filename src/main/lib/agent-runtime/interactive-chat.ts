@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import { planProviderTransition } from "../../../shared/provider-transition"
 import { antigravityPermissions } from "../../../shared/antigravity-permissions"
 import { providerAccountSnapshotFromRow } from "../provider-accounts/snapshot"
 import { randomUUID } from "node:crypto"
@@ -17,8 +18,10 @@ import {
   stripInactiveAgentHotlineLabels,
 } from "../../../shared/agent-hotline"
 import { nowEpochSeconds } from "../db/timestamps"
+import { assertSubChatNotRewinding } from "../sub-chat-rewind-guard"
 import type { QueuedAgentRun } from "../run-launch-service"
 import { createAgentActivityStore } from "./activity-store"
+import { isCodexDiscardedTurn } from "./codex/rewind"
 import {
   constructRuntimeSnapshot,
   resolvedLaunchFromSnapshotRow,
@@ -60,6 +63,7 @@ type ChatRow = {
   sub_chat_id: string
   sub_harness: string | null
   sub_model: string | null
+  sub_reasoning_effort: string | null
   sub_permission_mode: string | null
   sub_worktree_path: string | null
   sub_session_id: string | null
@@ -97,6 +101,8 @@ export function resolveInteractiveRuntime(
     context,
     snapshot.resolvedRuntime,
     snapshot.runtimePreference,
+    model,
+    input.reasoningEffort ?? null,
   )
   return {
     resolvedRuntime: snapshot.resolvedRuntime,
@@ -138,6 +144,8 @@ export function prepareInteractiveRuntimeLaunch(
         context,
         snapshot.resolvedRuntime,
         snapshot.runtimePreference,
+        model,
+        input.reasoningEffort ?? null,
       )
       assertRuntimeSelectionUnchanged(expectedRuntimePreference, snapshot.runtimePreference)
       pinAutomaticRuntimePreference(database, input.chatId, snapshot.runtimePreference)
@@ -180,6 +188,8 @@ export function materializeInteractiveRuntimeRun(
         context,
         snapshot.resolvedRuntime,
         snapshot.runtimePreference,
+        model,
+        input.reasoningEffort ?? null,
       )
       assertRuntimeSelectionUnchanged(input.expectedRuntimePreference, snapshot.runtimePreference)
       if (snapshot.resolvedRuntime === "flapstack-native" && input.harness !== "antigravity") {
@@ -205,6 +215,7 @@ export function materializeInteractiveRuntimeRun(
            WHERE sub_chat_id = ? AND status IN ('pending','running') LIMIT 1`,
         )
         .get(input.subChatId) as { id: string } | undefined
+      assertSubChatNotRewinding(input.subChatId)
       if (active) throw new Error("This Chat already has an active Runtime run.")
 
       pinAutomaticRuntimePreference(database, input.chatId, snapshot.runtimePreference)
@@ -429,7 +440,7 @@ export function persistInteractiveRuntimeAssistantFallback(
         .prepare(
           `SELECT r.chat_id chat_id, r.sub_chat_id sub_chat_id, r.resolved_runtime resolved_runtime, r.harness harness,
                   r.started_at started_at, r.completed_at completed_at, r.prompt_message_id prompt_message_id,
-                  s.messages messages
+                  s.messages messages, s.codex_rewind_intent, s.codex_rewind_discarded
            FROM agent_runs r
            JOIN sub_chats s ON s.id = r.sub_chat_id
            WHERE r.id = ?`,
@@ -444,9 +455,16 @@ export function persistInteractiveRuntimeAssistantFallback(
             completed_at: number | null
             prompt_message_id: string | null
             messages: string
+            codex_rewind_intent: string | null
+            codex_rewind_discarded: string | null
           }
         | undefined
-      if (!row) return
+      if (
+        !row ||
+        row.codex_rewind_intent ||
+        isCodexDiscardedTurn(row.codex_rewind_discarded, runId, row.prompt_message_id)
+      )
+        return
       const messages = parseMessages(row.messages)
       const hotline = resolveAgentHotlineEnabled(messages)
       const replyParts = parts.map((part) => ({
@@ -535,7 +553,7 @@ function requireContext(
       `SELECT c.id chat_id, c.harness chat_harness, c.model chat_model,
               c.permission_mode chat_permission_mode, c.custom_permissions,
               c.worktree_path chat_worktree_path,
-              s.id sub_chat_id, s.harness sub_harness, s.model sub_model,
+              s.id sub_chat_id, s.harness sub_harness, s.model sub_model, s.reasoning_effort sub_reasoning_effort,
               s.permission_mode sub_permission_mode, s.worktree_path sub_worktree_path,
               s.session_id sub_session_id,
               s.messages, p.path project_path
@@ -558,6 +576,8 @@ function assertRuntimeContinuationCompatible(
   context: ChatRow,
   resolvedRuntime: ResolvedAgentRuntime,
   runtimePreference: AgentRuntimePreference,
+  model: string | null,
+  reasoningEffort: string | null,
 ): void {
   if (!context.sub_session_id || resolvedRuntime === "flapstack-native") return
   const latest = database
@@ -570,7 +590,19 @@ function assertRuntimeContinuationCompatible(
     { resolved_runtime: string | null; runtime_preference: string | null } | undefined
   const previousRuntime = latest?.resolved_runtime ?? "flapstack-native"
   const previousPreference = latest?.runtime_preference ?? previousRuntime
-  if (previousRuntime === resolvedRuntime && previousPreference === runtimePreference) return
+  const transition = planProviderTransition({
+    current: {
+      harness: context.sub_harness,
+      runtime: previousPreference,
+      model: context.sub_model,
+      reasoningEffort: context.sub_reasoning_effort,
+    },
+    target: { harness: context.sub_harness, runtime: runtimePreference, model, reasoningEffort },
+    hasHistory: true,
+  })
+  if (transition.type === "reject") throw new Error(transition.reason)
+  // Claude's adapter reopens its SDK client with the existing native session ID when controls change.
+  if (previousRuntime === resolvedRuntime && transition.type !== "create_with_handoff") return
   throw new Error(
     `This Chat already has a ${previousPreference} provider session. Start a new Chat to use ${runtimePreference}; provider sessions cannot switch Runtime behavior in place.`,
   )

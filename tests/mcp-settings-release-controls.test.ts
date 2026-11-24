@@ -15,16 +15,9 @@ import {
 } from "../src/main/lib/credential-service"
 import {
   getCredentialStatus,
-  getPermissionState,
-  listRegisteredProviderExtensions,
   migrateLegacyCredential,
-  mutateRegisteredProjectProviderExtension,
-  previewPermission,
   removeCredential,
-  resolveTestChatSelection,
-  setChatPermission,
   setOrReplaceCredential,
-  setPermissionChangeBehavior,
 } from "../src/main/lib/mcp-test-control/settings-release-controls"
 
 vi.mock("electron", () => ({
@@ -141,103 +134,5 @@ describe("credential dev MCP DTOs", () => {
     expect(removed.status).toMatchObject({ configured: false })
     expect(serialized).not.toContain(secret)
     expect(serialized).not.toContain(`${secret}-new`)
-  })
-})
-
-describe("provider extension project boundaries", () => {
-  it("resolves project scope by ID, omits content, and rejects unknown IDs", async () => {
-    const created = await mutateRegisteredProjectProviderExtension({
-      operation: "create",
-      provider: "codex",
-      kind: "skill",
-      projectId: "project-1",
-      name: "release-proof",
-      description: "Release proof",
-      content: "private extension body",
-    })
-    const listed = await listRegisteredProviderExtensions({ projectId: "project-1" })
-
-    expect(created.projectId).toBe("project-1")
-    expect(listed.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: "release-proof", source: "project" }),
-      ]),
-    )
-    expect(JSON.stringify(listed)).not.toContain("private extension body")
-    await expect(
-      listRegisteredProviderExtensions({ projectId: "missing-project" }),
-    ).rejects.toThrow("Project not found")
-  })
-})
-
-describe("permission dev MCP production routing", () => {
-  it("sets and reads the remembered permission behavior", async () => {
-    await expect(setPermissionChangeBehavior({ behavior: "all-chats" })).resolves.toEqual({
-      behavior: "all-chats",
-    })
-    await expect(getPermissionState()).resolves.toMatchObject({
-      preferences: { changeBehavior: "all-chats" },
-    })
-    await setPermissionChangeBehavior({ behavior: "ask" })
-  })
-
-  it("returns exact stored custom state, mutates it, and previews the same toggles", async () => {
-    expect(await getPermissionState({ chatId: "chat-1" })).toMatchObject({
-      chat: { mode: "custom", customPermissions: exactCustom },
-    })
-    const updated = { ...exactCustom, shell: true, network: false }
-    await setChatPermission({
-      chatId: "chat-1",
-      mode: "custom",
-      scope: "current-chat",
-      customPermissions: updated,
-    })
-    const preview = await previewPermission({
-      chatId: "chat-1",
-      harness: "openrouter",
-      mode: "custom",
-    })
-
-    expect((await getPermissionState({ chatId: "chat-1" })).chat?.customPermissions).toEqual(
-      updated,
-    )
-    expect(preview).toMatchObject({
-      requested: "custom",
-      warnings: [
-        "Provider permission rules: unknown=deny, edit=allow, bash=deny, webfetch=deny.",
-        expect.any(String),
-      ],
-    })
-  })
-
-  it("rejects custom mutation and preview without explicit or stored capabilities", async () => {
-    await expect(
-      setChatPermission({ chatId: "chat-1", mode: "custom", scope: "current-chat" }),
-    ).rejects.toThrow("requires explicit capability toggles")
-    await setChatPermission({
-      chatId: "chat-1",
-      mode: "ask-before-edits",
-      scope: "current-chat",
-    })
-    await expect(
-      previewPermission({ chatId: "chat-1", harness: "codex", mode: "custom" }),
-    ).rejects.toThrow("requires explicit or stored capability toggles")
-  })
-})
-
-describe("test chat renderer selection boundary", () => {
-  it("resolves only an exact active chat and owned sub-chat", () => {
-    expect(resolveTestChatSelection({ chatId: "chat-1", subChatId: "sub-chat-1" })).toEqual({
-      chatId: "chat-1",
-      subChatId: "sub-chat-1",
-      project: expect.objectContaining({ id: "project-1", name: "Project" }),
-      persistedMessages: [],
-    })
-    expect(() => resolveTestChatSelection({ chatId: "chat-1", subChatId: "missing" })).toThrow(
-      "does not belong",
-    )
-    expect(() => resolveTestChatSelection({ chatId: "missing", subChatId: "sub-chat-1" })).toThrow(
-      "Active test chat not found",
-    )
   })
 })

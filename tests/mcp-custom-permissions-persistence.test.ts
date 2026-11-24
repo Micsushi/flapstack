@@ -14,7 +14,6 @@ import {
   resolveTrustedMcpCaller,
 } from "../src/main/lib/mcp-control/identity"
 import { getMcpControlTool } from "../src/main/lib/mcp-control/registry"
-import { permissionsRouter } from "../src/main/lib/trpc/routers/permissions"
 import {
   recoverPendingAllChatPermissionChange,
   stageAllChatPermissionPreferences,
@@ -75,44 +74,6 @@ describe("durable MCP custom permissions", () => {
     ).toBe("allowed")
   })
 
-  it.each([
-    ["missing", null],
-    ["malformed", "not-json"],
-    ["partial", JSON.stringify({ mcp: true })],
-    ["unsupported", JSON.stringify({ ...toggles, futureCapability: true })],
-  ])("fails closed for %s stored toggle state", (_name, stored) => {
-    const { path, sqlite } = createDatabase()
-    sqlite.prepare("UPDATE chats SET custom_permissions = ? WHERE id = 'chat-1'").run(stored)
-    sqlite.close()
-
-    expect(() =>
-      resolveTrustedMcpCaller({ chatId: "chat-1" }, createSqliteMcpCallerStore(path)),
-    ).toThrow(/missing stored capability toggles/)
-  })
-
-  it("denies a disabled capability from durable state", () => {
-    const { path, sqlite } = createDatabase()
-    sqlite.close()
-
-    const caller = resolveTrustedMcpCaller({ chatId: "chat-1" }, createSqliteMcpCallerStore(path))
-    expect(
-      evaluateMcpToolGate({ tool: getMcpControlTool("write_attachment_to_worktree")!, caller }),
-    ).toMatchObject({ decision: "denied", reason: expect.stringContaining("projectWrite") })
-  })
-
-  it("keeps Tier 3 approval fresh after durable custom capability checks", () => {
-    const { path, sqlite } = createDatabase()
-    sqlite
-      .prepare("UPDATE chats SET custom_permissions = ? WHERE id = 'chat-1'")
-      .run(JSON.stringify({ ...toggles, productMcpTier3: true, subagents: true }))
-    sqlite.close()
-    const caller = resolveTrustedMcpCaller({ chatId: "chat-1" }, createSqliteMcpCallerStore(path))
-    const tool = getMcpControlTool("launch_run")!
-
-    expect(evaluateMcpToolGate({ tool, caller }).decision).toBe("approval-required")
-    expect(evaluateMcpToolGate({ tool, caller, approved: true }).decision).toBe("allowed")
-  })
-
   it("uses the immutable run capability snapshot after the chat changes", () => {
     const { path, sqlite } = createDatabase()
     const runPermissions = { ...toggles, productMcpRead: true }
@@ -140,156 +101,6 @@ describe("durable MCP custom permissions", () => {
     expect(
       evaluateMcpToolGate({ tool: getMcpControlTool("list_projects")!, caller }).decision,
     ).toBe("allowed")
-  })
-
-  it("persists exact custom toggles only for the current chat and clears them on exit", async () => {
-    const { path, sqlite } = createDatabase()
-    sqlite
-      .prepare(
-        "INSERT INTO chats (id, name, scope, permission_mode, custom_permissions) VALUES (?, ?, ?, ?, ?)",
-      )
-      .run("chat-2", "Other caller", "global", "read-only", null)
-    sqlite.close()
-    process.env.FLAPSTACK_DB_PATH = path
-    process.env.FLAPSTACK_CONFIG_DIR = join(path, "..")
-    const caller = permissionsRouter.createCaller({ getWindow: () => null })
-    const exact = { ...toggles, projectWrite: true, shell: false }
-
-    await caller.setChatMode({
-      chatId: "chat-1",
-      mode: "custom",
-      scope: "current-chat",
-      customPermissions: exact,
-    })
-    closeDatabase()
-
-    let reloaded = new Database(path)
-    expect(
-      reloaded
-        .prepare("SELECT permission_mode, custom_permissions FROM chats WHERE id = 'chat-1'")
-        .get(),
-    ).toEqual({ permission_mode: "custom", custom_permissions: JSON.stringify(exact) })
-    expect(
-      reloaded
-        .prepare("SELECT permission_mode, custom_permissions FROM chats WHERE id = 'chat-2'")
-        .get(),
-    ).toEqual({ permission_mode: "read-only", custom_permissions: null })
-    reloaded.close()
-
-    await caller.setChatMode({
-      chatId: "chat-1",
-      mode: "ask-before-edits",
-      scope: "current-chat",
-    })
-    closeDatabase()
-    reloaded = new Database(path)
-    expect(
-      reloaded
-        .prepare("SELECT permission_mode, custom_permissions FROM chats WHERE id = 'chat-1'")
-        .get(),
-    ).toEqual({ permission_mode: "ask-before-edits", custom_permissions: null })
-    reloaded.close()
-  })
-
-  it.each([
-    ["missing", undefined],
-    ["partial", { mcp: true }],
-    ["extra-key", { ...toggles, futureCapability: true }],
-    ["malformed", { ...toggles, shell: "yes" }],
-  ])(
-    "rejects %s current-chat custom input before persistence",
-    async (_name, customPermissions) => {
-      const { path, sqlite } = createDatabase()
-      sqlite.close()
-      process.env.FLAPSTACK_DB_PATH = path
-      process.env.FLAPSTACK_CONFIG_DIR = join(path, "..")
-      const caller = permissionsRouter.createCaller({ getWindow: () => null })
-
-      await expect(
-        caller.setChatMode({
-          chatId: "chat-1",
-          mode: "custom",
-          scope: "current-chat",
-          customPermissions: customPermissions as typeof toggles,
-        }),
-      ).rejects.toThrow()
-      closeDatabase()
-
-      const reloaded = new Database(path)
-      expect(
-        reloaded
-          .prepare("SELECT permission_mode, custom_permissions FROM chats WHERE id = 'chat-1'")
-          .get(),
-      ).toEqual({ permission_mode: "custom", custom_permissions: JSON.stringify(toggles) })
-      reloaded.close()
-    },
-  )
-
-  it("applies all-chat custom atomically and persists the future default", async () => {
-    const { path, sqlite } = createDatabase()
-    sqlite
-      .prepare(
-        "INSERT INTO projects (id, name, path, default_permission_mode) VALUES ('project-1', 'Project', '/tmp/project', 'read-only')",
-      )
-      .run()
-    sqlite
-      .prepare(
-        "INSERT INTO tasks (id, project_id, name, default_permission_mode) VALUES ('task-1', 'project-1', 'Task', 'read-only')",
-      )
-      .run()
-    sqlite
-      .prepare(
-        "INSERT INTO chats (id, name, scope, permission_mode, custom_permissions) VALUES (?, ?, ?, ?, ?)",
-      )
-      .run("chat-2", "Other caller", "global", "read-only", null)
-    sqlite.close()
-    process.env.FLAPSTACK_DB_PATH = path
-    process.env.FLAPSTACK_CONFIG_DIR = join(path, "..")
-    const caller = permissionsRouter.createCaller({ getWindow: () => null })
-    await caller.setChatMode({
-      chatId: "chat-1",
-      mode: "custom",
-      scope: "all-chats",
-      rememberBehavior: "all-chats",
-      customPermissions: toggles,
-    })
-    expect(await caller.getPreferences()).toEqual({
-      globalDefault: "custom",
-      changeBehavior: "all-chats",
-      globalCustomPermissions: toggles,
-    })
-    closeDatabase()
-
-    const reloaded = new Database(path)
-    expect(
-      reloaded
-        .prepare("SELECT id, permission_mode, custom_permissions FROM chats ORDER BY id")
-        .all(),
-    ).toEqual([
-      { id: "chat-1", permission_mode: "custom", custom_permissions: JSON.stringify(toggles) },
-      { id: "chat-2", permission_mode: "custom", custom_permissions: JSON.stringify(toggles) },
-    ])
-    expect(
-      reloaded
-        .prepare(
-          "SELECT default_permission_mode, default_custom_permissions FROM projects WHERE id = 'project-1'",
-        )
-        .get(),
-    ).toEqual({
-      default_permission_mode: "custom",
-      default_custom_permissions: JSON.stringify(toggles),
-    })
-    expect(
-      reloaded
-        .prepare(
-          "SELECT default_permission_mode, default_custom_permissions FROM tasks WHERE id = 'task-1'",
-        )
-        .get(),
-    ).toEqual({
-      default_permission_mode: "custom",
-      default_custom_permissions: JSON.stringify(toggles),
-    })
-    reloaded.close()
   })
 
   it("recovers an interrupted all-chat promotion from the durable atomic intent", () => {

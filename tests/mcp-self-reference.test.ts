@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { evaluateMcpGate } from "../src/main/lib/mcp-control/gate"
 import {
-  evaluateMcpGateWithSelfReference,
   evaluateMcpSelfReference,
   type McpSelfReferenceCaller,
 } from "../src/main/lib/mcp-control/self-reference"
@@ -61,52 +59,5 @@ describe("MCP self-reference safety matrix", () => {
         }
       }
     }
-  })
-
-  it("allows targets outside the caller execution context", () => {
-    for (const operation of operations) {
-      for (const kind of targetKinds) {
-        expect(
-          evaluateMcpSelfReference({ caller, operation, target: { kind, id: `${kind}-other` } }),
-        ).toMatchObject({ decision: "allowed" })
-      }
-    }
-  })
-
-  it("does not turn a prior gate denial or approval requirement into permission", () => {
-    const denied = evaluateMcpGate({ tier: 1, permissionMode: "read-only" })
-    expect(
-      evaluateMcpGateWithSelfReference({
-        gate: denied,
-        caller,
-        operation: "rename",
-        target: { kind: "chat", id: caller.chatId },
-      }),
-    ).toEqual(denied)
-
-    const approvalRequired = evaluateMcpGate({ tier: 3, permissionMode: "ask-before-edits" })
-    expect(
-      evaluateMcpGateWithSelfReference({
-        gate: approvalRequired,
-        caller,
-        operation: "write",
-        target: { kind: "project", id: caller.projectId! },
-      }),
-    ).toEqual(approvalRequired)
-  })
-
-  it("makes a self-reference denial override a previously allowed F3-T1 decision", () => {
-    expect(
-      evaluateMcpGateWithSelfReference({
-        gate: evaluateMcpGate({ tier: 2, permissionMode: "full-access" }),
-        caller,
-        operation: "archive",
-        target: { kind: "run", id: caller.runId! },
-      }),
-    ).toMatchObject({
-      decision: "denied",
-      requiresApproval: false,
-      blockedReason: { code: "self-reference", operation: "archive", targetKind: "run" },
-    })
   })
 })

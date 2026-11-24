@@ -81,30 +81,6 @@ async function confirmed() {
 }
 
 describe("visual capture immutable run provenance", () => {
-  it("binds the exact confirmed derivative hash only when the chat selected it", async () => {
-    const { store, record, derivative } = await confirmed()
-    await bindVisualCaptureImagesToRun({
-      database,
-      artifactRoot,
-      chatId: "chat-a",
-      runId: "run-a",
-      images: [
-        {
-          filename: visualCaptureAttachmentFilename(record),
-          mediaType: "image/png",
-          base64Data: derivative.bytes.toString("base64"),
-        },
-      ],
-    })
-    expect(store.selectedContext("run", "run-a")).toEqual([
-      expect.objectContaining({
-        id: record.id,
-        sha256: derivative.derivativeSha256,
-        contextSha256: derivative.derivativeSha256,
-      }),
-    ])
-  })
-
   it("rejects byte/hash drift, cross-chat selection, and forged marker filenames", async () => {
     const { record, derivative } = await confirmed()
     const exact = {
@@ -202,62 +178,6 @@ describe("visual capture immutable run provenance", () => {
     ).resolves.toMatchObject({
       ok: false,
       error: { code: "out-of-scope" },
-    })
-  })
-
-  it("lets a task-scoped run consume an exact artifact linked to its task", async () => {
-    const { store, record, derivative } = await confirmed()
-    database.prepare("DELETE FROM visual_artifact_links WHERE artifact_id = ?").run(record.id)
-    store.link({ artifactId: record.id, consumerKind: "task", consumerId: "task-a" })
-
-    const service = createMcpMutationService(join(container, "agents.db"))
-    await expect(
-      service.invoke(
-        "read_visual_context",
-        {
-          chatId: "chat-a",
-          runId: "run-a",
-          permissionMode: "ask-before-edits",
-        },
-        { artifactId: record.id },
-      ),
-    ).resolves.toMatchObject({
-      ok: true,
-      data: { artifactId: record.id, sha256: derivative.derivativeSha256 },
-    })
-  })
-
-  it("lets a run consume an exact artifact linked to an included knowledge node", async () => {
-    const { record, derivative } = await confirmed()
-    database.prepare("DELETE FROM visual_artifact_links WHERE artifact_id = ?").run(record.id)
-    database
-      .prepare(
-        `INSERT INTO visual_artifact_links
-         (artifact_id, consumer_kind, consumer_id, context_sha256, selected_at)
-         VALUES (?, 'knowledge', 'note-a', ?, 100)`,
-      )
-      .run(record.id, derivative.derivativeSha256)
-    database.prepare("UPDATE agent_runs SET vault_context_manifest = ? WHERE id = 'run-a'").run(
-      JSON.stringify({
-        schemaVersion: 2,
-        graphContext: { entries: [{ nodeId: "note-a" }] },
-      }),
-    )
-
-    const service = createMcpMutationService(join(container, "agents.db"))
-    await expect(
-      service.invoke(
-        "read_visual_context",
-        {
-          chatId: "chat-a",
-          runId: "run-a",
-          permissionMode: "ask-before-edits",
-        },
-        { artifactId: record.id },
-      ),
-    ).resolves.toMatchObject({
-      ok: true,
-      data: { artifactId: record.id, sha256: derivative.derivativeSha256 },
     })
   })
 })

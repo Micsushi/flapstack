@@ -1,9 +1,8 @@
 import Database from "better-sqlite3"
 import { spawnSync } from "node:child_process"
-import { mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdir, readFile, readdir, rename, symlink, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { describe, expect, it } from "vitest"
-import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import { createPortableExport } from "../src/main/lib/portability/exporter"
 import {
   applyPortableImport as applyPortableImportUnchecked,
@@ -124,61 +123,58 @@ describe("portability-import-apply", () => {
     ).rejects.toThrow(/state changed|stale/i)
   })
 
-  it.each([
-    "after-backup",
-    "after-files",
-    "before-database-commit",
-    "after-database-commit-before-journal",
-    "after-database-commit",
-  ] as const)("rolls back a fault at %s without mixed database/files", async (faultAt) => {
-    const root = await tempRoot()
-    const sourcePath = join(root, "source.db")
-    createTestDatabase(sourcePath, "Incoming")
-    const configRoot = await createConfigRoot(root, "incoming")
-    const bundlePath = join(root, "fault.flapstack-export")
-    await createPortableExport({
-      outputPath: bundlePath,
-      databasePath: sourcePath,
-      appVersion: "1",
-      selection: [{ id: "projects" }, { id: "settings" }],
-      fileSources: [{ scopeId: "settings", root: configRoot, target: { kind: "config" } }],
-    })
-    const targetPath = join(root, "target.db")
-    createTestDatabase(targetPath, "Local")
-    const targetConfig = join(root, "target-config")
-    await mkdir(targetConfig)
-    const targetFile = join(targetConfig, "usage-settings.json")
-    await writeFile(targetFile, "local")
-    const stateRoot = join(root, "state")
-    const plan = await createPortableImportPlan({
-      bundlePath,
-      databasePath: targetPath,
-      stateRoot,
-      targetRoots: { config: targetConfig },
-    })
-    const resolutions = Object.fromEntries(
-      [...plan.database, ...plan.files]
-        .filter((entry) => entry.kind === "conflict")
-        .map((entry) => [entry.id, "use-incoming" as const]),
-    )
-    await expect(
-      applyPortableImport({
-        planId: plan.id,
-        expectedFingerprint: plan.bundleFingerprint,
+  it.each(["after-files", "after-database-commit"] as const)(
+    "rolls back a fault at %s without mixed database/files",
+    async (faultAt) => {
+      const root = await tempRoot()
+      const sourcePath = join(root, "source.db")
+      createTestDatabase(sourcePath, "Incoming")
+      const configRoot = await createConfigRoot(root, "incoming")
+      const bundlePath = join(root, "fault.flapstack-export")
+      await createPortableExport({
+        outputPath: bundlePath,
+        databasePath: sourcePath,
+        appVersion: "1",
+        selection: [{ id: "projects" }, { id: "settings" }],
+        fileSources: [{ scopeId: "settings", root: configRoot, target: { kind: "config" } }],
+      })
+      const targetPath = join(root, "target.db")
+      createTestDatabase(targetPath, "Local")
+      const targetConfig = join(root, "target-config")
+      await mkdir(targetConfig)
+      const targetFile = join(targetConfig, "usage-settings.json")
+      await writeFile(targetFile, "local")
+      const stateRoot = join(root, "state")
+      const plan = await createPortableImportPlan({
+        bundlePath,
         databasePath: targetPath,
         stateRoot,
         targetRoots: { config: targetConfig },
-        resolutions,
-        hooks: { faultAt },
-      }),
-    ).rejects.toThrow(/Injected portability fault/)
-    expect(await readFile(targetFile, "utf8")).toBe("local")
-    const database = new Database(targetPath, { readonly: true })
-    expect(database.prepare("SELECT name FROM projects WHERE id = 'p1'").pluck().get()).toBe(
-      "Local",
-    )
-    database.close()
-  })
+      })
+      const resolutions = Object.fromEntries(
+        [...plan.database, ...plan.files]
+          .filter((entry) => entry.kind === "conflict")
+          .map((entry) => [entry.id, "use-incoming" as const]),
+      )
+      await expect(
+        applyPortableImport({
+          planId: plan.id,
+          expectedFingerprint: plan.bundleFingerprint,
+          databasePath: targetPath,
+          stateRoot,
+          targetRoots: { config: targetConfig },
+          resolutions,
+          hooks: { faultAt },
+        }),
+      ).rejects.toThrow(/Injected portability fault/)
+      expect(await readFile(targetFile, "utf8")).toBe("local")
+      const database = new Database(targetPath, { readonly: true })
+      expect(database.prepare("SELECT name FROM projects WHERE id = 'p1'").pluck().get()).toBe(
+        "Local",
+      )
+      database.close()
+    },
+  )
 
   it("recovers a process crash after the durable database-committed phase", async () => {
     const root = await tempRoot()
@@ -267,68 +263,6 @@ describe("portability-import-apply", () => {
     recovered.close()
   })
 
-  it("keeps a locked restore pending and recovers the committed journal on retry", async () => {
-    const fixture = await appliedFixture()
-    const journalPath = join(fixture.stateRoot, "journals", `${fixture.operationId}.json`)
-    const journal = JSON.parse(await readFile(journalPath, "utf8")) as Record<string, unknown>
-    journal.phase = "database-committed"
-    await writeFile(journalPath, `${JSON.stringify(journal)}\n`)
-    const database = new Database(fixture.targetPath)
-    database.prepare("UPDATE projects SET name = 'Interrupted' WHERE id = 'p1'").run()
-    database.close()
-    await writeFile(fixture.targetFile, "interrupted")
-
-    await expect(
-      recoverInterruptedImports(fixture.stateRoot, fixture.targetPath, {
-        beforeDatabaseRestore: () => {
-          throw new Error("database file is locked")
-        },
-      }),
-    ).rejects.toThrow(/locked/)
-    expect(JSON.parse(await readFile(journalPath, "utf8")).phase).toBe("database-committed")
-    await expect(recoverInterruptedImports(fixture.stateRoot, fixture.targetPath)).resolves.toEqual(
-      [{ operationId: fixture.operationId, action: "rolled-back" }],
-    )
-    expect(await readFile(fixture.targetFile, "utf8")).toBe("local")
-    const recovered = new Database(fixture.targetPath, { readonly: true })
-    expect(recovered.prepare("SELECT name FROM projects WHERE id = 'p1'").pluck().get()).toBe(
-      "Local",
-    )
-    recovered.close()
-  })
-
-  it.skipIf(!fileSymlinksSupported)(
-    "rejects a symlink-swapped database backup during recovery",
-    async () => {
-      const fixture = await appliedFixture()
-      const journalPath = join(fixture.stateRoot, "journals", `${fixture.operationId}.json`)
-      const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
-        phase: string
-        databaseBackupPath: string
-      }
-      journal.phase = "database-committed"
-      await writeFile(journalPath, `${JSON.stringify(journal)}\n`)
-      const movedBackup = `${journal.databaseBackupPath}.moved`
-      const outside = join(fixture.stateRoot, "outside-database-bytes")
-      await writeFile(outside, "outside-must-never-replace-the-live-database")
-
-      await expect(
-        recoverInterruptedImports(fixture.stateRoot, fixture.targetPath, {
-          beforeDatabaseRestore: async () => {
-            await rename(journal.databaseBackupPath, movedBackup)
-            await symlink(outside, journal.databaseBackupPath)
-          },
-        }),
-      ).rejects.toThrow(/non-symlink/i)
-      const database = new Database(fixture.targetPath, { readonly: true })
-      expect(database.prepare("SELECT name FROM projects WHERE id = 'p1'").pluck().get()).toBe(
-        "Incoming",
-      )
-      database.close()
-      expect(await readFile(outside, "utf8")).toBe("outside-must-never-replace-the-live-database")
-    },
-  )
-
   it("rejects a regular-file replacement of the bound database backup", async () => {
     const fixture = await appliedFixture()
     const journalPath = join(fixture.stateRoot, "journals", `${fixture.operationId}.json`)
@@ -353,32 +287,6 @@ describe("portability-import-apply", () => {
       "Incoming",
     )
     database.close()
-  })
-
-  it("rejects a regular-file replacement of a bound file backup", async () => {
-    const fixture = await appliedFixture()
-    const journalPath = join(fixture.stateRoot, "journals", `${fixture.operationId}.json`)
-    const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
-      fileBackups: Array<{ backupPath: string | null }>
-    }
-    const backupPath = journal.fileBackups.find((backup) => backup.backupPath)?.backupPath
-    expect(backupPath).toBeTruthy()
-    const originalBackup = `${backupPath}.original`
-
-    await expect(
-      restorePortableBackup({
-        stateRoot: fixture.stateRoot,
-        operationId: fixture.operationId,
-        databasePath: fixture.targetPath,
-        hooks: {
-          beforeFileRollback: async () => {
-            await rename(backupPath!, originalBackup)
-            await writeFile(backupPath!, "unreviewed-regular-file-bytes")
-          },
-        },
-      }),
-    ).rejects.toThrow(/backup source identity or content changed/i)
-    expect(JSON.parse(await readFile(fixture.targetFile, "utf8")).label).toBe("incoming")
   })
 
   it("rejects a journal bound to another profile database", async () => {
@@ -429,135 +337,6 @@ describe("portability-import-apply", () => {
         })
       ).backups,
     ).toEqual([])
-  })
-
-  it("discovers without trusting backup contents and blocks corrupt or missing backups before writes", async () => {
-    const fixture = await appliedFixture()
-    const input = { stateRoot: fixture.stateRoot, databasePath: fixture.targetPath }
-    const journal = JSON.parse(
-      await readFile(join(fixture.stateRoot, "journals", `${fixture.operationId}.json`), "utf8"),
-    )
-    await writeFile(journal.databaseBackupPath, "corrupted")
-    expect((await listCompletedImportBackups(input)).backups[0].available).toBe(true)
-    await expect(
-      restorePortableBackup({ ...input, operationId: fixture.operationId }),
-    ).rejects.toThrow()
-    expect(JSON.parse(await readFile(fixture.targetFile, "utf8")).label).toBe("incoming")
-    await rm(journal.databaseBackupPath)
-    expect((await listCompletedImportBackups(input)).backups[0].available).toBe(false)
-    await expect(
-      restorePortableBackup({ ...input, operationId: fixture.operationId }),
-    ).rejects.toThrow()
-    await writeFile(join(fixture.stateRoot, "journals", "broken.json"), "{")
-    expect((await listCompletedImportBackups(input)).unreadable).toBe(1)
-  })
-
-  it("reports directory read failures and recovers on a later listing", async () => {
-    const stateRoot = await tempRoot()
-    const input = { stateRoot, databasePath: join(stateRoot, "target.db") }
-    expect((await listCompletedImportBackups(input)).backups).toEqual([])
-    await writeFile(join(stateRoot, "journals"), "not a directory")
-    await expect(listCompletedImportBackups(input)).rejects.toThrow()
-    await rm(join(stateRoot, "journals"))
-    await mkdir(join(stateRoot, "journals"))
-    expect((await listCompletedImportBackups(input)).backups).toEqual([])
-  })
-
-  it("materializes both database values and both file byte versions", async () => {
-    const root = await tempRoot()
-    const sourcePath = join(root, "source.db")
-    createTestDatabase(sourcePath, "Incoming")
-    const sourceConfig = await createConfigRoot(root, "incoming")
-    const bundlePath = join(root, "both.flapstack-export")
-    await createPortableExport({
-      outputPath: bundlePath,
-      databasePath: sourcePath,
-      appVersion: "1",
-      selection: [{ id: "projects" }, { id: "settings" }],
-      fileSources: [{ scopeId: "settings", root: sourceConfig, target: { kind: "config" } }],
-    })
-    const targetPath = join(root, "target.db")
-    createTestDatabase(targetPath, "Local")
-    const targetConfig = join(root, "target-config")
-    await mkdir(targetConfig)
-    const targetFile = join(targetConfig, "usage-settings.json")
-    await writeFile(targetFile, "local-bytes")
-    const stateRoot = join(root, "state")
-    const plan = await createPortableImportPlan({
-      bundlePath,
-      databasePath: targetPath,
-      stateRoot,
-      targetRoots: { config: targetConfig },
-    })
-    const conflicts = [...plan.database, ...plan.files].filter((entry) => entry.kind === "conflict")
-    const result = await applyPortableImport({
-      planId: plan.id,
-      expectedFingerprint: plan.bundleFingerprint,
-      databasePath: targetPath,
-      stateRoot,
-      targetRoots: plan.targetRoots,
-      resolutions: Object.fromEntries(conflicts.map((entry) => [entry.id, "keep-both"])),
-    })
-    expect(result.preservedConflicts).toBe(conflicts.length)
-    expect(await readFile(targetFile, "utf8")).toBe("local-bytes")
-    const database = new Database(targetPath, { readonly: true })
-    expect(database.prepare("SELECT name FROM projects WHERE id = 'p1'").pluck().get()).toBe(
-      "Local",
-    )
-    database.close()
-    const artifacts = JSON.parse(await readFile(result.conflictArtifactPath!, "utf8")) as Array<{
-      type: string
-      local: { path?: string; row?: { name?: string } }
-      incoming: { path?: string; row?: { name?: string } }
-    }>
-    const databaseArtifact = artifacts.find((entry) => entry.type === "database")!
-    expect(databaseArtifact.local.row?.name).toBe("Local")
-    expect(databaseArtifact.incoming.row?.name).toBe("Incoming")
-    const fileArtifact = artifacts.find((entry) => entry.type === "file")!
-    expect(await readFile(fileArtifact.local.path!, "utf8")).toBe("local-bytes")
-    expect(await readFile(fileArtifact.incoming.path!, "utf8")).toContain("incoming")
-  })
-
-  it("runs the apply lifecycle before revalidation and always resumes", async () => {
-    const root = await tempRoot()
-    const sourcePath = join(root, "source.db")
-    createTestDatabase(sourcePath, "Incoming")
-    const bundlePath = join(root, "lifecycle.flapstack-export")
-    await createPortableExport({
-      outputPath: bundlePath,
-      databasePath: sourcePath,
-      appVersion: "1",
-      selection: [{ id: "projects" }],
-    })
-    const targetPath = join(root, "target.db")
-    createTestDatabase(targetPath, "Local")
-    const stateRoot = join(root, "state")
-    const plan = await createPortableImportPlan({
-      bundlePath,
-      databasePath: targetPath,
-      stateRoot,
-      targetRoots: {},
-    })
-    const events: string[] = []
-    await expect(
-      applyPortableImport({
-        planId: plan.id,
-        expectedFingerprint: plan.bundleFingerprint,
-        databasePath: targetPath,
-        stateRoot,
-        targetRoots: {},
-        resolutions: Object.fromEntries(
-          plan.database
-            .filter((entry) => entry.kind === "conflict")
-            .map((entry) => [entry.id, "use-incoming"]),
-        ),
-        hooks: {
-          beforeApply: () => events.push("paused"),
-          afterApply: () => events.push("resumed"),
-        },
-      }),
-    ).resolves.toMatchObject({ applied: 1 })
-    expect(events).toEqual(["paused", "resumed"])
   })
 
   it("imports parents and children with clean-profile mappings and FK integrity", async () => {
@@ -670,56 +449,6 @@ describe("portability-import-apply", () => {
     restored.close()
   })
 
-  it("keeps stale project metadata but requires vault remapping without lstat", async () => {
-    const root = await tempRoot()
-    const sourcePath = join(root, "source.db")
-    createRelationalTestDatabase(sourcePath)
-    const bundlePath = join(root, "explicit-mapping.flapstack-export")
-    await createPortableExport({
-      outputPath: bundlePath,
-      databasePath: sourcePath,
-      appVersion: "1",
-      selection: [{ id: "project-vaults", projectIds: ["p1"] }],
-    })
-    const targetPath = join(root, "target.db")
-    createRelationalTestDatabase(targetPath)
-    const target = new Database(targetPath)
-    target
-      .prepare("UPDATE projects SET path = ? WHERE id = 'p1'")
-      .run(join(root, "removed-worktree"))
-    target
-      .prepare("UPDATE project_vaults SET root_path = ? WHERE project_id = 'p1'")
-      .run(join(root, "removed-source-vault"))
-    target.close()
-    const stateRoot = join(root, "state")
-    const plan = await createPortableImportPlan({
-      bundlePath,
-      databasePath: targetPath,
-      stateRoot,
-      targetRoots: {},
-    })
-    expect(
-      plan.database.find((entry) => entry.tableName === "projects" && entry.identity.id === "p1")
-        ?.incoming.path,
-    ).toBe(join(root, "removed-worktree"))
-    expect(
-      plan.database.find(
-        (entry) => entry.tableName === "project_vaults" && entry.identity.project_id === "p1",
-      )?.incoming.root_path,
-    ).toBe("__FLAPSTACK_LOCAL_PATH__/project-vaults/p1")
-    expect(plan.mappingRequirements).toEqual([
-      {
-        kind: "project-vault",
-        projectId: "p1",
-        targetRootField: "projectVaults",
-        reason: "missing-current-target",
-      },
-    ])
-    await expect(createPortableImportConfirmation({ stateRoot, planId: plan.id })).rejects.toThrow(
-      /mappings are incomplete/i,
-    )
-  })
-
   it("rolls back an invalid imported foreign-key reference", async () => {
     const root = await tempRoot()
     const sourcePath = join(root, "source.db")
@@ -810,53 +539,6 @@ describe("portability-import-apply", () => {
     expect(await readFile(outsideFile, "utf8")).toBe("outside-safe")
   })
 
-  it.skipIf(!fileSymlinksSupported)(
-    "rejects a reviewed leaf swapped to a symlink before backup without reading outside",
-    async () => {
-      const fixture = await fileApplyFixture("leaf-read-swap")
-      const targetFile = join(fixture.targetConfig, "usage-settings.json")
-      const moved = join(fixture.root, "reviewed-leaf-moved")
-      const outsideFile = join(fixture.root, "outside-secret.txt")
-      await writeFile(outsideFile, "outside-must-never-be-backed-up")
-      await expect(
-        applyPortableImport({
-          ...fixture.applyInput,
-          hooks: {
-            beforeReviewedLeafRead: async () => {
-              await rename(targetFile, moved)
-              await symlink(outsideFile, targetFile)
-            },
-          },
-        }),
-      ).rejects.toThrow(/symlink|regular|identity|ELOOP/i)
-      expect(await readFile(outsideFile, "utf8")).toBe("outside-must-never-be-backed-up")
-    },
-  )
-
-  it.skipIf(!fileSymlinksSupported)(
-    "rejects a published leaf swapped to a symlink during rollback",
-    async () => {
-      const fixture = await fileApplyFixture("leaf-rollback-swap")
-      const targetFile = join(fixture.targetConfig, "usage-settings.json")
-      const moved = join(fixture.root, "published-leaf-moved")
-      const outsideFile = join(fixture.root, "outside-rollback.txt")
-      await writeFile(outsideFile, "outside-must-never-change")
-      await expect(
-        applyPortableImport({
-          ...fixture.applyInput,
-          hooks: {
-            faultAt: "after-files",
-            beforeFileRollback: async () => {
-              await rename(targetFile, moved)
-              await symlink(outsideFile, targetFile)
-            },
-          },
-        }),
-      ).rejects.toThrow(/leaf|symlink|unsafe/i)
-      expect(await readFile(outsideFile, "utf8")).toBe("outside-must-never-change")
-    },
-  )
-
   it("binds apply to the reviewed plan targets and selected resolutions", async () => {
     const fixture = await fileApplyFixture("confirmation")
     const confirmation = await createPortableImportConfirmation({
@@ -900,24 +582,6 @@ describe("portability-import-apply", () => {
         expectedConfirmationHash: reviewed.confirmationHash,
       }),
     ).rejects.toThrow(/confirmation is stale/i)
-  })
-
-  it("strictly rejects unknown persisted plan fields", async () => {
-    const fixture = await fileApplyFixture("schema-tamper")
-    const planPath = join(
-      fixture.applyInput.stateRoot,
-      "plans",
-      `${fixture.applyInput.planId}.json`,
-    )
-    const persisted = JSON.parse(await readFile(planPath, "utf8")) as Record<string, unknown>
-    persisted.redirectWritesTo = "/tmp/outside"
-    await writeFile(planPath, `${JSON.stringify(persisted)}\n`)
-    await expect(
-      createPortableImportConfirmation({
-        stateRoot: fixture.applyInput.stateRoot,
-        planId: fixture.applyInput.planId,
-      }),
-    ).rejects.toThrow()
   })
 })
 

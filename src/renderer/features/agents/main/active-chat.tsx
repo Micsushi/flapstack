@@ -2616,15 +2616,17 @@ const ChatViewInner = memo(function ChatViewInner({
   const isDesktop = useAtomValue(isDesktopAtom)
   const isFullscreen = useAtomValue(isFullscreenAtom)
 
+  const supportsManualCompact = provider === "claude-code" || provider === "antigravity"
+
   // Handler to trigger manual context compaction
   const handleCompact = useCallback(() => {
-    if (isStreamingRef.current) return // Can't compact while streaming
+    if (!supportsManualCompact || isStreamingRef.current) return
     sendMessageRef.current({
       role: "user",
       parts: [{ type: "text", text: "/compact" }],
     })
     rememberMessagedProject()
-  }, [rememberMessagedProject])
+  }, [rememberMessagedProject, supportsManualCompact])
 
   // Handler to stop streaming - memoized to prevent ChatInputArea re-renders
   const handleStop = useCallback(async () => {
@@ -3062,6 +3064,8 @@ const ChatViewInner = memo(function ChatViewInner({
       messageCount,
       contextWindow,
       totalChatTokens,
+      autoCompactThreshold: runtimeUsage?.autoCompactThreshold,
+      autoCompactEnabled: runtimeUsage?.autoCompactEnabled,
     }
   }, [messages, provider, runtimeMessageUsage, runtimeUsage])
 
@@ -3564,6 +3568,16 @@ const ChatViewInner = memo(function ChatViewInner({
     projectPath,
   )
 
+  const codexRewind = trpc.chats.codexRewindTargets.useQuery(
+    { subChatId },
+    { enabled: provider === "codex" && !isStreaming, staleTime: 0 },
+  )
+  const nativeRewind = codexRewind.data
+  const refreshCodexRewind = codexRewind.refetch
+  useEffect(() => {
+    if (provider === "codex" && !isStreaming) void refreshCodexRewind()
+  }, [provider, isStreaming, refreshCodexRewind])
+
   // Rollback handler - triggered from user message bubble
   // Finds the last assistant message BEFORE this user message, rolls back to it,
   // and inserts the user message text into the input for easy re-sending
@@ -3589,8 +3603,13 @@ const ChatViewInner = memo(function ChatViewInner({
         return
       }
 
+      const isCodexRewind =
+        intent === "rollback" &&
+        provider === "codex" &&
+        nativeRewind?.messageIds.includes(userMsg.id)
+      const confirmsPending = nativeRewind?.pendingMessageId === userMsg.id
       const sdkUuid =
-        intent === "rollback"
+        intent === "rollback" && !isCodexRewind
           ? findRollbackTargetSdkUuidForUserIndex(
               userMsgIndex,
               messages.length,
@@ -3598,10 +3617,19 @@ const ChatViewInner = memo(function ChatViewInner({
             )
           : null
 
-      if (intent === "rollback" && !sdkUuid) {
+      if (intent === "rollback" && !isCodexRewind && !sdkUuid) {
         toast.error("Cannot rollback: this turn is not rollbackable")
         return
       }
+
+      if (
+        isCodexRewind &&
+        !confirmsPending &&
+        !window.confirm(
+          "Rewind this Codex conversation? This removes the selected turn and everything after it from the conversation history.",
+        )
+      )
+        return
 
       // Extract raw text from user message (includes mention tokens)
       const rawText =
@@ -3759,13 +3787,19 @@ const ChatViewInner = memo(function ChatViewInner({
                 subChatId,
                 userMessageId: userMsg.id,
               })
-            : await trpcClient.chats.rollbackToMessage.mutate({
-                subChatId,
-                sdkMessageUuid: sdkUuid!,
-              })
+            : isCodexRewind
+              ? await trpcClient.chats.rewindCodexToUserMessage.mutate({
+                  subChatId,
+                  userMessageId: userMsg.id,
+                })
+              : await trpcClient.chats.rollbackToMessage.mutate({
+                  subChatId,
+                  sdkMessageUuid: sdkUuid!,
+                })
+        if (isCodexRewind) void refreshCodexRewind()
 
         if (!result.success) {
-          toast.error(`Failed to rollback: ${result.error}`)
+          toast.error(result.error)
           setIsRollingBack(false)
           return
         }
@@ -3853,6 +3887,9 @@ const ChatViewInner = memo(function ChatViewInner({
     [
       isRollingBack,
       isStreaming,
+      provider,
+      nativeRewind,
+      refreshCodexRewind,
       messages,
       setMessages,
       subChatId,
@@ -5322,7 +5359,11 @@ const ChatViewInner = memo(function ChatViewInner({
             )}
 
             {isActive && (
-              <ChatTranscriptOverview markers={transcriptMarkers} onJump={jumpToTranscriptMarker} />
+              <ChatTranscriptOverview
+                markers={transcriptMarkers}
+                onJump={jumpToTranscriptMarker}
+                scrollElementRef={chatContainerRef}
+              />
             )}
 
             {/* Messages */}
@@ -5392,6 +5433,7 @@ const ChatViewInner = memo(function ChatViewInner({
                         scrollElementRef={chatContainerRef}
                         virtualizerRef={messageVirtualizerRef}
                         onRollback={handleRollback}
+                        codexRewind={provider === "codex" ? nativeRewind : undefined}
                         onEditLatest={handleEditLatestMessage}
                         onFork={handleForkFromMessage}
                       />
@@ -5555,7 +5597,7 @@ const ChatViewInner = memo(function ChatViewInner({
                 onSend={handleSend}
                 onForceSend={handleForceSend}
                 onStop={handleStop}
-                onCompact={handleCompact}
+                onCompact={supportsManualCompact ? handleCompact : undefined}
                 onModeChange={handleModeChange}
                 isStreaming={isStreaming}
                 isCompacting={isCompacting}
@@ -6516,8 +6558,9 @@ function ChatViewScoped({
   const sandboxId = agentChat?.sandbox_id
   const sandboxUrl = sandboxId ? `https://3003-${sandboxId}.e2b.app` : null
   const globalRuntimePath = (agentChat as any)?.globalRuntimePath as string | undefined
-  // Global Chats use an app-owned runtime directory without gaining a project checkout.
-  const chatWorkingDir = activeTargetWorktreePath || worktreePath || globalRuntimePath || sandboxUrl
+  // A project chat can start in its project folder before it has a dedicated checkout.
+  const localRuntimePath = worktreePath || globalRuntimePath || originalProjectPath
+  const chatWorkingDir = activeTargetWorktreePath || localRuntimePath || sandboxUrl
 
   // Plugin MCP approval - disabled for now since official marketplace plugins
   // are trusted by default. Will re-enable when third-party plugin support is added.
@@ -7574,7 +7617,7 @@ Make sure to preserve all functionality from both branches when resolving confli
       const chatSandboxUrl = chatSandboxId ? `https://3003-${chatSandboxId}.e2b.app` : null
       const isRemoteChat = !!(agentChat as any)?.isRemote || !!chatSandboxId
       const targetWorktreePath = appStore.get(selectedTargetWorktreePathAtomFamily(subChatId))
-      const runWorktreePath = targetWorktreePath || worktreePath || globalRuntimePath
+      const runWorktreePath = targetWorktreePath || localRuntimePath
       const desiredSubChat = agentSubChats.find((sc) => sc.id === subChatId)
       const savedConversation = desiredSubChat as
         | {
@@ -7900,7 +7943,7 @@ Make sure to preserve all functionality from both branches when resolving confli
       agentChat,
       agentSubChats,
       chatWorkingDir,
-      worktreePath,
+      localRuntimePath,
       chatId,
       currentMode,
       inferProviderFromMessages,

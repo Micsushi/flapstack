@@ -1,7 +1,8 @@
 "use client"
 
 import { memo } from "react"
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip"
+import { Button } from "../../../components/ui/button"
+import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover"
 import { cn } from "../../../lib/utils"
 
 // Pre-computed token data to avoid re-computing on every render
@@ -12,6 +13,8 @@ export interface MessageTokenData {
   messageCount: number
   contextWindow?: number
   totalChatTokens?: number
+  autoCompactThreshold?: number
+  autoCompactEnabled?: boolean
 }
 
 interface AgentContextIndicatorProps {
@@ -87,19 +90,22 @@ export const AgentContextIndicator = memo(function AgentContextIndicator({
   const contextTokens = tokenData.totalInputTokens
   const contextWindow = tokenData.contextWindow
   const percentUsed = contextWindow ? Math.min(100, (contextTokens / contextWindow) * 100) : 0
-  const isEmpty = contextTokens === 0
-
-  const isClickable = onCompact && !disabled && !isCompacting
+  const threshold = tokenData.autoCompactThreshold
+  const autoCompact =
+    tokenData.autoCompactEnabled === false
+      ? "Disabled"
+      : threshold !== undefined
+        ? `${threshold.toLocaleString()} tokens`
+        : "Threshold unavailable"
 
   return (
-    <Tooltip delayDuration={300}>
-      <TooltipTrigger asChild>
-        <div
-          onClick={isClickable ? onCompact : undefined}
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label="Context usage"
           className={cn(
-            "h-4 w-4 flex items-center justify-center",
-            isClickable ? "cursor-pointer hover:opacity-70 transition-opacity" : "cursor-default",
-            disabled && "opacity-50",
+            "flex size-7 items-center justify-center rounded-sm hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring",
             className,
           )}
         >
@@ -107,33 +113,43 @@ export const AgentContextIndicator = memo(function AgentContextIndicator({
             percent={percentUsed}
             size={14}
             strokeWidth={2.5}
-            className={isCompacting ? "animate-pulse" : undefined}
+            className={isCompacting ? "animate-pulse motion-reduce:animate-none" : undefined}
           />
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="top" sideOffset={8}>
-        <p className="text-xs">
-          {isEmpty ? (
-            <span className="text-muted-foreground">
-              Context: 0 / {contextWindow ? formatTokens(contextWindow) : "Unknown"}
-            </span>
-          ) : (
-            <>
-              <span className="font-mono font-medium text-foreground">
-                {percentUsed.toFixed(1)}%
-              </span>
-              <span className="text-muted-foreground mx-1">·</span>
-              <span className="text-muted-foreground">
-                {formatTokens(contextTokens)} /{" "}
-                {contextWindow ? formatTokens(contextWindow) : "Unknown"} context
-              </span>
-            </>
-          )}
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Chat total: {(tokenData.totalChatTokens ?? 0).toLocaleString()} tokens
-        </p>
-      </TooltipContent>
-    </Tooltip>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        aria-label="Context usage"
+        side="top"
+        sideOffset={8}
+        align="end"
+        className="w-60 max-w-[calc(100vw-2rem)] p-3 text-xs"
+      >
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2">
+          <dt className="text-muted-foreground">Context</dt>
+          <dd>
+            {formatTokens(contextTokens)}
+            {contextWindow ? ` / ${formatTokens(contextWindow)}` : ""} tokens
+          </dd>
+          <dt className="text-muted-foreground">Chat total</dt>
+          <dd>{(tokenData.totalChatTokens ?? 0).toLocaleString()} tokens</dd>
+          <dt className="text-muted-foreground">Auto-compact</dt>
+          <dd>{autoCompact}</dd>
+          <dt className="text-muted-foreground">Manual /compact</dt>
+          <dd>{onCompact ? "Available" : "Unavailable"}</dd>
+        </dl>
+        {onCompact && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-3 w-full"
+            disabled={disabled || isCompacting || tokenData.messageCount === 0}
+            onClick={onCompact}
+          >
+            {isCompacting ? "Compacting..." : "Compact context"}
+          </Button>
+        )}
+      </PopoverContent>
+    </Popover>
   )
 })

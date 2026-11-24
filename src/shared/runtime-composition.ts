@@ -123,6 +123,7 @@ export const visibleContextOmissionClassSchema = z.enum([
   "hidden-tool-state",
   "secret-or-credential",
   "unselected-message",
+  "context-budget",
   "unselected-file",
   "unselected-attachment",
   "unsupported-content",

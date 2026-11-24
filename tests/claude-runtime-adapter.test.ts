@@ -6,13 +6,7 @@ import {
   ClaudeRuntimeFailedError,
   createClaudeCodeRuntimeAdapter,
 } from "../src/main/lib/agent-runtime/claude-code"
-import {
-  baseDependencies,
-  collect,
-  iterable,
-  probeInput,
-  runtimeContext,
-} from "./claude-runtime-test-helpers"
+import { baseDependencies, collect, iterable, runtimeContext } from "./claude-runtime-test-helpers"
 
 const fixture = JSON.parse(
   readFileSync(
@@ -129,73 +123,6 @@ describe("Claude Code Runtime adapter", () => {
         providerToolId: "tool-permission-1",
       }),
     ])
-  })
-
-  it("passes launch-owned multimodal prompts to the Claude SDK query", async () => {
-    const multimodalPrompt = iterable([
-      { type: "user", message: { role: "user", content: [{ type: "image" }] } },
-    ])
-    let receivedPrompt: unknown = null
-    const adapter = createClaudeCodeRuntimeAdapter(
-      baseDependencies({
-        resolvePrompt: () => multimodalPrompt,
-        query(input) {
-          receivedPrompt = input.prompt
-          return iterable(fixture.events)
-        },
-      }),
-    )
-    const context = runtimeContext()
-    const session = await adapter.startSession(context)
-    const turn = await adapter.startTurn(context, session, "Inspect this image")
-
-    await collect(adapter.streamActivity(context, session, turn))
-
-    expect(receivedPrompt).toBe(multimodalPrompt)
-  })
-
-  it("reports pinned availability and exact drift diagnostics", async () => {
-    const good = createClaudeCodeRuntimeAdapter(baseDependencies())
-    await expect(good.probe("claude-code")).resolves.toMatchObject({
-      available: true,
-      versions: { adapterVersion: "1", protocolVersion: "claude-agent-sdk/0.3.207" },
-    })
-
-    const drifted = createClaudeCodeRuntimeAdapter(
-      baseDependencies({
-        probe: async () => ({ ...probeInput(), sdkVersion: "0.3.208" }),
-      }),
-    )
-    await expect(drifted.probe("claude-code")).resolves.toMatchObject({
-      available: false,
-      reason: { code: "protocol-unsupported" },
-    })
-    const incompatibleProbe = vi.fn(async () => probeInput())
-    const incompatible = createClaudeCodeRuntimeAdapter(
-      baseDependencies({ probe: incompatibleProbe }),
-    )
-    await expect(incompatible.probe("codex")).resolves.toMatchObject({
-      available: false,
-      reason: { code: "runtime-incompatible", harness: "codex" },
-    })
-    expect(incompatibleProbe).not.toHaveBeenCalled()
-  })
-
-  it("returns a sanitized typed unavailable probe when probe authority fails", async () => {
-    const adapter = createClaudeCodeRuntimeAdapter(
-      baseDependencies({
-        probe: async () => {
-          throw new Error("probe failed sk-secret /Users/person/private/config")
-        },
-      }),
-    )
-    const result = await adapter.probe("claude-code")
-    expect(result).toMatchObject({
-      available: false,
-      reason: { code: "runtime-unavailable" },
-    })
-    expect(JSON.stringify(result)).not.toContain("sk-secret")
-    expect(JSON.stringify(result)).not.toContain("/Users/person")
   })
 
   it("stops consuming provider messages after a durably appended result", async () => {

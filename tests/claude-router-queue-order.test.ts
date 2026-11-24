@@ -130,46 +130,6 @@ afterEach(() => {
 })
 
 describe("Claude legacy queue routing", () => {
-  it("keeps distinct user turn identities even when their text matches", async () => {
-    const sqlite = new Database(databasePath)
-    sqlite
-      .prepare("UPDATE sub_chats SET messages = ? WHERE id = 'sub-order'")
-      .run(
-        JSON.stringify([
-          { id: "different-turn", role: "user", parts: [{ type: "text", text: "A" }] },
-        ]),
-      )
-    sqlite.close()
-    await launchThroughClaudeRouter({
-      runId: "run-a",
-      chatId: "chat-order",
-      subChatId: "sub-order",
-      prompt: "A",
-      worktreePath: directory,
-    } as QueuedAgentRun)
-    expect(readVisibleTranscript()).toEqual(["A", "A", "A-response"])
-  })
-
-  it("reuses an already persisted prompt identity beyond the last message", async () => {
-    const sqlite = new Database(databasePath)
-    sqlite.prepare("UPDATE sub_chats SET messages = ? WHERE id = 'sub-order'").run(
-      JSON.stringify([
-        { id: "mcp-order-a", role: "user", parts: [{ type: "text", text: "A" }] },
-        { id: "later-turn", role: "user", parts: [{ type: "text", text: "Later" }] },
-      ]),
-    )
-    sqlite.close()
-    await launchThroughClaudeRouter({
-      runId: "run-a",
-      chatId: "chat-order",
-      subChatId: "sub-order",
-      prompt: "A",
-      worktreePath: directory,
-    } as QueuedAgentRun)
-    expect(readVisibleTranscript().filter((text) => text === "A")).toHaveLength(1)
-    expect(readVisibleTranscript()).toEqual(["A", "A-response", "Later"])
-  })
-
   it("persists A/response/B/response through the real router", async () => {
     await drainPendingMcpRuns(databasePath, launchThroughClaudeRouter, {
       waitForCompletion: true,

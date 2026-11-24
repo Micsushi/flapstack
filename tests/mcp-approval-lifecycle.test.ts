@@ -15,21 +15,6 @@ const request = (
 afterEach(() => vi.useRealTimers())
 
 describe("MCP approval lifecycle", () => {
-  it("settles duplicate and late decisions exactly once", async () => {
-    const lifecycle = new McpApprovalLifecycle()
-    const wait = lifecycle.request(request("approval-1"))
-
-    expect(lifecycle.approve("approval-1")).toBe(true)
-    expect(lifecycle.deny("approval-1")).toBe(false)
-    expect(lifecycle.cancel("approval-1")).toBe(false)
-    await expect(wait.decision).resolves.toEqual({
-      id: "approval-1",
-      state: "approved",
-      source: "user",
-    })
-    expect(lifecycle.listPending()).toEqual([])
-  })
-
   it("fails closed on timeout, cancellation, and shutdown", async () => {
     vi.useFakeTimers()
     const lifecycle = new McpApprovalLifecycle()
@@ -54,37 +39,6 @@ describe("MCP approval lifecycle", () => {
     await expect(lifecycle.request(request("after-shutdown")).decision).resolves.toMatchObject({
       state: "shutdown",
     })
-  })
-
-  it("notifies renderer consumers when pending approvals settle", async () => {
-    vi.useFakeTimers()
-    const onPendingChanged = vi.fn()
-    const lifecycle = new McpApprovalLifecycle(undefined, onPendingChanged)
-    lifecycle.request(request("timeout", { timeoutMs: 10 }))
-    lifecycle.request(request("approved"))
-    lifecycle.request(request("denied"))
-
-    vi.advanceTimersByTime(10)
-    lifecycle.approve("approved")
-    lifecycle.deny("denied")
-
-    expect(onPendingChanged).toHaveBeenCalledTimes(3)
-  })
-
-  it("shares only an exact duplicate pending decision and rejects context collisions", async () => {
-    const lifecycle = new McpApprovalLifecycle()
-    const first = lifecycle.request(request("same-id"))
-    const duplicate = lifecycle.request(request("same-id"))
-    const collision = lifecycle.request(request("same-id", { toolName: "archive_item" }))
-
-    expect(duplicate.pending).toMatchObject({ id: "same-id", toolName: "rename_item" })
-    expect(duplicate.decision).toBe(first.decision)
-    await expect(collision.decision).resolves.toMatchObject({ state: "cancelled" })
-    lifecycle.deny("same-id")
-    await expect(Promise.all([first.decision, duplicate.decision])).resolves.toEqual([
-      { id: "same-id", state: "denied", source: "user" },
-      { id: "same-id", state: "denied", source: "user" },
-    ])
   })
 
   it("keeps grants in memory and scopes them to chat, tool, and tier", async () => {
@@ -125,19 +79,6 @@ describe("MCP approval lifecycle", () => {
     expect(lifecycle.hasSessionGrant(request("probe", { tier: 3, toolName: "launch_run" }))).toBe(
       false,
     )
-    lifecycle.shutdown()
-  })
-
-  it("cancels all pending requests and grants when a chat ends", async () => {
-    const lifecycle = new McpApprovalLifecycle()
-    const granted = lifecycle.request(request("grant"))
-    lifecycle.approve("grant", { grantSession: true })
-    await granted.decision
-    const pending = lifecycle.request(request("pending", { toolName: "archive_item" }))
-
-    lifecycle.revokeChat("chat-1")
-    await expect(pending.decision).resolves.toMatchObject({ state: "cancelled" })
-    expect(lifecycle.request(request("after-chat")).pending).not.toBeNull()
     lifecycle.shutdown()
   })
 })

@@ -1,11 +1,18 @@
 import { observable } from "@trpc/server/observable"
 import { recordSubmittedAt } from "../../run-timings"
-import { antigravityModels } from "../../agent-runtime/antigravity/adapter"
+import { antigravityIntegration, antigravityModels } from "../../agent-runtime/antigravity/adapter"
 import {
   AGENT_RUNTIME_PREFERENCES,
   type ResolvedAgentRuntime,
 } from "../../../../shared/agent-runtime"
 import { app } from "electron"
+import {
+  beginAntigravityLogin,
+  antigravityLoginStatus,
+  submitAntigravityCode,
+  cancelAntigravityLogin,
+  reopenAntigravityLogin,
+} from "../../agent-runtime/antigravity/login"
 import { join } from "node:path"
 import { z } from "zod"
 import { CHAT_MODES } from "../../../../shared/chat-mode"
@@ -99,6 +106,31 @@ type RuntimeChatEvent =
 
 export const agentRuntimeChatRouter = router({
   antigravityModels: publicProcedure.query(() => antigravityModels()),
+  antigravityIntegration: publicProcedure.query(() => antigravityIntegration()),
+  startAntigravitySignIn: publicProcedure
+    .input(z.object({ loginId: z.string().uuid() }))
+    .mutation(({ input }) => beginAntigravityLogin(input.loginId)),
+  antigravitySignInStatus: publicProcedure
+    .input(z.object({ loginId: z.string().uuid() }))
+    .query(({ input }) => antigravityLoginStatus(input.loginId)),
+  submitAntigravitySignInCode: publicProcedure
+    .input(
+      z.object({
+        loginId: z.string().uuid(),
+        code: z
+          .string()
+          .trim()
+          .regex(/^[^\s\u0000-\u001f\u007f]+$/)
+          .max(4096),
+      }),
+    )
+    .mutation(({ input }) => submitAntigravityCode(input.loginId, input.code)),
+  reopenAntigravitySignIn: publicProcedure
+    .input(z.object({ loginId: z.string().uuid() }))
+    .mutation(({ input }) => reopenAntigravityLogin(input.loginId)),
+  cancelAntigravitySignIn: publicProcedure
+    .input(z.object({ loginId: z.string().uuid() }))
+    .mutation(({ input }) => cancelAntigravityLogin(input.loginId)),
   resolve: publicProcedure.input(resolveInputSchema).query(async ({ input }) => {
     await assertRuntimeCheckoutReady(input.chatId)
     const path = getDatabasePath()

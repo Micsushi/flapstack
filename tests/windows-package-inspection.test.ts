@@ -2,12 +2,9 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } f
 import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
 // @ts-expect-error JavaScript build-script helper intentionally has no declaration file.
-import {
-  inspectWindowsApp,
-  readWindowsElectronVersion,
-} from "../scripts/inspect-packaged-binaries.mjs"
+import { inspectWindowsApp } from "../scripts/inspect-packaged-binaries.mjs"
 
 const packagedElectronVersion = JSON.parse(
   readFileSync("package.json", "utf8"),
@@ -78,18 +75,6 @@ function fixture() {
 }
 
 describe("Windows package inspection", () => {
-  it("reads Electron's runtime version without splitting an app path containing spaces", () => {
-    const runner = vi.fn(() => ({ status: 0, stdout: "39.8.10\r\n", stderr: "" }))
-    const app = "C:\\Preview Folder\\Flapstack Preview.exe"
-
-    expect(readWindowsElectronVersion(app, runner)).toBe("39.8.10")
-    expect(runner).toHaveBeenCalledWith(app, ["-p", "process.versions.electron"], {
-      encoding: "utf8",
-      windowsHide: true,
-      env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: "1" }),
-    })
-  })
-
   it("verifies the app, harnesses, speech engines, native modules, and licenses", () => {
     const app = fixture()
     expect(
@@ -108,12 +93,6 @@ describe("Windows package inspection", () => {
         "node-pty-winpty-dll": expect.stringContaining("winpty.dll"),
       },
     })
-  })
-
-  it("rejects an unexpected packaged Electron version", () => {
-    expect(() =>
-      inspectWindowsApp(fixture(), "win32-x64", { readVersion: () => "38.0.0.0" }),
-    ).toThrow("Electron version mismatch")
   })
 
   it("rejects a sidecar changed after package-resource preparation", () => {

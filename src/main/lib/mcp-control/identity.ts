@@ -6,6 +6,7 @@ import { PRODUCT_MCP_INVALIDATION_ENDPOINT_ENV } from "../../../shared/product-m
 import { openAppDatabase } from "../db/access"
 import { z } from "zod"
 import { parseCustomPermissionToggles, parsePermissionMode } from "../permissions"
+import type Database from "better-sqlite3"
 import type { McpCallerIdentity, McpCallerStore } from "./types"
 import { readDurableAgentProfileRuntimeAuthority } from "../agent-profiles/runtime-authority"
 import { canonicalMcpChatScope } from "./scope"
@@ -42,15 +43,30 @@ export function signLaunchedExternalMcpProof(payload: string) {
 export function readMcpLaunch(
   args: string[],
   environment: NodeJS.ProcessEnv = process.env,
-): { caller: McpCallerIdentity; resolveExternal?: () => McpCallerIdentity } {
+): {
+  caller: McpCallerIdentity
+  resolveExternal?: () => McpCallerIdentity
+  exposure: "lazy" | "direct"
+} {
   const { values } = parseArgs({
     args,
-    options: { external: { type: "boolean" }, profile: { type: "string" } },
+    options: {
+      external: { type: "boolean" },
+      profile: { type: "string" },
+      "tool-exposure": { type: "string" },
+    },
   })
-  if (!values.external && environment.FLAPSTACK_MCP_CALLER_MODE !== "external") {
+  const external = values.external || environment.FLAPSTACK_MCP_CALLER_MODE === "external"
+  const exposure =
+    values["tool-exposure"] ??
+    environment.FLAPSTACK_MCP_TOOL_EXPOSURE ??
+    (external ? "direct" : "lazy")
+  if (exposure !== "lazy" && exposure !== "direct")
+    throw new Error("Unknown MCP tool exposure mode.")
+  if (!external) {
     const caller = readMcpCallerIdentity(environment)
     if (!environment[CHILD_LIVE_KEY]) throw new Error("Missing launcher-issued MCP credential.")
-    return { caller }
+    return { caller, exposure }
   }
   if (
     environment.FLAPSTACK_MCP_CHAT_ID !== undefined ||
@@ -83,7 +99,7 @@ export function readMcpLaunch(
   environment.FLAPSTACK_DB_PATH = databasePath
   environment.FLAPSTACK_CONFIG_DIR = configDir
   delete environment[PRODUCT_MCP_INVALIDATION_ENDPOINT_ENV]
-  return { caller, resolveExternal }
+  return { caller, resolveExternal, exposure }
 }
 
 export function resolveTrustedMcpCaller(
@@ -139,19 +155,23 @@ export function resolveTrustedMcpCaller(
  */
 export function createSqliteMcpCallerStore(
   databasePath = process.env.FLAPSTACK_DB_PATH,
+  activeDatabase?: () => Database.Database,
 ): McpCallerStore {
   if (!databasePath) throw new Error("FLAPSTACK_DB_PATH is required for MCP caller validation.")
 
-  const query = (sql: string, params: unknown[]): Record<string, unknown> | undefined => {
+  const read = <T>(operation: (db: Database.Database) => T): T => {
+    if (activeDatabase) return operation(activeDatabase())
     const db = openAppDatabase(databasePath, { readonly: true, fileMustExist: true })
     try {
       db.pragma("query_only = ON")
       db.pragma("busy_timeout = 5000")
-      return db.prepare(sql).get(...params) as Record<string, unknown> | undefined
+      return operation(db)
     } finally {
       db.close()
     }
   }
+  const query = (sql: string, params: unknown[]) =>
+    read((db) => db.prepare(sql).get(...params) as Record<string, unknown> | undefined)
 
   return {
     findChat(chatId) {
@@ -182,9 +202,7 @@ export function createSqliteMcpCallerStore(
         [runId],
       )
       if (!row) return null
-      const db = openAppDatabase(databasePath, { readonly: true, fileMustExist: true })
-      try {
-        db.pragma("query_only = ON")
+      return read((db) => {
         const profile = readDurableAgentProfileRuntimeAuthority(db, runId)
         return {
           id: String(row.id),
@@ -197,9 +215,7 @@ export function createSqliteMcpCallerStore(
               ? { profileRuntimeAuthority: "invalid" as const }
               : {}),
         }
-      } finally {
-        db.close()
-      }
+      })
     },
     findCustomPermissions(chatId, runId) {
       const row = runId

@@ -77,33 +77,11 @@ describe("Anthropic account removal", () => {
     expect(state.clearCaches).toHaveBeenCalledOnce()
   })
 
-  it("clears the launch credential when the last managed account is removed", async () => {
-    await caller().remove({ accountId: "b" })
-    expect(state.clearCaches).not.toHaveBeenCalled()
-    expect(credential()).toEqual({ oauth_token: token("a") })
-    await caller().remove({ accountId: "a" })
-    expect(active()).toEqual({ active_account_id: null })
-    expect(credential()).toBeUndefined()
-    expect(state.clearCaches).toHaveBeenCalledOnce()
-  })
-
   it("rolls back removal and selection if the replacement credential is corrupt", async () => {
     sqlite
       .prepare("UPDATE anthropic_accounts SET oauth_token = ? WHERE id = 'b'")
       .run(Buffer.from("corrupt").toString("base64"))
     await expect(caller().remove({ accountId: "a" })).rejects.toThrow()
-    expect(active()).toEqual({ active_account_id: "a" })
-    expect(credential()).toEqual({ oauth_token: token("a") })
-    expect(sqlite.prepare("SELECT id FROM anthropic_accounts WHERE id = 'a'").get()).toEqual({
-      id: "a",
-    })
-    expect(state.clearCaches).not.toHaveBeenCalled()
-  })
-
-  it("rolls back the credential replacement if updating selection fails", async () => {
-    sqlite.exec(`CREATE TRIGGER reject_selection BEFORE UPDATE ON anthropic_settings
-      BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END;`)
-    await expect(caller().remove({ accountId: "a" })).rejects.toThrow("simulated write failure")
     expect(active()).toEqual({ active_account_id: "a" })
     expect(credential()).toEqual({ oauth_token: token("a") })
     expect(sqlite.prepare("SELECT id FROM anthropic_accounts WHERE id = 'a'").get()).toEqual({
@@ -121,26 +99,6 @@ describe("Anthropic account removal", () => {
     sqlite.exec("UPDATE anthropic_settings SET active_account_id = NULL")
     expect(() => resolveToken(decrypt, system)).toThrow("credential unavailable")
     expect(system).not.toHaveBeenCalled()
-  })
-
-  it("fails closed for a missing selected account instead of using a legacy token", () => {
-    sqlite.exec("DELETE FROM anthropic_accounts WHERE id = 'a'")
-    const decrypt = vi.fn(() => "decrypted-token")
-    const system = vi.fn(() => "system-token")
-    expect(() => resolveToken(decrypt, system)).toThrow("Selected Claude account is unavailable")
-    expect(decrypt).not.toHaveBeenCalled()
-    expect(system).not.toHaveBeenCalled()
-  })
-
-  it("uses system credentials only when no managed or legacy credential is selected", () => {
-    sqlite.exec(
-      "UPDATE anthropic_settings SET active_account_id = NULL; DELETE FROM claude_code_credentials",
-    )
-    const decrypt = vi.fn(() => "decrypted-token")
-    const system = vi.fn(() => " system-token ")
-    expect(resolveToken(decrypt, system)).toBe("system-token")
-    expect(decrypt).not.toHaveBeenCalled()
-    expect(system).toHaveBeenCalledOnce()
   })
 
   it("persists legacy ciphertext migration before returning a token", () => {

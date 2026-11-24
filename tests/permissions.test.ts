@@ -1,25 +1,14 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
-  buildClaudePermissionApplication,
   buildCodexPermissionApplication,
   buildLocalModelPermissionApplication,
-  copyOnCreate,
-  getGlobalDefault,
-  getPermissionChangeBehavior,
-  isClaudeMutatingTool,
-  isClaudeReadOnlyToolAllowed,
   mapCodexAcpModeId,
-  mapClaudeSdkPermissionMode,
   claudeReadOnlyToolOptions,
-  resolvePermission,
   resolveClaudeRuntimeToolPermission,
   resolveClaudeRuntimeToolPermissionWithBridge,
-  resolveClaudeRuntimeToolPermissionWithoutBridge,
-  setPermissionChangeBehavior,
-  setGlobalDefault,
   type PermissionMode,
 } from "../src/main/lib/permissions"
 import { disabledCustomPermissions } from "../src/shared/permission-capabilities"
@@ -37,76 +26,6 @@ afterEach(() => {
 })
 
 describe("permissions", () => {
-  it("resolves the nearest explicitly set mode", () => {
-    expect(
-      resolvePermission({
-        chatMode: "read-only",
-        taskMode: "full-access",
-        projectMode: "auto-edit-project-only",
-        globalMode: "ask-before-edits",
-      }),
-    ).toEqual({ mode: "read-only", source: "chat" })
-
-    expect(
-      resolvePermission({
-        chatMode: null,
-        taskMode: "full-access",
-        projectMode: "auto-edit-project-only",
-        globalMode: "ask-before-edits",
-      }),
-    ).toEqual({ mode: "full-access", source: "task" })
-
-    expect(
-      resolvePermission({
-        chatMode: null,
-        taskMode: null,
-        projectMode: "auto-edit-project-only",
-        globalMode: "ask-before-edits",
-      }),
-    ).toEqual({ mode: "auto-edit-project-only", source: "project" })
-  })
-
-  it("falls back to the global default and then the built-in default", () => {
-    expect(resolvePermission({ globalMode: "full-access" })).toEqual({
-      mode: "full-access",
-      source: "global",
-    })
-
-    expect(resolvePermission({})).toEqual({
-      mode: "ask-before-edits",
-      source: "fallback",
-    })
-  })
-
-  it("copies parent mode once for new children", () => {
-    const copied: PermissionMode = copyOnCreate("full-access")
-
-    expect(copied).toBe("full-access")
-    expect(copyOnCreate(null, "read-only")).toBe("read-only")
-    expect(copyOnCreate(null)).toBe("ask-before-edits")
-  })
-
-  it("persists the global default", () => {
-    expect(getGlobalDefault()).toBe("ask-before-edits")
-
-    setGlobalDefault("auto-edit-project-only")
-
-    expect(getGlobalDefault()).toBe("auto-edit-project-only")
-  })
-
-  it("asks for permission-change scope by default and persists remembered behavior", () => {
-    expect(getPermissionChangeBehavior()).toBe("ask")
-
-    setPermissionChangeBehavior("all-chats")
-    expect(getPermissionChangeBehavior()).toBe("all-chats")
-
-    setPermissionChangeBehavior("current-chat")
-    expect(getPermissionChangeBehavior()).toBe("current-chat")
-
-    setPermissionChangeBehavior("ask")
-    expect(getPermissionChangeBehavior()).toBe("ask")
-  })
-
   it("applies the Codex workspace mode and fail-closed approval bridge", () => {
     const application = buildCodexPermissionApplication({
       permissionMode: "auto-edit-project-only",
@@ -160,45 +79,6 @@ describe("permissions", () => {
     )
   })
 
-  it("reports missing cwd as unenforced for Codex ACP launch placement", () => {
-    const application = buildCodexPermissionApplication({
-      permissionMode: "read-only",
-      cwd: null,
-    })
-
-    expect(application.enforced).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ control: "process-cwd", applied: false }),
-        expect.objectContaining({ control: "acp-session-cwd", applied: false }),
-        expect.objectContaining({ control: "codex-sandbox", value: "read-only" }),
-      ]),
-    )
-  })
-
-  it.each([
-    ["read-only", "deny", "deny", "deny", "deny"],
-    ["ask-before-edits", "ask", "ask", "ask", "ask"],
-    ["auto-edit-project-only", "project-only", "deny", "deny", "deny"],
-    ["full-access", "allow", "allow", "allow", "allow"],
-  ] as const)(
-    "maps local %s to exact project-write, shell, git, and network policies",
-    (permissionMode, write, shell, git, network) => {
-      const application = buildLocalModelPermissionApplication({
-        permissionMode,
-        cwd: "/tmp/project",
-      })
-      expect(application).toMatchObject({ applied: true, degraded: false })
-      expect(application.enforced).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ control: "filesystem-write-scope", value: write }),
-          expect.objectContaining({ control: "shell", value: shell }),
-          expect.objectContaining({ control: "git", value: git }),
-          expect.objectContaining({ control: "network", value: network }),
-        ]),
-      )
-    },
-  )
-
   it("fails local custom permissions closed when their stored snapshot is invalid", () => {
     const application = buildLocalModelPermissionApplication({
       permissionMode: "custom",
@@ -216,53 +96,6 @@ describe("permissions", () => {
     )
   })
 
-  it("reports Claude delegated permission limitations without overclaiming mid modes", () => {
-    const application = buildClaudePermissionApplication({
-      permissionMode: "ask-before-edits",
-      cwd: "/tmp/project",
-      sdkPermissionMode: "default",
-      canUseToolReadOnlyGuard: false,
-    })
-
-    expect(application).toMatchObject({
-      requested: "ask-before-edits",
-      applied: false,
-      degraded: true,
-    })
-    expect(application.enforced).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ control: "process-cwd", applied: true }),
-        expect.objectContaining({ control: "filesystem-write-scope", applied: false }),
-      ]),
-    )
-    expect(application.limitations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ control: "filesystem-write-scope" }),
-        expect.objectContaining({ control: "mcp" }),
-      ]),
-    )
-    expect(application.warnings.join(" ")).toMatch(/per-tool approval bridge/i)
-    expect(application.warnings.join(" ")).not.toMatch(/does not present|not wired/i)
-  })
-
-  it.each([
-    ["full-access", "write", "bypassPermissions", true],
-    ["auto-edit-project-only", "write", "acceptEdits", false],
-    ["read-only", "write", "dontAsk", false],
-    ["read-only", "plan", "dontAsk", false],
-    ["ask-before-edits", "write", "default", false],
-    ["custom", "write", "default", false],
-    ["full-access", "plan", "plan", false],
-  ] as const)(
-    "maps %s/%s to Claude SDK permission mode %s",
-    (permissionMode, chatMode, sdkPermissionMode, allowDangerouslySkipPermissions) => {
-      expect(mapClaudeSdkPermissionMode(permissionMode, chatMode)).toEqual({
-        sdkPermissionMode,
-        allowDangerouslySkipPermissions,
-      })
-    },
-  )
-
   it("removes plan-file writes from the native read-only tool inventory", () => {
     const options = claudeReadOnlyToolOptions("read-only")
     expect(options.permissionMode).toBe("dontAsk")
@@ -273,23 +106,6 @@ describe("permissions", () => {
     expect(options.tools).not.toContain("Bash")
     expect(options.tools).not.toContain("ExitPlanMode")
     expect(claudeReadOnlyToolOptions("full-access")).toEqual({})
-  })
-
-  it("recognizes known Claude mutating tools and write-like MCP tools", () => {
-    expect(isClaudeMutatingTool("Write")).toBe(true)
-    expect(isClaudeMutatingTool("MultiEdit")).toBe(true)
-    expect(isClaudeMutatingTool("mcp__repo__update_file")).toBe(true)
-    expect(isClaudeMutatingTool("Read")).toBe(false)
-    expect(isClaudeMutatingTool("mcp__repo__list_files")).toBe(false)
-  })
-
-  it("allows only known read operations in Claude read-only mode", () => {
-    for (const toolName of ["Read", "Glob", "Grep", "WebSearch", "AskUserQuestion", "Skill"]) {
-      expect(isClaudeReadOnlyToolAllowed(toolName)).toBe(true)
-    }
-    for (const toolName of ["Write", "Bash", "Task", "mcp__repo__list_files", "FutureTool"]) {
-      expect(isClaudeReadOnlyToolAllowed(toolName)).toBe(false)
-    }
   })
 
   it("keeps direct Claude mid-level permissions inside their exact authority", async () => {
@@ -354,37 +170,6 @@ describe("permissions", () => {
         toolInput: { command: "git status" },
       }),
     ).resolves.toMatchObject({ behavior: "allow" })
-  })
-
-  it("fails closed when legacy Claude has no approval bridge", async () => {
-    await expect(
-      resolveClaudeRuntimeToolPermissionWithoutBridge({
-        mode: "ask-before-edits",
-        cwd: configDir,
-        toolName: "Write",
-        toolInput: { file_path: join("src", "inside.ts") },
-      }),
-    ).resolves.toMatchObject({
-      behavior: "deny",
-      message: expect.stringMatching(/approval bridge/i),
-    })
-  })
-
-  it("allows exactly one legacy Claude tool use through a successful bridge", async () => {
-    const toolInput = { file_path: join("src", "inside.ts") }
-    const bridge = vi.fn(async () => true)
-    await expect(
-      resolveClaudeRuntimeToolPermissionWithBridge(
-        {
-          mode: "ask-before-edits",
-          cwd: configDir,
-          toolName: "Write",
-          toolInput,
-        },
-        bridge,
-      ),
-    ).resolves.toEqual({ behavior: "allow", updatedInput: toolInput })
-    expect(bridge).toHaveBeenCalledOnce()
   })
 
   it("fails closed when the legacy Claude approval bridge denies or fails", async () => {

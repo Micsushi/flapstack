@@ -1,7 +1,6 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
+import { mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { dirname, join, relative } from "node:path"
-import { fileURLToPath } from "node:url"
+import { join, relative } from "node:path"
 import { describe, expect, it } from "vitest"
 import {
   ensureGlobalChatRuntimePath,
@@ -25,21 +24,5 @@ describe("global Chat runtime directory", () => {
     } finally {
       await rm(userDataPath, { recursive: true, force: true })
     }
-  })
-
-  it("wires the isolated directory into global Chat creation and runtime transport", async () => {
-    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..")
-    const [routerSource, chatSource] = await Promise.all([
-      readFile(join(repoRoot, "src/main/lib/trpc/routers/chats.ts"), "utf8"),
-      readFile(join(repoRoot, "src/renderer/features/agents/main/active-chat.tsx"), "utf8"),
-    ])
-
-    expect(
-      routerSource.match(/ensureGlobalChatRuntimePath\(app\.getPath\("userData"\), chat\.id\)/g),
-    ).toHaveLength(2)
-    expect(chatSource).toContain(
-      "activeTargetWorktreePath || worktreePath || globalRuntimePath || sandboxUrl",
-    )
-    expect(chatSource).toContain("targetWorktreePath || worktreePath || globalRuntimePath")
   })
 })

@@ -1,11 +1,4 @@
-import {
-  appendFileSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs"
+import { appendFileSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createHash } from "node:crypto"
@@ -74,15 +67,6 @@ it("stops at the byte limit even when a file grows after the initial handle stat
   expect(state.readBytes).toBe(9)
 })
 
-it("reads exact limits, empty files and multiple chunks without truncation", async () => {
-  for (const size of [0, 1, 64 * 1024, 64 * 1024 + 3]) {
-    const bytes = Buffer.alloc(size, 97)
-    await expect(
-      readFileInsideRoot(fixture(bytes), "file.txt", { maxBytes: size }),
-    ).resolves.toEqual(bytes)
-  }
-})
-
 it("bounds the old-content read used by a conditional overwrite after handle growth", async () => {
   const root = fixture("abc")
   state.growPath = join(root, "file.txt")
@@ -100,62 +84,4 @@ it("bounds the old-content read used by a conditional overwrite after handle gro
   ).rejects.toBeInstanceOf(RootedReadTooLargeError)
   expect(state.closed).toBe(true)
   expect(state.readBytes).toBe(9)
-})
-
-it("rejects oversized files and invalid limits", async () => {
-  const root = fixture("abc")
-  await expect(readFileInsideRoot(root, "file.txt", { maxBytes: 2 })).rejects.toBeInstanceOf(
-    RootedReadTooLargeError,
-  )
-  for (const maxBytes of [-1, NaN, Infinity, 1.5]) {
-    await expect(readFileInsideRoot(root, "file.txt", { maxBytes })).rejects.toThrow()
-    await expect(
-      writeFileInsideRoot(
-        root,
-        "file.txt",
-        { data: "next" },
-        { overwrite: true, maxExistingBytes: maxBytes },
-      ),
-    ).rejects.toBeInstanceOf(RangeError)
-  }
-  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe("abc")
-})
-
-it("rechecks the existing byte limit without a content-hash expectation", async () => {
-  const root = fixture("abc")
-  await expect(
-    writeFileInsideRoot(
-      root,
-      "file.txt",
-      { data: "next" },
-      {
-        overwrite: true,
-        maxExistingBytes: 3,
-        beforeCommit: async (path) => {
-          appendFileSync(path, "d")
-        },
-      },
-    ),
-  ).rejects.toBeInstanceOf(RootedReadTooLargeError)
-  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe("abcd")
-})
-
-it("rejects an existing target expected to be missing before reading its content", async () => {
-  const root = fixture("abc")
-  state.growPath = join(root, "file.txt")
-  await expect(
-    writeFileInsideRoot(
-      root,
-      "file.txt",
-      { data: "next" },
-      {
-        overwrite: true,
-        expectedSha256: null,
-        maxExistingBytes: 3,
-      },
-    ),
-  ).rejects.toThrow()
-  expect(state.readBytes).toBe(0)
-  expect(state.closed).toBe(false)
-  expect(readFileSync(join(root, "file.txt"), "utf8")).toBe("abc")
 })

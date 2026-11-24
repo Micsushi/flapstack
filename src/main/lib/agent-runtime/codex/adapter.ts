@@ -25,6 +25,7 @@ import {
   PINNED_CODEX_APP_SERVER_VERSION,
   resolveCodexRuntimeCommand,
 } from "./binary"
+import { coalesceReasoningDeltas } from "./reasoning-stream"
 import { CodexProtocolDriftError, mapCodexNotification, permissionActivity } from "./events"
 import {
   spawnCodexProtocolClient,
@@ -40,10 +41,19 @@ const execFileAsync = promisify(execFile)
 const PERMISSION_TIMEOUT_MS = AGENT_INPUT_TIMEOUT_MS
 const MAX_MODEL_PAGES = 10
 
+type CodexReasoningSummary = "auto" | "concise" | "detailed" | "none"
+
+function parseReasoningSummary(value: unknown): CodexReasoningSummary | undefined {
+  if (value === "auto" || value === "concise" || value === "detailed" || value === "none")
+    return value
+}
+
 type ClientPurpose = { cwd?: string; env?: NodeJS.ProcessEnv }
 
 type CodexRunState = {
   effort: string | null
+  summary: CodexReasoningSummary
+  autoCompactThreshold?: number
   context: RuntimeAdapterContext
   client: CodexProtocolClient
   threadId: string | null
@@ -255,7 +265,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
           const prefix = this.options.cancelledFirstThreadContext?.(context, threadId)
           if (prefix == null || context.signal.aborted) throw resumeError
           state.recoveredPromptPrefix = prefix
-          return await this.startNewThread(context, state)
+          return await this.startNewThread(context, state, threadParams)
         }
         if (
           !(resumeError instanceof Error) ||
@@ -355,7 +365,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
         const settings = {
           model: context.launch.model,
           effort: state.effort,
-          summary: context.launch.controls.reasoningDisplay ? "detailed" : "none",
+          summary: state.summary,
         }
         const response = record(
           await state.client.request("turn/start", {
@@ -410,9 +420,13 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     }
     state.streaming = true
     try {
-      for await (const notification of notificationsForState(state)) {
+      for await (const notification of coalesceReasoningDeltas(notificationsForState(state))) {
         state.fileChangeApprovals.observe(notification)
-        const events = mapCodexNotification(notification)
+        const events = mapCodexNotification(notification).map((event): AgentActivityAppend => {
+          if (event.kind !== "usage" || state.autoCompactThreshold === undefined) return event
+          const payload = { ...event.payload, autoCompactThreshold: state.autoCompactThreshold }
+          return { ...event, payload }
+        })
         if (state.acceptedTurnSettings) {
           events.unshift(state.acceptedTurnSettings)
           delete state.acceptedTurnSettings
@@ -605,6 +619,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     const client = await (connection ?? this.openConnection())
     const state: CodexRunState = {
       effort: normalizeCodexRuntimeEffort(context.launch.controls.modelEffort),
+      summary: context.launch.controls.reasoningDisplay ? "auto" : "none",
       context,
       client,
       threadId: null,
@@ -672,8 +687,40 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       throw error
     }
     // Native thread creation/resume can run configured hooks before the first tool event.
-    await context.waitForWorkspace?.()
-    return { state, params: authority.value }
+    try {
+      await context.waitForWorkspace?.()
+      context.signal.throwIfAborted()
+      const params = authority.value
+      const config = record(params.config)
+      const native = record(
+        await state.client.request("config/read", { cwd: params.cwd, includeLayers: false }),
+      )
+      const effectiveConfig = record(native.config)
+      if (context.launch.controls.reasoningDisplay) {
+        state.summary =
+          parseReasoningSummary(
+            config.model_reasoning_summary ?? effectiveConfig.model_reasoning_summary,
+          ) ?? "auto"
+      }
+      const threshold =
+        config.model_auto_compact_token_limit ?? effectiveConfig.model_auto_compact_token_limit
+      if (typeof threshold === "number" && Number.isSafeInteger(threshold) && threshold > 0)
+        state.autoCompactThreshold = threshold
+      return {
+        state,
+        params: {
+          ...params,
+          config: {
+            ...config,
+            features: { ...record(config.features), concurrent_reasoning_summaries: true },
+            model_reasoning_summary: state.summary,
+          },
+        },
+      }
+    } catch (error) {
+      await this.failState(state, error)
+      throw error
+    }
   }
 
   private async startNewThread(

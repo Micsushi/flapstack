@@ -9,40 +9,54 @@ export type ProductMcpRuntimePointer = {
   controlEndpoint: string
 }
 
-function validEndpoint(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    (process.platform === "win32"
-      ? /^\\\\\.\\pipe\\flapstack-product-mcp-\d+-[a-f0-9-]{36}$/.test(value)
-      : /^\/tmp\/fsmcp-\d+-[a-f0-9]{8}\.sock$/.test(value))
-  )
+export function productMcpLocalEndpointPid(value: unknown): number | null {
+  if (typeof value !== "string") return null
+  const pattern =
+    process.platform === "win32"
+      ? /^\\\\\.\\pipe\\flapstack-product-mcp-([1-9]\d{0,9})-[a-f0-9-]{36}$/
+      : /^\/tmp\/fsmcp-([1-9]\d{0,9})-[a-f0-9]{8}\.sock$/
+  const pid = Number(pattern.exec(value)?.[1])
+  return pid <= 0x7fffffff ? pid : null
+}
+
+export function validProductMcpHttpEndpoint(value: unknown): value is string {
+  if (typeof value !== "string") return false
+  const found = /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})\/mcp\/[a-f0-9-]{36}$/.exec(value)
+  return !!found && Number(found[1]) <= 65535
 }
 
 export function readProductMcpRuntimePointer(
   databasePath = process.env.FLAPSTACK_DB_PATH,
   configDir = process.env.FLAPSTACK_CONFIG_DIR,
+  options: { failIfInvalid?: boolean } = {},
 ): ProductMcpRuntimePointer | null {
-  if (!databasePath) return null
   try {
+    if (!databasePath) throw new Error("The database path is missing.")
     const file = join(configDir || dirname(databasePath), "product-mcp-runtime.json")
-    const stat = lstatSync(file)
+    const stat = lstatSync(file, { throwIfNoEntry: false })
+    if (!stat) return null
     if (
       !stat.isFile() ||
       stat.size > 8192 ||
       (process.platform !== "win32" &&
         (stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0))
     )
-      return null
+      throw new Error("The runtime pointer file is invalid.")
     const value = JSON.parse(readFileSync(file, "utf8"))
+    const pid = productMcpLocalEndpointPid(value.invalidationEndpoint)
     if (
       value.version !== 1 ||
       value.databasePath !== realpathSync.native(databasePath) ||
-      !validEndpoint(value.invalidationEndpoint) ||
-      !validEndpoint(value.controlEndpoint)
+      pid === null ||
+      // Older builds advertised a named pipe or Unix socket for control.
+      (!validProductMcpHttpEndpoint(value.controlEndpoint) &&
+        productMcpLocalEndpointPid(value.controlEndpoint) !== pid)
     )
-      return null
+      throw new Error("The runtime pointer is invalid.")
     return value as ProductMcpRuntimePointer
   } catch {
+    if (options.failIfInvalid)
+      throw new Error("Could not read the local Flapstack MCP runtime pointer.")
     return null
   }
 }

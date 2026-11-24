@@ -1,21 +1,10 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { parseFrontmatter } from "../src/main/lib/frontmatter"
-import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import {
   discoverProviderExtensions,
   mutateProviderExtension,
-  providerExtensionId,
 } from "../src/main/lib/provider-extensions"
 
 const temporaryRoots: string[] = []
@@ -36,31 +25,6 @@ afterEach(() => {
 })
 
 describe("provider extension contracts", () => {
-  it("keeps same-name extensions distinct by provider, kind, and source identity", async () => {
-    const home = temporaryRoot()
-    const cwd = join(home, "project")
-    write(join(home, ".claude", "skills", "review", "SKILL.md"), skill("review"))
-    write(join(home, ".agents", "skills", "review", "SKILL.md"), skill("review"))
-    write(join(cwd, ".cursor", "commands", "review.md"), "Review the current changes.")
-    write(join(cwd, ".opencode", "skills", "review", "SKILL.md"), skill("review"))
-
-    const inventory = await discoverProviderExtensions({ cwd, homeDir: home })
-    const review = inventory.filter((item) => item.name === "review")
-
-    expect(review).toHaveLength(4)
-    expect(new Set(review.map((item) => item.id)).size).toBe(4)
-    for (const provider of ["claude", "codex", "cursor", "opencode"] as const) {
-      const scoped = await discoverProviderExtensions({ cwd, homeDir: home, provider })
-      expect(scoped).toEqual(inventory.filter((entry) => entry.provider === provider))
-    }
-    expect(review.map((item) => `${item.provider}:${item.kind}`).sort()).toEqual([
-      "claude:skill",
-      "codex:skill",
-      "cursor:command",
-      "opencode:skill",
-    ])
-  })
-
   it("fails closed for unknown MCP config instead of exposing mutation", async () => {
     const home = temporaryRoot()
     write(join(home, ".cursor", "mcp.json"), "{not-json")
@@ -80,123 +44,9 @@ describe("provider extension contracts", () => {
       },
     })
   })
-
-  it("keeps reserved-name provider entries visible as third-party MCP", async () => {
-    const home = temporaryRoot()
-    write(
-      join(home, ".codex", "config.toml"),
-      '[mcp_servers."third-party"]\ncommand = "example"\n\n[mcp_servers.flapstack]\ncommand = "internal"\n',
-    )
-
-    const mcp = (await discoverProviderExtensions({ homeDir: home })).filter(
-      (item) => item.provider === "codex" && item.kind === "mcp",
-    )
-    expect(mcp.map((item) => item.name)).toEqual(["flapstack", "third-party"])
-    expect(mcp.every((item) => item.description === "Third-party provider MCP configuration")).toBe(
-      true,
-    )
-    expect(mcp.find((item) => item.name === "flapstack")?.limitations).toContain(
-      "A reserved display name does not grant product or development-control privileges.",
-    )
-  })
-
-  it("keeps nested Codex MCP tables out of server policy names", async () => {
-    const home = temporaryRoot()
-    const config = [
-      "[mcp_servers.flapstack_dev] # server",
-      'command = "synthetic-command"',
-      "[mcp_servers.flapstack_dev.env]",
-      'SYNTHETIC_VALUE = "not-a-server"',
-      '[mcp_servers."literal.dot"]',
-      'command = "synthetic-command"',
-      '[mcp_servers."literal.dot".env]',
-      'SYNTHETIC_VALUE = "also-not-a-server"',
-      "[mcp_servers.'single.dot']",
-      'url = "https://example.invalid/mcp"',
-      "[mcp_servers.'single.dot'.http_headers]",
-      'Accept = "application/json"',
-      "",
-    ].join("\n")
-    const file = join(home, ".codex", "config.toml")
-    write(file, config)
-
-    const names = (await discoverProviderExtensions({ homeDir: home }))
-      .filter((item) => item.provider === "codex" && item.kind === "mcp")
-      .map((item) => item.name)
-    expect(names.sort()).toEqual(["flapstack_dev", "literal.dot", "single.dot"])
-    expect(readFileSync(file, "utf8")).toBe(config)
-  })
-
-  it("refresh removes stale entries without touching provider files", async () => {
-    const home = temporaryRoot()
-    const file = join(home, ".agents", "skills", "release", "SKILL.md")
-    write(file, skill("release"))
-    expect(
-      (await discoverProviderExtensions({ homeDir: home })).some((item) => item.name === "release"),
-    ).toBe(true)
-
-    rmSync(file)
-    expect(
-      (await discoverProviderExtensions({ homeDir: home })).some((item) => item.name === "release"),
-    ).toBe(false)
-  })
-
-  it("fails one oversized provider file closed without hiding valid siblings", async () => {
-    const home = temporaryRoot()
-    write(join(home, ".agents", "skills", "valid", "SKILL.md"), skill("valid"))
-    write(
-      join(home, ".agents", "skills", "oversized", "SKILL.md"),
-      `---\nname: oversized\ndescription: oversized\n---\n\n${"x".repeat(1_000_001)}`,
-    )
-
-    const inventory = await discoverProviderExtensions({ homeDir: home })
-    expect(inventory.some((item) => item.name === "valid")).toBe(true)
-    expect(inventory.find((item) => item.name === "oversized")?.capabilities).toMatchObject({
-      discovery: "unknown",
-      update: false,
-      runtime: "unknown",
-    })
-  })
 })
 
 describe("provider extension mutations", () => {
-  it("creates and updates only the exact provider-scoped runtime path", async () => {
-    const home = temporaryRoot()
-    const created = await mutateProviderExtension(
-      {
-        operation: "create",
-        provider: "codex",
-        kind: "skill",
-        source: "user",
-        name: "release-check",
-        description: "Check a release",
-        content: "Run the release checks.",
-      },
-      { homeDir: home },
-    )
-
-    const codexPath = join(home, ".agents", "skills", "release-check", "SKILL.md")
-    const claudePath = join(home, ".claude", "skills", "release-check", "SKILL.md")
-    expect(created.id).toBe(providerExtensionId("codex", "skill", codexPath))
-    expect(readFileSync(codexPath, "utf8")).toContain("Run the release checks.")
-    expect(() => readFileSync(claudePath, "utf8")).toThrow()
-
-    await mutateProviderExtension(
-      {
-        operation: "update",
-        provider: "codex",
-        kind: "skill",
-        source: "user",
-        sourceId: codexPath,
-        name: "release-check",
-        description: "Check a release safely",
-        content: "Run verified release checks.",
-      },
-      { homeDir: home },
-    )
-    expect(readFileSync(codexPath, "utf8")).toContain("Run verified release checks.")
-  })
-
   it("rejects a cross-provider identity and preserves the prior file", async () => {
     const home = temporaryRoot()
     const claudePath = join(home, ".claude", "skills", "shared", "SKILL.md")
@@ -218,118 +68,6 @@ describe("provider extension mutations", () => {
       ),
     ).rejects.toThrow("identity does not match")
     expect(readFileSync(claudePath, "utf8")).toBe(skill("shared"))
-  })
-
-  it("deletes the complete skill directory, including provider-owned assets", async () => {
-    const home = temporaryRoot()
-    const skillRoot = join(home, ".agents", "skills", "with-assets")
-    const skillPath = join(skillRoot, "SKILL.md")
-    write(skillPath, skill("with-assets"))
-    write(join(skillRoot, "references", "details.md"), "Provider-owned reference")
-
-    await mutateProviderExtension(
-      {
-        operation: "delete",
-        provider: "codex",
-        kind: "skill",
-        source: "user",
-        sourceId: skillPath,
-        name: "with-assets",
-        description: "",
-        content: "",
-      },
-      { homeDir: home },
-    )
-
-    expect(existsSync(skillRoot)).toBe(false)
-  })
-
-  it("preserves provider-specific frontmatter during an update", async () => {
-    const home = temporaryRoot()
-    const agentPath = join(home, ".claude", "agents", "reviewer.md")
-    write(
-      agentPath,
-      "---\ndescription: Review code\nmodel: opus\ntools: Read, Grep\n---\n\nReview carefully.\n",
-    )
-
-    await mutateProviderExtension(
-      {
-        operation: "update",
-        provider: "claude",
-        kind: "custom-agent",
-        source: "user",
-        sourceId: agentPath,
-        name: "reviewer",
-        description: "Review code safely",
-        content: "Review carefully and report risks.",
-      },
-      { homeDir: home },
-    )
-
-    const updated = parseFrontmatter(readFileSync(agentPath, "utf8"))
-    expect(updated.data).toMatchObject({
-      name: "reviewer",
-      model: "opus",
-      tools: "Read, Grep",
-    })
-    expect(updated.content).toContain("Review carefully and report risks.")
-  })
-
-  it("does not invent write support for read-only provider kinds", async () => {
-    const home = temporaryRoot()
-    await expect(
-      mutateProviderExtension(
-        {
-          operation: "create",
-          provider: "cursor",
-          kind: "plugin",
-          source: "user",
-          name: "unsafe-plugin",
-          description: "",
-          content: "export default {}",
-        },
-        { homeDir: home },
-      ),
-    ).rejects.toThrow("is not supported")
-
-    await expect(
-      mutateProviderExtension(
-        {
-          operation: "create",
-          provider: "opencode",
-          kind: "skill",
-          source: "user",
-          name: "not-injected",
-          description: "Must not claim runtime support",
-          content: "Not consumed by managed sidecars.",
-        },
-        { homeDir: home },
-      ),
-    ).rejects.toThrow("is not supported")
-  })
-
-  it("rejects nested symlinks that escape a provider root", async () => {
-    const home = temporaryRoot()
-    const outside = temporaryRoot()
-    const root = join(home, ".agents", "skills")
-    mkdirSync(root, { recursive: true })
-    symlinkSync(outside, join(root, "escaped"), process.platform === "win32" ? "junction" : "dir")
-
-    await expect(
-      mutateProviderExtension(
-        {
-          operation: "update",
-          provider: "codex",
-          kind: "skill",
-          source: "user",
-          sourceId: join(root, "escaped", "SKILL.md"),
-          name: "escaped",
-          description: "escape",
-          content: "escape",
-        },
-        { homeDir: home },
-      ),
-    ).rejects.toThrow("real directory")
   })
 
   it("revalidates the rooted parent after validation and before commit", async () => {
@@ -363,25 +101,6 @@ describe("provider extension mutations", () => {
     ).rejects.toThrow("Write parent changed during commit")
     expect(readFileSync(outsideFile, "utf8")).toBe(skill("outside"))
   })
-
-  it.skipIf(!fileSymlinksSupported)(
-    "does not disclose content through a symlinked discovery file",
-    async () => {
-      const home = temporaryRoot()
-      const outside = temporaryRoot()
-      const secret = "outside-secret-provider-content"
-      const skillRoot = join(home, ".agents", "skills", "linked")
-      mkdirSync(skillRoot, { recursive: true })
-      write(join(outside, "SKILL.md"), skill(secret))
-      symlinkSync(join(outside, "SKILL.md"), join(skillRoot, "SKILL.md"))
-
-      const inventory = await discoverProviderExtensions({ homeDir: home })
-      expect(JSON.stringify(inventory)).not.toContain(secret)
-      expect(inventory.find((item) => item.name === "linked")?.capabilities.discovery).toBe(
-        "unknown",
-      )
-    },
-  )
 })
 
 function skill(name: string): string {

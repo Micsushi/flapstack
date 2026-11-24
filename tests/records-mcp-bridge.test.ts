@@ -20,36 +20,33 @@ afterEach(() => {
 })
 
 describe("canonical Records MCP bridge", () => {
-  it.each([
-    "create_task",
-    "records_workflow",
-    "records_read",
-    "records_start_agent",
-    "records_yap_proposal_approve",
-  ])("refuses %s before using an unbound owner connection or local SQLite", async (operation) => {
+  it("refuses Records operations without a bound owner connection or local SQLite", async () => {
     vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_URL", "http://127.0.0.1:47839")
     vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_TOKEN", "runner-owner-token")
     const fetch = vi.fn()
     vi.stubGlobal("fetch", fetch)
-    const input =
-      operation === "create_task"
-        ? { name: "Canonical task" }
-        : operation === "records_read"
-          ? { path: "lanes/vault/questions.md" }
-          : {
-              recordId: "QUESTION-OWNER",
-              path: "lanes/vault/questions.md",
-              expectedRevision: "b".repeat(64),
-              action: "owner-resolve",
-              data: { answer: "Forged owner answer" },
-            }
-    const result = await createMcpMutationService("/does/not/exist.sqlite").invoke(
-      operation,
-      caller,
-      input,
-    )
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error.code).toBe("permission-denied")
+    const mutations = createMcpMutationService("/does/not/exist.sqlite")
+    const ownerChange = {
+      recordId: "QUESTION-OWNER",
+      path: "lanes/vault/questions.md",
+      expectedRevision: "b".repeat(64),
+      action: "owner-resolve",
+      data: { answer: "Unapproved owner answer" },
+    }
+    const attempts = {
+      create_task: { name: "Canonical task" },
+      records_workflow: ownerChange,
+      records_read: { path: "lanes/vault/questions.md" },
+      records_start_agent: ownerChange,
+      records_yap_proposal_approve: ownerChange,
+    }
+
+    for (const [operation, input] of Object.entries(attempts)) {
+      expect(await mutations.invoke(operation, caller, input), operation).toMatchObject({
+        ok: false,
+        error: { code: "permission-denied" },
+      })
+    }
     expect(fetch).not.toHaveBeenCalled()
   })
 
@@ -106,35 +103,36 @@ describe("canonical Records MCP bridge", () => {
     expect(request).toHaveBeenCalledTimes(2)
   })
 
-  it.each([
-    [409, "conflict"],
-    [404, "stale-target"],
-    [422, "invalid-input"],
-    [403, "permission-denied"],
-    [503, "reconciliation-required"],
-  ])("returns an actionable MCP error for Records status %i", async (status, code) => {
+  it("maps Records failures to actionable MCP errors without exposing service details", async () => {
     vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_MODE", "connected")
     vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_URL", "http://127.0.0.1:47839")
     vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_TOKEN", "isolated-test-token")
-    vi.stubGlobal(
-      "fetch",
-      async () =>
-        new Response(JSON.stringify({ message: "private service detail" }), {
-          status: Number(status),
-        }),
-    )
-    const result = await invokeDesktopProjectTool(
-      "create_task",
-      {
-        callerKind: "external-owner",
-        chatId: "external-owner:fixture",
-        permissionMode: "full-access",
-      },
-      { name: "Canonical task", records: { projectId: "candidate", requestId: "scoped-test" } },
-      { invocationId: "owner", approved: false },
-    )
-    expect(result).toMatchObject({ ok: false, error: { code } })
-    expect(JSON.stringify(result)).not.toContain("private service detail")
+    const failures = [
+      [409, "conflict"],
+      [404, "stale-target"],
+      [422, "invalid-input"],
+      [403, "permission-denied"],
+      [503, "reconciliation-required"],
+    ] as const
+
+    for (const [status, code] of failures) {
+      vi.stubGlobal(
+        "fetch",
+        async () => new Response(JSON.stringify({ message: "private service detail" }), { status }),
+      )
+      const result = await invokeDesktopProjectTool(
+        "create_task",
+        {
+          callerKind: "external-owner",
+          chatId: "external-owner:fixture",
+          permissionMode: "full-access",
+        },
+        { name: "Canonical task", records: { projectId: "candidate", requestId: "scoped-test" } },
+        { invocationId: "owner", approved: false },
+      )
+      expect(result).toMatchObject({ ok: false, error: { code } })
+      expect(JSON.stringify(result)).not.toContain("private service detail")
+    }
   })
 
   it("does not advertise unavailable Records authority in tool discovery or describe", async () => {

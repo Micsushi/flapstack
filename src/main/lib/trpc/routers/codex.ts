@@ -14,7 +14,6 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { readdir, readFile } from "node:fs/promises"
-import { homedir } from "node:os"
 import { basename, dirname, join, sep } from "node:path"
 import { z } from "zod"
 import { sleep } from "../../../../shared/sleep"
@@ -77,6 +76,9 @@ import {
   FLAPSTACK_MCP_SERVER_NAME,
   renameProductMcpServerCollisions,
 } from "../../mcp-control/registration"
+import { homedir } from "node:os"
+import type { LiveCodexModel } from "../../../../shared/model-catalog"
+import { ProviderProbeCache, providerProbeKey } from "../../agent-runtime/probe-cache"
 import { resolveCodexRuntimeCommand } from "../../agent-runtime/codex/binary"
 import { childHarnessEnvironment, isOwnerRegistration } from "../../mcp-control/child-registration"
 import { isProtectedChildCredentialName } from "../../mcp-control/codex-mcp-policy.mjs"
@@ -437,6 +439,7 @@ function createMcpConfigClient(home: string) {
 }
 
 type RunCodexCliOptions = {
+  signal?: AbortSignal
   cwd?: string
 }
 
@@ -457,6 +460,7 @@ async function runCodexCli(
       cwd: cwd && cwd.length > 0 ? cwd : undefined,
       env: process.env,
       windowsHide: true,
+      signal: options?.signal,
     })
 
     let stdout = ""
@@ -1596,15 +1600,24 @@ function cleanupAllCodexProviders(): void {
   for (const subChatId of [...providerSessions.keys()]) cleanupProvider(subChatId)
 }
 
+const codexCatalog = new ProviderProbeCache<LiveCodexModel[]>(0)
+
 export const codexRouter = router({
-  listModels: publicProcedure.query(async () => {
-    const probe = await requireRuntimeLaunchAuthority(getDatabasePath()).probe("codex", "codex")
-    if (!probe.available || !probe.codexModels)
-      throw new Error(probe.reason?.message ?? "Codex models unavailable.")
-    return probe.codexModels
+  listModels: publicProcedure.query(() => {
+    const key = providerProbeKey(
+      resolveCodexRuntimeCommand(),
+      process.env,
+      process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"),
+    )
+    return codexCatalog.get(key, async () => {
+      const probe = await requireRuntimeLaunchAuthority(getDatabasePath()).probe("codex", "codex")
+      if (!probe.available || !probe.codexModels?.length)
+        throw new Error(probe.reason?.message ?? "Codex models unavailable.")
+      return probe.codexModels
+    })
   }),
   getIntegration: publicProcedure.query(async () => {
-    const result = await runCodexCli(["login", "status"])
+    const result = await runCodexCli(["login", "status"], { signal: AbortSignal.timeout(12_000) })
     const combinedOutput = [result.stdout, result.stderr]
       .filter((chunk) => chunk.trim().length > 0)
       .join("\n")

@@ -16,6 +16,7 @@ import { useAtomValue } from "jotai"
 import { messageGroupsPerChatAtom, userMessageIdsPerChatAtom } from "../stores/message-store"
 import { IsolatedMessageGroup } from "./isolated-message-group"
 import { useStreamingStatusStore } from "../stores/streaming-status-store"
+import { preserveDisclosurePosition } from "../lib/disclosure-anchor"
 
 const EAGER_TRANSCRIPT_GROUP_LIMIT = 12
 
@@ -66,6 +67,7 @@ interface IsolatedMessagesSectionProps {
   sandboxSetupError?: string
   onRetrySetup?: () => void
   onRollback?: (msg: any) => void
+  codexRewind?: { messageIds: string[]; pendingMessageId: string | null }
   onEditLatest?: (msg: any, text: string) => Promise<boolean>
   onFork?: (messageId: string) => void
   // Components passed from parent - must be stable references
@@ -104,6 +106,7 @@ function areSectionPropsEqual(
     prev.sandboxSetupError === next.sandboxSetupError &&
     prev.onRetrySetup === next.onRetrySetup &&
     prev.onRollback === next.onRollback &&
+    prev.codexRewind === next.codexRewind &&
     prev.onEditLatest === next.onEditLatest &&
     prev.onFork === next.onFork &&
     prev.UserBubbleComponent === next.UserBubbleComponent &&
@@ -124,6 +127,7 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
   sandboxSetupError,
   onRetrySetup,
   onRollback,
+  codexRewind,
   onEditLatest,
   onFork,
   UserBubbleComponent,
@@ -138,6 +142,8 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
   const messageGroups = useAtomValue(messageGroupsPerChatAtom(subChatId))
   const renderEagerly = userMsgIds.length <= EAGER_TRANSCRIPT_GROUP_LIMIT
   const sectionRef = useRef<HTMLDivElement>(null)
+  const releaseDisclosureAnchor = useRef<(() => void) | undefined>(undefined)
+  useEffect(() => () => releaseDisclosureAnchor.current?.(), [])
   const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null)
   const [scrollMargin, setScrollMargin] = useState(0)
   const subChatStatus = useStreamingStatusStore(
@@ -155,14 +161,15 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
   )
   const virtualizer = useVirtualizer({
     count: userMsgIds.length,
-    getScrollElement: () => scrollElementRef?.current ?? null,
+    // An ancestor's callback ref can be temporarily null during this layout effect.
+    getScrollElement: () => scrollElement,
     getItemKey: (index) => userMsgIds[index] ?? index,
     estimateSize: () => 240,
     overscan: 6,
     rangeExtractor,
     scrollMargin,
     anchorTo: "end",
-    enabled: !renderEagerly && Boolean(scrollElementRef),
+    enabled: !renderEagerly && Boolean(scrollElement),
   })
   const virtualItems = virtualizer.getVirtualItems()
 
@@ -282,6 +289,7 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
       sandboxSetupError={sandboxSetupError}
       onRetrySetup={onRetrySetup}
       onRollback={onRollback}
+      codexRewind={codexRewind}
       onEditLatest={onEditLatest}
       onFork={onFork}
       UserBubbleComponent={UserBubbleComponent}
@@ -294,6 +302,20 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
   return (
     <div
       ref={sectionRef}
+      onClickCapture={(event) => {
+        const viewport = scrollElementRef?.current
+        const disclosure =
+          event.target instanceof Element
+            ? event.target.closest<HTMLElement>(
+                "[aria-expanded], [data-transcript-disclosure], summary",
+              )
+            : null
+        if (!viewport || !disclosure || !event.currentTarget.contains(disclosure)) return
+        releaseDisclosureAnchor.current?.()
+        if (isStreaming && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 48)
+          return
+        releaseDisclosureAnchor.current = preserveDisclosurePosition(viewport, disclosure)
+      }}
       role="feed"
       aria-busy={isStreaming}
       aria-label="Chat transcript"

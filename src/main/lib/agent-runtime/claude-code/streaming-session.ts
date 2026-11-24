@@ -3,7 +3,8 @@ import { stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { PassThrough } from "node:stream"
-import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk"
+import { setTimeout, clearTimeout } from "node:timers"
+import type { SDKControlGetContextUsageResponse, SDKMessage } from "@anthropic-ai/claude-agent-sdk"
 import type { ClaudeRuntimeQueryInput } from "./types"
 
 type PermissionCallback = (...args: unknown[]) => unknown
@@ -20,6 +21,8 @@ export class ClaudeStreamingSession {
     { queued: boolean; resolve(): void; reject(error: Error): void }
   >()
   private readonly messages: AsyncIterator<SDKMessage>
+  private readonly readContextUsage?: () => Promise<SDKControlGetContextUsageResponse>
+  private compaction?: { autoCompactThreshold?: number; autoCompactEnabled: boolean }
   private permission: PermissionCallback | null = null
   private closed = false
   private turnActive = false
@@ -38,14 +41,50 @@ export class ClaudeStreamingSession {
         return { behavior: "deny", message: "This turn is no longer active." }
       return this.permission(...args)
     }
-    this.messages = query({
+    const sdk = query({
       prompt: this.inputs(),
       options: {
         ...options,
         abortController: this.controller,
         ...(options.canUseTool ? { canUseTool } : {}),
       },
-    })[Symbol.asyncIterator]()
+    }) as AsyncIterable<SDKMessage> & {
+      getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>
+    }
+    this.messages = sdk[Symbol.asyncIterator]()
+    this.readContextUsage = sdk.getContextUsage?.bind(sdk)
+  }
+
+  get knownCompactionPolicy() {
+    return this.compaction
+  }
+
+  async compactionPolicy(refresh = false) {
+    if (!this.readContextUsage || this.closed) return undefined
+    if (!refresh && this.compaction) return this.compaction
+    let cancelTimer: (() => void) | undefined
+    try {
+      const usage = await Promise.race([
+        this.readContextUsage(),
+        new Promise<undefined>((resolve) => {
+          const timer = setTimeout(resolve, 150)
+          cancelTimer = () => clearTimeout(timer)
+        }),
+      ])
+      if (!usage || typeof usage.isAutoCompactEnabled !== "boolean") return undefined
+      const limit = usage.autoCompactThreshold
+      return (this.compaction = {
+        autoCompactEnabled: usage.isAutoCompactEnabled,
+        ...(typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0
+          ? { autoCompactThreshold: limit }
+          : {}),
+      })
+    } catch {
+      // Older Claude Code versions can omit this SDK control request.
+      return undefined
+    } finally {
+      cancelTimer?.()
+    }
   }
 
   private async *inputs(): AsyncIterable<unknown> {

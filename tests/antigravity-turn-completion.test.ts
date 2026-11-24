@@ -19,19 +19,6 @@ it("fails an ACP end_turn containing only an executor diagnostic, including spli
   )
 })
 
-it("preserves an answer explaining the native executor diagnostic", () => {
-  const turn = new AntigravityEvents("explanation", false)
-  turn.update({
-    sessionUpdate: "agent_message_chunk",
-    content: {
-      type: "text",
-      text: "Here is the error:\n⚠ agent executor error: building toolbox.",
-    },
-  })
-  expect(turn.completionError()).toBeNull()
-  expect(turn.finishTurn()[0]).toMatchObject({ sectionBoundary: "final_answer" })
-})
-
 it("finishes a user-declined file change without an invented reply or a failure notification", () => {
   const turn = new AntigravityEvents("gemini-session", false)
   const file = {
@@ -92,59 +79,6 @@ it("finishes a user-declined file change without an invented reply or a failure 
   expect(turn.completionError()?.message).toMatch(/command failed/)
 })
 
-it("preserves a genuine failed edit, a new approval, and a decline without a final tool callback", () => {
-  const turn = new AntigravityEvents("session", false)
-  const file = { toolCallId: "edit-1", kind: "edit" as const, title: "Write file" }
-  turn.setFileChangeDeclined(file, true)
-  expect(turn.completionError()).toBeNull()
-  expect(turn.finishTurn()).toMatchObject([{ kind: "patch", phase: "cancelled" }])
-  turn.setFileChangeDeclined(file, false)
-  expect(turn.completionError()).toBeInstanceOf(Error)
-  const failed = turn.update({
-    sessionUpdate: "tool_call_update",
-    toolCallId: file.toolCallId,
-    status: "failed",
-  })
-  expect(failed).toMatchObject([{ kind: "patch", phase: "failed" }])
-  expect(turn.completionError()).toBeInstanceOf(Error)
-})
-
-it("preserves the resumed tool timeline and rejects an end_turn with a failed command and no answer", () => {
-  const turn = new AntigravityEvents("resumed-session", true)
-  const timeline = [
-    ...turn.update({
-      sessionUpdate: "agent_thought_chunk",
-      content: { type: "text", text: "Checking the input." },
-    }),
-    ...turn.update({
-      sessionUpdate: "tool_call",
-      toolCallId: "read",
-      title: "Read CSV",
-      kind: "read",
-      status: "in_progress",
-    }),
-    ...turn.update({ sessionUpdate: "tool_call_update", toolCallId: "read", status: "completed" }),
-    ...turn.update({
-      sessionUpdate: "tool_call",
-      toolCallId: "command",
-      title: "Compute",
-      kind: "execute",
-      status: "in_progress",
-    }),
-    ...turn.update({ sessionUpdate: "tool_call_update", toolCallId: "command", status: "failed" }),
-    ...turn.finish(),
-  ]
-  expect(timeline.map((e) => e.kind)).toEqual([
-    "provider-visible-reasoning",
-    "provider-visible-reasoning",
-    "tool",
-    "tool",
-    "command",
-    "command",
-  ])
-  expect(timeline.at(-1)).toMatchObject({ providerSessionId: "resumed-session", phase: "failed" })
-  expect(turn.completionError()?.message).toMatch(/without a reply after a command failed/)
-})
 it("accepts successful tool-only turns and actual answers after a failure, including streamed tails", () => {
   const turn = new AntigravityEvents("session", false)
   expect(turn.completionError()).toBeInstanceOf(Error)

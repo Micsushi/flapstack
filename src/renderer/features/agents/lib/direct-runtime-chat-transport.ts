@@ -13,7 +13,7 @@ import {
 } from "../../../lib/atoms"
 import { appStore } from "../../../lib/jotai-store"
 import { createStreamChunkBatcher } from "../../../lib/stream-chunk-batcher"
-import { antigravityNativeApprovalsAtom, pendingAuthRetryMessageAtom } from "../atoms"
+import { pendingAuthRetryMessageAtom } from "../atoms"
 
 const steerableRuns = new Map<string, string>()
 
@@ -159,9 +159,6 @@ export async function createDirectRuntimeStream(input: {
           reasoningEffort: input.reasoningEffort,
           reasoningEnabled: input.reasoningEnabled,
           codexThreadVisibility: appStore.get(codexThreadVisibilityAtom),
-          ...(input.harness === "antigravity"
-            ? { antigravityNativeApprovals: appStore.get(antigravityNativeApprovalsAtom) }
-            : {}),
           ...(input.vaultContextGraphSelection
             ? { vaultContextGraphSelection: input.vaultContextGraphSelection }
             : {}),

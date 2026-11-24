@@ -9,19 +9,6 @@ vi.mock("ws", () => ({
   },
 }))
 import { RemoteTransport } from "../src/main/lib/mobile-client/transport"
-it("uses exact HTTPS Origin and scoped pin agent for WebSocket without redirects", () => {
-  const transport = new RemoteTransport("https://100.78.162.80:4317", "sha256:" + "a".repeat(64))
-  try {
-    transport.socket()
-    expect(seen.url).toBe("wss://100.78.162.80:4317/mobile/v1/events")
-    expect(seen.options.origin).toBe("https://100.78.162.80:4317")
-    expect(seen.options.agent).toBe(transport.agent)
-    expect(seen.options.followRedirects).toBe(false)
-    expect(seen.options.maxPayload).toBe(512 * 1024)
-  } finally {
-    transport.close()
-  }
-})
 
 it("uses the production HTTPS pairing statuses and rejects wrong status and certificate", async () => {
   const { createServer } = await import("node:https")

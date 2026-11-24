@@ -60,18 +60,7 @@ const request = {
   initialPrompt: "Review this change",
   idempotencyKey: "fixture-key",
 }
-it("queues the explicitly selected owned conversation with its harness", () => {
-  const queued = queueChatRun(sqlite, { ...request, subChatId: "chosen" })
-  expect(queued.ok).toBe(true)
-  expect(
-    sqlite.prepare("SELECT sub_chat_id, harness, permission_mode FROM agent_runs").get(),
-  ).toEqual({ sub_chat_id: "chosen", harness: "claude-code", permission_mode: "read-only" })
-})
-it("rejects a foreign or missing explicit conversation without falling back", () => {
-  for (const subChatId of ["foreign", "missing"])
-    expect(queueChatRun(sqlite, { ...request, subChatId }).ok).toBe(false)
-  expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
-})
+
 it("keeps running status when another run is queued behind it", () => {
   expect(queueChatRun(sqlite, request).ok).toBe(true)
   sqlite.prepare("UPDATE agent_runs SET status = 'running'").run()

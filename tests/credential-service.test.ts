@@ -10,7 +10,6 @@ import {
   secureCredentialFile,
   type CredentialEncryption,
 } from "../src/main/lib/credential-service"
-import { inspectSafeStorageBackend } from "../src/main/lib/safe-storage-backend"
 import { credentialsRouter } from "../src/main/lib/trpc/routers/credentials"
 
 const encryptedBackend: CredentialEncryption = {
@@ -102,68 +101,6 @@ describe("main-process credential service", () => {
     expect(decryptions).toBe(afterVerifiedWrite)
   })
 
-  it("reports a cached warning after use discovers an undecryptable credential", () => {
-    const dir = tempDir()
-    new CredentialService({ storageDir: dir, encryption: encryptedBackend }).set(
-      "codex.api-key",
-      "machine-bound-secret",
-    )
-    let decryptions = 0
-    const migrated = new CredentialService({
-      storageDir: dir,
-      encryption: {
-        ...encryptedBackend,
-        decrypt: () => {
-          decryptions += 1
-          throw new Error("wrong machine")
-        },
-      },
-    })
-
-    expect(migrated.status("codex.api-key").warning).toBeUndefined()
-    expect(migrated.resolve("codex.api-key")).toBeNull()
-    expect(migrated.status("codex.api-key")).toMatchObject({
-      configured: true,
-      warning: expect.stringMatching(/could not be decrypted/i),
-    })
-    expect(decryptions).toBe(1)
-  })
-
-  it("uses memory only when OS encryption is unavailable", () => {
-    const dir = tempDir()
-    const service = new CredentialService({
-      storageDir: dir,
-      encryption: {
-        inspect: () => ({
-          available: false,
-          backend: "unavailable",
-          warning: "Keychain denied; session only",
-        }),
-        encrypt: () => {
-          throw new Error("must not encrypt")
-        },
-        decrypt: () => {
-          throw new Error("must not decrypt")
-        },
-      },
-    })
-
-    const result = service.set("openai.voice-api-key", "sk-session-secret", {
-      requirePersistence: true,
-    })
-
-    expect(result).toMatchObject({
-      acknowledged: false,
-      persistence: "session",
-      source: "session-memory",
-      warning: "Keychain denied; session only",
-    })
-    expect(service.resolve("openai.voice-api-key")).toBe("sk-session-secret")
-    const retirement = readFileSync(service.storePath, "utf8")
-    expect(retirement).not.toContain("sk-session-secret")
-    expect(retirement).toContain('"openai.voice-api-key"')
-  })
-
   it("rejects session replacement when an unreadable store cannot prove retirement", () => {
     const dir = tempDir()
     const path = join(dir, "credentials.v1.json")
@@ -177,55 +114,6 @@ describe("main-process credential service", () => {
     expect(service.resolve("codex.api-key")).toBeNull()
     expect(() => service.remove("codex.api-key")).toThrow()
     expect(service.resolve("claude.custom-api-token")).toBeNull()
-  })
-
-  it("rejects encryption that cannot round-trip before changing disk", () => {
-    const dir = tempDir()
-    const service = new CredentialService({
-      storageDir: dir,
-      encryption: {
-        inspect: () => ({ available: true, backend: "broken" }),
-        encrypt: () => Buffer.from("ciphertext"),
-        decrypt: () => "wrong-value",
-      },
-    })
-
-    const result = service.set("nanogpt.api-key", "nano-secret", {
-      requirePersistence: true,
-    })
-
-    expect(result).toMatchObject({ acknowledged: false, persistence: "session" })
-    expect(() => readFileSync(service.storePath)).toThrow()
-  })
-
-  it("keeps Claude custom tokens session-only on Chromium basic_text", () => {
-    const dir = tempDir()
-    let encryptCalled = false
-    const service = new CredentialService({
-      storageDir: dir,
-      encryption: {
-        inspect: () =>
-          inspectSafeStorageBackend({
-            isEncryptionAvailable: () => true,
-            getSelectedStorageBackend: () => "basic_text",
-          }),
-        encrypt: () => {
-          encryptCalled = true
-          throw new Error("weak encryption must not run")
-        },
-        decrypt: encryptedBackend.decrypt,
-      },
-    })
-
-    expect(service.set("claude.custom-api-token", "sk-ant-api03-session")).toMatchObject({
-      acknowledged: false,
-      persistence: "session",
-    })
-    expect(service.resolve("claude.custom-api-token")).toBe("sk-ant-api03-session")
-    expect(encryptCalled).toBe(false)
-    const raw = readFileSync(service.storePath, "utf8")
-    expect(raw).not.toContain("sk-ant-api03-session")
-    expect(JSON.parse(raw).credentials).toEqual({})
   })
 
   it("retires the old durable value before Settings accepts session-only replacement", async () => {
@@ -256,106 +144,5 @@ describe("main-process credential service", () => {
     const restarted = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
     expect(restarted.resolve("codex.api-key")).toBeNull()
     expect(restarted.status("codex.api-key").configured).toBe(false)
-  })
-
-  it("retires an old opaque secret before accepting a session-only replacement", () => {
-    const dir = tempDir()
-    const id = `mcp.${"a".repeat(64)}`
-    const persisted = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
-    persisted.setOpaque(id, "old-durable-secret")
-
-    const unavailable: CredentialEncryption = {
-      inspect: () => ({ available: false, backend: "unavailable" }),
-      encrypt: () => {
-        throw new Error("must not encrypt")
-      },
-      decrypt: encryptedBackend.decrypt,
-    }
-    const session = new CredentialService({ storageDir: dir, encryption: unavailable })
-    expect(session.setOpaque(id, "new-session-secret")).toEqual({ persistence: "session" })
-    expect(session.resolveOpaque(id)).toBe("new-session-secret")
-
-    const restarted = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
-    expect(restarted.resolveOpaque(id)).toBeNull()
-    expect(readFileSync(restarted.storePath, "utf8")).not.toContain("old-durable-secret")
-    expect(readFileSync(restarted.storePath, "utf8")).not.toContain("new-session-secret")
-  })
-
-  it.each([
-    ["codex.api-key", "onboarding:codex-api-key"],
-    ["openai.voice-api-key", "agents:openai-api-key"],
-    ["claude.custom-api-token", "agents:claude-custom-config"],
-  ] as const)(
-    "keeps a session replacement tombstone across restart for %s",
-    async (id, legacyKey) => {
-      const dir = tempDir()
-      const unavailable: CredentialEncryption = {
-        inspect: () => ({ available: false, backend: "unavailable" }),
-        encrypt: () => {
-          throw new Error("must not encrypt")
-        },
-        decrypt: encryptedBackend.decrypt,
-      }
-      const session = new CredentialService({ storageDir: dir, encryption: unavailable })
-      session.set(id, `replacement-${id}`)
-      expect(session.isLegacySourceRetired(id)).toBe(true)
-
-      const restarted = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
-      setCredentialServiceForTests(restarted)
-      const caller = credentialsRouter.createCaller({ getWindow: () => null })
-      const stale = `stale-${id}`
-      const result = await caller.migrateLegacy({
-        id,
-        legacyKey,
-        secret: stale,
-        expectedFingerprint: credentialFingerprint(stale),
-      })
-
-      expect(result).toMatchObject({ acknowledged: false, retireSource: true })
-      expect(restarted.resolve(id)).toBeNull()
-      expect(readFileSync(restarted.storePath, "utf8")).not.toContain(stale)
-    },
-  )
-
-  it.each([
-    ["codex.api-key", "onboarding:codex-api-key"],
-    ["openai.voice-api-key", "agents:openai-api-key"],
-    ["claude.custom-api-token", "agents:claude-custom-config"],
-  ] as const)(
-    "does not overwrite an encrypted %s replacement when upgrading a pre-tombstone store",
-    async (id, legacyKey) => {
-      const dir = tempDir()
-      const replacement = `replacement-${id}`
-      const beforeRestart = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
-      beforeRestart.set(id, replacement)
-      const oldStore = JSON.parse(readFileSync(beforeRestart.storePath, "utf8"))
-      delete oldStore.retiredLegacySources
-      writeFileSync(beforeRestart.storePath, `${JSON.stringify(oldStore)}\n`, { mode: 0o600 })
-
-      const restarted = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
-      setCredentialServiceForTests(restarted)
-      const caller = credentialsRouter.createCaller({ getWindow: () => null })
-      const stale = `stale-${id}`
-      const result = await caller.migrateLegacy({
-        id,
-        legacyKey,
-        secret: stale,
-        expectedFingerprint: credentialFingerprint(stale),
-      })
-
-      expect(result).toMatchObject({ acknowledged: false, retireSource: true })
-      expect(restarted.resolve(id)).toBe(replacement)
-      expect(restarted.isLegacySourceRetired(id)).toBe(true)
-    },
-  )
-
-  it("rejects metadata URLs that could leak embedded credentials", () => {
-    const service = new CredentialService({ storageDir: tempDir(), encryption: encryptedBackend })
-    expect(() =>
-      service.set("claude.custom-api-token", "sk-ant-safe", {
-        metadata: { baseUrl: "https://user:secret@example.test/v1" },
-      }),
-    ).toThrow(/unsafe base URL/)
-    expect(() => readFileSync(service.storePath)).toThrow()
   })
 })

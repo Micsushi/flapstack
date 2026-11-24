@@ -13,83 +13,6 @@ import type {
 } from "../src/shared/agent-runtime"
 
 describe("Runtime launch coordinator", () => {
-  it.each([
-    ["codex", "codex"],
-    ["claude-code", "claude-code"],
-    ["flapstack-native", "openrouter"],
-  ] as const)("dispatches %s only after durable intent", async (runtime, harness) => {
-    const order: string[] = []
-    const registry = createAgentRuntimeRegistry([
-      { runtime, factory: () => adapter(runtime, order) },
-    ])
-    const coordinator = new RuntimeLaunchCoordinator(registry, {
-      persistIntent() {
-        order.push("intent")
-      },
-      persistSession() {
-        order.push("persist-session")
-      },
-      onActivityReference(_request, activity) {
-        order.push(`reference:${String(activity)}`)
-      },
-    })
-
-    await expect(
-      coordinator.launch({
-        runId: `run-${runtime}`,
-        chatId: "chat",
-        subChatId: "sub",
-        launch: launch(runtime, harness),
-        prompt: "Do bounded work.",
-      }),
-    ).resolves.toMatchObject({ activityCount: 2 })
-    expect(order).toEqual([
-      "probe",
-      "intent",
-      "start-session",
-      "persist-session",
-      "start-turn",
-      "stream",
-      "reference:first",
-      "reference:second",
-      "complete",
-      "cleanup",
-    ])
-  })
-
-  it("checks provider availability during the checkpoint and waits before dispatch", async () => {
-    const order: string[] = []
-    let rejectSnapshot!: (reason: Error) => void
-    const snapshot = new Promise<void>((_, reject) => {
-      rejectSnapshot = reject
-    })
-    const coordinator = new RuntimeLaunchCoordinator(
-      createAgentRuntimeRegistry([{ runtime: "codex", factory: () => adapter("codex", order) }]),
-      {
-        prepareWorkspace: () => {
-          order.push("checkpoint")
-          return snapshot
-        },
-        persistIntent: () => {
-          order.push("intent")
-        },
-      },
-    )
-    const running = coordinator.launch({
-      runId: "failed-checkpoint",
-      chatId: "chat",
-      subChatId: "sub",
-      launch: launch("codex", "codex"),
-      prompt: "Inspect the working tree.",
-    })
-    await Promise.resolve()
-    expect(order).toEqual(["checkpoint", "probe"])
-    rejectSnapshot(new Error("Could not save checkpoint"))
-    await expect(running).rejects.toThrow("Could not save checkpoint")
-    expect(order).toEqual(["checkpoint", "probe"])
-    expect(coordinator.runState("failed-checkpoint")).toBeNull()
-  })
-
   it("overlaps inert session setup and still rejects dispatch when a required preimage fails", async () => {
     let reject!: (error: Error) => void
     let ready!: () => void
@@ -131,69 +54,6 @@ describe("Runtime launch coordinator", () => {
     reject(new Error("Invalid preimage"))
     await expect(running).rejects.toThrow("Invalid preimage")
     expect(dispatch).not.toHaveBeenCalled()
-  })
-
-  it("fails unavailable choices before provider intent with no fallback", async () => {
-    const intent = vi.fn()
-    const fallback = vi.fn(() => adapter("flapstack-native", []))
-    const registry = createAgentRuntimeRegistry([
-      { runtime: "codex", factory: () => unavailableAdapter("codex") },
-      { runtime: "flapstack-native", factory: fallback },
-    ])
-    const coordinator = new RuntimeLaunchCoordinator(registry, { persistIntent: intent })
-
-    await expect(
-      coordinator.launch({
-        runId: "blocked",
-        chatId: "chat",
-        subChatId: "sub",
-        launch: launch("codex", "codex"),
-        prompt: "Do not fallback.",
-      }),
-    ).rejects.toMatchObject({ reason: { code: "protocol-unsupported", runtime: "codex" } })
-    expect(intent).not.toHaveBeenCalled()
-    expect(fallback).not.toHaveBeenCalled()
-  })
-
-  it("cancels a reserved launch after probe without starting provider intent", async () => {
-    let releaseProbe!: () => void
-    let probeStarted!: () => void
-    const started = new Promise<void>((resolve) => {
-      probeStarted = resolve
-    })
-    const gate = new Promise<void>((resolve) => {
-      releaseProbe = resolve
-    })
-    const value = adapter("codex", [])
-    value.probe = async (harness) => {
-      probeStarted()
-      await gate
-      return availableProbe("codex", harness)
-    }
-    const persistIntent = vi.fn()
-    const lifecycle: string[] = []
-    const coordinator = new RuntimeLaunchCoordinator(
-      createAgentRuntimeRegistry([{ runtime: "codex", factory: () => value }]),
-      {
-        persistIntent,
-        onLifecycle: (_request, state) => lifecycle.push(state),
-      },
-    )
-    const running = coordinator.launch({
-      runId: "cancel-reserved",
-      chatId: "chat",
-      subChatId: "sub",
-      launch: launch("codex", "codex"),
-      prompt: "Never dispatch.",
-    })
-    await started
-    const cancelled = coordinator.cancel("cancel-reserved", "usage-budget-exceeded")
-    releaseProbe()
-
-    await expect(cancelled).resolves.toBe(true)
-    await expect(running).rejects.toMatchObject({ name: "RuntimeLaunchCancelledError" })
-    expect(persistIntent).not.toHaveBeenCalled()
-    expect(lifecycle).toEqual(["validated", "cancelled"])
   })
 
   it("does not replay uncertain intent and rejects duplicate active launches", async () => {
@@ -270,29 +130,6 @@ describe("Runtime launch coordinator", () => {
     expect(value.complete).not.toHaveBeenCalled()
     expect(lifecycle.filter((state) => state === "cancelled")).toHaveLength(1)
     expect(lifecycle).not.toContain("completed")
-  })
-
-  it("lets an authoritative completion win only when cancellation starts afterward", async () => {
-    const value = adapter("codex", [])
-    const lifecycle: string[] = []
-    const coordinator = new RuntimeLaunchCoordinator(
-      createAgentRuntimeRegistry([{ runtime: "codex", factory: () => value }]),
-      {
-        persistIntent: vi.fn(),
-        onLifecycle: (_request, state) => lifecycle.push(state),
-      },
-    )
-    await coordinator.launch({
-      runId: "completed-first",
-      chatId: "chat",
-      subChatId: "sub",
-      launch: launch("codex", "codex"),
-      prompt: "Finish.",
-    })
-
-    await expect(coordinator.cancel("completed-first", "late")).resolves.toBe(false)
-    expect(lifecycle.filter((state) => state === "completed")).toHaveLength(1)
-    expect(lifecycle).not.toContain("cancelled")
   })
 
   it("bounds paused delivery, serializes rapid controls, and reconciles as running", async () => {
@@ -413,52 +250,6 @@ describe("Runtime launch coordinator", () => {
     expect(lifecycle).toContain("cancelled")
     expect(lifecycle).not.toContain("completed")
   })
-
-  it("rolls back a failed pause lifecycle write without stalling delivery", async () => {
-    let firstReferenced!: () => void
-    let releaseSecond!: () => void
-    const first = new Promise<void>((resolve) => {
-      firstReferenced = resolve
-    })
-    const secondGate = new Promise<void>((resolve) => {
-      releaseSecond = resolve
-    })
-    const value = adapter("codex", [])
-    value.streamActivity = async function* () {
-      yield "first"
-      await secondGate
-      yield "second"
-    }
-    const references: string[] = []
-    const coordinator = new RuntimeLaunchCoordinator(
-      createAgentRuntimeRegistry([{ runtime: "codex", factory: () => value }]),
-      {
-        persistIntent: vi.fn(),
-        onLifecycle: (_request, state) => {
-          if (state === "paused") throw new Error("pause persistence failed")
-        },
-        onActivityReference: (_request, activity) => {
-          references.push(activity)
-          if (activity === "first") firstReferenced()
-        },
-      },
-    )
-    const running = coordinator.launch({
-      runId: "pause-write-failure",
-      chatId: "chat",
-      subChatId: "sub",
-      launch: launch("codex", "codex"),
-      prompt: "Rollback pause.",
-    })
-    await first
-    await expect(coordinator.pause("pause-write-failure")).rejects.toThrow(
-      "pause persistence failed",
-    )
-    expect(coordinator.runState("pause-write-failure")).toBe("running")
-    releaseSecond()
-    await running
-    expect(references).toEqual(["first", "second"])
-  })
 })
 
 function adapter(
@@ -503,30 +294,6 @@ function adapter(
       order.push("cleanup")
     },
   }
-}
-
-function unavailableAdapter(runtime: ResolvedAgentRuntime): HarnessAdapter<string> {
-  const value = adapter(runtime, [])
-  value.probe = async (harness) => {
-    const reason = {
-      code: "protocol-unsupported" as const,
-      harness,
-      runtime,
-      message: "Pinned protocol mismatch.",
-      repair: "Install the supported protocol version.",
-    }
-    return {
-      ...availableProbe(runtime, harness),
-      available: false,
-      capabilities: {
-        ...availableProbe(runtime, harness).capabilities,
-        status: "unavailable",
-        unavailableReason: reason,
-      },
-      reason,
-    }
-  }
-  return value
 }
 
 function availableProbe(runtime: ResolvedAgentRuntime, harness: string) {

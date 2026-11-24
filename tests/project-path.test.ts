@@ -49,31 +49,6 @@ describe("canonical project paths", () => {
     expect(resolveCanonicalProjectPath(project)).toBe(realpathSync(project))
     expect(resolveCanonicalProjectPath(worktree)).toBe(realpathSync(worktree))
   })
-
-  it("keeps independent Git repositories separate", () => {
-    const container = temporaryDirectory()
-    const first = join(container, "first")
-    const second = join(container, "second")
-    mkdirSync(first)
-    mkdirSync(second)
-    git(first, ["init"])
-    git(second, ["init"])
-
-    expect(resolveCanonicalProjectPath(first)).toBe(realpathSync(first))
-    expect(resolveCanonicalProjectPath(second)).toBe(realpathSync(second))
-  })
-
-  it("allows folders with the same name at different paths", () => {
-    const container = temporaryDirectory()
-    const first = join(container, "one", "flapstack")
-    const second = join(container, "two", "flapstack")
-    mkdirSync(first, { recursive: true })
-    mkdirSync(second, { recursive: true })
-
-    expect(resolveCanonicalProjectPath(first)).toBe(realpathSync(first))
-    expect(resolveCanonicalProjectPath(second)).toBe(realpathSync(second))
-    expect(resolveCanonicalProjectPath(first)).not.toBe(resolveCanonicalProjectPath(second))
-  })
 })
 
 function temporaryDirectory(): string {

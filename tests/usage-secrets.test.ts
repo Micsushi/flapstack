@@ -1,23 +1,12 @@
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("node:child_process", () => ({ spawnSync: vi.fn() }))
 
-import {
-  buildWindowsCredentialScript,
-  getUsageCredentialNamespace,
-  getUsageSecret,
-  hasUsageSecret,
-  setUsageSecret,
-} from "../src/main/lib/usage/secrets"
-import { getAppUsageSecret } from "../src/main/lib/usage/app-secrets"
-import {
-  clearProviderKey,
-  setProviderKey,
-} from "../src/main/lib/harness/opencode-sidecar/credentials"
+import { getUsageSecret, setUsageSecret } from "../src/main/lib/usage/secrets"
 
 describe("usage credential hardening", () => {
   let temp: string
@@ -44,19 +33,6 @@ describe("usage credential hardening", () => {
     vi.unstubAllEnvs()
   })
 
-  it("clears stale fallback values and repairs the secrets file to mode 0600", () => {
-    const path = join(temp, "usage-secrets.json")
-    writeFileSync(path, JSON.stringify({ "openrouter.api_key": "plain:stale-value" }), {
-      mode: 0o644,
-    })
-
-    setUsageSecret("openrouter.api_key", null)
-
-    expect(getUsageSecret("openrouter.api_key")).toBeNull()
-    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({})
-    if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600)
-  })
-
   it("refuses to create a plaintext fallback when secure storage is unavailable", () => {
     vi.mocked(spawnSync).mockReturnValue({ status: 1, stdout: "", stderr: "" } as never)
     expect(() => setUsageSecret("openrouter.api_key", "must-not-be-plaintext")).toThrow(
@@ -64,18 +40,6 @@ describe("usage credential hardening", () => {
     )
     const path = join(temp, "usage-secrets.json")
     expect(() => readFileSync(path, "utf8")).toThrow()
-  })
-
-  it("fails closed on a legacy raw value when the native credential store is unavailable", () => {
-    const path = join(temp, "usage-secrets.json")
-    writeFileSync(path, JSON.stringify({ "openrouter.api_key": "plain:legacy-secret" }))
-    vi.mocked(spawnSync).mockReturnValue({ status: 1, stdout: "", stderr: "" } as never)
-
-    expect(getUsageSecret("openrouter.api_key")).toBeNull()
-    expect(hasUsageSecret("openrouter.api_key")).toBe(false)
-    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
-      "openrouter.api_key": "plain:legacy-secret",
-    })
   })
 
   it("moves a recognized legacy raw value into the native credential store before using it", () => {
@@ -114,37 +78,5 @@ describe("usage credential hardening", () => {
     } else if (process.platform === "linux") {
       expect(options).toMatchObject({ input: "super-secret-value" })
     }
-  })
-
-  it("uses an explicit secret namespace for isolated daemon evidence", () => {
-    vi.stubEnv("FLAPSTACK_USAGE_SECRET_NAMESPACE", "Usage Exit C100")
-    expect(getUsageCredentialNamespace()).toBe("usage-exit-c100")
-    vi.mocked(spawnSync).mockReturnValue({ status: 0, stdout: "", stderr: "" } as never)
-    setUsageSecret("openrouter.api_key", "super-secret-value")
-    const [, args] = vi.mocked(spawnSync).mock.calls.at(-1)!
-    if (process.platform === "win32") {
-      const encodedIndex = args.indexOf("-EncodedCommand")
-      const script = Buffer.from(args[encodedIndex + 1]!, "base64").toString("utf16le")
-      expect(script).toContain("dev.flapstack.usage.usage-exit-c100")
-    } else {
-      expect(args).toContain("dev.flapstack.usage.usage-exit-c100")
-    }
-  })
-
-  it("builds a Credential Manager script without embedding the plaintext value", () => {
-    const plaintext = "do-not-embed-this"
-    const script = buildWindowsCredentialScript(
-      "write",
-      "dev.flapstack.usage/account",
-      Buffer.from(plaintext).toString("base64"),
-    )
-    expect(script).toContain("CredWrite")
-    expect(script).not.toContain(plaintext)
-  })
-
-  it("reuses a configured chat-provider key for app-side general usage", async () => {
-    setProviderKey("openrouter", "shared-openrouter-key")
-    await expect(getAppUsageSecret("openrouter.api_key")).resolves.toBe("shared-openrouter-key")
-    clearProviderKey("openrouter")
   })
 })

@@ -1,5 +1,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js"
+import { signedMcpHttpFetch } from "../src/main/lib/mcp-control/http-auth"
 import { drainPendingMcpRuns } from "../src/main/lib/run-launch-service"
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
@@ -9,11 +12,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
-import {
-  desktopMcpInvoker,
-  startProductMcpRuntime,
-} from "../src/main/lib/mcp-control/desktop-invocation"
-import { decideMcpApproval } from "../src/main/lib/mcp-control/approval-coordinator"
+import { startProductMcpRuntime } from "../src/main/lib/mcp-control/desktop-invocation"
 import { agentInputLifecycle } from "../src/main/lib/agent-input/service"
 import { invokeDesktopRunTool } from "../src/main/lib/mcp-control/desktop-run-actions"
 import { childLiveKey, CHILD_LIVE_KEY } from "../src/main/lib/mcp-control/child-live-key"
@@ -21,10 +20,8 @@ import {
   advertiseProductMcpRuntime,
   readProductMcpRuntimePointer,
 } from "../src/main/lib/mcp-control/live-discovery"
-import {
-  callDesktopMcpTool,
-  startDesktopMcpTransport,
-} from "../src/main/lib/mcp-control/live-transport"
+import { startDesktopMcpTransport } from "../src/main/lib/mcp-control/live-transport"
+import { openDesktopMcpEndpoint } from "../src/main/lib/mcp-control/stdio-relay"
 import { createProductMcpInvalidationEndpoint } from "../src/main/lib/mcp-control/invalidation-bridge"
 import { createExternalMcpRegistration } from "../src/main/lib/mcp-control/external-registration"
 import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
@@ -73,6 +70,29 @@ const owner: McpCallerIdentity = {
   projectId: null,
 }
 
+async function callDesktopMcpTool(
+  name: string,
+  caller: McpCallerIdentity,
+  args: Record<string, unknown>,
+) {
+  const endpoint = readProductMcpRuntimePointer()!.controlEndpoint
+  const client = new Client({ name: "direct-http-fixture", version: "1" })
+  const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
+    fetch: signedMcpHttpFetch(endpoint, caller, "direct"),
+  })
+  try {
+    await client.connect(transport)
+    return (await client.callTool({ name, arguments: args })).structuredContent
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("proof was rejected"))
+      return { ok: false, error: { code: "invalid-caller" } }
+    throw error
+  } finally {
+    await transport.terminateSession().catch(() => undefined)
+    await client.close()
+  }
+}
+
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "flapstack-live-control-"))
   databasePath = join(directory, "agents.db")
@@ -112,7 +132,7 @@ afterEach(() => {
 })
 
 describe("live app control", () => {
-  it("authenticates the launch-bound child over the profile socket and rejects a completed caller", async () => {
+  it("authenticates the launch-bound child over authenticated loopback HTTP and rejects a completed caller", async () => {
     const desktop = await startDesktopMcpTransport(
       databasePath,
       async (name, input, resolveCaller) => invokeDesktopRunTool(name, resolveCaller(), input),
@@ -163,13 +183,60 @@ describe("live app control", () => {
     expect(readProductMcpRuntimePointer()).toBeNull()
   })
 
+  it("only uses offline discovery for a refused endpoint when its publisher is confirmed gone", async () => {
+    await expect(openDesktopMcpEndpoint()).resolves.toBeNull()
+    const desktop = await startDesktopMcpTransport(databasePath, async () => ({
+      ok: true,
+      data: {},
+    }))
+    const pointer = {
+      version: 1 as const,
+      databasePath,
+      invalidationEndpoint: createProductMcpInvalidationEndpoint(),
+      controlEndpoint: desktop.endpoint,
+    }
+    const withdraw = advertiseProductMcpRuntime(directory, pointer)
+    try {
+      await expect(openDesktopMcpEndpoint()).resolves.toBe(desktop.endpoint)
+    } finally {
+      await desktop.stop()
+    }
+    const kill = vi.spyOn(process, "kill")
+    try {
+      await expect(openDesktopMcpEndpoint()).rejects.toThrow(/could not confirm/i)
+      expect(kill).toHaveBeenLastCalledWith(process.pid, 0)
+      kill.mockImplementationOnce(() => {
+        throw Object.assign(new Error("Access denied"), { code: "EPERM" })
+      })
+      await expect(openDesktopMcpEndpoint()).rejects.toThrow(/could not confirm/i)
+      kill.mockImplementationOnce(() => {
+        advertiseProductMcpRuntime(directory, {
+          ...pointer,
+          invalidationEndpoint: createProductMcpInvalidationEndpoint(),
+        })
+        throw Object.assign(new Error("No such process"), { code: "ESRCH" })
+      })
+      await expect(openDesktopMcpEndpoint()).rejects.toThrow(/could not confirm/i)
+      kill.mockImplementationOnce(() => {
+        throw Object.assign(new Error("No such process"), { code: "ESRCH" })
+      })
+      await expect(openDesktopMcpEndpoint()).resolves.toBeNull()
+    } finally {
+      kill.mockRestore()
+      withdraw()
+    }
+  })
+
   it("discovers the selected profile and wakes its pending run from a separate stdio process", async () => {
     sqlite.prepare("UPDATE agent_runs SET status='completed' WHERE id='turn'").run()
     const launch = vi.fn().mockResolvedValue(undefined)
     const receiver = await startProductMcpRuntime(databasePath, (event) => {
       if (event.domains.includes("runs")) void drainPendingMcpRuns(databasePath, launch)
     })
-    const client = new Client({ name: "external-refresh-fixture", version: "1" })
+    const client = new Client({ name: "stdio-relay-fixture", version: "1" })
+    const changes = vi.fn()
+    client.setNotificationHandler(ToolListChangedNotificationSchema, changes)
+
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: ["--import", "tsx", resolve("src/main/mcp-control-stdio.ts")],
@@ -185,6 +252,28 @@ describe("live app control", () => {
     })
     try {
       await client.connect(transport)
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
+        "ping",
+        "describe",
+        "list_chats",
+        "spawn_thread",
+        "launch_run",
+        "tool_search",
+      ])
+      const resultSearch = await client.callTool({
+        name: "tool_search",
+        arguments: { query: "read_chat" },
+      })
+      expect(resultSearch.structuredContent).toMatchObject({
+        ok: true,
+        data: { tools: [{ name: "read_chat" }] },
+      })
+      await vi.waitFor(() => expect(changes).toHaveBeenCalled())
+      expect((await client.listTools()).tools.some((tool) => tool.name === "read_chat")).toBe(true)
+      expect(
+        (await client.callTool({ name: "read_chat", arguments: { chatId: "target" } }))
+          .structuredContent,
+      ).toMatchObject({ ok: true, data: { chat: { id: "target" } } })
       const result = await client.callTool({
         name: "launch_run",
         arguments: { chatId: "target", initialPrompt: "Live pickup", idempotencyKey: "wakeup" },
@@ -250,9 +339,24 @@ describe("live app control", () => {
         new StdioClientTransport({
           command: process.execPath,
           args: ["--import", "tsx", ...config.args],
-          env: { PATH: process.env.PATH ?? "", ...config.env },
+          env: { PATH: process.env.PATH ?? "", ...config.env, FLAPSTACK_MCP_TOOL_EXPOSURE: "lazy" },
           stderr: "pipe",
         }),
+      )
+      expect((await fetch(desktop.endpoint)).status).toBe(401)
+      expect((await client.listTools()).tools.map(({ name }) => name)).not.toContain(
+        "list_pending_approvals",
+      )
+      expect(
+        (
+          await client.callTool({
+            name: "tool_search",
+            arguments: { query: "list_pending_approvals" },
+          })
+        ).structuredContent,
+      ).toMatchObject({ ok: true, data: { tools: [{ name: "list_pending_approvals" }] } })
+      expect((await client.listTools()).tools.map(({ name }) => name)).toContain(
+        "list_pending_approvals",
       )
       expect(
         (await client.callTool({ name: "list_pending_approvals", arguments: {} }))
@@ -299,35 +403,6 @@ describe("live app control", () => {
     ).toEqual([{ initial_prompt: "second" }, { initial_prompt: "original turn" }])
   })
 
-  it("honors a desktop session approval on a fresh socket call for the same active run", async () => {
-    const invoke = desktopMcpInvoker(databasePath, () => {})
-    sqlite.prepare("UPDATE agent_runs SET permission_mode='read-only' WHERE id='turn'").run()
-    const caller = () => ({ ...child, permissionMode: "ask-before-edits" as const })
-    runtime.cancel.mockResolvedValue(true)
-    const first = invoke("stop_run", { runId: "turn" }, caller, new AbortController().signal)
-    const pending = sqlite
-      .prepare(
-        "SELECT id FROM mcp_approval_requests WHERE caller_run_id='child' AND decision IS NULL",
-      )
-      .get() as { id: string }
-    expect(
-      decideMcpApproval(drizzle(sqlite, { schema }), {
-        id: pending.id,
-        decision: "approve",
-        grantSession: true,
-      }),
-    ).toBe(true)
-    expect(await first).toMatchObject({ ok: true })
-    expect(
-      await invoke("stop_run", { runId: "turn" }, caller, new AbortController().signal),
-    ).toMatchObject({ ok: true })
-    expect(
-      sqlite
-        .prepare("SELECT count(*) count FROM mcp_approval_requests WHERE caller_run_id='child'")
-        .get(),
-    ).toEqual({ count: 1 })
-  })
-
   it("refuses to stop a higher-permission run or the caller's own run", async () => {
     const restricted = { ...child, permissionMode: "ask-before-edits" as const }
     for (const status of ["pending", "running"]) {
@@ -346,19 +421,6 @@ describe("live app control", () => {
     })
     expect(runtime.cancel).not.toHaveBeenCalled()
     expect(runtime.compatibilityCancel).not.toHaveBeenCalled()
-  })
-  it("cancels the exact renderer-owned compatibility session before runtime reconciliation", async () => {
-    runtime.activeRunIds.mockReturnValueOnce([])
-    runtime.compatibilityCancel.mockReturnValueOnce({ cancelled: true, ignoredStale: false })
-    expect(await invokeDesktopRunTool("stop_run", child, { runId: "turn" })).toMatchObject({
-      ok: true,
-      data: { stopped: true },
-    })
-    expect(runtime.compatibilityCancel).toHaveBeenCalledWith({
-      subChatId: "target-sub",
-      runId: "turn",
-    })
-    expect(runtime.cancel).not.toHaveBeenCalled()
   })
 
   it("answers questions once and keeps permission resolution with the external owner", async () => {

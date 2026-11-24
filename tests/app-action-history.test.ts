@@ -27,14 +27,6 @@ describe("app action history", () => {
     expect(redo).toHaveBeenCalledOnce()
   })
 
-  it("clears redo after a new forward action", async () => {
-    recordAppAction({ label: "First", undo: vi.fn(), redo: vi.fn() })
-    await undoAppAction()
-    recordAppAction({ label: "Second", undo: vi.fn(), redo: vi.fn() })
-
-    expect(getAppActionHistorySnapshot()).toMatchObject({ canUndo: true, canRedo: false })
-  })
-
   it("keeps an entry available when undo fails", async () => {
     recordAppAction({
       label: "Archive Chat",

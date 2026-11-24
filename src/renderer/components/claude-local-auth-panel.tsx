@@ -25,6 +25,7 @@ export function ClaudeLocalAuthPanel({
   const autoStartedRef = useRef(false)
   const successHandledRef = useRef(false)
   const flowIdRef = useRef<string | null>(null)
+  const mounted = useRef(true)
   const onSuccessRef = useRef(onSuccess)
   onSuccessRef.current = onSuccess
   flowIdRef.current = flowId
@@ -62,6 +63,10 @@ export function ClaudeLocalAuthPanel({
     successHandledRef.current = false
     try {
       const result = await startMutation.mutateAsync()
+      if (!mounted.current) {
+        cancelMutationRef.current.mutate({ flowId: result.flowId })
+        return
+      }
       flowIdRef.current = result.flowId
       setFlowId(result.flowId)
     } catch (err) {
@@ -97,15 +102,14 @@ export function ClaudeLocalAuthPanel({
     }
   }, [active, autoStart, cancelFlow, flowId, startFlow, startMutation.isPending])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
       const currentFlowId = flowIdRef.current
-      if (currentFlowId) {
-        cancelMutationRef.current.mutate({ flowId: currentFlowId })
-      }
-    },
-    [],
-  )
+      if (currentFlowId) cancelMutationRef.current.mutate({ flowId: currentFlowId })
+    }
+  }, [])
 
   const status = statusQuery.data
   const isStarting = startMutation.isPending || (flowId && !status)

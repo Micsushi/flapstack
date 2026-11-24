@@ -122,7 +122,7 @@ export type RuntimeLaunchControls = {
   modelEffort: string | null
   /** Provider service-tier id. Optional only for legacy schema-v1 snapshots. */
   serviceTier?: string | null
-  /** Keep Antigravity's native approval prompts in an explicitly Full-access run. */
+  /** Retained for older stored launch snapshots. Antigravity now uses the host permission mode. */
   antigravityNativeApprovals?: boolean
   modelThinking: boolean | null
   reasoningDisplay: boolean

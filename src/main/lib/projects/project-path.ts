@@ -6,7 +6,7 @@ import { resolve } from "node:path"
  * folder, while distinct folders and linked Git worktrees remain separate.
  */
 export function resolveCanonicalProjectPath(inputPath: string): string {
-  const selectedPath = realpathSync(resolve(inputPath))
+  const selectedPath = realpathSync.native(resolve(inputPath))
   if (!statSync(selectedPath).isDirectory()) throw new Error("Project path must be a directory")
   return selectedPath
 }
