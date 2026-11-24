@@ -247,7 +247,7 @@ describe("live app control", () => {
       ok: true,
       data: { delivery: "queued", status: "pending", created: true },
     })
-    sqlite.prepare("UPDATE agent_runs SET status='failed' WHERE id='turn'").run()
+    sqlite.prepare("UPDATE agent_runs SET status='failure' WHERE id='turn'").run()
     const args = { runId: "turn", idempotencyKey: "retry-1" }
     expect(await invokeDesktopRunTool("retry_run", child, args)).toMatchObject({
       ok: true,

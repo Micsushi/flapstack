@@ -276,7 +276,7 @@ export async function invokeDesktopRunTool(
         ? { ok: true, data: { ...queued, delivery: "queued", chatId: target.chat_id } }
         : fail(queued.code, queued.message)
     }
-    if (!("idempotencyKey" in input) || !["cancelled", "failed"].includes(target.status))
+    if (!("idempotencyKey" in input) || !["cancelled", "failure"].includes(target.status))
       return fail(
         "stale-target",
         "Retry requires a failed or cancelled run with a persisted prompt.",
