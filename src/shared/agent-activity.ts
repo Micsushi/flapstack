@@ -173,6 +173,7 @@ const payloadSchemas = {
       cachedTokens: finiteNonNegative.nullable().optional(),
       reasoningTokens: finiteNonNegative.nullable().optional(),
       contextWindow: finiteNonNegative.nullable().optional(),
+      contextUsed: finiteNonNegative.nullable().optional(),
       costUsd: finiteNonNegative.nullable().optional(),
     })
     .strict(),

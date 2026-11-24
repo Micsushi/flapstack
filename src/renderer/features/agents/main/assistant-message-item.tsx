@@ -20,6 +20,7 @@ import {
 } from "../../../components/ui/dropdown-menu"
 import { PlanIcon } from "../../../components/ui/icons"
 import { TextShimmer } from "../../../components/ui/text-shimmer"
+import { trpcClient } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
 import { selectedProjectAtom, showMessageJsonAtom } from "../atoms"
 import { MessageJsonDisplay } from "../ui/message-json-display"
@@ -863,6 +864,19 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
     const collapsedOps = planOpsSummary.operations.filter((op) => op.index < collapseBeforeIndex)
     return collapsedOps[collapsedOps.length - 1] || null
   }, [hasPlanInCollapsedSteps, planOpsSummary.operations, collapseBeforeIndex])
+
+  const openingText =
+    isStreaming && isLastMessage
+      ? finalParts
+          .find((part) => part.type === "text")
+          ?.text?.slice(0, 320)
+          .trim()
+          .match(/^[^.!?]+[.!?]+(?=\s|$)/)?.[0]
+      : undefined
+  useEffect(() => {
+    if (openingText)
+      void trpcClient.speech.prepareOpening.mutate({ text: openingText }).catch(() => {})
+  }, [openingText])
 
   const hasTextContent = useMemo(
     () => messageParts.some((p: any) => p.type === "text" && p.text?.trim()),

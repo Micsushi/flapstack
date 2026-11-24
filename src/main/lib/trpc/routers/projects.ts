@@ -5,6 +5,7 @@ import { eq, desc, isNull, isNotNull } from "drizzle-orm"
 import { dialog, app } from "electron"
 import { basename, join } from "path"
 import { exec } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import { promisify } from "node:util"
 import { existsSync } from "node:fs"
 import { mkdir, copyFile, unlink } from "node:fs/promises"
@@ -12,6 +13,7 @@ import { extname } from "node:path"
 import { getGitRemoteInfo } from "../../git"
 import { sleep } from "../../../../shared/sleep"
 import {
+  assertRegisteredWorktree,
   bindFilesystemRootIdentity,
   bindRegisteredFilesystemRoot,
 } from "../../git/security/path-validation"
@@ -35,6 +37,17 @@ const customPermissionsSchema = z.custom<CustomPermissionToggles>(
   "Expected complete versioned custom permission capabilities",
 )
 
+function prepareOpenedProject(project: typeof projects.$inferSelect) {
+  trackProjectOpened({ id: project.id, hasGitRemote: !!project.gitRemoteUrl })
+  if (project.archivedAt || project.defaultPermissionMode === "read-only") return
+  // The root is registered before this point. The composer can adopt the same preparation.
+  void import("../../checkpoints")
+    .then(({ prepareCheckpointOriginals }) => {
+      prepareCheckpointOriginals(assertRegisteredWorktree(project.path).canonicalPath, randomUUID())
+    })
+    .catch(() => {})
+}
+
 async function openProjectDirectory(path: string) {
   const folderPath = resolveCanonicalProjectPath(path)
   const gitInfo = await getGitRemoteInfo(folderPath)
@@ -57,10 +70,7 @@ async function openProjectDirectory(path: string) {
       .returning()
       .get()
 
-    trackProjectOpened({
-      id: updatedProject!.id,
-      hasGitRemote: !!gitInfo.remoteUrl,
-    })
+    prepareOpenedProject(updatedProject!)
     return updatedProject
   }
 
@@ -83,10 +93,7 @@ async function openProjectDirectory(path: string) {
     .returning()
     .get()
 
-  trackProjectOpened({
-    id: newProject!.id,
-    hasGitRemote: !!gitInfo.remoteUrl,
-  })
+  prepareOpenedProject(newProject!)
   return newProject
 }
 

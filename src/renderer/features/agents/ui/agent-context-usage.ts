@@ -6,7 +6,7 @@ export function resolveContextUsage(
   provider: string,
 ): {
   runId: string
-  inputTokens: number
+  inputTokens: number | undefined
   outputTokens: number
   cachedTokens: number
   reasoningTokens: number
@@ -18,19 +18,20 @@ export function resolveContextUsage(
       candidate.subChatId === subChatId &&
       candidate.kind === "usage" &&
       candidate.phase === "snapshot" &&
-      candidate.payload.inputTokens != null,
+      (candidate.payload.inputTokens != null || candidate.payload.contextUsed != null),
   )
-  if (!event || event.kind !== "usage" || event.payload.inputTokens == null) return null
+  if (!event || event.kind !== "usage") return null
 
   return {
     runId: event.runId,
-    inputTokens: event.payload.inputTokens,
+    inputTokens: event.payload.inputTokens ?? undefined,
     outputTokens: event.payload.outputTokens ?? 0,
     cachedTokens: event.payload.cachedTokens ?? 0,
     reasoningTokens: event.payload.reasoningTokens ?? 0,
     contextTokens:
-      event.payload.inputTokens +
-      (provider === "claude-code" ? (event.payload.cachedTokens ?? 0) : 0),
+      event.payload.contextUsed ??
+      (event.payload.inputTokens ?? 0) +
+        (provider === "claude-code" ? (event.payload.cachedTokens ?? 0) : 0),
     contextWindow: event.payload.contextWindow ?? undefined,
   }
 }

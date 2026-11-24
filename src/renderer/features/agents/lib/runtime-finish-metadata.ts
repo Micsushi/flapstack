@@ -36,6 +36,7 @@ export function directRuntimeFinishMetadata(input: {
     ...(input.usage?.contextWindow != null
       ? { modelContextWindow: input.usage.contextWindow }
       : {}),
+    ...(input.usage?.contextUsed != null ? { modelContextUsed: input.usage.contextUsed } : {}),
     ...(input.stoppedByUser ? { stoppedByUser: true } : {}),
   }
 }

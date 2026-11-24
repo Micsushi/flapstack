@@ -12,6 +12,7 @@ export class AntigravityEvents {
   private pending = ""
   private part = 0
   private answeredSinceTool = false
+  private receivedUsage = false
   private readonly tools = new Map<
     string,
     { name: string; kind?: string | null; outcome?: "completed" | "failed" | "declined" }
@@ -45,6 +46,17 @@ export class AntigravityEvents {
     this.kind = null
     this.pending = ""
     return [event]
+  }
+
+  confirmedCompaction(prompt: string): AgentActivityAppend | undefined {
+    if (prompt.trim() !== "/compact" || !this.receivedUsage || this.tools.size) return
+    return {
+      ...this.identity(),
+      kind: "compaction",
+      phase: "completed",
+      displayClass: "status",
+      payload: { state: "compacted", summary: null },
+    }
   }
 
   completionError(): Error | null {
@@ -103,6 +115,26 @@ export class AntigravityEvents {
   }
 
   update(update: SessionUpdate): AgentActivityAppend[] {
+    if (update.sessionUpdate === "usage_update") {
+      if (
+        !Number.isSafeInteger(update.used) ||
+        update.used < 0 ||
+        !Number.isSafeInteger(update.size) ||
+        update.size <= 0
+      )
+        return []
+      this.receivedUsage = true
+      return [
+        {
+          ...this.identity(),
+          kind: "usage",
+          phase: "snapshot",
+          displayClass: "metadata",
+          privacyClass: "sensitive",
+          payload: { contextUsed: update.used, contextWindow: update.size },
+        },
+      ]
+    }
     if (
       update.sessionUpdate === "agent_message_chunk" ||
       update.sessionUpdate === "agent_thought_chunk"

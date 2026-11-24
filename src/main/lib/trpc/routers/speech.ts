@@ -13,7 +13,8 @@ import {
 } from "../../speech/registry"
 import { getVoiceSettings, setVoiceSettings } from "../../speech/settings"
 import { createFallbackSpokenSummary } from "../../speech/spoken-summary"
-import { warmCachedKokoro } from "../../speech/tts-kokoro"
+import { resolveSpeechText } from "../../speech/speech-text"
+import { prepareKokoroOpening, warmCachedKokoro } from "../../speech/tts-kokoro"
 import { prepareSpeech } from "../../speech/prepare"
 import { SpeechRequestOwnership } from "../../speech/request-ownership"
 import { ensureModel, getSttModelStatus, listWhisperModels } from "../../speech/stt-whisper-cpp"
@@ -53,6 +54,15 @@ async function stopTtsAdapters(requestScopeId: string) {
 }
 
 export const speechRouter = router({
+  prepareOpening: publicProcedure
+    .input(z.object({ text: z.string().min(1).max(320) }))
+    .mutation(({ input }) => {
+      const settings = getVoiceSettings()
+      if (!settings.prepareReplyAudio || settings.ttsAdapterId !== "kokoro") return
+      const text = resolveSpeechText(input.text, null, settings.replyReadMode)
+      if (text)
+        void prepareKokoroOpening(text, settings.voiceByTtsAdapterId.kokoro ?? settings.voiceId)
+    }),
   getSettings: publicProcedure.query(() => {
     const settings = getVoiceSettings()
     if (settings.ttsAdapterId === "kokoro") warmCachedKokoro()

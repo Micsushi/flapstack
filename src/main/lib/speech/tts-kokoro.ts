@@ -141,6 +141,35 @@ function nextSentence() {
   waiting.splice(next, 1)[0]!.run()
 }
 
+type KokoroAudio = Awaited<ReturnType<KokoroModel["generate"]>>
+let opening: { text: string; voice: string; audio: Promise<KokoroAudio> } | undefined
+let preparingOpening = false
+
+/** Keep only the latest first sentence in memory. Never play it or create a history entry. */
+export async function prepareKokoroOpening(text: string, requestedVoice: string | null) {
+  const chunk = getKokoroChunks(text.replace(/\s+/g, " ").trim())[0]
+  if (!chunk || !/[.!?]$/.test(chunk) || preparingOpening) return
+  const voice = requestedVoice || DEFAULT_KOKORO_VOICE
+  if (opening?.text === chunk && opening.voice === voice) return
+  if (
+    !loadPromise &&
+    !existsSync(path.join(getSpeechDataDir(), "kokoro", MODEL_ID, "onnx", "model_quantized.onnx"))
+  )
+    return
+  preparingOpening = true
+  const audio = loadModel(true).then((model) =>
+    scheduleKokoroSentence(undefined, () => model.generate(chunk, { voice, speed: 1 })),
+  )
+  opening = { text: chunk, voice, audio }
+  try {
+    await audio
+  } catch {
+    if (opening?.audio === audio) opening = undefined
+  } finally {
+    preparingOpening = false
+  }
+}
+
 export async function synthesizeKokoroChunks(
   model: KokoroModel,
   chunks: string[],
@@ -152,10 +181,16 @@ export async function synthesizeKokoroChunks(
   let sampleRate = DEFAULT_SAMPLE_RATE
   for (const chunk of chunks) {
     assertRequestActive(input)
-    const audio = await scheduleKokoroSentence(input.interactive, () => {
-      assertRequestActive(input)
-      return model.generate(chunk, { voice, speed })
-    })
+    const cached =
+      !buffers.length && speed === 1 && opening?.voice === voice && opening.text === chunk
+        ? opening.audio
+        : undefined
+    const generate = () =>
+      scheduleKokoroSentence(input.interactive, () => {
+        assertRequestActive(input)
+        return model.generate(chunk, { voice, speed })
+      })
+    const audio = await (cached ? cached.catch(generate) : generate())
     assertRequestActive(input)
     const samples = audio.audio || audio.data
     if (!samples || typeof samples.length !== "number") {

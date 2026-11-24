@@ -407,10 +407,13 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
         .prompt({ sessionId: state.sessionId, prompt })
         .then((result) => {
           state.collecting = false
-          terminalError =
-            result.stopReason === "end_turn"
-              ? state.mapper!.completionError()
-              : new Error(`Antigravity ended the turn: ${result.stopReason}.`)
+          if (result.stopReason === "end_turn") {
+            const compacted = state.mapper!.confirmedCompaction(state.prompt)
+            if (compacted) state.events.write(compacted)
+            else terminalError = state.mapper!.completionError()
+          } else {
+            terminalError = new Error(`Antigravity ended the turn: ${result.stopReason}.`)
+          }
           for (const event of state.mapper!.finishTurn()) state.events.write(event)
           ended = true
         })

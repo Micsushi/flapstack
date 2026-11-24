@@ -2985,7 +2985,7 @@ const ChatViewInner = memo(function ChatViewInner({
   )
   const runtimeMessageUsage = useMemo<AgentMessageMetadata | undefined>(
     () =>
-      runtimeUsage
+      runtimeUsage?.inputTokens != null
         ? {
             runId: runtimeUsage.runId,
             transport: `${provider}-runtime`,
@@ -3007,6 +3007,7 @@ const ChatViewInner = memo(function ChatViewInner({
         cacheReadInputTokens?: number
         cacheCreationInputTokens?: number
         modelContextWindow?: number
+        modelContextUsed?: number
       }
 
       return (
@@ -3015,6 +3016,7 @@ const ChatViewInner = memo(function ChatViewInner({
         metadata.totalTokens !== undefined ||
         metadata.cacheReadInputTokens !== undefined ||
         metadata.cacheCreationInputTokens !== undefined ||
+        metadata.modelContextUsed !== undefined ||
         metadata.modelContextWindow !== undefined
       )
     })
@@ -3028,6 +3030,7 @@ const ChatViewInner = memo(function ChatViewInner({
           cacheReadInputTokens?: number
           cacheCreationInputTokens?: number
           modelContextWindow?: number
+          modelContextUsed?: number
         }
       | undefined
 
@@ -3040,6 +3043,7 @@ const ChatViewInner = memo(function ChatViewInner({
 
     const totalInputTokens =
       runtimeUsage?.contextTokens ??
+      metadata?.modelContextUsed ??
       (provider === "codex"
         ? (codexInputTokensFromTotal ?? metadata?.inputTokens ?? 0)
         : (metadata?.inputTokens || 0) + cacheReadInputTokens + cacheCreationInputTokens)

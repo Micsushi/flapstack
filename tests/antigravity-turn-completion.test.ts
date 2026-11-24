@@ -157,3 +157,20 @@ it("accepts successful tool-only turns and actual answers after a failure, inclu
     payload: { text: "Could not read the file." },
   })
 })
+
+it("records ACP context occupancy independently of token billing and recognizes a confirmed compact", () => {
+  const turn = new AntigravityEvents("qa-session", true)
+  expect(turn.confirmedCompaction("/compact")).toBeUndefined()
+  const usage = turn.update({ sessionUpdate: "usage_update", used: 1351, size: 65536 })
+  expect(usage[0]).toMatchObject({
+    kind: "usage",
+    payload: { contextUsed: 1351, contextWindow: 65536 },
+  })
+  expect(usage[0]?.payload).not.toHaveProperty("inputTokens")
+  expect(turn.confirmedCompaction("explain /compact")).toBeUndefined()
+  expect(turn.completionError()).toBeInstanceOf(Error)
+  expect(turn.confirmedCompaction("/compact")).toMatchObject({
+    kind: "compaction",
+    payload: { state: "compacted" },
+  })
+})

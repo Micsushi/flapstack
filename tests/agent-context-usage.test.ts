@@ -31,6 +31,19 @@ function usageEvent(
 }
 
 describe("context usage", () => {
+  it("shows native context occupancy without counting it as billable Gemini input", () => {
+    const result = resolveContextUsage(
+      [usageEvent(1, "chat-view", { contextUsed: 912, contextWindow: 32768 })],
+      "chat-view",
+      "antigravity",
+    )
+    expect(result).toMatchObject({
+      inputTokens: undefined,
+      contextTokens: 912,
+      contextWindow: 32768,
+    })
+  })
+
   it("uses latest native snapshot and Codex-reported window", () => {
     const result = resolveContextUsage(
       [
