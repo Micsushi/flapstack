@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { dirname } from "node:path"
-import { getDatabase, withDatabaseOperation } from "../db"
+import { getDatabase, getSqliteDatabase, withDatabaseOperation } from "../db"
 import {
   invalidationForProductMcpMutation,
   type ProductMcpRendererInvalidation,
@@ -27,17 +27,38 @@ export function desktopMcpInvoker(
 ): DesktopMcpInvoke {
   const changed = (domain: "audit" | "approvals") =>
     notify({ version: 1, source: "product-mcp", domains: [domain] })
+  const runApprovals = new Map<string, McpApprovalLifecycle>()
+  const createApprovals = () =>
+    new McpApprovalLifecycle(
+      createSqliteMcpApprovalCoordinator(getDatabase, () => changed("approvals")),
+      () => changed("approvals"),
+    )
+  function approvalsForRun(runId: string) {
+    const previous = runApprovals.get(runId)
+    if (previous) return previous
+    // Only live runs can reuse "approve for this run" on a later socket call.
+    const active = new Set(
+      getSqliteDatabase().prepare("SELECT id FROM agent_runs WHERE status='running'").pluck().all(),
+    )
+    for (const [id, lifecycle] of runApprovals) {
+      if (!active.has(id)) {
+        lifecycle.shutdown()
+        runApprovals.delete(id)
+      }
+    }
+    const lifecycle = createApprovals()
+    runApprovals.set(runId, lifecycle)
+    return lifecycle
+  }
   return (name, input, resolveCaller, signal) =>
     withDatabaseOperation(async () => {
       if (!needsDesktopMcp(name))
         return { ok: false, error: { code: "tool-not-found", message: "Unknown desktop control." } }
       const caller = resolveCaller()
       const invocationId = randomUUID()
-      const approvals = new McpApprovalLifecycle(
-        createSqliteMcpApprovalCoordinator(getDatabase, () => changed("approvals")),
-        () => changed("approvals"),
-      )
-      const disconnected = () => approvals.shutdown()
+      const runSession = caller.permissionMode === "ask-before-edits" && caller.runId
+      const approvals = runSession ? approvalsForRun(runSession) : createApprovals()
+      const disconnected = () => approvals.cancel(invocationId)
       signal.addEventListener("abort", disconnected, { once: true })
       try {
         const response = await invokeMcpControlTool(name, caller, input, undefined, {
@@ -63,7 +84,7 @@ export function desktopMcpInvoker(
         return response
       } finally {
         signal.removeEventListener("abort", disconnected)
-        approvals.shutdown()
+        if (!runSession) approvals.shutdown()
       }
     })
 }

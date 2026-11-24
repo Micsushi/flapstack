@@ -9,6 +9,8 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
+import { desktopMcpInvoker } from "../src/main/lib/mcp-control/desktop-invocation"
+import { decideMcpApproval } from "../src/main/lib/mcp-control/approval-coordinator"
 import { agentInputLifecycle } from "../src/main/lib/agent-input/service"
 import { invokeDesktopRunTool } from "../src/main/lib/mcp-control/desktop-run-actions"
 import { childLiveKey, CHILD_LIVE_KEY } from "../src/main/lib/mcp-control/child-live-key"
@@ -29,6 +31,13 @@ import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 import type { McpCallerIdentity } from "../src/main/lib/mcp-control/types"
 
 const runtime = vi.hoisted(() => ({ cancel: vi.fn(), steer: vi.fn() }))
+vi.mock("../src/main/lib/mcp-control/desktop-workflows", () => ({ invokeDesktopWorkflow: vi.fn() }))
+vi.mock("../src/main/lib/mcp-control/desktop-project-actions", () => ({
+  invokeDesktopProjectTool: vi.fn(),
+}))
+vi.mock("../src/main/lib/mcp-control/desktop-models", () => ({
+  invokeDesktopModelDiscovery: vi.fn(),
+}))
 vi.mock("../src/main/lib/main-run-launcher", () => ({ getMainRuntimeLaunchService: () => runtime }))
 vi.mock("../src/main/lib/trpc/routers/opencode", () => ({
   listPendingOpencodeApprovals: () => [],
@@ -36,6 +45,7 @@ vi.mock("../src/main/lib/trpc/routers/opencode", () => ({
 }))
 vi.mock("../src/main/lib/db", async (original) => ({
   ...(await original<typeof import("../src/main/lib/db")>()),
+  withDatabaseOperation: async (operation: () => Promise<unknown>) => operation(),
   getDatabase: () => drizzle(sqlite, { schema }),
   getDatabasePath: () => databasePath,
   getSqliteDatabase: () => sqlite,
@@ -262,6 +272,34 @@ describe("live app control", () => {
         .prepare("SELECT initial_prompt FROM agent_runs WHERE status='pending' ORDER BY rowid")
         .all(),
     ).toEqual([{ initial_prompt: "second" }, { initial_prompt: "original turn" }])
+  })
+
+  it("honors a desktop session approval on a fresh socket call for the same active run", async () => {
+    const invoke = desktopMcpInvoker(databasePath, () => {})
+    const caller = () => ({ ...child, permissionMode: "ask-before-edits" as const })
+    runtime.cancel.mockResolvedValue(true)
+    const first = invoke("stop_run", { runId: "turn" }, caller, new AbortController().signal)
+    const pending = sqlite
+      .prepare(
+        "SELECT id FROM mcp_approval_requests WHERE caller_run_id='child' AND decision IS NULL",
+      )
+      .get() as { id: string }
+    expect(
+      decideMcpApproval(drizzle(sqlite, { schema }), {
+        id: pending.id,
+        decision: "approve",
+        grantSession: true,
+      }),
+    ).toBe(true)
+    expect(await first).toMatchObject({ ok: true })
+    expect(
+      await invoke("stop_run", { runId: "turn" }, caller, new AbortController().signal),
+    ).toMatchObject({ ok: true })
+    expect(
+      sqlite
+        .prepare("SELECT count(*) count FROM mcp_approval_requests WHERE caller_run_id='child'")
+        .get(),
+    ).toEqual({ count: 1 })
   })
 
   it("answers questions once and keeps permission resolution with the external owner", async () => {
