@@ -177,7 +177,14 @@ describe("MCP mutation service", () => {
     const first = await service.invoke("launch_run", caller, request)
     if (!first.ok) throw new Error(first.error.message)
     expect(
-      await service.invoke("update_chat_settings", caller, { chatId, model: "changed" }),
+      await service.invoke("update_chat_settings", caller, {
+        chatId,
+        model: "changed",
+        reasoningEffort: "low",
+      }),
+    ).toMatchObject({ ok: true })
+    expect(
+      await service.invoke("update_chat_settings", caller, { chatId, harness: "claude-code" }),
     ).toMatchObject({ error: { code: "conflict" } })
     await drainPendingAgentRuns(
       path,
@@ -200,6 +207,11 @@ describe("MCP mutation service", () => {
                 id: "a1",
                 role: "assistant",
                 parts: [
+                  {
+                    type: "text",
+                    text: "Working",
+                    providerMetadata: { runtime: { phase: "commentary" } },
+                  },
                   { type: "text", text: "First reply" },
                   { type: "reasoning", text: "hidden" },
                   { type: "tool-lookup", output: "private output" },
@@ -255,11 +267,20 @@ describe("MCP mutation service", () => {
       },
       { waitForCompletion: true },
     )
+    sqlite
+      .prepare(
+        "INSERT INTO record_chat_links (chat_id,store_identity,record_path,record_id,canonical_project_id,source_revision) VALUES (?,?,?,?,?,?)",
+      )
+      .run(chatId, "private-store", "tasks.md", "R-2", "canon", "rev")
     const page = read.invoke("read_chat", caller, { chatId, limit: 2 })
     expect(page).toMatchObject({
-      chat: { model: "sonnet", reasoningEffort: "medium" },
+      chat: {
+        model: "sonnet",
+        reasoningEffort: "medium",
+        recordTask: { path: "tasks.md", recordId: "R-2", canonicalProjectId: "canon" },
+      },
       items: [
-        { id: "a1", text: "First reply", tools: ["lookup"] },
+        { id: "a1", text: "First reply", commentary: "Working", tools: ["lookup"] },
         { id: "mcp-second", text: "Second turn" },
       ],
       nextCursor: expect.any(String),

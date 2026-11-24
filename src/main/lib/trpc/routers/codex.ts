@@ -1251,6 +1251,7 @@ async function createCodexRun(params: {
       subChatId: params.subChatId,
       harness: "codex",
       model: params.model,
+      reasoningEffort: params.reasoningEffort ?? null,
       permissionMode: params.permissionMode,
       customPermissions: params.customPermissions,
       worktreePath: params.worktreePath,
@@ -1264,6 +1265,7 @@ async function createCodexRun(params: {
     .set({
       harness: "codex",
       model: params.model,
+      reasoningEffort: params.reasoningEffort ?? null,
       permissionMode: params.permissionMode,
       worktreePath: params.worktreePath,
       runStatus: "running",
@@ -1274,7 +1276,7 @@ async function createCodexRun(params: {
 
   // Keep the chat-level identity chip in sync with the latest run
   db.update(chats)
-    .set({ harness: "codex", model: params.model })
+    .set({ harness: "codex", model: params.model, reasoningEffort: params.reasoningEffort ?? null })
     .where(eq(chats.id, params.chatId))
     .run()
 

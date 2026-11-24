@@ -547,13 +547,17 @@ function updateChatSettings(
     .get(input.chatId) as Row | undefined
   if (!sub) return fail("stale-target", "Chat conversation is missing.")
   if (
+    (input.harness !== undefined ||
+      input.chatMode !== undefined ||
+      input.permissionMode !== undefined ||
+      input.customPermissions !== undefined) &&
     db
       .prepare("SELECT 1 FROM agent_runs WHERE chat_id = ? AND status IN ('running','pending')")
       .get(input.chatId)
   ) {
     return fail(
       "conflict",
-      "Wait for this chat's current and queued turns to finish before changing settings.",
+      "Wait for this chat's current and queued turns to finish before switching harness, mode, or permissions.",
     )
   }
   if (input.customPermissions && input.permissionMode !== "custom") {

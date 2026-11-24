@@ -223,14 +223,14 @@ export function materializeInteractiveRuntimeRun(
       database
         .prepare(
           `INSERT INTO agent_runs (
-             id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
+             id, chat_id, sub_chat_id, harness, model, reasoning_effort, permission_mode, custom_permissions,
              worktree_path, prompt_message_id, initial_prompt, vault_context_sections,
              runtime_snapshot_version,
              runtime_preference, runtime_preference_source, resolved_runtime,
              runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
              runtime_control_snapshot, provider_account_id, provider_auth_mode,
              provider_runtime_target, provider_credential_revision, status, started_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`,
         )
         .run(
           input.runId,
@@ -238,6 +238,7 @@ export function materializeInteractiveRuntimeRun(
           input.subChatId,
           input.harness,
           model,
+          input.reasoningEffort ?? null,
           permissionMode,
           permissionMode === "custom" ? context.custom_permissions : null,
           worktreePath,
@@ -255,19 +256,23 @@ export function materializeInteractiveRuntimeRun(
       database
         .prepare(
           `UPDATE sub_chats
-           SET harness = ?, model = ?, worktree_path = ?, mode = ?,
+           SET harness = ?, model = ?, reasoning_effort = ?, worktree_path = ?, mode = ?,
                run_status = 'running', messages = ?, updated_at = ?
            WHERE id = ?`,
         )
         .run(
           input.harness,
           model,
+          input.reasoningEffort ?? null,
           worktreePath,
           mode,
           JSON.stringify(messages),
           now,
           input.subChatId,
         )
+      database
+        .prepare("UPDATE chats SET model=?, reasoning_effort=?, updated_at=? WHERE id=?")
+        .run(model, input.reasoningEffort ?? null, now, input.chatId)
       const launch = resolvedLaunchFromSnapshotRow({
         harness: input.harness,
         model,

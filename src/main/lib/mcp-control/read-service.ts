@@ -332,14 +332,32 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
           [input.chatId, ...v.params],
         )
         if (!chat) fail("not-found", "Chat is missing or outside the caller scope.")
+        const recordTask =
+          name === "read_chat"
+            ? store.get(
+                `SELECT links.path, links.recordId, links.canonicalProjectId FROM (
+             SELECT chat_id,record_path path,record_id recordId,canonical_project_id canonicalProjectId FROM record_chat_links
+             UNION ALL
+             SELECT chat_id,record_path,record_id,canonical_project_id FROM record_task_worktrees
+           ) links JOIN chats c ON c.id=links.chat_id WHERE c.id=? AND ${v.sql} LIMIT 1`,
+                [input.chatId, ...v.params],
+              )
+            : undefined
         const rows = store.all(
           `SELECT m.key position, substr(m.value ->> '$.id',1,128) id, m.value ->> '$.role' role,
              coalesce((SELECT substr(group_concat(piece,''),1,4096) FROM (
                SELECT substr(part.value ->> '$.text',1,4096) piece
                FROM json_each(m.value,'$.parts') part WHERE part.type='object'
                  AND part.value ->> '$.type'='text' AND json_type(part.value,'$.text')='text'
+                 AND (part.value ->> '$.providerMetadata.runtime.phase') IS NOT 'commentary'
                ORDER BY part.key LIMIT 64
              )), CASE WHEN json_type(m.value,'$.content')='text' THEN substr(m.value ->> '$.content',1,4096) END,'') text,
+             (SELECT substr(group_concat(piece,char(10)),1,1024) FROM (
+               SELECT substr(part.value ->> '$.text',1,1024) piece FROM json_each(m.value,'$.parts') part
+               WHERE part.type='object' AND part.value ->> '$.type'='text'
+                 AND part.value ->> '$.providerMetadata.runtime.phase'='commentary'
+               ORDER BY part.key LIMIT 12
+             )) commentary,
              (SELECT json_group_array(name) FROM (
                SELECT substr(part.value ->> '$.type',6,128) name
                FROM json_each(m.value,'$.parts') part WHERE part.type='object'
@@ -368,6 +386,14 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
             id: row.id,
             role: row.role,
             text: sanitizeRuntimeText(String(row.text), { mode: "agent-content", maxLength: 4096 }),
+            ...(typeof row.commentary === "string"
+              ? {
+                  commentary: sanitizeRuntimeText(row.commentary, {
+                    mode: "agent-content",
+                    maxLength: 1024,
+                  }),
+                }
+              : {}),
             tools: JSON.parse(String(row.tools)) as string[],
           }))
         return {
@@ -375,6 +401,7 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
             ? {
                 chat: {
                   ...chat,
+                  recordTask: recordTask ?? null,
                   customPermissions: parseStoredCustomPermissionCapabilities(
                     chat.customPermissions,
                   ),

@@ -338,6 +338,7 @@ async function createClaudeAgentRun(input: {
       subChatId: input.subChatId,
       harness: HARNESS,
       model: input.model ?? undefined,
+      reasoningEffort: input.reasoningEffort ?? null,
       permissionMode: input.permissionMode,
       customPermissions: input.customPermissions ?? null,
       worktreePath: input.worktreePath ?? null,
@@ -351,6 +352,7 @@ async function createClaudeAgentRun(input: {
     .set({
       harness: HARNESS,
       model: input.model ?? null,
+      reasoningEffort: input.reasoningEffort ?? null,
       permissionMode: input.permissionMode,
       worktreePath: input.worktreePath ?? null,
       runStatus: "running",
@@ -360,7 +362,11 @@ async function createClaudeAgentRun(input: {
 
   // Keep the chat-level identity chip in sync with the latest run
   db.update(chats)
-    .set({ harness: HARNESS, model: input.model ?? null })
+    .set({
+      harness: HARNESS,
+      model: input.model ?? null,
+      reasoningEffort: input.reasoningEffort ?? null,
+    })
     .where(eq(chats.id, input.chatId))
     .run()
 
