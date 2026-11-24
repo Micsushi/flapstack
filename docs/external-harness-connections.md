@@ -12,6 +12,13 @@ In the running Flapstack profile you want to control, open the Flapstack applica
 | Claude Code | Run `claude --strict-mcp-config --mcp-config "<generated directory>/mcp.json"`.                                                             |
 | Antigravity | Change the working directory to the generated directory and start `agy`. Its workspace configuration is in `.agents/mcp_config.json`.       |
 
+In a noninteractive Codex session, select the individual actions the client may invoke without a prompt. For example, this entry in the generated `config.toml` allows Codex to request project creation. Flapstack checks its own connection grant on every call. [Codex configuration reference](https://developers.openai.com/codex/config-reference/)
+
+```toml
+[mcp_servers.flapstack-app-control.tools.create_project]
+approval_mode = "approve"
+```
+
 Antigravity prompts before using a newly connected MCP tool. For a headless connection check, pass `--settings` with `{"permissions":{"allow":["mcp(flapstack-app-control/ping)","mcp(flapstack-app-control/describe)"]}}`. This allows those two read-only calls for that session. [Antigravity CLI permissions](https://antigravity.google/docs/cli-permissions)
 
 Each registration uses the desktop executable and bundled stdio entrypoint for the selected installation. Create a new connection if you move the installation. The generated environment selects this profile explicitly. For a standard profile the server also accepts `--external --profile <absolute user-data directory>` with the owner-issued credential and derives `data/agents.db`. The permission mode comes from the grant kept by the desktop.
