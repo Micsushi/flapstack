@@ -261,6 +261,8 @@ function createTestSchema() {
       created_at integer,
       updated_at integer
     )`,
+    "CREATE TABLE record_task_worktrees (chat_id TEXT)",
+    "CREATE TABLE record_chat_links (chat_id TEXT)",
     `CREATE TABLE agent_runs (
       id text PRIMARY KEY NOT NULL,
       chat_id text NOT NULL REFERENCES chats(id) ON DELETE cascade,

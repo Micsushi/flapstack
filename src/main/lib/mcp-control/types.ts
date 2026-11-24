@@ -76,7 +76,7 @@ export type McpMutationService = {
     name: string,
     caller: McpCallerIdentity,
     input: unknown,
-    context?: { invocationId: string; approved: boolean },
+    context?: { invocationId: string; approved: boolean; desktopApproved?: boolean },
   ): Promise<McpControlResponse>
 }
 

@@ -52,7 +52,13 @@ export function McpExternalMutationRefreshBridge() {
           utils.projects.listArchived.invalidate(),
           utils.chats.archiveSummary.invalidate(),
         ]),
-      tasksList: () => Promise.all([utils.tasks.list.invalidate(), utils.tasks.board.invalidate()]),
+      tasksList: () =>
+        Promise.all([
+          utils.tasks.list.invalidate(),
+          utils.tasks.board.invalidate(),
+          utils.projectRecords.list.invalidate(),
+          utils.projectRecords.read.invalidate(),
+        ]),
       tasksArchived: () =>
         Promise.all([
           utils.tasks.listArchived.invalidate(),

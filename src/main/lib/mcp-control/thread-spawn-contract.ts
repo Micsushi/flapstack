@@ -88,8 +88,8 @@ export type ThreadSpawnPlan = {
   worktree: ThreadSpawnWorktree
   launch: { requested: boolean; initialPrompt?: string }
   lineage: {
-    initiatorChatId: string
-    parentChatId: string
+    initiatorChatId: string | null
+    parentChatId: string | null
     parentRunId?: string
     ancestorChatIds: string[]
   }
@@ -121,15 +121,25 @@ export function prepareThreadSpawn(
     return invalid("invalid-input", `${request.data.targetHarness} threads require a model.`)
   }
 
-  const caller = threadSpawnCallerSchema.safeParse(callerInput)
-  if (!caller.success) return invalid("invalid-caller", caller.error.issues[0]?.message)
-
-  if (request.data.targetHarness === caller.data.harness) {
-    return invalid("forbidden-target", "Thread spawning requires a different target harness.")
+  let lineage: ThreadSpawnPlan["lineage"] = {
+    parentChatId: null,
+    initiatorChatId: null,
+    ancestorChatIds: [],
   }
-
-  const lineageError = validateCallerLineage(caller.data)
-  if (lineageError) return invalid("forbidden-loop", lineageError)
+  if (callerInput !== null) {
+    const caller = threadSpawnCallerSchema.safeParse(callerInput)
+    if (!caller.success) return invalid("invalid-caller", caller.error.issues[0]?.message)
+    const lineageError = validateCallerLineage(caller.data)
+    if (lineageError) return invalid("forbidden-loop", lineageError)
+    lineage = {
+      initiatorChatId: caller.data.initiatorChatId,
+      parentChatId: caller.data.chatId,
+      ...(caller.data.runId ? { parentRunId: caller.data.runId } : {}),
+      ancestorChatIds: [...caller.data.ancestorChatIds, caller.data.chatId],
+    }
+  } else if (request.data.worktree.strategy === "inherit") {
+    return invalid("invalid-input", "An external caller has no parent worktree to inherit.")
+  }
 
   const operations: ("create-thread" | "launch-run")[] = ["create-thread"]
   if (request.data.launch) operations.push("launch-run")
@@ -146,12 +156,7 @@ export function prepareThreadSpawn(
       launch: request.data.launch
         ? { requested: true, initialPrompt: request.data.launch.initialPrompt }
         : { requested: false },
-      lineage: {
-        initiatorChatId: caller.data.initiatorChatId,
-        parentChatId: caller.data.chatId,
-        ...(caller.data.runId ? { parentRunId: caller.data.runId } : {}),
-        ancestorChatIds: [...caller.data.ancestorChatIds, caller.data.chatId],
-      },
+      lineage,
       approval: {
         required: true,
         operations,

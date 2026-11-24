@@ -226,6 +226,15 @@ export function invalidationForProductMcpMutation(
       return event(["chats"], {
         chatIds: compactIds(resultId, stringValue(result.childChatId), chatId),
       })
+    case "create_project":
+      return event(["projects"], { projectIds: compactIds(resultId) })
+    case "open_record_task_worktree":
+    case "attach_record_task_chat":
+    case "detach_record_task_chat":
+      return event(["tasks", "chats"], {
+        chatIds: compactIds(chatId, stringValue(result.chatId)),
+        projectIds: compactIds(stringValue(request.localProjectId)),
+      })
     case "create_task":
       return event(["tasks"], { taskIds: compactIds(resultId) })
     case "orchestrate_task": {

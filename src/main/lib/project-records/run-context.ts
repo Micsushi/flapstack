@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm"
 import { resolve } from "node:path"
 import type { getDatabase } from "../db"
-import { chats, projects, recordTaskWorktrees } from "../db/schema"
+import { chats, projects, recordChatLinks, recordTaskWorktrees } from "../db/schema"
 import { assertRegisteredFilesystemRoot } from "../git/security/path-validation"
 import { containsProjectVaultSecret } from "../project-vaults/content-safety"
 import { configuredProjectRecordsClient, type ProjectRecordsClient } from "./client"
@@ -17,31 +17,42 @@ export async function buildRecordTaskRunContext(
   database: Database,
   input: { chatId: string; cwd: string },
   connect: () => Promise<
-    Pick<ProjectRecordsClient, "endpoint" | "read">
+    Pick<ProjectRecordsClient, "endpoint" | "read"> &
+      Partial<Pick<ProjectRecordsClient, "storeIdentity">>
   > = configuredProjectRecordsClient,
 ): Promise<string> {
-  const link = database
+  const worktree = database
     .select()
     .from(recordTaskWorktrees)
     .where(eq(recordTaskWorktrees.chatId, input.chatId))
     .get()
+  const link =
+    worktree ??
+    database.select().from(recordChatLinks).where(eq(recordChatLinks.chatId, input.chatId)).get()
   if (!link) return ""
   const chat = database.select().from(chats).where(eq(chats.id, input.chatId)).get()
-  const project = database.select().from(projects).where(eq(projects.id, link.localProjectId)).get()
+  const project = chat?.projectId
+    ? database.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+    : undefined
   if (
     !chat ||
     !project ||
     project.archivedAt ||
-    chat.projectId !== link.localProjectId ||
-    !chat.worktreePath ||
-    !samePath(chat.worktreePath, link.worktreePath) ||
-    !samePath(input.cwd, link.worktreePath)
-  ) {
+    (worktree
+      ? chat.projectId !== worktree.localProjectId ||
+        !chat.worktreePath ||
+        !samePath(chat.worktreePath, worktree.worktreePath) ||
+        !samePath(input.cwd, worktree.worktreePath)
+      : !samePath(input.cwd, chat.worktreePath ?? project.path))
+  )
     throw new Error("The linked task workspace changed. Reopen the task from the Workboard.")
-  }
   assertRegisteredFilesystemRoot(input.cwd, database)
   const client = await connect()
-  if (client.endpoint !== link.endpoint) {
+  if (
+    "storeIdentity" in link
+      ? (await client.storeIdentity?.()) !== link.storeIdentity
+      : client.endpoint !== link.endpoint
+  ) {
     throw new Error("The linked task belongs to a different Project Records connection.")
   }
   const snapshot = await client.read(link.recordPath)

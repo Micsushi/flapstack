@@ -324,16 +324,18 @@ try {
   assert(codexToClaude.result.status === "completed", "Codex-to-Claude spawn failed")
   const claudeChild = await waitForChild(codex, "claude-code", "CLAUDE_CHILD_READY")
 
-  const freshTier3 = await startCall(codex, "spawn_thread", spawnArgs("codex", "NEVER_RUN"))
+  const freshTier3 = await startCall(codex, "spawn_thread", spawnArgs("codex", "CODEX_PEER_READY"))
   const freshTier3Approval = await waitForApproval(codex.chatId)
   await call("reply_product_mcp_approval", {
     approvalId: freshTier3Approval.id,
     decision: "approve",
   })
   assert(
-    (await waitForProductCall(freshTier3.id)).status === "failed",
-    "Same-harness spawn was allowed",
+    (await waitForProductCall(freshTier3.id)).status === "completed",
+    "Approved same-harness spawn failed",
   )
+
+  await waitForChild(codex, "codex", "CODEX_PEER_READY")
 
   const claudeToCodex = await decideCall(
     claude,

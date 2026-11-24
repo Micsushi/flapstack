@@ -98,6 +98,12 @@ export function createAgentOrchestrationService(databasePath: string) {
       inputValue: unknown,
       trustedCallerChatId?: string,
       options: {
+        createCoordinator?: {
+          permissionMode: string
+          customPermissions: string | null
+          parentChatId?: string
+          parentRunId?: string
+        }
         deferScheduling?: boolean
         coordinationEngineProbes?: Partial<Record<CoordinationEngine, CoordinationEngineProbe>>
       } = {},
@@ -125,6 +131,57 @@ export function createAgentOrchestrationService(databasePath: string) {
         })
         let taskId = ""
         const create = db.transaction(() => {
+          if (options.createCoordinator) {
+            const source = options.createCoordinator
+            const project = db
+              .prepare("SELECT path FROM projects WHERE id=? AND archived_at IS NULL")
+              .get(input.projectId) as Row | undefined
+            if (!project)
+              throw new AgentOrchestrationError("stale-target", "Project is missing or archived.")
+            const parent = source.parentChatId
+              ? (db
+                  .prepare(
+                    "SELECT parent_chat_id,initiator_chat_id,ancestor_chat_ids FROM chats WHERE id=? AND scope='global' AND project_id IS NULL AND task_id IS NULL AND archived_at IS NULL",
+                  )
+                  .get(source.parentChatId) as Row | undefined)
+              : undefined
+            if (source.parentChatId && !parent)
+              throw new AgentOrchestrationError(
+                "stale-caller",
+                "The global initiating Chat changed.",
+              )
+            if (source.parentChatId) validateChatParentChain(db, source.parentChatId)
+            const ancestors = parent
+              ? [...parseIds(parent.ancestor_chat_ids ?? []), source.parentChatId]
+              : []
+            const now = nowEpochSeconds()
+            db.prepare(
+              "INSERT INTO chats(id, name, scope, project_id, permission_mode, custom_permissions, worktree_path,parent_chat_id,initiator_chat_id,parent_run_id,ancestor_chat_ids,created_at,updated_at) VALUES (?, ?, 'project', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ).run(
+              input.initiatingChatId,
+              input.task.mode === "create" ? input.task.name : "Task coordinator",
+              input.projectId,
+              source.permissionMode,
+              source.customPermissions,
+              project.path,
+              source.parentChatId ?? null,
+              parent?.initiator_chat_id ?? source.parentChatId ?? null,
+              source.parentRunId ?? null,
+              JSON.stringify(ancestors),
+              now,
+              now,
+            )
+            db.prepare(
+              "INSERT INTO sub_chats(id,chat_id,permission_mode,worktree_path,messages,created_at,updated_at) VALUES (?,?,?,?,'[]',?,?)",
+            ).run(
+              randomUUID(),
+              input.initiatingChatId,
+              source.permissionMode,
+              project.path,
+              now,
+              now,
+            )
+          }
           taskId = createOrAttachTask(db, input)
           validateInitialWorktrees(db, taskId, input)
           const existing = db
@@ -896,7 +953,8 @@ function validateChatParentChain(db: Sqlite, startingChatId: string): void {
       )
       .get(current) as Row | undefined
     if (!row) throw new AgentOrchestrationError("stale-caller", "Chat lineage is stale.")
-    const ancestors = parseIds(row.ancestor_chat_ids)
+    // Root Chats created directly by the desktop may predate stored lineage.
+    const ancestors = parseIds(row.ancestor_chat_ids ?? (row.parent_chat_id ? null : []))
     if (new Set(ancestors).size !== ancestors.length || ancestors.includes(current)) {
       throw new AgentOrchestrationError("forbidden-loop", "Duplicate chat ancestor blocked.")
     }

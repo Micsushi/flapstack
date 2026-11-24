@@ -1,3 +1,4 @@
+import { requiresProjectApproval } from "./project-control-contract"
 import { z } from "zod"
 import { liveControlTools } from "./live-control-contract"
 import { randomUUID } from "node:crypto"
@@ -278,7 +279,7 @@ export const mcpControlTools: McpControlTool[] = [
   },
   {
     name: "spawn_thread",
-    description: "Create and optionally launch a thread for another supported harness.",
+    description: "Create and optionally launch a new thread on a supported harness.",
     tier: 3,
     requiredCapabilities: ["subagents", "shell"],
     status: "implemented",
@@ -291,8 +292,47 @@ export const mcpControlTools: McpControlTool[] = [
     status: "implemented",
   },
   {
+    name: "create_project",
+    description:
+      "Register an existing local folder as a project. Reopening the same folder returns its project ID.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
+    status: "implemented",
+  },
+  {
+    name: "attach_record_task_chat",
+    description:
+      "Attach an existing project Chat to a canonical task at its current Records revision.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
+    status: "implemented",
+  },
+  {
+    name: "detach_record_task_chat",
+    description: "Remove the exact canonical task link from a Chat.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
+    status: "implemented",
+  },
+  {
+    name: "preview_record_task_worktree",
+    description: "Preview the branch and worktree for a claimed canonical task.",
+    tier: 1,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "open_record_task_worktree",
+    description:
+      "Open or create a claimed task's reviewed worktree Chat using the current preview.",
+    tier: 3,
+    requiredCapabilities: ["projectWrite", "shell"],
+    status: "implemented",
+  },
+  {
     name: "create_task",
-    description: "Create a new task.",
+    description:
+      "Create a local task or a canonical task with an explicit Records destination and request ID.",
     tier: 1,
     requiredCapabilities: [],
     status: "implemented",
@@ -564,7 +604,8 @@ export async function invokeMcpControlTool(
     return response
   }
 
-  if (initialGate.decision === "approval-required") {
+  const exactProjectApproval = requiresProjectApproval(tool.name, trustedCaller.caller, input)
+  if (initialGate.decision === "approval-required" || exactProjectApproval) {
     const approvals = dependencies.approvals
     if (!approvals) {
       const response = denied("Approval lifecycle is unavailable.")
@@ -595,7 +636,7 @@ export async function invokeMcpControlTool(
       invocationId,
       caller: trustedCaller.caller,
       toolName: tool.name,
-      tier: tool.tier,
+      tier: exactProjectApproval ? 3 : tool.tier,
       input,
     })
     const decision = await wait.decision

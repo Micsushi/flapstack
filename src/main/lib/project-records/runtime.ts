@@ -56,6 +56,13 @@ async function startRuntime(options: {
     (endpoint || token || tokenFile ? "connected" : "standalone")
   // Select authority before any startup operation can fail; never fall back to legacy tasks.
   env.FLAPSTACK_PROJECT_RECORDS_MODE = mode
+  if (mode === "disabled") {
+    if (endpoint || token || tokenFile) {
+      env.FLAPSTACK_PROJECT_RECORDS_MODE = "invalid"
+      throw new Error("Disabled Records cannot also configure an external connection.")
+    }
+    return () => {}
+  }
   if (mode === "connected") {
     if (!endpoint) throw new Error("Connected Records requires FLAPSTACK_PROJECT_RECORDS_URL.")
     managedConnections.set(env, { endpoint, tokenFile, token })

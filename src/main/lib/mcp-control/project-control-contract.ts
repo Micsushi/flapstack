@@ -46,6 +46,7 @@ export const projectActionSchemas = {
 }
 
 export const desktopProjectToolNames: ReadonlySet<string> = new Set([
+  "orchestrate_task",
   "create_task",
   "attach_record_task_chat",
   "detach_record_task_chat",
@@ -60,6 +61,7 @@ export function requiresProjectApproval(
 ) {
   if (caller.callerKind === "external-owner" || !input || typeof input !== "object") return false
   const request = input as Record<string, unknown>
+  if (tool === "orchestrate_task") return false
   if (desktopProjectToolNames.has(tool)) return tool !== "create_task" || !!request.records
   if (tool === "create_project") return true
   return (

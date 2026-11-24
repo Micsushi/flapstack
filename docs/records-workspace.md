@@ -62,6 +62,11 @@ separate reviewed import, not an automatic conversion.
   its profile's `project-records` directory. Set `FLAPSTACK_PROJECT_RECORDS_DATA`
   to choose another local directory. This is a data directory, not a Git checkout.
 
+For a profile that explicitly uses local SQLite tasks, start the desktop with
+`FLAPSTACK_PROJECT_RECORDS_MODE=disabled` and clear the connected URL and
+credential settings. The Records Board requires standalone or connected mode.
+Changing modes selects the task authority on startup and preserves both stores.
+
 Standalone currently requires an installed Python 3 interpreter. Set
 `FLAPSTACK_PROJECT_RECORDS_PYTHON` to its executable path when the default
 (`python` on Windows, `python3` elsewhere) is not available. Python is not installed automatically or bundled in this foundation.
@@ -212,3 +217,43 @@ repository. Confirmation creates the reviewed task and one read-only Chat with
 its captured context. It starts no run and creates no Git worktree. Repeated
 confirmation or recovery opens the same pair. Other actions and proposals already
 approved for Records-only application retain **Apply approved changes**.
+
+## Project and task control from a harness
+
+Use `create_project` with an absolute path to an existing folder. Its result
+includes the local project ID. Reusing the folder opens the same project.
+An in-app agent needs desktop approval to register a filesystem root.
+
+With local tasks enabled, call `create_task` with the local `projectId` and
+`name`, then `create_chat` with `scope: "task"` and the returned `taskId`
+(use the task result's `id`). With Records connected, supply the canonical
+destination separately, as in this request.
+
+```json
+{
+  "name": "Check the release",
+  "projectId": "local-project-id",
+  "records": {
+    "projectId": "release-work",
+    "path": "lanes/release-work/tasks.md",
+    "requestId": "check-the-release"
+  }
+}
+```
+
+Reuse the request ID when retrying. The canonical result includes `path`,
+`recordId`, `canonicalProjectId` and `revision`. To attach a project Chat,
+call `attach_record_task_chat` with those IDs, `expectedRevision` set to
+`revision`, the local `chatId`, and `localProjectId`. The Chat reads fresh
+task context on later turns. Use the returned locator with
+`detach_record_task_chat` to remove that link. A claimed task can instead
+open an isolated worktree. Supply its current claim and revision to
+`preview_record_task_worktree`, then pass the preview's `expectedTarget` to
+`open_record_task_worktree` with the same inputs.
+
+A registered external owner grant or an explicit desktop approval authorizes
+these Records operations. Ordinary agents may still use `propose_task`, and
+Board-launched workers keep their own claim-bound connection. In local task
+mode, `orchestrate_task` creates or attaches a SQLite task. External callers
+can omit `initiatingChatId` to create a project coordinator. In Records mode,
+the Board and claim-bound Records tools own worker starts and Setup selection.

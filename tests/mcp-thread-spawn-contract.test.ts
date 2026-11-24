@@ -96,7 +96,7 @@ describe("MCP thread-spawn contract", () => {
     ).toBe(false)
   })
 
-  it("rejects same-harness recursion and corrupted lineage loops", () => {
+  it("allows a new same-harness conversation and rejects corrupted lineage loops", () => {
     expect(
       prepareThreadSpawn(
         {
@@ -107,7 +107,7 @@ describe("MCP thread-spawn contract", () => {
         },
         rootCaller,
       ),
-    ).toMatchObject({ ok: false, error: { code: "forbidden-target" } })
+    ).toMatchObject({ ok: true, plan: { lineage: { parentChatId: rootCaller.chatId } } })
 
     const fixture = JSON.parse(
       readFileSync(resolve("tests/fixtures/mcp-thread-spawn/forbidden-loop.json"), "utf8"),

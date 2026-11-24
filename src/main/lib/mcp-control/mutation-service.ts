@@ -1,5 +1,10 @@
 import type Database from "better-sqlite3"
 import { AgentProfileChatBindingService } from "../agent-profiles/chat-binding"
+import { drizzle } from "drizzle-orm/better-sqlite3"
+import * as dbSchema from "../db/schema"
+import { registerProjectDirectory } from "../projects/register-project"
+import { projectActionSchemas } from "./project-control-contract"
+import { moveStoredChat } from "../projects/move-chat"
 import { projectRecordsEnabled } from "../project-records/mode"
 import { openAppDatabase } from "../db/access"
 import { randomUUID } from "node:crypto"
@@ -66,8 +71,9 @@ function validateChatDestination(input: {
 }
 
 const schemas = {
+  ...projectActionSchemas,
   spawn_thread: threadSpawnRequestSchema,
-  orchestrate_task: createOrchestrationInputSchema,
+  orchestrate_task: createOrchestrationInputSchema.partial({ initiatingChatId: true }),
   create_chat: z
     .object({
       name,
@@ -89,9 +95,6 @@ const schemas = {
       permissionMode: z.enum(permissionModes).optional(),
       customPermissions: customPermissionCapabilitiesSchema.optional(),
     })
-    .strict(),
-  create_task: z
-    .object({ projectId: id.optional(), name, description: z.string().max(20_000).optional() })
     .strict(),
   add_attachment: z
     .object({
@@ -182,7 +185,7 @@ export function createMcpMutationService(
       const input = schema.safeParse(rawInput)
       if (!input.success)
         return fail("invalid-input", input.error.issues[0]?.message ?? "Invalid input.")
-      if (operation === "create_task" && projectRecordsEnabled()) {
+      if (operation === "create_task" && (projectRecordsEnabled() || "records" in input.data)) {
         return refuseUnboundRecordsCaller()
       }
       if (
@@ -196,8 +199,39 @@ export function createMcpMutationService(
         db.pragma("busy_timeout = 5000")
         const scope = callerScope(db, caller)
         switch (operation) {
+          case "create_project": {
+            if (caller.callerKind !== "external-owner" && !context?.desktopApproved)
+              return fail("out-of-scope", "Registering another folder requires desktop approval.")
+            const request = input.data as z.infer<typeof schemas.create_project>
+            if (!isAbsolute(request.path))
+              return fail("invalid-input", "Select an absolute local folder path.")
+            const { project, created } = await registerProjectDirectory(
+              drizzle(db, { schema: dbSchema }),
+              request.path,
+              request.name,
+            )
+            return {
+              ok: true,
+              data: {
+                id: project.id,
+                name: project.name,
+                path: project.path,
+                gitProvider: project.gitProvider,
+                archived: !!project.archivedAt,
+                created,
+              },
+            }
+          }
           case "create_task":
-            return createTask(db, scope, input.data as z.infer<typeof schemas.create_task>)
+            return db
+              .transaction(() =>
+                createTask(
+                  db,
+                  callerScope(db, caller),
+                  input.data as z.infer<typeof schemas.create_task>,
+                ),
+              )
+              .immediate()
           case "spawn_thread":
             return await spawnThread(
               db,
@@ -206,14 +240,16 @@ export function createMcpMutationService(
             )
           case "orchestrate_task":
             return orchestrateTask(
+              db,
               databasePath,
+              scope,
               caller,
-              input.data as z.infer<typeof createOrchestrationInputSchema>,
+              input.data as z.infer<typeof schemas.orchestrate_task>,
             )
           case "create_chat":
             return db
               .transaction(() =>
-                createChat(db, scope, input.data as z.infer<typeof schemas.create_chat>),
+                createChat(db, callerScope(db, caller), input.data as z.infer<typeof schemas.create_chat>),
               )
               .immediate()
           case "update_chat_settings":
@@ -221,7 +257,7 @@ export function createMcpMutationService(
               .transaction(() =>
                 updateChatSettings(
                   db,
-                  scope,
+                  callerScope(db, caller),
                   caller,
                   input.data as z.infer<typeof schemas.update_chat_settings>,
                 ),
@@ -248,7 +284,16 @@ export function createMcpMutationService(
           case "rename_item":
             return renameItem(db, scope, input.data as z.infer<typeof schemas.rename_item>)
           case "move_chat":
-            return moveChat(db, scope, input.data as z.infer<typeof schemas.move_chat>)
+            return db
+              .transaction(() =>
+                moveChat(
+                  db,
+                  callerScope(db, caller),
+                  input.data as z.infer<typeof schemas.move_chat>,
+                  context?.desktopApproved === true,
+                ),
+              )
+              .immediate()
           case "pin_item":
             return pinItem(db, scope, input.data as z.infer<typeof schemas.pin_item>)
           case "archive_item":
@@ -417,13 +462,69 @@ function visualArtifactRootForDatabase(databasePath: string): string {
 }
 
 function orchestrateTask(
+  db: Database.Database,
   databasePath: string,
+  scope: Scope,
   caller: McpCallerIdentity,
-  input: z.infer<typeof createOrchestrationInputSchema>,
+  input: z.infer<typeof schemas.orchestrate_task>,
 ): McpControlResponse {
+  if (
+    caller.callerKind !== "external-owner" &&
+    input.initiatingChatId &&
+    input.initiatingChatId !== caller.chatId
+  )
+    return fail("stale-caller", "The initiating chat must match the trusted MCP caller.")
+  if (
+    input.agents.some(
+      (agent) => !mcpTargetPermissionAllowed(caller, agent.permissionMode, agent.customPermissions),
+    )
+  )
+    return fail(
+      "permission-denied",
+      "An orchestration agent requests permissions beyond the caller's grant.",
+    )
+  const external = caller.callerKind === "external-owner"
+  const needsCoordinator = scope.kind === "global" && (!external || !input.initiatingChatId)
+  const project = needsCoordinator
+    ? (db
+        .prepare(
+          "SELECT default_permission_mode,default_custom_permissions FROM projects WHERE id=? AND archived_at IS NULL",
+        )
+        .get(input.projectId) as Row | undefined)
+    : undefined
+  if (needsCoordinator && !project) return fail("stale-target", "Project is missing or archived.")
+  const inherit =
+    project &&
+    mcpTargetPermissionAllowed(
+      caller,
+      project.default_permission_mode,
+      project.default_custom_permissions,
+    )
+  const createCoordinator = needsCoordinator
+    ? {
+        permissionMode: inherit
+          ? String(project.default_permission_mode)
+          : (caller.permissionMode ?? "read-only"),
+        customPermissions: inherit
+          ? stringOrNull(project.default_custom_permissions)
+          : caller.customPermissions
+            ? JSON.stringify(caller.customPermissions)
+            : null,
+        ...(external ? {} : { parentChatId: caller.chatId, parentRunId: caller.runId }),
+      }
+    : undefined
   return {
     ok: true,
-    data: createAgentOrchestrationService(databasePath).create(input, caller.chatId),
+    data: createAgentOrchestrationService(databasePath).create(
+      {
+        ...input,
+        initiatingChatId: needsCoordinator
+          ? randomUUID()
+          : (input.initiatingChatId ?? caller.chatId),
+      },
+      external || needsCoordinator ? undefined : caller.chatId,
+      { createCoordinator },
+    ),
   }
 }
 
@@ -598,6 +699,11 @@ function waitForChats(
   caller: McpCallerIdentity,
   input: z.infer<typeof schemas.wait_for_chats>,
 ): McpControlResponse {
+  if (caller.callerKind === "external-owner")
+    return fail(
+      "invalid-input",
+      "Only a Flapstack Chat can suspend and resume. Poll read_run or read_chat from an external harness.",
+    )
   for (const chatId of new Set(input.targetChatIds)) target(db, scope, "chat", chatId)
   const registered = registerChatWait(db, {
     waiterChatId: caller.chatId,
@@ -621,6 +727,8 @@ function waitForChats(
 
 type Scope = { chatId: string; projectId: string | null; taskId: string | null; kind: string }
 function callerScope(db: Database.Database, caller: McpCallerIdentity): Scope {
+  if (caller.callerKind === "external-owner")
+    return { kind: "global", projectId: null, taskId: null, chatId: caller.chatId }
   const row = db
     .prepare(
       `SELECT c.id, c.scope, c.project_id, c.task_id, p.id valid_project_id,
@@ -810,6 +918,17 @@ async function spawnThread(
   caller: McpCallerIdentity,
   request: z.infer<typeof threadSpawnRequestSchema>,
 ): Promise<McpControlResponse> {
+  if (
+    !mcpTargetPermissionAllowed(
+      caller,
+      request.permission.mode,
+      request.permission.customPermissions,
+    )
+  )
+    return fail(
+      "permission-denied",
+      "The new thread requests permissions beyond the caller's grant.",
+    )
   const callerRow = db
     .prepare(
       `SELECT id, harness, parent_chat_id, initiator_chat_id, ancestor_chat_ids
@@ -817,22 +936,30 @@ async function spawnThread(
     )
     .get(caller.chatId) as Row | undefined
   const harness = callerRow && typeof callerRow.harness === "string" ? callerRow.harness : null
-  if (!AGENT_HARNESSES.includes(harness as AgentHarness)) {
+  if (
+    caller.callerKind !== "external-owner" &&
+    !AGENT_HARNESSES.includes(harness as AgentHarness)
+  ) {
     return fail("invalid-caller", "Caller is not a supported spawned-thread harness.")
   }
 
   const ancestors = parseAncestorChatIds(callerRow?.ancestor_chat_ids)
   if (!ancestors) return fail("forbidden-loop", "Caller has invalid durable lineage.")
-  const contract = prepareThreadSpawn(request, {
-    harness: harness as AgentHarness,
-    chatId: caller.chatId,
-    ...(caller.runId ? { runId: caller.runId } : {}),
-    initiatorChatId:
-      typeof callerRow?.initiator_chat_id === "string"
-        ? callerRow.initiator_chat_id
-        : caller.chatId,
-    ancestorChatIds: ancestors,
-  })
+  const contract = prepareThreadSpawn(
+    request,
+    caller.callerKind === "external-owner"
+      ? null
+      : {
+          harness: harness as AgentHarness,
+          chatId: caller.chatId,
+          ...(caller.runId ? { runId: caller.runId } : {}),
+          initiatorChatId:
+            typeof callerRow?.initiator_chat_id === "string"
+              ? callerRow.initiator_chat_id
+              : caller.chatId,
+          ancestorChatIds: ancestors,
+        },
+  )
   if (!contract.ok) return fail(contract.error.code, contract.error.message)
 
   const resolved = resolveSpawnTarget(db, caller, contract.plan)
@@ -998,8 +1125,7 @@ function resolveSpawnTarget(
   caller: McpCallerIdentity,
   plan: ThreadSpawnPlan,
 ): ResolvedSpawnTarget | FailedSpawnTarget {
-  const callerScope = callerScopeForSpawn(db, caller.chatId)
-  if (!callerScope) return spawnFail("stale-caller", "Caller chat is stale.")
+  const scope = callerScope(db, caller)
   let projectId: string | null = null
   let taskId: string | null = null
   if (plan.scope.kind === "project") projectId = plan.scope.projectId
@@ -1018,9 +1144,9 @@ function resolveSpawnTarget(
       .get(projectId)
     if (!project) return spawnFail("stale-target", "Project is missing or stale.")
   }
-  if (callerScope.taskId && taskId !== callerScope.taskId)
+  if (scope.taskId && taskId !== scope.taskId)
     return spawnFail("out-of-scope", "Thread is outside the caller task scope.")
-  if (callerScope.projectId && projectId !== callerScope.projectId)
+  if (scope.projectId && projectId !== scope.projectId)
     return spawnFail("out-of-scope", "Thread is outside the caller project scope.")
 
   if (plan.worktree.strategy === "none")
@@ -1053,22 +1179,6 @@ function resolveSpawnTarget(
     branch: stringOrNull(source.branch),
     baseBranch: stringOrNull(source.base_branch),
   }
-}
-
-function callerScopeForSpawn(db: Database.Database, chatId: string): Scope | null {
-  const row = db
-    .prepare(
-      "SELECT id, scope, project_id, task_id FROM chats WHERE id = ? AND archived_at IS NULL",
-    )
-    .get(chatId) as Row | undefined
-  return row
-    ? {
-        chatId: String(row.id),
-        kind: String(row.scope),
-        projectId: stringOrNull(row.project_id),
-        taskId: stringOrNull(row.task_id),
-      }
-    : null
 }
 
 function spawnFail(code: McpControlErrorCode, message: string): FailedSpawnTarget {
@@ -1117,6 +1227,7 @@ function moveChat(
   db: Database.Database,
   scope: Scope,
   input: z.infer<typeof schemas.move_chat>,
+  approved: boolean,
 ): McpControlResponse {
   target(db, scope, "chat", input.id)
   let projectId = input.projectId ?? null
@@ -1141,12 +1252,14 @@ function moveChat(
   }
   if (
     (scope.taskId && (input.scope !== "task" || taskId !== scope.taskId)) ||
-    (scope.projectId && projectId !== scope.projectId)
+    (scope.projectId && projectId !== scope.projectId && !approved)
   )
     return fail("out-of-scope", "Move is outside caller scope.")
-  db.prepare(
-    "UPDATE chats SET scope = ?, project_id = ?, task_id = ?, updated_at = unixepoch() WHERE id = ?",
-  ).run(input.scope, projectId, taskId, input.id)
+  moveStoredChat(
+    db,
+    { ...input, projectId: projectId ?? undefined, taskId: taskId ?? undefined },
+    true,
+  )
   return { ok: true, data: { id: input.id, moved: true } }
 }
 function pinItem(

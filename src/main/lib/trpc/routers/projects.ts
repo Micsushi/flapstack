@@ -10,6 +10,7 @@ import { promisify } from "node:util"
 import { existsSync } from "node:fs"
 import { mkdir, copyFile, unlink } from "node:fs/promises"
 import { extname } from "node:path"
+import { registerProjectDirectory } from "../../projects/register-project"
 import { getGitRemoteInfo } from "../../git"
 import { sleep } from "../../../../shared/sleep"
 import {
@@ -20,7 +21,6 @@ import {
 import { trackProjectOpened } from "../../analytics"
 import { getLaunchDirectory } from "../../cli"
 import {
-  getPermissionPreferences,
   parseCustomPermissionToggles,
   permissionModes,
   type CustomPermissionToggles,
@@ -49,52 +49,9 @@ function prepareOpenedProject(project: typeof projects.$inferSelect) {
 }
 
 async function openProjectDirectory(path: string) {
-  const folderPath = resolveCanonicalProjectPath(path)
-  const gitInfo = await getGitRemoteInfo(folderPath)
-  const db = getDatabase()
-  const permissionPreferences = getPermissionPreferences()
-  const existing = findProjectByCanonicalPath(db.select().from(projects).all(), folderPath)
-
-  if (existing) {
-    bindRegisteredFilesystemRoot(folderPath)
-    const updatedProject = db
-      .update(projects)
-      .set({
-        updatedAt: new Date(),
-        gitRemoteUrl: gitInfo.remoteUrl,
-        gitProvider: gitInfo.provider,
-        gitOwner: gitInfo.owner,
-        gitRepo: gitInfo.repo,
-      })
-      .where(eq(projects.id, existing.id))
-      .returning()
-      .get()
-
-    prepareOpenedProject(updatedProject!)
-    return updatedProject
-  }
-
-  bindFilesystemRootIdentity(folderPath)
-  const newProject = db
-    .insert(projects)
-    .values({
-      name: basename(folderPath),
-      path: folderPath,
-      gitRemoteUrl: gitInfo.remoteUrl,
-      gitProvider: gitInfo.provider,
-      gitOwner: gitInfo.owner,
-      gitRepo: gitInfo.repo,
-      defaultPermissionMode: permissionPreferences.globalDefault,
-      defaultCustomPermissions:
-        permissionPreferences.globalDefault === "custom"
-          ? JSON.stringify(permissionPreferences.globalCustomPermissions)
-          : null,
-    })
-    .returning()
-    .get()
-
-  prepareOpenedProject(newProject!)
-  return newProject
+  const { project } = await registerProjectDirectory(getDatabase(), path)
+  prepareOpenedProject(project)
+  return project
 }
 
 export const projectsRouter = router({

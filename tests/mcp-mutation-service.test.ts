@@ -2,7 +2,8 @@ import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { eq } from "drizzle-orm"
-import { mkdtempSync, rmSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -67,6 +68,74 @@ afterEach(() => {
 })
 
 describe("MCP mutation service", () => {
+  it("registers an external project once and binds its filesystem identity", async () => {
+    const folder = join(directory, "new-project")
+    mkdirSync(folder)
+    execFileSync("git", ["init", "--quiet", folder], { windowsHide: true })
+    execFileSync(
+      "git",
+      ["-C", folder, "remote", "add", "origin", "https://github.com/example/project.git"],
+      { windowsHide: true },
+    )
+    const service = createMcpMutationService(path)
+    const caller = {
+      callerKind: "external-owner" as const,
+      chatId: "external-owner:grant",
+      permissionMode: "full-access" as const,
+    }
+    const first = await service.invoke("create_project", caller, {
+      path: folder,
+      name: "Named project",
+    })
+    expect(first).toMatchObject({
+      ok: true,
+      data: { created: true, name: "Named project", gitProvider: "github" },
+    })
+    const again = await service.invoke("create_project", caller, { path: folder })
+    expect(again).toMatchObject({ ok: true, data: { created: false, name: "Named project" } })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT name FROM projects p JOIN filesystem_root_registrations f ON p.path=f.path WHERE p.name='Named project'",
+        )
+        .get(),
+    ).toEqual({ name: "Named project" })
+    expect(
+      await service.invoke("create_project", { chatId: "chat-project" }, { path: folder }),
+    ).toMatchObject({ ok: false, error: { code: "out-of-scope" } })
+  })
+
+  it("moves a global owner's thread to a different checkout; scoped callers need an exact desktop approval", async () => {
+    const service = createMcpMutationService(path)
+    const owner = { callerKind: "external-owner" as const, chatId: "external-owner:grant" }
+    const caller = { chatId: "chat-project", projectId: "project-1" }
+    sqlite
+      .prepare(
+        "UPDATE chats SET worktree_path='/tmp/private-custom-checkout' WHERE id='chat-project-target'",
+      )
+      .run()
+    const request = { id: "chat-project-target", scope: "project", projectId: "project-2" }
+    expect(
+      await service.invoke("move_chat", caller, request, { invocationId: "a", approved: true }),
+    ).toMatchObject({ ok: false, error: { code: "out-of-scope" } })
+    expect(
+      await service.invoke("move_chat", caller, request, {
+        invocationId: "b",
+        approved: true,
+        desktopApproved: true,
+      }),
+    ).toMatchObject({ ok: true })
+    expect(
+      sqlite.prepare("SELECT project_id,worktree_path FROM chats WHERE id=?").get(request.id),
+    ).toEqual({ project_id: "project-2", worktree_path: "/tmp/other" })
+    expect(
+      await service.invoke("move_chat", owner, { ...request, projectId: "project-1" }),
+    ).toMatchObject({ ok: true })
+    expect(
+      sqlite.prepare("SELECT project_id,worktree_path FROM chats WHERE id=?").get(request.id),
+    ).toEqual({ project_id: "project-1", worktree_path: "/tmp/project" })
+  })
+
   it("creates idempotently and never expands the caller task scope", async () => {
     const service = createMcpMutationService(path)
     const caller = { chatId: "chat-1", permissionMode: "full-access" as const }

@@ -1,3 +1,4 @@
+import { moveStoredChat } from "../../projects/move-chat"
 import { and, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm"
 import { createHash } from "node:crypto"
 import { app, BrowserWindow, dialog } from "electron"
@@ -33,11 +34,7 @@ import { applyAutomaticChatTags, CHAT_TAG_COLORS, CHAT_TAG_ICONS } from "../../c
 import { listUndoneRunIds } from "../../run-change-undo"
 import { reclaimCheckpointFiles } from "../../checkpoint-file-retention"
 import { applyAutomaticAgentChatLabels, listAgentChatLabels } from "../../chat-agent-labels"
-import {
-  getChatAssignment,
-  updateChatAssignment,
-  assertChatAssignmentProjectMove,
-} from "../../chat-assignment"
+import { getChatAssignment, updateChatAssignment } from "../../chat-assignment"
 import { updateChatAssignmentSchema } from "../../../../shared/chat-assignment"
 import { dismissFailedChatWait, listAgentChatWaits } from "../../chat-waits"
 import { restoreCheckpoint } from "../../checkpoints"
@@ -69,7 +66,6 @@ import {
   getDetachedChatCheckoutPath,
   getResolvedWorktreeStatus,
   isDetachedChatCheckoutPath,
-  isManagedFlapstackWorktreePath,
   listWorktreeOptions,
   resolveDefaultWorktree,
   validateCustomWorktreePath,
@@ -1329,84 +1325,7 @@ export const chatsRouter = router({
         taskId: z.string().optional(),
       }),
     )
-    .mutation(({ input }) => {
-      const db = getDatabase()
-      const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
-      if (!chat) throw new Error("Chat not found")
-      const sourceDefaultWorktreePath = resolveDefaultWorktree(chat)
-      const keepExplicitCustomWorktree = Boolean(
-        chat.worktreePath &&
-        chat.worktreePath !== sourceDefaultWorktreePath &&
-        !isManagedFlapstackWorktreePath(chat.worktreePath),
-      )
-
-      if (input.scope === "global") {
-        assertChatAssignmentProjectMove(getSqliteDatabase(), chat.id, null)
-        return db
-          .update(chats)
-          .set({
-            scope: "global",
-            projectId: null,
-            taskId: null,
-            // A global chat must not keep a project-owned default checkout.
-            // Preserve only an explicit custom worktree so history and user
-            // intent survive detaching from a project or task.
-            worktreePath: keepExplicitCustomWorktree ? chat.worktreePath : null,
-            branch: keepExplicitCustomWorktree ? chat.branch : null,
-            baseBranch: keepExplicitCustomWorktree ? chat.baseBranch : null,
-            updatedAt: new Date(),
-          })
-          .where(eq(chats.id, input.id))
-          .returning()
-          .get()
-      }
-
-      if (input.scope === "project") {
-        if (!input.projectId) throw new Error("Project move requires projectId")
-        const project = db.select().from(projects).where(eq(projects.id, input.projectId)).get()
-        if (!project) throw new Error("Project not found")
-        assertChatAssignmentProjectMove(getSqliteDatabase(), chat.id, project.id)
-
-        return db
-          .update(chats)
-          .set({
-            scope: "project",
-            projectId: project.id,
-            taskId: null,
-            worktreePath: keepExplicitCustomWorktree ? chat.worktreePath : project.path,
-            branch: keepExplicitCustomWorktree ? chat.branch : null,
-            baseBranch: keepExplicitCustomWorktree ? chat.baseBranch : null,
-            updatedAt: new Date(),
-          })
-          .where(eq(chats.id, input.id))
-          .returning()
-          .get()
-      }
-
-      if (!input.taskId) throw new Error("Task move requires taskId")
-      const task = db.select().from(tasks).where(eq(tasks.id, input.taskId)).get()
-      if (!task) throw new Error("Task not found")
-      const project = db.select().from(projects).where(eq(projects.id, task.projectId)).get()
-      if (!project) throw new Error("Project not found")
-      assertChatAssignmentProjectMove(getSqliteDatabase(), chat.id, project.id)
-
-      return db
-        .update(chats)
-        .set({
-          scope: "task",
-          projectId: project.id,
-          taskId: task.id,
-          worktreePath: keepExplicitCustomWorktree
-            ? chat.worktreePath
-            : (task.primaryWorktreePath ?? project.path),
-          branch: keepExplicitCustomWorktree ? chat.branch : task.primaryBranch,
-          baseBranch: keepExplicitCustomWorktree ? chat.baseBranch : null,
-          updatedAt: new Date(),
-        })
-        .where(eq(chats.id, input.id))
-        .returning()
-        .get()
-    }),
+    .mutation(({ input }) => moveStoredChat(getSqliteDatabase(), input)),
 
   /**
    * Archive a chat (also kills any terminal processes in the workspace).

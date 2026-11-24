@@ -83,11 +83,46 @@ describe("MCP cross-harness thread spawn service", () => {
     approvals.shutdown()
   })
 
+  it("creates a parentless external Chat and keeps real same-harness child lineage", async () => {
+    const service = createMcpMutationService(path)
+    const request = {
+      targetHarness: "codex",
+      scope: { kind: "task", projectId: "project-1", taskId: "task-1" },
+      permission: { mode: "read-only" },
+      worktree: { strategy: "none" },
+    }
+    const external = await service.invoke(
+      "spawn_thread",
+      {
+        callerKind: "external-owner",
+        chatId: "external-owner:grant",
+        permissionMode: "full-access",
+      },
+      request,
+    )
+    if (!external.ok) throw new Error(external.error.message)
+    const { chatId } = external.data as { chatId: string }
+    expect(
+      sqlite.prepare("SELECT parent_chat_id,initiator_chat_id FROM chats WHERE id=?").get(chatId),
+    ).toEqual({ parent_chat_id: null, initiator_chat_id: null })
+    const child = await service.invoke(
+      "spawn_thread",
+      { chatId, permissionMode: "full-access" },
+      request,
+    )
+    expect(child).toMatchObject({
+      ok: true,
+      data: {
+        lineage: { parentChatId: chatId, initiatorChatId: chatId, ancestorChatIds: [chatId] },
+      },
+    })
+  })
+
   it("creates durable Codex-to-Claude and Claude-to-Codex threads with resolved lineage", async () => {
     const service = createMcpMutationService(path)
     const codexToClaude = await service.invoke(
       "spawn_thread",
-      { chatId: "codex-root" },
+      { chatId: "codex-root", permissionMode: "full-access" },
       {
         targetHarness: "claude-code",
         reasoningEffort: "medium",
@@ -99,7 +134,7 @@ describe("MCP cross-harness thread spawn service", () => {
     )
     const claudeToCodex = await service.invoke(
       "spawn_thread",
-      { chatId: "claude-root" },
+      { chatId: "claude-root", permissionMode: "full-access" },
       {
         targetHarness: "codex",
         scope: { kind: "task", projectId: "project-1", taskId: "task-1" },
@@ -170,7 +205,7 @@ describe("MCP cross-harness thread spawn service", () => {
   it("creates and queues an API-provider child from Cursor with its selected model", async () => {
     const result = await createMcpMutationService(path).invoke(
       "spawn_thread",
-      { chatId: "cursor-root" },
+      { chatId: "cursor-root", permissionMode: "full-access" },
       {
         targetHarness: "openrouter",
         model: "anthropic/claude-sonnet-4",
@@ -254,7 +289,7 @@ describe("MCP cross-harness thread spawn service", () => {
   it("fails an interrupted direct MCP run without replay when no recovery authority exists", async () => {
     const result = await createMcpMutationService(path).invoke(
       "spawn_thread",
-      { chatId: "codex-root" },
+      { chatId: "codex-root", permissionMode: "full-access" },
       {
         targetHarness: "claude-code",
         scope: { kind: "task", projectId: "project-1", taskId: "task-1" },

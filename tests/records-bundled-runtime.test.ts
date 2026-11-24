@@ -7,6 +7,7 @@ import {
   managedRecordsConnection,
   startProjectRecordsRuntime,
 } from "../src/main/lib/project-records/runtime"
+import { createCanonicalTask } from "../src/main/lib/mcp-control/desktop-project-actions"
 import { configuredProjectRecordsClient } from "../src/main/lib/project-records/client"
 
 test("bundled standalone SQL shares Board and MCP writes and survives restart without a checkout", async () => {
@@ -73,6 +74,19 @@ test("bundled standalone SQL shares Board and MCP writes and survives restart wi
       projectName: "Integration",
       requestId: "bundled-integration",
     })) as { path: string; recordId: string; revision: string }
+    const request = {
+      name: "MCP canonical task",
+      description: "Isolated fixture",
+      records: { projectId: "integration", requestId: "verified-app-control-create" },
+    }
+    const canonical = await createCanonicalTask(client, request)
+    expect(canonical.authority).toBe("records")
+    expect(
+      (await client.read(canonical.path)).document.records.find(
+        (record) => record.id === canonical.id,
+      )?.title,
+    ).toBe(request.name)
+    expect((await createCanonicalTask(client, request)).id).toBe(canonical.id)
     const read = await client.read(created.path)
     const id = created.recordId
     expect(read.document.records.find((record) => record.id === id)?.title).toBe("Board created")

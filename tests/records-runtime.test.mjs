@@ -138,6 +138,22 @@ server.serve_forever()
   }
 })
 
+test("explicit local tasks start without Records and reject conflicting owner connection settings", async () => {
+  const options = { userData: "unused", snapshotPath: "unused" }
+  const env = { FLAPSTACK_PROJECT_RECORDS_MODE: "disabled" }
+  const stop = await startProjectRecordsRuntime({ ...options, env })
+  assert.equal(managedRecordsConnection(env), undefined)
+  assert.equal(projectRecordsEnabled(env), false)
+  stop()
+  const conflicting = { ...env, FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE: "fixture-only" }
+  await assert.rejects(
+    startProjectRecordsRuntime({ ...options, env: conflicting }),
+    /cannot also configure/,
+  )
+  assert.equal(projectRecordsEnabled(conflicting), true)
+  assert.equal(conflicting.FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE, undefined)
+})
+
 test("failed default startup retains Records authority without opening legacy writes", async () => {
   const root = await mkdtemp(join(tmpdir(), "flapstack-records-failure-"))
   const env = {}

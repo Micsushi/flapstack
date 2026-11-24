@@ -969,6 +969,54 @@ describe("durable agent task orchestration", () => {
     ).toEqual({ worktree_path: realpathSync(featurePath) })
   })
 
+  it("creates an unparented coordinator for an external orchestration in one transaction", async () => {
+    const { initiatingChatId: _ignored, ...request } = createInput()
+    const caller = {
+      callerKind: "external-owner" as const,
+      chatId: "external-owner:grant",
+      permissionMode: "full-access" as const,
+    }
+    const response = await createMcpMutationService(path).invoke(
+      "orchestrate_task",
+      caller,
+      request,
+    )
+    if (!response.ok) throw new Error(response.error.message)
+    const { orchestration } = response.data as {
+      orchestration: { initiatingChatId: string; taskId: string }
+    }
+    expect(
+      sqlite
+        .prepare("SELECT parent_chat_id,initiator_chat_id,task_id FROM chats WHERE id=?")
+        .get(orchestration.initiatingChatId),
+    ).toEqual({ parent_chat_id: null, initiator_chat_id: null, task_id: orchestration.taskId })
+    expect(sqlite.prepare("SELECT 1 FROM chats WHERE id=?").get(caller.chatId)).toBeUndefined()
+  })
+
+  it("retains a global agent's Chat while its orchestration gets a project coordinator", async () => {
+    sqlite
+      .prepare(
+        "INSERT INTO chats(id,name,scope,permission_mode,harness) VALUES ('global-root','Global','global','full-access','codex')",
+      )
+      .run()
+    const response = await createMcpMutationService(path).invoke(
+      "orchestrate_task",
+      { chatId: "global-root", permissionMode: "full-access" },
+      { ...createInput(), initiatingChatId: "global-root" },
+    )
+    if (!response.ok) throw new Error(response.error.message)
+    const { orchestration } = response.data as { orchestration: { initiatingChatId: string } }
+    expect(
+      sqlite
+        .prepare("SELECT parent_chat_id FROM chats WHERE id=?")
+        .get(orchestration.initiatingChatId),
+    ).toEqual({ parent_chat_id: "global-root" })
+    expect(sqlite.prepare("SELECT scope,task_id FROM chats WHERE id='global-root'").get()).toEqual({
+      scope: "global",
+      task_id: null,
+    })
+  })
+
   it("auto-approves full-access MCP orchestration with audit and trusted caller identity", async () => {
     const approvals = new McpApprovalLifecycle()
     const statuses: string[] = []

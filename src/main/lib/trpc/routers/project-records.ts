@@ -6,16 +6,9 @@ import {
 } from "../../../../shared/project-records"
 import { configuredProjectRecordsClient } from "../../project-records/client"
 import { publicProcedure, router } from "../index"
-import { homedir } from "node:os"
-import { join } from "node:path"
 import { getSqliteDatabase } from "../../db"
-import { createWorktree } from "../../git/worktree"
-import { bindFilesystemRootIdentity } from "../../git/security/path-validation"
-import {
-  openRecordChatSchema,
-  previewRecordChatSchema,
-  RecordTaskWorktreeService,
-} from "../../project-records/task-worktree"
+import { configuredRecordTaskWorktrees } from "../../project-records/configured-task-worktrees"
+import { openRecordChatSchema, previewRecordChatSchema } from "../../project-records/task-worktree"
 
 import {
   RecordsPlanPairService,
@@ -23,18 +16,6 @@ import {
   confirmYapPairSchema,
 } from "../../project-records/plan-pair"
 import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
-
-async function taskWorktrees() {
-  const client = await configuredProjectRecordsClient()
-  return new RecordTaskWorktreeService(
-    getSqliteDatabase(),
-    client,
-    client.endpoint,
-    join(homedir(), ".flapstack", "worktrees", "records"),
-    createWorktree,
-    bindFilesystemRootIdentity,
-  )
-}
 
 export const projectRecordsRouter = router({
   answerContinuationIdentity: publicProcedure.query(async () =>
@@ -92,10 +73,10 @@ export const projectRecordsRouter = router({
   }),
   previewTaskChat: publicProcedure
     .input(previewRecordChatSchema)
-    .query(async ({ input }) => (await taskWorktrees()).preview(input)),
+    .query(async ({ input }) => (await configuredRecordTaskWorktrees()).preview(input)),
   openTaskChat: publicProcedure
     .input(openRecordChatSchema)
-    .mutation(async ({ input }) => (await taskWorktrees()).open(input)),
+    .mutation(async ({ input }) => (await configuredRecordTaskWorktrees()).open(input)),
   yapProposals: publicProcedure
     .input(z.object({ projectId: z.string().optional() }).default({}))
     .query(async ({ input }) => {
