@@ -78,7 +78,7 @@ import {
   renameProductMcpServerCollisions,
 } from "../../mcp-control/registration"
 import { resolveCodexRuntimeCommand } from "../../agent-runtime/codex/binary"
-import { isOwnerRegistration } from "../../mcp-control/child-registration"
+import { childHarnessEnvironment, isOwnerRegistration } from "../../mcp-control/child-registration"
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
 import { mergeMessagesPreservingSpokenText } from "../../speech/history"
@@ -1383,14 +1383,26 @@ function buildCodexProviderEnv(
     }
   }
 
+  const childEnv = childHarnessEnvironment(env)
   let existingConfig: Record<string, unknown> = {}
   try {
     if (env.CODEX_CONFIG) existingConfig = JSON.parse(env.CODEX_CONFIG)
   } catch {
     existingConfig = {}
   }
+  const inheritedServers = existingConfig?.mcp_servers
   const runConfig = {
     ...existingConfig,
+    ...(inheritedServers && typeof inheritedServers === "object" && !Array.isArray(inheritedServers)
+      ? {
+          mcp_servers: Object.fromEntries(
+            Object.entries(inheritedServers).map(([name, server]) => [
+              name,
+              isOwnerRegistration(name, server) ? { enabled: false } : server,
+            ]),
+          ),
+        }
+      : {}),
     model_reasoning_summary: reasoningEnabled ? "detailed" : "none",
     model_supports_reasoning_summaries: reasoningEnabled,
     show_raw_agent_reasoning: false,
@@ -1401,20 +1413,20 @@ function buildCodexProviderEnv(
       : {}),
     ...(serviceTier ? { service_tier: serviceTier } : {}),
   }
-  env.CODEX_CONFIG = JSON.stringify(
+  childEnv.CODEX_CONFIG = JSON.stringify(
     extensionLaunchPolicy
       ? applyCodexExtensionPolicyConfig(runConfig, extensionLaunchPolicy)
       : runConfig,
   )
 
-  env.CODEX_PATH = resolveCodexRuntimeCommand()
+  childEnv.CODEX_PATH = resolveCodexRuntimeCommand()
   const apiKey = authConfig?.apiKey?.trim()
   if (!apiKey) {
-    return env
+    return childEnv
   }
 
   return {
-    ...env,
+    ...childEnv,
     CODEX_API_KEY: apiKey,
   }
 }
@@ -1531,6 +1543,7 @@ function getOrCreateProvider(params: {
 
   const provider = createACPProvider({
     command: resolveCodexAcpBinaryPath(),
+    inheritEnvironment: false,
     env: buildCodexProviderEnv(
       params.authConfig,
       params.reasoningEnabled,

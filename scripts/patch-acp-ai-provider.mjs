@@ -1,5 +1,5 @@
 import { createRequire } from "node:module"
-import { readFileSync, writeFileSync } from "node:fs"
+import { copyFileSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 
 const require = createRequire(import.meta.url)
@@ -13,6 +13,18 @@ for (const filename of ["index.cjs", "index.mjs"]) {
     /return \{\s*outcome: \{\s*outcome: "selected",\s*optionId: params\.options\[0\]\?\.optionId \|\| "allow"\s*\}\s*\};/,
     'return { outcome: { outcome: "cancelled" } };',
   )
+
+  // The router supplies a complete, sanitized environment for app-launched Codex.
+  // Preserve the library's default merge for other consumers.
+  if (!source.includes("this.config.inheritEnvironment === false")) {
+    source = source.replace(
+      /env: \{\s*\.\.\.([\w.]+\.env),\s*\.\.\.this\.config\.env\s*\}/,
+      "env: this.config.inheritEnvironment === false ? this.config.env : { ...$1, ...this.config.env }",
+    )
+  }
+  if (!source.includes("this.config.inheritEnvironment === false")) {
+    throw new Error(`Could not isolate the ACP launch environment in ${filename}`)
+  }
 
   const clientCreation = "this.client = new ACPAISDKClient();"
   const handlerHook = `${clientCreation}\n      if (this.config.permissionRequestHandler) {\n        this.client.setPermissionRequestHandler(this.config.permissionRequestHandler);\n      }`
@@ -95,6 +107,14 @@ if (!types.includes("permissionRequestHandler?:")) {
 if (!types.includes("permissionRequestHandler?:")) {
   throw new Error("Could not patch ACP provider type declarations")
 }
+if (!types.includes("inheritEnvironment?:")) {
+  types = types.replace(
+    "  permissionRequestHandler?:",
+    "  inheritEnvironment?: boolean;\n  permissionRequestHandler?:",
+  )
+}
+if (!types.includes("inheritEnvironment?:"))
+  throw new Error("Could not patch ACP environment types")
 writeFileSync(typesPath, types)
 
 const codexAcpPath = require.resolve("@agentclientprotocol/codex-acp")
@@ -124,6 +144,36 @@ if (!codexAcpSource.includes(windowsFallback)) {
     windowsFallback + "\n" + sessionConfigLine,
   )
 }
+// Every ACP start and resume uses createSessionConfig, including its empty-server paths.
+// Apply the same native-layer policy as direct App Server threads after ACP's own merges.
+const legacyPolicyImport =
+  'import { disabledCodexMcpServers } from "./flapstack-codex-mcp-policy.mjs";'
+const sessionMethod =
+  "  async createSessionConfig(projectPath, additionalDirectories, mcpServers) {"
+const legacyBoundary = `${sessionMethod}
+    const config = await this.buildFlapstackSessionConfig(projectPath, additionalDirectories, mcpServers);
+    const native = await this.codexClient.configRead({ cwd: projectPath, includeLayers: true });
+    const disabled = disabledCodexMcpServers(native, config.mcp_servers);
+    return Object.keys(disabled).length ? { ...config, mcp_servers: { ...config.mcp_servers, ...disabled } } : config;
+  }
+  async buildFlapstackSessionConfig(projectPath, additionalDirectories, mcpServers) {`
+if (!codexAcpSource.includes(legacyBoundary)) {
+  if (!codexAcpSource.includes(sessionMethod))
+    throw new Error("Could not isolate Codex ACP session configuration")
+  codexAcpSource = codexAcpSource.replace(sessionMethod, legacyBoundary)
+}
+if (!codexAcpSource.includes(legacyPolicyImport)) {
+  codexAcpSource = codexAcpSource.replace(
+    "#!/usr/bin/env node\n",
+    "#!/usr/bin/env node\n" + legacyPolicyImport + "\n",
+  )
+}
+if (!codexAcpSource.includes(legacyPolicyImport))
+  throw new Error("Could not load Codex ACP session policy")
+copyFileSync(
+  new URL("../src/main/lib/mcp-control/codex-mcp-policy.mjs", import.meta.url),
+  join(dirname(codexAcpPath), "flapstack-codex-mcp-policy.mjs"),
+)
 codexAcpSource = codexAcpSource.replace(
   "excludeTmpdirEnvVar: false,\n      excludeSlashTmp: false",
   "excludeTmpdirEnvVar: true,\n      excludeSlashTmp: true",

@@ -601,6 +601,71 @@ describe("direct Codex Runtime adapter", () => {
 })
 
 describe("Codex App Server JSON-RPC transport bounds", () => {
+  it.each(["thread/start", "thread/resume", "thread/fork"])(
+    "disables owner registrations from native config layers during %s",
+    async (method) => {
+      const fake = fakeChild()
+      const client = spawnCodexProtocolClient({
+        command: "/fixture/codex",
+        spawnProcess: () => fake.child,
+      })
+      const frames: Array<{ method: string; params: Record<string, unknown> }> = []
+      fake.stdin.on("data", (line) => {
+        const frame = JSON.parse(line.toString())
+        frames.push(frame)
+        const result =
+          frame.method === "config/read"
+            ? {
+                config: { mcp_servers: { publicConfigured: { command: "example" } } },
+                layers: [
+                  {
+                    config: {
+                      mcp_servers: {
+                        "flapstack-app-control": { command: "example" },
+                        publicGlobal: { command: "example" },
+                      },
+                    },
+                  },
+                  {
+                    disabledReason: "not trusted",
+                    config: {
+                      mcp_servers: {
+                        publicAlias: { args: ["mcp-control-stdio.js", "--external"] },
+                      },
+                    },
+                  },
+                ],
+              }
+            : {}
+        fake.stdout.write(JSON.stringify({ id: frame.id, result }) + "\n")
+      })
+      try {
+        const servers = {
+          flapstack: { command: "trusted-chat-fixture" },
+          publicRun: { command: "example" },
+        }
+        await client.request(method, {
+          cwd: "/fixture",
+          sandbox: "danger-full-access",
+          config: { mcp_servers: servers },
+        })
+        expect(frames[0]).toMatchObject({
+          method: "config/read",
+          params: { cwd: "/fixture", includeLayers: true },
+        })
+        expect(frames[1].params.config).toEqual({
+          mcp_servers: {
+            ...servers,
+            "flapstack-app-control": { enabled: false },
+            publicAlias: { enabled: false },
+          },
+        })
+      } finally {
+        await client.close()
+      }
+    },
+  )
+
   it("preserves large completed command results across fragmented UTF-8 frames", async () => {
     const fake = fakeChild()
     const client = spawnCodexProtocolClient({

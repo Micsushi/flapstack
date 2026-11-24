@@ -74,6 +74,19 @@ describe("Flapstack MCP per-chat exposure", () => {
       FLAPSTACK_MCP_CALLER_MODE: "external",
       PATH: "bin",
     }
+    const desktopAndShell = {
+      ...parent,
+      FLAPSTACK_PROJECT_RECORDS_TOKEN: "public-fixture",
+      PROJECT_RECORDS_TOKEN: "public-fixture",
+      PROJECT_RECORDS_TOKEN_FILE: "public-path",
+      flapstack_project_records_token_file: "public-path",
+      FLAPSTACK_MCP_OWNER_TOKEN_FILE: "public-path",
+      CODEX_API_KEY: "provider-fixture",
+    }
+    expect(childHarnessEnvironment(desktopAndShell)).toEqual({
+      PATH: "bin",
+      CODEX_API_KEY: "provider-fixture",
+    })
     expect(childHarnessEnvironment(parent)).toEqual({ PATH: "bin" })
     expect(parent.FLAPSTACK_MCP_OWNER_TOKEN).toBe("fixture")
   })

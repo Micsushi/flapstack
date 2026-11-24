@@ -1,3 +1,4 @@
+import { disabledCodexMcpServers } from "../mcp-control/codex-mcp-policy.mjs"
 import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -15,15 +16,6 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 export function codexSideQuestionConfig(configRead: unknown): Record<string, unknown> {
-  const response = record(configRead)
-  if (!Array.isArray(response.layers))
-    throw new Error("Codex did not expose its configuration layers.")
-  const names = new Set<string>()
-  for (const raw of response.layers) {
-    const layer = record(raw)
-    if (layer.disabledReason) continue
-    for (const name of Object.keys(record(record(layer.config).mcp_servers))) names.add(name)
-  }
   return {
     features: {
       shell_tool: false,
@@ -46,7 +38,7 @@ export function codexSideQuestionConfig(configRead: unknown): Record<string, unk
     sleep_tool: { enabled: false },
     skills: { include_instructions: false },
     web_search: "disabled",
-    mcp_servers: Object.fromEntries([...names].map((name) => [name, { enabled: false }])),
+    mcp_servers: disabledCodexMcpServers(configRead, {}, true),
   }
 }
 

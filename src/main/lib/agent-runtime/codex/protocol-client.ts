@@ -1,3 +1,4 @@
+import { disabledCodexMcpServers } from "../../mcp-control/codex-mcp-policy.mjs"
 import { childHarnessEnvironment } from "../../mcp-control/child-registration"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { sanitizeRuntimeText } from "../sanitizer"
@@ -168,21 +169,39 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
     params?: Record<string, unknown>,
     timeoutMs = this.requestTimeoutMs,
   ): Promise<unknown> {
-    if (
-      process.platform === "win32" &&
-      params?.sandbox !== "danger-full-access" &&
-      ["thread/start", "thread/resume", "thread/fork"].includes(method)
-    ) {
-      const response = await this.request("config/read", { cwd: params?.cwd, includeLayers: false })
-      const current = isRecord(response) && isRecord(response.config) ? response.config : {}
-      const windows = isRecord(current.windows) ? current.windows : {}
-      // A missing Windows implementation leaves a restricted thread without OS enforcement.
-      // Preserve native elevated and MXC configurations when already configured.
-      const sandbox =
-        windows.sandbox === "elevated" || windows.sandbox === "mxc" ? windows.sandbox : "unelevated"
-      const config = isRecord(params?.config) ? params.config : {}
-      const overrides = isRecord(config.windows) ? config.windows : {}
-      params = { ...params, config: { ...config, windows: { ...overrides, sandbox } } }
+    if (["thread/start", "thread/resume", "thread/fork"].includes(method)) {
+      let cwd = params?.cwd
+      if (!cwd && method !== "thread/start" && typeof params?.threadId === "string") {
+        const saved = await this.request("thread/read", {
+          threadId: params.threadId,
+          includeTurns: false,
+        })
+        if (
+          !isRecord(saved) ||
+          !isRecord(saved.thread) ||
+          typeof saved.thread.cwd !== "string" ||
+          !saved.thread.cwd
+        ) {
+          throw new Error("Codex did not expose the saved thread workspace.")
+        }
+        cwd = saved.thread.cwd
+      }
+      const response = await this.request("config/read", { cwd, includeLayers: true })
+      const config = isRecord(params?.config) ? { ...params.config } : {}
+      const servers = isRecord(config.mcp_servers) ? config.mcp_servers : {}
+      const disabled = disabledCodexMcpServers(response, servers)
+      if (Object.keys(disabled).length) config.mcp_servers = { ...servers, ...disabled }
+      if (process.platform === "win32" && params?.sandbox !== "danger-full-access") {
+        const current = isRecord(response) && isRecord(response.config) ? response.config : {}
+        const windows = isRecord(current.windows) ? current.windows : {}
+        // Keep native elevated and MXC configurations when already configured.
+        const sandbox =
+          windows.sandbox === "elevated" || windows.sandbox === "mxc"
+            ? windows.sandbox
+            : "unelevated"
+        config.windows = { ...(isRecord(config.windows) ? config.windows : {}), sandbox }
+      }
+      params = { ...params, config }
     }
     if (!this.alive) throw new Error(`[codex-runtime] Cannot call ${method}; process exited.`)
     if (this.pending.size >= MAX_PENDING_REQUESTS) {

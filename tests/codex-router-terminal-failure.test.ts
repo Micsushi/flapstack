@@ -64,7 +64,11 @@ vi.mock("../src/main/lib/credential-service", () => ({
 }))
 
 vi.mock("../src/main/lib/claude/env", () => ({
-  getClaudeShellEnvironment: () => ({}),
+  getClaudeShellEnvironment: () => ({
+    PROJECT_RECORDS_TOKEN_FILE: "public-shell-fixture",
+    FLAPSTACK_MCP_OWNER_TOKEN: "public-shell-fixture",
+    FLAPSTACK_ACP_TEST_KEEP: "public-ordinary-setting",
+  }),
 }))
 
 import { closeDatabase } from "../src/main/lib/db"
@@ -110,6 +114,7 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDatabase()
+  vi.unstubAllEnvs()
   delete process.env.FLAPSTACK_DB_PATH
   delete process.env.FLAPSTACK_TEST_USER_DATA
   rmSync(directory, { recursive: true, force: true })
@@ -260,6 +265,16 @@ describe("Codex router terminal provider failure", () => {
 
   it("enforces task-resolved skill and MCP policy for a direct Codex launch", async () => {
     seedCodexExtensionPolicy()
+    vi.stubEnv("FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE", "public-desktop-fixture")
+    vi.stubEnv(
+      "CODEX_CONFIG",
+      JSON.stringify({
+        mcp_servers: {
+          publicAlias: { env: { FLAPSTACK_MCP_OWNER_TOKEN: "public-inline-fixture" } },
+          publicServer: { command: "example" },
+        },
+      }),
+    )
 
     await collectStream(
       await codexRouter.createCaller({ getWindow: () => null }).chat({
@@ -274,7 +289,18 @@ describe("Codex router terminal provider failure", () => {
 
     expect(mocks.createACPProvider).toHaveBeenCalledTimes(1)
     const providerOptions = mocks.createACPProvider.mock.calls[0]![0]
+    expect(providerOptions.inheritEnvironment).toBe(false)
+    expect(providerOptions.env.FLAPSTACK_ACP_TEST_KEEP).toBe("public-ordinary-setting")
+    for (const key of [
+      "PROJECT_RECORDS_TOKEN_FILE",
+      "FLAPSTACK_MCP_OWNER_TOKEN",
+      "FLAPSTACK_PROJECT_RECORDS_TOKEN_FILE",
+    ]) {
+      expect(providerOptions.env).not.toHaveProperty(key)
+    }
     const config = JSON.parse(providerOptions.env.CODEX_CONFIG)
+    expect(config.mcp_servers.publicAlias).toEqual({ enabled: false })
+    expect(config.mcp_servers.publicServer).toEqual({ command: "example" })
     expect(config.skills.config).toContainEqual({
       path: join(directory, ".agents", "skills", "policy-alpha-task", "SKILL.md"),
       enabled: false,
