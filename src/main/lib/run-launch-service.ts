@@ -1,3 +1,8 @@
+import {
+  AgentProfileChatBindingError,
+  AgentProfileChatBindingService,
+} from "./agent-profiles/chat-binding"
+import { REASONING_EFFORTS, type ReasoningEffort } from "../../shared/model-catalog"
 import type Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { openAppDatabase } from "./db/access"
@@ -9,6 +14,8 @@ import type { ResolvedRuntimeLaunch } from "../../shared/agent-runtime"
 import type { CodexThreadVisibility } from "../../shared/codex-thread-visibility"
 import type { AgentProfileRuntimeAuthority } from "../../shared/agent-profiles"
 import { resolvedLaunchFromSnapshotRow } from "./agent-runtime/snapshot"
+import { mcpTargetPermissionAllowed } from "./mcp-control/permission-ceiling"
+import type { McpCallerIdentity } from "./mcp-control/types"
 import { redactMcpAuditSummary } from "./mcp-control/audit-storage"
 import { nowEpochSeconds } from "./db/timestamps"
 import { claimPendingRunWithinUsageBudget } from "./usage/budgets"
@@ -50,7 +57,7 @@ export type QueuedAgentRun = {
   chatMode?: ChatMode
   hotlineEnabled?: boolean
   model: string | null
-  reasoningEffort: "minimal" | "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null
+  reasoningEffort: ReasoningEffort | null
   permissionMode: string
   customPermissions: string | null
   worktreePath: string | null
@@ -61,6 +68,7 @@ export type QueuedAgentRun = {
   requiredLocalToolTiers?: Array<"read" | "project-write" | "shell" | "git" | "network">
   runtimeLaunch?: ResolvedRuntimeLaunch
   profileRuntimeAuthority?: AgentProfileRuntimeAuthority
+  profileInstructions?: string
   providerAccount: ProviderAccountSnapshot
   outputSchema?: Record<string, unknown> | null
 }
@@ -88,8 +96,11 @@ export function queueChatRun(
     subChatId?: string
     initialPrompt: string
     idempotencyKey: string
+    model?: string
+    reasoningEffort?: NonNullable<QueuedAgentRun["reasoningEffort"]>
     vaultContextSectionIds?: string[]
   },
+  caller?: McpCallerIdentity,
 ): QueueChatRunResult {
   const chat = db.prepare("SELECT * FROM chats WHERE id = ?").get(input.chatId) as Row | undefined
   if (!chat || chat.archived_at) {
@@ -97,28 +108,16 @@ export function queueChatRun(
   }
   const subChat = db
     .prepare(
-      "SELECT id, messages, mode, harness, permission_mode, worktree_path, model FROM sub_chats WHERE chat_id = ? AND (? IS NULL OR id = ?) ORDER BY created_at, id LIMIT 1",
+      "SELECT id, messages, mode, harness, permission_mode, worktree_path, model, reasoning_effort FROM sub_chats WHERE chat_id = ? AND (? IS NULL OR id = ?) ORDER BY created_at, id LIMIT 1",
     )
     .get(input.chatId, input.subChatId ?? null, input.subChatId ?? null) as Row | undefined
   if (!subChat) {
     return { ok: false, code: "stale-target", message: "Chat conversation is missing." }
   }
-  const harness = (subChat.harness ?? chat.harness) as AgentHarness
-  if (!AGENT_HARNESSES.includes(harness)) {
-    return { ok: false, code: "invalid-input", message: "Chat does not use a launchable harness." }
-  }
-  if (isSubChatRewinding(String(subChat.id))) {
-    return {
-      ok: false,
-      code: "permission-denied",
-      message: "Message history is being rewound; retry after it finishes.",
-    }
-  }
-  const model = subChat.model ?? chat.model ?? null
-  if ((harness === "openrouter" || harness === "nanogpt" || harness === "local") && !model) {
-    return { ok: false, code: "invalid-input", message: `${harness} chats require a model.` }
-  }
-
+  const turnOverrides =
+    caller || input.model || input.reasoningEffort
+      ? JSON.stringify({ model: input.model, reasoningEffort: input.reasoningEffort })
+      : null
   const promptMessageId = `mcp-${input.idempotencyKey}`
   const vaultSections =
     input.vaultContextSectionIds === undefined ? null : JSON.stringify(input.vaultContextSectionIds)
@@ -126,6 +125,7 @@ export function queueChatRun(
     if (
       row.sub_chat_id !== subChat.id ||
       row.initial_prompt !== input.initialPrompt ||
+      (row.turn_overrides ?? "{}") !== (turnOverrides ?? "{}") ||
       row.vault_context_sections !== vaultSections
     )
       return {
@@ -137,26 +137,77 @@ export function queueChatRun(
   }
   const existing = db
     .prepare(
-      "SELECT id, status, sub_chat_id, initial_prompt, vault_context_sections FROM agent_runs WHERE chat_id = ? AND prompt_message_id = ?",
+      "SELECT id, status, sub_chat_id, initial_prompt, vault_context_sections, turn_overrides FROM agent_runs WHERE chat_id = ? AND prompt_message_id = ?",
     )
     .get(input.chatId, promptMessageId) as Row | undefined
   if (existing) {
     return replay(existing)
   }
 
+  const profiles = new AgentProfileChatBindingService(db)
+  const binding = profiles.get(input.chatId)
+  const profile = binding?.snapshot.capability
+  if (
+    (input.model && profile?.modelPreference && input.model !== profile.modelPreference) ||
+    (input.reasoningEffort &&
+      profile?.reasoningEffort &&
+      input.reasoningEffort !== profile.reasoningEffort)
+  ) {
+    return {
+      ok: false,
+      code: "permission-denied",
+      message: "This turn conflicts with the bound Agent Profile.",
+    }
+  }
+  const harness = (profile?.harness ?? subChat.harness ?? chat.harness) as AgentHarness
+  if (!AGENT_HARNESSES.includes(harness)) {
+    return { ok: false, code: "invalid-input", message: "Chat does not use a launchable harness." }
+  }
+  if (isSubChatRewinding(String(subChat.id))) {
+    return {
+      ok: false,
+      code: "permission-denied",
+      message: "Message history is being rewound; retry after it finishes.",
+    }
+  }
+  const model = input.model ?? profile?.modelPreference ?? subChat.model ?? chat.model ?? null
+  const storedEffort =
+    input.reasoningEffort ??
+    profile?.reasoningEffort ??
+    subChat.reasoning_effort ??
+    chat.reasoning_effort
+  const reasoningEffort = isReasoningEffort(storedEffort) ? storedEffort : null
+  if ((harness === "openrouter" || harness === "nanogpt" || harness === "local") && !model) {
+    return { ok: false, code: "invalid-input", message: `${harness} chats require a model.` }
+  }
+
   const runId = stableMcpRunId(input.chatId, input.idempotencyKey)
   const preferences = getPermissionPreferences()
   const requestedPermissionMode = String(
-    subChat.permission_mode ?? chat.permission_mode ?? preferences.globalDefault,
+    profile?.permissionMode ??
+      subChat.permission_mode ??
+      chat.permission_mode ??
+      preferences.globalDefault,
   ) as RunPermissionMode
   const permissionMode = resolveChatModePermission(
     normalizeChatMode(typeof subChat.mode === "string" ? subChat.mode : null),
     requestedPermissionMode,
   )
   const customPermissions =
-    permissionMode === "custom" && typeof chat.custom_permissions === "string"
-      ? chat.custom_permissions
-      : null
+    permissionMode !== "custom"
+      ? null
+      : profile?.customPermissions
+        ? JSON.stringify(profile.customPermissions)
+        : typeof chat.custom_permissions === "string"
+          ? chat.custom_permissions
+          : null
+  if (caller && !mcpTargetPermissionAllowed(caller, permissionMode, customPermissions)) {
+    return {
+      ok: false,
+      code: "permission-denied",
+      message: "The target run exceeds the caller's permissions.",
+    }
+  }
   if (permissionMode === "custom" && !customPermissions) {
     return {
       ok: false,
@@ -164,13 +215,27 @@ export function queueChatRun(
       message: "Custom permission settings are missing for this conversation.",
     }
   }
-  const runtimeSnapshot = constructRuntimeSnapshot(db, {
-    chatId: input.chatId,
-    harness,
-    model: model as string | null,
-    permission: runtimePermissionSnapshot(permissionMode as RunPermissionMode, customPermissions),
-  })
   const transaction = db.transaction(() => {
+    const materialized = profiles.materializeForRun({
+      chatId: input.chatId,
+      runId,
+      expectedHarness: harness,
+    })
+    if ((materialized?.snapshotId ?? null) !== (binding?.snapshot.snapshotId ?? null))
+      throw new AgentProfileChatBindingError(
+        "run-conflict",
+        "The chat's Agent Profile changed before launch.",
+      )
+    const runtimeSnapshot = constructRuntimeSnapshot(db, {
+      chatId: input.chatId,
+      harness,
+      model: model as string | null,
+      controls: {
+        modelEffort: reasoningEffort,
+        serviceTier: materialized?.launch.serviceTier ?? null,
+      },
+      permission: runtimePermissionSnapshot(permissionMode, customPermissions),
+    })
     db.prepare(
       `UPDATE sub_chats SET run_status = CASE WHEN EXISTS (
       SELECT 1 FROM agent_runs WHERE sub_chat_id = ? AND status = 'running'
@@ -178,19 +243,21 @@ export function queueChatRun(
     ).run(subChat.id, subChat.id)
     db.prepare(
       `INSERT INTO agent_runs (
-        id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
+        id, chat_id, sub_chat_id, harness, model, reasoning_effort, turn_overrides, permission_mode, custom_permissions,
         worktree_path, prompt_message_id, initial_prompt, vault_context_sections,
         runtime_snapshot_version, runtime_preference, runtime_preference_source, resolved_runtime,
         runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
         runtime_control_snapshot, provider_account_id, provider_auth_mode,
         provider_runtime_target, provider_credential_revision, status, started_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
     ).run(
       runId,
       input.chatId,
       subChat.id,
       harness,
       model,
+      reasoningEffort,
+      turnOverrides,
       permissionMode,
       customPermissions,
       subChat.worktree_path ?? chat.worktree_path ?? null,
@@ -206,12 +273,14 @@ export function queueChatRun(
   } catch (error) {
     const raced = db
       .prepare(
-        "SELECT id, status, sub_chat_id, initial_prompt, vault_context_sections FROM agent_runs WHERE id = ? AND chat_id = ?",
+        "SELECT id, status, sub_chat_id, initial_prompt, vault_context_sections, turn_overrides FROM agent_runs WHERE id = ? AND chat_id = ?",
       )
       .get(runId, input.chatId) as Row | undefined
     if (raced) {
       return replay(raced)
     }
+    if (error instanceof AgentProfileChatBindingError)
+      return { ok: false, code: "permission-denied", message: error.message }
     throw error
   }
   return { ok: true, runId, created: true, status: "pending" }
@@ -444,7 +513,10 @@ export async function drainPendingMcpRuns(
       }
       const claimed = claimPendingRunWithinUsageBudget(db, String(row.id))
       if (!claimed.claimed) continue
-      if (run.runtimeLaunch && run.runtimeLaunch.resolvedRuntime !== "flapstack-native") {
+      if (
+        run.runtimeLaunch &&
+        (run.runtimeLaunch.resolvedRuntime !== "flapstack-native" || run.harness === "antigravity")
+      ) {
         // Persist at launch, not enqueue: an active provider owns its transcript until it finishes.
         const conversation = db
           .prepare("SELECT messages FROM sub_chats WHERE id = ?")
@@ -640,6 +712,15 @@ function queuedRun(db: Database.Database, row: Row): QueuedAgentRun | null {
   ) {
     throw new Error("Durable run Agent Profile authority does not match its frozen snapshot.")
   }
+  const regularProfile =
+    profileAuthority.kind === "authority" &&
+    db.prepare("SELECT 1 FROM agent_profile_run_bindings WHERE run_id=?").get(row.id)
+      ? new AgentProfileChatBindingService(db).materializeForRun({
+          chatId: String(row.chat_id),
+          runId: String(row.id),
+          expectedHarness: String(row.harness),
+        })
+      : null
   const localInputs = validateDurableLocalLaunchInputs(row, durableDefinition)
   return {
     runId: String(row.id),
@@ -650,14 +731,15 @@ function queuedRun(db: Database.Database, row: Row): QueuedAgentRun | null {
     chatMode: normalizeChatMode(row.chat_mode),
     hotlineEnabled: resolveAgentHotlineEnabled(parseDurableMessages(row.messages)),
     model: typeof row.model === "string" ? row.model : null,
-    reasoningEffort: isReasoningEffort(durableDefinition?.reasoningEffort)
-      ? durableDefinition.reasoningEffort
-      : null,
+    reasoningEffort: isReasoningEffort(row.reasoning_effort)
+      ? row.reasoning_effort
+      : (durableDefinition?.reasoningEffort ?? null),
     permissionMode: String(row.permission_mode),
     customPermissions: typeof row.custom_permissions === "string" ? row.custom_permissions : null,
     worktreePath: typeof row.worktree_path === "string" ? row.worktree_path : null,
     projectPath: typeof row.project_path === "string" ? row.project_path : null,
     ...localInputs,
+    ...(regularProfile ? { profileInstructions: regularProfile.instructions } : {}),
     ...(taskEnvelope ? { outputSchema: taskEnvelope.outputSchema } : {}),
     ...(profileAuthority.kind === "authority"
       ? { profileRuntimeAuthority: profileAuthority.authority }
@@ -755,8 +837,8 @@ function parseDurableCustomPermissions(
 
 function isReasoningEffort(
   value: unknown,
-): value is "minimal" | "low" | "medium" | "high" | "xhigh" {
-  return ["minimal", "low", "medium", "high", "xhigh"].includes(String(value))
+): value is NonNullable<QueuedAgentRun["reasoningEffort"]> {
+  return REASONING_EFFORTS.some((effort) => effort === value)
 }
 
 export function findPrompt(messagesValue: unknown, promptMessageId: unknown): string {
@@ -820,7 +902,8 @@ function runtimeSnapshotProjection(db: Database.Database): string {
     ? "r.provider_account_id, r.provider_auth_mode, r.provider_runtime_target, r.provider_credential_revision"
     : "'legacy-system-default' provider_account_id, 'legacy' provider_auth_mode, 'local' provider_runtime_target, 'legacy' provider_credential_revision"
   if (columns.some((column) => column.name === "runtime_snapshot_version")) {
-    return `r.runtime_snapshot_version, r.runtime_preference,
+    return `${columns.some((column) => column.name === "reasoning_effort") ? "r.reasoning_effort" : "NULL reasoning_effort"},
+      r.runtime_snapshot_version, r.runtime_preference,
       r.runtime_preference_source, r.resolved_runtime, r.runtime_adapter_version,
       r.runtime_protocol_version, r.runtime_capability_snapshot, r.runtime_control_snapshot,
       ${accountProjection}`

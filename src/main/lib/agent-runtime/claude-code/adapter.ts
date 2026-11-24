@@ -249,6 +249,24 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
             state.deliveredProviderMessages += 1
             await this.captureIdentity(state, message)
             const batch = state.mapper.map(message)
+            if (state.deliveredProviderMessages === 1) {
+              const { model, effort } = state.queryInput.options
+              batch.unshift({
+                provider: "flapstack",
+                kind: "opaque-metadata",
+                phase: "snapshot",
+                displayClass: "metadata",
+                privacyClass: "public",
+                dedupKey: "claude-query-settings",
+                payload: {
+                  eventType: "claude/query.settings-sent",
+                  metadata: {
+                    model: typeof model === "string" ? model : null,
+                    effort: typeof effort === "string" ? effort : null,
+                  },
+                },
+              })
+            }
             for (const event of batch) {
               if (event.kind === "warning" && event.payload.code === "monthly-spend-limit")
                 state.failureDetail = event.payload.message

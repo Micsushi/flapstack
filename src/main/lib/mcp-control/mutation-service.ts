@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3"
+import { AgentProfileChatBindingService } from "../agent-profiles/chat-binding"
 import { projectRecordsEnabled } from "../project-records/mode"
 import { openAppDatabase } from "../db/access"
 import { randomUUID } from "node:crypto"
@@ -8,7 +9,13 @@ import { z } from "zod"
 import { projectVaultSectionIds } from "../project-vaults/registry"
 import { readFileInsideRoot, writeFileInsideRoot } from "../path-safety"
 import { assertRegisteredWorktree } from "../git/security/path-validation"
-import { getPermissionPreferences } from "../permissions"
+import { mcpTargetPermissionAllowed } from "./permission-ceiling"
+import { CHAT_MODES, normalizeChatMode, resolveChatModePermission } from "../../../shared/chat-mode"
+import {
+  customPermissionCapabilitiesSchema,
+  parseStoredCustomPermissionCapabilities,
+} from "../../../shared/permission-capabilities"
+import { getPermissionPreferences, parsePermissionMode, permissionModes } from "../permissions"
 import { nowEpochSeconds } from "../db/timestamps"
 import { createOrchestrationInputSchema } from "../../../shared/agent-orchestration"
 import {
@@ -17,6 +24,7 @@ import {
 } from "../agent-orchestration/service"
 import {
   prepareThreadSpawn,
+  reasoningEffortSchema,
   threadSpawnRequestSchema,
   type ThreadSpawnPlan,
 } from "./thread-spawn-contract"
@@ -66,8 +74,20 @@ const schemas = {
       scope: z.enum(["global", "project", "task"]),
       projectId: id.optional(),
       taskId: id.optional(),
-      harness: z.string().trim().min(1).max(80).optional(),
-      model: z.string().trim().max(200).optional(),
+      harness: z.enum(AGENT_HARNESSES).optional(),
+      model: name.optional(),
+      reasoningEffort: reasoningEffortSchema.optional(),
+    })
+    .strict(),
+  update_chat_settings: z
+    .object({
+      chatId: id,
+      harness: z.enum(AGENT_HARNESSES).optional(),
+      model: name.nullable().optional(),
+      reasoningEffort: reasoningEffortSchema.nullable().optional(),
+      chatMode: z.enum(CHAT_MODES).optional(),
+      permissionMode: z.enum(permissionModes).optional(),
+      customPermissions: customPermissionCapabilitiesSchema.optional(),
     })
     .strict(),
   create_task: z
@@ -113,6 +133,8 @@ const schemas = {
   launch_run: z
     .object({
       chatId: id,
+      model: name.optional(),
+      reasoningEffort: reasoningEffortSchema.optional(),
       initialPrompt: z.string().trim().min(1).max(100_000),
       idempotencyKey: id,
       vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
@@ -189,7 +211,22 @@ export function createMcpMutationService(
               input.data as z.infer<typeof createOrchestrationInputSchema>,
             )
           case "create_chat":
-            return createChat(db, scope, input.data as z.infer<typeof schemas.create_chat>)
+            return db
+              .transaction(() =>
+                createChat(db, scope, input.data as z.infer<typeof schemas.create_chat>),
+              )
+              .immediate()
+          case "update_chat_settings":
+            return db
+              .transaction(() =>
+                updateChatSettings(
+                  db,
+                  scope,
+                  caller,
+                  input.data as z.infer<typeof schemas.update_chat_settings>,
+                ),
+              )
+              .immediate()
           case "add_attachment":
             return addAttachment(db, scope, input.data as z.infer<typeof schemas.add_attachment>)
           case "request_visual_capture":
@@ -225,7 +262,11 @@ export function createMcpMutationService(
               input.data as z.infer<typeof schemas.write_attachment_to_worktree>,
             )
           case "launch_run":
-            return launchRun(db, scope, input.data as z.infer<typeof schemas.launch_run>)
+            return db
+              .transaction(() =>
+                launchRun(db, scope, caller, input.data as z.infer<typeof schemas.launch_run>),
+              )
+              .immediate()
           case "wait_for_chats":
             return waitForChats(
               db,
@@ -386,13 +427,160 @@ function orchestrateTask(
   }
 }
 
+function updateChatSettings(
+  db: Database.Database,
+  scope: Scope,
+  caller: McpCallerIdentity,
+  input: z.infer<typeof schemas.update_chat_settings>,
+): McpControlResponse {
+  const chat = target(db, scope, "chat", input.chatId)
+  if (chat.archived_at != null) return fail("stale-target", "Chat is archived.")
+  if (Object.keys(input).length === 1)
+    return fail("invalid-input", "Choose at least one chat setting.")
+  const sub = db
+    .prepare("SELECT * FROM sub_chats WHERE chat_id = ? ORDER BY created_at, id LIMIT 1")
+    .get(input.chatId) as Row | undefined
+  if (!sub) return fail("stale-target", "Chat conversation is missing.")
+  if (
+    db
+      .prepare("SELECT 1 FROM agent_runs WHERE chat_id = ? AND status IN ('running','pending')")
+      .get(input.chatId)
+  ) {
+    return fail(
+      "conflict",
+      "Wait for this chat's current and queued turns to finish before changing settings.",
+    )
+  }
+  if (input.customPermissions && input.permissionMode !== "custom") {
+    return fail("invalid-input", "Custom capabilities require custom permission mode.")
+  }
+  const permission = input.permissionMode ?? sub.permission_mode ?? chat.permission_mode ?? null
+  const custom =
+    input.customPermissions ??
+    parseStoredCustomPermissionCapabilities(
+      typeof chat.custom_permissions === "string" ? chat.custom_permissions : null,
+    )
+  if (permission === "custom" && !custom)
+    return fail("invalid-input", "Supply custom permission capabilities.")
+  if (
+    !mcpTargetPermissionAllowed(
+      caller,
+      resolveChatModePermission(
+        normalizeChatMode(input.chatMode ?? sub.mode),
+        parsePermissionMode(permission) ?? getPermissionPreferences().globalDefault,
+      ),
+      custom,
+    )
+  ) {
+    return fail("permission-denied", "The requested chat settings exceed the caller's permissions.")
+  }
+  if (
+    (input.permissionMode || input.customPermissions) &&
+    !mcpTargetPermissionAllowed(caller, permission, custom)
+  ) {
+    return fail("permission-denied", "The stored permission mode exceeds the caller's permissions.")
+  }
+  const previousHarness = sub.harness ?? chat.harness
+  const harness = input.harness ?? previousHarness ?? null
+  const changedHarness = harness !== previousHarness
+  const model =
+    input.model !== undefined
+      ? input.model
+      : changedHarness
+        ? null
+        : (sub.model ?? chat.model ?? null)
+  const effort =
+    input.reasoningEffort !== undefined
+      ? input.reasoningEffort
+      : changedHarness
+        ? null
+        : (sub.reasoning_effort ?? chat.reasoning_effort ?? null)
+  const binding = new AgentProfileChatBindingService(db).get(input.chatId)?.snapshot.capability
+  if (
+    binding &&
+    ((input.harness && input.harness !== binding.harness) ||
+      (input.model !== undefined &&
+        binding.modelPreference &&
+        input.model !== binding.modelPreference) ||
+      (input.reasoningEffort !== undefined &&
+        binding.reasoningEffort &&
+        input.reasoningEffort !== binding.reasoningEffort) ||
+      input.permissionMode ||
+      input.customPermissions)
+  ) {
+    return fail(
+      "permission-denied",
+      "The selected settings are fixed by this chat's bound Agent Profile.",
+    )
+  }
+  db.prepare(
+    "UPDATE chats SET harness = ?, model = ?, reasoning_effort = ?, permission_mode = ?, custom_permissions = ?, runtime_preference = CASE WHEN ? THEN NULL ELSE runtime_preference END, updated_at = unixepoch() WHERE id = ?",
+  ).run(
+    harness,
+    model,
+    effort,
+    permission,
+    permission === "custom" ? JSON.stringify(custom) : null,
+    Number(changedHarness),
+    input.chatId,
+  )
+  db.prepare(
+    "UPDATE sub_chats SET harness = ?, model = ?, reasoning_effort = ?, permission_mode = ?, mode = ?, session_id = CASE WHEN ? THEN NULL ELSE session_id END, needs_provider_handoff = CASE WHEN ? THEN 1 ELSE needs_provider_handoff END, updated_at = unixepoch() WHERE id = ?",
+  ).run(
+    harness,
+    model,
+    effort,
+    permission,
+    input.chatMode ?? sub.mode,
+    Number(changedHarness),
+    Number(changedHarness),
+    sub.id,
+  )
+  return {
+    ok: true,
+    data: {
+      chatId: input.chatId,
+      harness,
+      model,
+      reasoningEffort: effort,
+      permissionMode: permission,
+      chatMode: input.chatMode ?? sub.mode,
+    },
+  }
+}
+
 function launchRun(
   db: Database.Database,
   scope: Scope,
+  caller: McpCallerIdentity,
   input: z.infer<typeof schemas.launch_run>,
 ): McpControlResponse {
   target(db, scope, "chat", input.chatId)
-  const queued = queueChatRun(db, input)
+  // Internal service callers may supply just a chat ID. A run's grant always wins.
+  if (!caller.permissionMode) {
+    const source = (
+      caller.runId
+        ? db
+            .prepare(
+              "SELECT permission_mode, custom_permissions FROM agent_runs WHERE id=? AND chat_id=? AND status='running'",
+            )
+            .get(caller.runId, caller.chatId)
+        : db
+            .prepare(
+              "SELECT permission_mode, custom_permissions FROM chats WHERE id=? AND archived_at IS NULL",
+            )
+            .get(caller.chatId)
+    ) as Row | undefined
+    caller = {
+      ...caller,
+      permissionMode: parsePermissionMode(source?.permission_mode) ?? undefined,
+      customPermissions:
+        parseStoredCustomPermissionCapabilities(
+          typeof source?.custom_permissions === "string" ? source.custom_permissions : null,
+        ) ?? undefined,
+    }
+  }
+  const queued = queueChatRun(db, input, caller)
   if (!queued.ok) return fail(queued.code, queued.message)
   return {
     ok: true,
@@ -580,7 +768,7 @@ function createChat(
   const chatId = randomUUID()
   const now = nowEpochSeconds()
   db.prepare(
-    "INSERT INTO chats (id, name, scope, project_id, task_id, permission_mode, custom_permissions, mcp_exposure_enabled, harness, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+    "INSERT INTO chats (id, name, scope, project_id, task_id, permission_mode, custom_permissions, mcp_exposure_enabled, harness, model, reasoning_effort, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
   ).run(
     chatId,
     input.name,
@@ -591,12 +779,22 @@ function createChat(
     customPermissions,
     input.harness ?? null,
     input.model ?? null,
+    input.reasoningEffort ?? null,
     now,
     now,
   )
   db.prepare(
-    "INSERT INTO sub_chats (id, chat_id, harness, model, permission_mode, messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '[]', ?, ?)",
-  ).run(randomUUID(), chatId, input.harness ?? null, input.model ?? null, permissionMode, now, now)
+    "INSERT INTO sub_chats (id, chat_id, harness, model, reasoning_effort, permission_mode, messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?)",
+  ).run(
+    randomUUID(),
+    chatId,
+    input.harness ?? null,
+    input.model ?? null,
+    input.reasoningEffort ?? null,
+    permissionMode,
+    now,
+    now,
+  )
   return { ok: true, data: { id: chatId, created: true } }
 }
 
@@ -661,10 +859,10 @@ async function spawnThread(
     db.prepare(
       `INSERT INTO chats (
         id, name, scope, project_id, task_id, permission_mode, custom_permissions,
-        mcp_exposure_enabled, harness, model,
+        mcp_exposure_enabled, harness, model, reasoning_effort,
         worktree_path, branch, base_branch, parent_chat_id, initiator_chat_id,
         parent_run_id, ancestor_chat_ids, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       chatId,
       `${contract.plan.targetHarness} thread`,
@@ -677,6 +875,7 @@ async function spawnThread(
         : null,
       contract.plan.targetHarness,
       contract.plan.model ?? null,
+      contract.plan.reasoningEffort ?? null,
       resolved.worktreePath,
       resolved.branch,
       resolved.baseBranch,
@@ -689,14 +888,15 @@ async function spawnThread(
     )
     db.prepare(
       `INSERT INTO sub_chats (
-        id, chat_id, harness, model, permission_mode, worktree_path, run_status, messages,
+        id, chat_id, harness, model, reasoning_effort, permission_mode, worktree_path, run_status, messages,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       subChatId,
       chatId,
       contract.plan.targetHarness,
       contract.plan.model ?? null,
+      contract.plan.reasoningEffort ?? null,
       contract.plan.permission.mode,
       resolved.worktreePath,
       runId ? "pending" : null,
@@ -708,6 +908,8 @@ async function spawnThread(
       const runtimeSnapshot = constructRuntimeSnapshot(db, {
         chatId,
         harness: contract.plan.targetHarness,
+        model: contract.plan.model,
+        controls: { modelEffort: contract.plan.reasoningEffort ?? null },
         permission: runtimePermissionSnapshot(
           contract.plan.permission.mode,
           contract.plan.permission.customPermissions,
@@ -715,19 +917,20 @@ async function spawnThread(
       })
       db.prepare(
         `INSERT INTO agent_runs (
-          id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions, worktree_path,
+          id, chat_id, sub_chat_id, harness, model, reasoning_effort, permission_mode, custom_permissions, worktree_path, turn_overrides,
           prompt_message_id, initial_prompt, runtime_snapshot_version, runtime_preference,
           runtime_preference_source, resolved_runtime, runtime_adapter_version,
           runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot,
           provider_account_id, provider_auth_mode, provider_runtime_target,
           provider_credential_revision, status, started_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       ).run(
         runId,
         chatId,
         subChatId,
         contract.plan.targetHarness,
         contract.plan.model ?? null,
+        contract.plan.reasoningEffort ?? null,
         contract.plan.permission.mode,
         contract.plan.permission.customPermissions
           ? JSON.stringify(contract.plan.permission.customPermissions)

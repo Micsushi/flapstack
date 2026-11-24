@@ -212,18 +212,32 @@ export class AgentProfileChatBindingService {
         this.sqlite
           .prepare(
             `UPDATE chats SET
-               harness = ?, model = ?, runtime_preference = ?,
+               harness = ?, model = ?, reasoning_effort = ?, runtime_preference = ?,
                permission_mode = ?, custom_permissions = ?, updated_at = ?
              WHERE id = ?`,
           )
           .run(
             snapshot.capability.harness,
             snapshot.capability.modelPreference,
+            snapshot.capability.reasoningEffort,
             snapshot.runtimeResolution.preference,
             snapshot.capability.permissionMode,
             snapshot.capability.customPermissions
               ? JSON.stringify(snapshot.capability.customPermissions)
               : null,
+            now,
+            input.chatId,
+          )
+        this.sqlite
+          .prepare(
+            `UPDATE sub_chats SET harness=?, model=?, reasoning_effort=?, permission_mode=?, updated_at=?
+          WHERE id=(SELECT id FROM sub_chats WHERE chat_id=? ORDER BY created_at,id LIMIT 1)`,
+          )
+          .run(
+            snapshot.capability.harness,
+            snapshot.capability.modelPreference,
+            snapshot.capability.reasoningEffort,
+            snapshot.capability.permissionMode,
             now,
             input.chatId,
           )

@@ -1,3 +1,4 @@
+import { drainPendingAgentRuns, queueChatRun } from "../src/main/lib/run-launch-service"
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
@@ -97,6 +98,53 @@ afterEach(() => {
 })
 
 describe("regular Chat Agent Profile binding", () => {
+  it("freezes the bound profile on a queued MCP turn and rejects a conflicting override", async () => {
+    sqlite
+      .prepare(
+        "INSERT INTO sub_chats (id,chat_id,harness,messages) VALUES ('sub','project-chat','codex','[]')",
+      )
+      .run()
+    const binding = new AgentProfileChatBindingService(sqlite).bind({
+      chatId: "project-chat",
+      profile: { profileId: "builtin.planner", version: 1 },
+    })
+    const queued = queueChatRun(sqlite, {
+      chatId: "project-chat",
+      initialPrompt: "Plan",
+      idempotencyKey: "bound",
+    })
+    expect(queued.ok).toBe(true)
+    if (!queued.ok) throw new Error(queued.message)
+    expect(
+      sqlite
+        .prepare("SELECT snapshot_id FROM agent_profile_run_bindings WHERE run_id=?")
+        .get(queued.runId),
+    ).toEqual({ snapshot_id: binding.snapshotId })
+    let dispatched = false
+    await drainPendingAgentRuns(
+      sqlite.name,
+      async (run) => {
+        expect(run.harness).toBe(binding.capability.harness)
+        expect(run.profileRuntimeAuthority?.snapshotId).toBe(binding.snapshotId)
+        expect(run.profileInstructions).toBeTruthy()
+        dispatched = true
+      },
+      { waitForCompletion: true },
+    )
+    expect(dispatched).toBe(true)
+    if (binding.capability.reasoningEffort) {
+      const other = binding.capability.reasoningEffort === "medium" ? "low" : "medium"
+      expect(
+        queueChatRun(sqlite, {
+          chatId: "project-chat",
+          initialPrompt: "Plan again",
+          idempotencyKey: "override",
+          reasoningEffort: other,
+        }),
+      ).toMatchObject({ ok: false, code: "permission-denied" })
+    }
+  })
+
   it("searches compatible exact versions and previews all launch dimensions without running", () => {
     const service = new AgentProfileChatBindingService(sqlite)
 

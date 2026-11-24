@@ -86,6 +86,15 @@ describe("Claude Code Runtime adapter", () => {
     const tools = activities.filter((activity) => activity.kind === "tool")
     expect(tools.some((activity) => activity.payload.name === "ReasoningOutput")).toBe(false)
     expect(appended).toEqual(activities)
+    expect(appended).toContainEqual(
+      expect.objectContaining({
+        provider: "flapstack",
+        payload: {
+          eventType: "claude/query.settings-sent",
+          metadata: { model: queryOptions!.model ?? null, effort: queryOptions!.effort },
+        },
+      }),
+    )
     expect(await adapter.reconcile(context)).toBe("completed")
     await expect(adapter.complete(context)).resolves.toBeUndefined()
   })

@@ -1,3 +1,4 @@
+import { REASONING_EFFORTS, type ReasoningEffort } from "../../../../shared/model-catalog"
 import { spawnCodexProtocolClient } from "../../agent-runtime/codex/protocol-client"
 import { requireRuntimeLaunchAuthority } from "../../agent-runtime/launch-access"
 import { changeCodexMcpWithUndo } from "../../codex-mcp-actions"
@@ -148,7 +149,7 @@ type CodexProviderSession = {
   mcpFingerprint: string
   extensionPolicyFingerprint: string
   reasoningEnabled: boolean
-  reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" | null
+  reasoningEffort: ReasoningEffort | null
   serviceTier: "fast" | null
 }
 
@@ -1198,7 +1199,7 @@ async function createCodexRun(params: {
   worktreePath: string | null
   promptMessageId?: string
   images?: Array<{ base64Data: string; mediaType: string; filename?: string }>
-  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"
+  reasoningEffort?: ReasoningEffort
   serviceTier?: "fast" | null
 }) {
   assertSubChatNotRewinding(params.subChatId)
@@ -1358,7 +1359,7 @@ function getAuthFingerprint(authConfig?: { apiKey: string }): string | null {
 function buildCodexProviderEnv(
   authConfig?: { apiKey: string },
   reasoningEnabled = true,
-  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh",
+  reasoningEffort?: ReasoningEffort,
   extensionLaunchPolicy?: ExtensionLaunchPolicy,
   serviceTier?: "fast" | null,
 ): Record<string, string> {
@@ -1493,7 +1494,7 @@ function getOrCreateProvider(params: {
     apiKey: string
   }
   reasoningEnabled: boolean
-  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"
+  reasoningEffort?: ReasoningEffort
   serviceTier?: "fast" | null
 }): ACPProvider {
   const authFingerprint = getAuthFingerprint(params.authConfig)
@@ -1886,7 +1887,7 @@ export const codexRouter = router({
         sessionId: z.string().optional(),
         forceNewSession: z.boolean().optional(),
         reasoningEnabled: z.boolean().default(true),
-        reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
+        reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
         images: z.array(imageAttachmentSchema).optional(),
         vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
         vaultContextGraphSelection: vaultContextGraphSelectionSchema.optional(),

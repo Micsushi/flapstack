@@ -1,3 +1,4 @@
+import { REASONING_EFFORTS } from "../../../shared/model-catalog"
 import { z } from "zod"
 import { permissionModes } from "../permissions"
 import { AGENT_HARNESSES } from "../../../shared/harness-types"
@@ -7,6 +8,7 @@ import {
 } from "../../../shared/permission-capabilities"
 
 const identifierSchema = z.string().trim().min(1).max(200)
+export const reasoningEffortSchema = z.enum(REASONING_EFFORTS)
 const supportedThreadSpawnHarnessSchema = z.enum(AGENT_HARNESSES)
 export const threadSpawnScopeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("global") }).strict(),
@@ -46,6 +48,7 @@ export const threadSpawnLaunchSchema = z
 export const threadSpawnRequestSchema = z
   .object({
     targetHarness: supportedThreadSpawnHarnessSchema,
+    reasoningEffort: reasoningEffortSchema.optional(),
     model: z.string().trim().min(1).max(200).optional(),
     scope: threadSpawnScopeSchema,
     permission: threadSpawnPermissionSchema,
@@ -79,6 +82,7 @@ export type ThreadSpawnContractError = {
 export type ThreadSpawnPlan = {
   targetHarness: z.infer<typeof supportedThreadSpawnHarnessSchema>
   model?: string
+  reasoningEffort?: z.infer<typeof reasoningEffortSchema>
   scope: ThreadSpawnScope
   permission: ThreadSpawnPermission
   worktree: ThreadSpawnWorktree
@@ -135,6 +139,7 @@ export function prepareThreadSpawn(
     plan: {
       targetHarness: request.data.targetHarness,
       ...(request.data.model ? { model: request.data.model } : {}),
+      ...(request.data.reasoningEffort ? { reasoningEffort: request.data.reasoningEffort } : {}),
       scope: request.data.scope,
       permission: request.data.permission,
       worktree: request.data.worktree,

@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { createMcpReadService } from "../src/main/lib/mcp-control/read-service"
 import { createMcpMutationService } from "../src/main/lib/mcp-control/mutation-service"
 import { McpApprovalLifecycle } from "../src/main/lib/mcp-control/approval-lifecycle"
 import { appendMcpAuditRecord } from "../src/main/lib/mcp-control/audit-storage"
@@ -83,6 +84,143 @@ describe("MCP mutation service", () => {
     expect(
       sqlite.prepare("SELECT count(*) count FROM tasks WHERE name = 'Follow-up'").get(),
     ).toEqual({ count: 1 })
+  })
+
+  it("keeps a chat across turns, freezes overrides on the run and returns only visible replies", async () => {
+    const caller = { chatId: "chat-1", permissionMode: "full-access" as const }
+    const service = createMcpMutationService(path)
+    const read = createMcpReadService({
+      get: (sql, params) =>
+        sqlite.prepare(sql).get(...params) as Record<string, unknown> | undefined,
+      all: (sql, params) => sqlite.prepare(sql).all(...params) as Record<string, unknown>[],
+    })
+    const created = await service.invoke("create_chat", caller, {
+      name: "Two turns",
+      scope: "task",
+      taskId: "task-1",
+      harness: "codex",
+      model: "sol",
+      reasoningEffort: "high",
+    })
+    if (!created.ok) throw new Error(created.error.message)
+    const chatId = String(created.data.id)
+    const request = { chatId, initialPrompt: "First turn", idempotencyKey: "first" }
+    const first = await service.invoke("launch_run", caller, request)
+    if (!first.ok) throw new Error(first.error.message)
+    expect(
+      await service.invoke("update_chat_settings", caller, { chatId, model: "changed" }),
+    ).toMatchObject({ error: { code: "conflict" } })
+    await drainPendingAgentRuns(
+      path,
+      async (run) => {
+        expect(run).toMatchObject({
+          chatId,
+          model: "sol",
+          reasoningEffort: "high",
+          runtimeLaunch: { controls: { modelEffort: "high" } },
+        })
+        sqlite
+          .prepare("UPDATE agent_runs SET status='success',completed_at=unixepoch() WHERE id=?")
+          .run(run.runId)
+        sqlite
+          .prepare("UPDATE sub_chats SET session_id='old-session',messages=? WHERE chat_id=?")
+          .run(
+            JSON.stringify([
+              { id: "u1", role: "user", parts: [{ type: "text", text: "First turn" }] },
+              {
+                id: "a1",
+                role: "assistant",
+                parts: [
+                  { type: "text", text: "First reply" },
+                  { type: "reasoning", text: "hidden" },
+                  { type: "tool-lookup", output: "private output" },
+                ],
+              },
+            ]),
+            chatId,
+          )
+      },
+      { waitForCompletion: true },
+    )
+    expect(
+      await service.invoke("update_chat_settings", caller, {
+        chatId,
+        harness: "claude-code",
+        model: "sonnet",
+        reasoningEffort: "medium",
+        chatMode: "plan",
+      }),
+    ).toMatchObject({ ok: true })
+    expect(
+      sqlite
+        .prepare("SELECT session_id, needs_provider_handoff FROM sub_chats WHERE chat_id=?")
+        .get(chatId),
+    ).toEqual({ session_id: null, needs_provider_handoff: 1 })
+    const turn = {
+      chatId,
+      idempotencyKey: "second",
+      initialPrompt: "Second turn",
+      model: "opus",
+      reasoningEffort: "max",
+    }
+    const second = await service.invoke("launch_run", caller, turn)
+    if (!second.ok) throw new Error(second.error.message)
+    expect(
+      await service.invoke("launch_run", caller, { ...turn, reasoningEffort: "low" }),
+    ).toMatchObject({ ok: false, error: { code: "invalid-input" } })
+    expect(await service.invoke("launch_run", caller, request)).toMatchObject({
+      ok: true,
+      data: { created: false, runId: first.data.runId },
+    })
+    await drainPendingAgentRuns(
+      path,
+      async (run) => {
+        expect(run).toMatchObject({
+          chatId,
+          harness: "claude-code",
+          model: "opus",
+          reasoningEffort: "max",
+          permissionMode: "read-only",
+          runtimeLaunch: { controls: { modelEffort: "max" } },
+        })
+      },
+      { waitForCompletion: true },
+    )
+    const page = read.invoke("read_chat", caller, { chatId, limit: 2 })
+    expect(page).toMatchObject({
+      chat: { model: "sonnet", reasoningEffort: "medium" },
+      items: [
+        { id: "a1", text: "First reply", tools: ["lookup"] },
+        { id: "mcp-second", text: "Second turn" },
+      ],
+      nextCursor: expect.any(String),
+    })
+    expect(JSON.stringify(page)).not.toMatch(/hidden|private output/)
+    expect(
+      read.invoke("read_messages", caller, {
+        chatId,
+        limit: 1,
+        cursor: (page as { nextCursor: string }).nextCursor,
+      }),
+    ).toMatchObject({ items: [{ id: "u1" }], nextCursor: null })
+    expect(read.invoke("read_run", caller, { runId: second.data.runId })).toMatchObject({
+      status: "running",
+      model: "opus",
+      reasoningEffort: "max",
+    })
+    expect(() => read.invoke("read_chat", caller, { chatId: "chat-project-target" })).toThrow(
+      "not-found",
+    )
+    sqlite
+      .prepare("UPDATE agent_runs SET status='success',completed_at=unixepoch() WHERE id=?")
+      .run(second.data.runId)
+    expect(
+      await service.invoke(
+        "update_chat_settings",
+        { ...caller, permissionMode: "auto-edit-project-only" },
+        { chatId, permissionMode: "full-access" },
+      ),
+    ).toMatchObject({ ok: false, error: { code: "permission-denied" } })
   })
 
   it("stores MCP-created chat timestamps in Drizzle's Unix-second format", async () => {

@@ -1566,6 +1566,7 @@ export const chats = sqliteTable(
       .default(false),
     harness: text("harness"),
     model: text("model"),
+    reasoningEffort: text("reasoning_effort"),
     runtimePreference: text("runtime_preference"),
     // Owner assignments are independent of automatic labels and runtime lineage.
     assignedRole: text("assigned_role", { enum: ["discussion", "lead", "worker"] }),
@@ -1730,6 +1731,10 @@ export const subChats = sqliteTable(
     mode: text("mode").notNull().default("write"), // "write" | "plan" | "read" | "review"
     harness: text("harness"),
     model: text("model"),
+    needsProviderHandoff: integer("needs_provider_handoff", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    reasoningEffort: text("reasoning_effort"),
     permissionMode: text("permission_mode"),
     worktreePath: text("worktree_path"),
     runStatus: text("run_status"),
@@ -1761,6 +1766,8 @@ export const agentRuns = sqliteTable(
     subChatId: text("sub_chat_id").references(() => subChats.id, { onDelete: "set null" }),
     harness: text("harness").notNull(),
     model: text("model"),
+    reasoningEffort: text("reasoning_effort"),
+    turnOverrides: text("turn_overrides"),
     permissionMode: text("permission_mode").notNull(),
     customPermissions: text("custom_permissions"),
     worktreePath: text("worktree_path"),

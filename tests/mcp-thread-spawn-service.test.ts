@@ -90,6 +90,7 @@ describe("MCP cross-harness thread spawn service", () => {
       { chatId: "codex-root" },
       {
         targetHarness: "claude-code",
+        reasoningEffort: "medium",
         scope: { kind: "task", projectId: "project-1", taskId: "task-1" },
         permission: { mode: "full-access" },
         worktree: { strategy: "inherit" },
@@ -110,6 +111,16 @@ describe("MCP cross-harness thread spawn service", () => {
 
     if (!codexToClaude.ok) throw new Error(codexToClaude.error.message)
     if (!claudeToCodex.ok) throw new Error(claudeToCodex.error.message)
+
+    expect(
+      sqlite
+        .prepare(
+          `SELECT r.reasoning_effort run, c.reasoning_effort chat, s.reasoning_effort conversation,
+      json_extract(r.runtime_control_snapshot,'$.modelEffort') frozen FROM agent_runs r JOIN chats c ON c.id=r.chat_id
+      JOIN sub_chats s ON s.id=r.sub_chat_id WHERE r.id=?`,
+        )
+        .get(codexToClaude.data.runId),
+    ).toEqual({ run: "medium", chat: "medium", conversation: "medium", frozen: "medium" })
 
     expect(codexToClaude).toMatchObject({ ok: true, data: { launch: { status: "pending" } } })
     expect(claudeToCodex).toMatchObject({ ok: true, data: { launch: { status: "pending" } } })

@@ -1,3 +1,4 @@
+import { antigravityEffortVariants } from "../../../../shared/antigravity-models"
 import { useAtom } from "jotai"
 import { antigravityPermissions } from "../../../../shared/antigravity-permissions"
 import type { RunPermissionMode } from "../../../../shared/harness-types"
@@ -27,15 +28,7 @@ export function useAntigravityModelPicker(
     ? (selections[subChatId] ?? persistedModel)
     : (selections.draft ?? models[0]?.id)
   const selectedModel = models.find((model) => model.id === selectedModelId)
-  // Antigravity advertises each effort as a separate model ID.
-  const effortPattern = /^(.*) \((minimal|none|low|medium|high|xhigh|max|ultra)\)$/i
-  const family = selectedModel && effortPattern.exec(selectedModel.name)
-  const efforts = family
-    ? models.flatMap((model) => {
-        const match = effortPattern.exec(model.name)
-        return match?.[1] === family[1] && match?.[2] ? [{ id: model.id, label: match[2] }] : []
-      })
-    : []
+  const { efforts, selectedEffort } = antigravityEffortVariants(models, selectedModelId)
   const status =
     catalog.error?.message ??
     (catalog.isPending
@@ -49,7 +42,7 @@ export function useAntigravityModelPicker(
     setNativeApprovals,
     selectedModelId,
     efforts,
-    selectedEffort: family?.[2],
+    selectedEffort,
     canRetry: catalog.isError || (catalog.isSuccess && !models.length),
     label: selectedModel?.name ?? selectedModelId ?? "Choose Gemini model",
     status,

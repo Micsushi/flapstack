@@ -1,3 +1,15 @@
+export const REASONING_EFFORTS = [
+  "minimal",
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+] as const
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number]
+
 export type ClaudeEffortLevel = "low" | "medium" | "high" | "xhigh" | "max"
 
 const CLAUDE_DEEP_EFFORTS: readonly ClaudeEffortLevel[] = ["low", "medium", "high", "xhigh", "max"]

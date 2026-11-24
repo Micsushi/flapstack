@@ -1,3 +1,5 @@
+import { buildVisibleContextManifest } from "./agent-runtime/context-manifest"
+import type { HandoffMessage } from "./chat-handoff"
 import { buildRecordTaskRunContext } from "./project-records/run-context"
 import { recordRunTimingInterval } from "./run-timings"
 import { createAntigravityAdapter } from "./agent-runtime/antigravity/adapter"
@@ -457,7 +459,14 @@ export class MainRuntimeLaunchService {
         )
         void workspace.catch(() => {})
       }
-      const instructions = await this.resolveDirectRuntimeInstructions(run)
+      const workspaceInstructions = await this.resolveDirectRuntimeInstructions(run)
+      const instructions =
+        [
+          resolvedLaunch.resolvedRuntime !== "flapstack-native" && run.profileInstructions,
+          workspaceInstructions,
+        ]
+          .filter(Boolean)
+          .join("\n\n") || null
       if (this.prelaunchCancellations.has(run.runId)) {
         throw new RuntimeLaunchCancelledError(run.runId)
       }
@@ -507,13 +516,16 @@ export class MainRuntimeLaunchService {
           sqlite.close()
         }
       }
+      const handoff = persistedSession ? null : this.loadProviderHandoff(run)
       const prompt = resolveRuntimeTurnPrompt(
         {
           ...run,
-          prompt:
-            !persistedSession &&
-            run.harness !== "local" &&
-            (resolvedLaunch.resolvedRuntime !== "flapstack-native" || run.harness === "antigravity")
+          prompt: handoff
+            ? handoff + "\n" + run.prompt
+            : !persistedSession &&
+                run.harness !== "local" &&
+                (resolvedLaunch.resolvedRuntime !== "flapstack-native" ||
+                  run.harness === "antigravity")
               ? prependPreSessionChatContext(
                   run.prompt,
                   this.loadPreSessionUserMessages(run.runId, Boolean(recordTaskContext)),
@@ -1326,7 +1338,8 @@ export class MainRuntimeLaunchService {
           if (
             terminal === "success" &&
             (run.resolved_runtime !== "flapstack-native" || run.harness === "antigravity") &&
-            (run.prompt_message_id?.startsWith("mcp-mobile-") ||
+            (run.turn_overrides != null ||
+              run.prompt_message_id?.startsWith("mcp-mobile-") ||
               (run.prompt_message_id?.startsWith("mcp-diff-feedback-") &&
                 db
                   .prepare("SELECT id FROM diff_feedback_batches WHERE id = ? AND run_id = ?")
@@ -1355,6 +1368,11 @@ export class MainRuntimeLaunchService {
               runId,
               loadInteractiveRuntimeAssistantParts(db, runId),
             )
+          }
+          if (terminal === "success" && run.sub_chat_id) {
+            db.prepare(
+              "UPDATE sub_chats SET needs_provider_handoff=0 WHERE id=? AND harness=? AND needs_provider_handoff=1",
+            ).run(run.sub_chat_id, run.harness)
           }
           if (run.sub_chat_id) {
             db.prepare(
@@ -1529,6 +1547,35 @@ export class MainRuntimeLaunchService {
         nowEpochSeconds(),
         runId,
       )
+    } finally {
+      db.close()
+    }
+  }
+
+  private loadProviderHandoff(run: QueuedAgentRun): string | null {
+    const db = this.open()
+    try {
+      const row = db
+        .prepare(
+          `SELECT s.messages, r.prompt_message_id FROM sub_chats s JOIN agent_runs r ON r.sub_chat_id=s.id
+        WHERE r.id=? AND s.needs_provider_handoff=1 AND s.harness=r.harness`,
+        )
+        .get(run.runId) as { messages: string; prompt_message_id: string | null } | undefined
+      if (!row) return null
+      const messages = parseStoredChatMessages(row.messages).filter(
+        (message) =>
+          message.id !== row.prompt_message_id &&
+          (message.role === "user" || message.role === "assistant"),
+      )
+      if (!messages.length) return null
+      return buildVisibleContextManifest({
+        sourceChatId: run.chatId,
+        sourceRunId: null,
+        compact: true,
+        conversations: [
+          { subChatId: run.subChatId, subChatName: null, messages: messages as HandoffMessage[] },
+        ],
+      }).contextText
     } finally {
       db.close()
     }
@@ -1851,7 +1898,7 @@ export class MainRuntimeLaunchService {
   private requireRunRow(db: Database.Database, runId: string) {
     const row = db
       .prepare(
-        "SELECT id, chat_id, sub_chat_id, harness, resolved_runtime, prompt_message_id FROM agent_runs WHERE id = ?",
+        "SELECT id, chat_id, sub_chat_id, harness, resolved_runtime, prompt_message_id, turn_overrides FROM agent_runs WHERE id = ?",
       )
       .get(runId) as
       | {
@@ -1861,6 +1908,7 @@ export class MainRuntimeLaunchService {
           harness: string
           resolved_runtime: string
           prompt_message_id: string | null
+          turn_overrides: string | null
         }
       | undefined
     if (!row) throw new Error(`Runtime run ${runId} is missing.`)
@@ -2296,9 +2344,7 @@ async function launchLegacyStream(
         ...(model ? { model } : {}),
         mode: chatMode,
         reasoningEnabled,
-        ...(legacyCodexEffort(run.reasoningEffort)
-          ? { reasoningEffort: legacyCodexEffort(run.reasoningEffort)! }
-          : {}),
+        ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}),
       })
     case "claude-code":
       return caller.claude.compatibilityChat({
@@ -2429,12 +2475,10 @@ function resolveCodexLaunchModel(
 ): string | null {
   const normalized = model?.trim()
   if (!normalized) return null
-  const effort =
-    reasoningEffort === "max" || reasoningEffort === "ultra"
-      ? "xhigh"
-      : reasoningEffort && reasoningEffort !== "minimal" && reasoningEffort !== "none"
-        ? reasoningEffort
-        : "low"
+  const storedEffort = normalized.match(
+    /(?:\/|\[)(none|minimal|low|medium|high|xhigh|max|ultra)\]?$/i,
+  )?.[1]
+  const effort = reasoningEffort === "minimal" ? "low" : (reasoningEffort ?? storedEffort ?? "low")
   const withoutEffort = normalized
     .replace(/\/(?:none|minimal|low|medium|high|xhigh|max|ultra)$/i, "")
     .replace(/\[(?:none|minimal|low|medium|high|xhigh|max|ultra)\]$/i, "")

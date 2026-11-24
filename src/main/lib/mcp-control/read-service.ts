@@ -1,6 +1,9 @@
 import type Database from "better-sqlite3"
 import { openAppDatabase } from "../db/access"
 import { z } from "zod"
+import { AGENT_HARNESSES } from "../../../shared/harness-types"
+import { parseStoredCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
+import { sanitizeRuntimeText } from "../agent-runtime/sanitizer"
 import { orchestrationFleetQuerySchema } from "../../../shared/agent-orchestration"
 import { queryOrchestrationFleet } from "../agent-orchestration/fleet"
 import { isBetaFeatureEnabled } from "../beta-features/settings"
@@ -34,6 +37,11 @@ const listChatsSchema = z
   })
   .strict()
 const listRunsSchema = z.object({ ...pageShape, chatId: z.string().min(1).optional() }).strict()
+const historySchema = z.object({ chatId: z.string().min(1).max(128), ...pageShape }).strict()
+const runSchema = z.object({ runId: z.string().min(1).max(128), ...pageShape }).strict()
+export const providerCatalogSchema = z
+  .object({ provider: z.enum(AGENT_HARNESSES).optional() })
+  .strict()
 const listWorktreesSchema = z
   .object({ ...pageShape, projectId: z.string().min(1).optional() })
   .strict()
@@ -61,6 +69,11 @@ export const mcpReadInputShapes: Record<string, z.ZodRawShape | undefined> = {
   list_orchestrations: listOrchestrationsSchema.shape,
   list_chats: listChatsSchema.shape,
   list_runs: listRunsSchema.shape,
+  list_models: providerCatalogSchema.shape,
+  list_providers: {},
+  read_chat: historySchema.shape,
+  read_messages: historySchema.shape,
+  read_run: runSchema.shape,
   list_worktrees: listWorktreesSchema.shape,
   list_artifacts: listArtifactsSchema.shape,
   search: searchSchema.shape,
@@ -109,6 +122,9 @@ function timestamp(value: unknown): string | null {
 }
 
 function scopeFor(store: McpReadStore, caller: McpCallerIdentity): Scope {
+  if ("callerKind" in caller && caller.callerKind === "external-owner") {
+    return { chatId: caller.chatId, kind: "global", projectId: null, taskId: null }
+  }
   const row = store.get(
     `SELECT c.id, c.scope, c.task_id, c.project_id, p.id valid_project_id,
             t.project_id task_project_id
@@ -129,11 +145,21 @@ function scopeFor(store: McpReadStore, caller: McpCallerIdentity): Scope {
 }
 
 function requireScope(
+  store: McpReadStore,
   scope: Scope,
   requested: { projectId?: string; taskId?: string; chatId?: string },
 ) {
-  if (requested.chatId && requested.chatId !== scope.chatId)
-    fail("out-of-scope", "Chat is outside the caller scope.")
+  if (requested.chatId && requested.chatId !== scope.chatId) {
+    const v = visible(scope)
+    if (
+      !store.get(`SELECT c.id FROM chats c WHERE c.id=? AND ${v.sql}`, [
+        requested.chatId,
+        ...v.params,
+      ])
+    ) {
+      fail("out-of-scope", "Chat is outside the caller scope.")
+    }
+  }
   if (scope.taskId && requested.taskId && requested.taskId !== scope.taskId)
     fail("out-of-scope", "Task is outside the caller scope.")
   if (scope.projectId && requested.projectId && requested.projectId !== scope.projectId)
@@ -194,7 +220,7 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
       }
       if (name === "list_tasks") {
         const input = listTasksSchema.parse(rawInput)
-        requireScope(scope, input)
+        requireScope(store, scope, input)
         const start = offset(input.cursor)
         const conditions = [
           input.includeArchived ? "1 = 1" : "t.archived_at IS NULL",
@@ -259,7 +285,7 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
       }
       if (name === "list_chats") {
         const input = listChatsSchema.parse(rawInput)
-        requireScope(scope, input)
+        requireScope(store, scope, input)
         const start = offset(input.cursor)
         const v = visible(scope)
         const conditions = [v.sql, input.includeArchived ? "1 = 1" : "c.archived_at IS NULL"]
@@ -293,9 +319,123 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
           })),
         }
       }
+      if (name === "read_chat" || name === "read_messages") {
+        const input = historySchema.parse(rawInput)
+        const v = visible(scope)
+        const chat = store.get(
+          `SELECT c.id, c.name, c.scope, c.project_id projectId, c.task_id taskId,
+             coalesce(s.harness,c.harness) harness, coalesce(s.model,c.model) model,
+             coalesce(s.reasoning_effort,c.reasoning_effort) reasoningEffort,
+             coalesce(s.permission_mode,c.permission_mode) permissionMode, c.custom_permissions customPermissions, s.mode chatMode
+           FROM chats c LEFT JOIN sub_chats s ON s.chat_id = c.id
+           WHERE c.id = ? AND ${v.sql} ORDER BY s.created_at,s.id LIMIT 1`,
+          [input.chatId, ...v.params],
+        )
+        if (!chat) fail("not-found", "Chat is missing or outside the caller scope.")
+        const rows = store.all(
+          `SELECT m.key position, substr(m.value ->> '$.id',1,128) id, m.value ->> '$.role' role,
+             coalesce((SELECT substr(group_concat(piece,''),1,4096) FROM (
+               SELECT substr(part.value ->> '$.text',1,4096) piece
+               FROM json_each(m.value,'$.parts') part WHERE part.type='object'
+                 AND part.value ->> '$.type'='text' AND json_type(part.value,'$.text')='text'
+               ORDER BY part.key LIMIT 64
+             )), CASE WHEN json_type(m.value,'$.content')='text' THEN substr(m.value ->> '$.content',1,4096) END,'') text,
+             (SELECT json_group_array(name) FROM (
+               SELECT substr(part.value ->> '$.type',6,128) name
+               FROM json_each(m.value,'$.parts') part WHERE part.type='object'
+               AND substr(part.value ->> '$.type',1,5)='tool-' ORDER BY part.key LIMIT 12
+             )) tools
+           FROM chats c JOIN sub_chats s ON s.id = (
+             SELECT id FROM sub_chats WHERE chat_id=c.id ORDER BY created_at,id LIMIT 1)
+           JOIN json_each(s.messages) m
+           WHERE c.id=? AND ${v.sql} AND m.key < ? AND m.type='object' AND m.value ->> '$.role' IN ('user','assistant')
+           ORDER BY m.key DESC LIMIT ?`,
+          [
+            input.chatId,
+            ...v.params,
+            input.cursor ? offset(input.cursor) : Number.MAX_SAFE_INTEGER,
+            input.limit + 1,
+          ],
+        )
+        const nextCursor =
+          rows.length > input.limit
+            ? Buffer.from(String(rows[input.limit - 1]!.position)).toString("base64url")
+            : null
+        const items = rows
+          .slice(0, input.limit)
+          .reverse()
+          .map((row) => ({
+            id: row.id,
+            role: row.role,
+            text: sanitizeRuntimeText(String(row.text), { mode: "agent-content", maxLength: 4096 }),
+            tools: JSON.parse(String(row.tools)) as string[],
+          }))
+        return {
+          ...(name === "read_chat"
+            ? {
+                chat: {
+                  ...chat,
+                  customPermissions: parseStoredCustomPermissionCapabilities(
+                    chat.customPermissions,
+                  ),
+                },
+              }
+            : {}),
+          items,
+          nextCursor,
+        }
+      }
+      if (name === "read_run") {
+        const input = runSchema.parse(rawInput)
+        const v = visible(scope)
+        const run = store.get(
+          `SELECT r.id, r.chat_id chatId, r.harness, r.model, r.reasoning_effort reasoningEffort,
+             r.permission_mode permissionMode, r.status, r.started_at, r.completed_at
+           FROM agent_runs r JOIN chats c ON c.id=r.chat_id WHERE r.id=? AND ${v.sql}`,
+          [input.runId, ...v.params],
+        )
+        if (!run) fail("not-found", "Run is missing or outside the caller scope.")
+        const activity = queryPage(
+          store,
+          `SELECT a.sequence, a.kind, a.phase,
+             substr(CASE a.kind WHEN 'reasoning-summary' THEN a.payload_json ->> '$.text'
+                WHEN 'tool' THEN a.payload_json ->> '$.name' ELSE a.payload_json ->> '$.message' END,1,1024) summary
+           FROM agent_activity_events a JOIN agent_runs r ON r.id=a.run_id JOIN chats c ON c.id=r.chat_id
+           WHERE r.id=? AND ${v.sql} AND a.privacy_class='public' AND a.display_class!='private'
+             AND a.redaction_state='none' AND a.kind IN ('reasoning-summary','tool','status')
+           ORDER BY a.sequence DESC`,
+          [input.runId, ...v.params],
+          offset(input.cursor),
+          input.limit,
+        )
+        const providerSettings = store.get(
+          `SELECT a.payload_json ->> '$.eventType' event, a.payload_json ->> '$.metadata.model' model,
+             a.payload_json ->> '$.metadata.effort' effort
+           FROM agent_activity_events a JOIN agent_runs r ON r.id=a.run_id JOIN chats c ON c.id=r.chat_id
+           WHERE r.id=? AND ${v.sql} AND a.kind='opaque-metadata' AND a.provider='flapstack'
+             AND a.privacy_class='public' AND a.redaction_state='none'
+             AND a.payload_json ->> '$.eventType' IN ('turn/start.settings-sent','claude/query.settings-sent','antigravity/set-session-model.settings-sent')
+           ORDER BY a.sequence DESC LIMIT 1`,
+          [input.runId, ...v.params],
+        )
+        const { started_at, completed_at, ...metadata } = run
+        return {
+          ...metadata,
+          providerSettings: providerSettings ?? null,
+          startedAt: timestamp(started_at),
+          completedAt: timestamp(completed_at),
+          activity: {
+            ...activity,
+            items: activity.items.reverse().map((item) => ({
+              ...item,
+              summary: typeof item.summary === "string" ? sanitizeRuntimeText(item.summary) : null,
+            })),
+          },
+        }
+      }
       if (name === "list_runs") {
         const input = listRunsSchema.parse(rawInput)
-        requireScope(scope, input)
+        requireScope(store, scope, input)
         const start = offset(input.cursor)
         const v = visible(scope)
         const params = [...v.params]
@@ -326,7 +466,7 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
       }
       if (name === "list_worktrees") {
         const input = listWorktreesSchema.parse(rawInput)
-        requireScope(scope, input)
+        requireScope(store, scope, input)
         const start = offset(input.cursor)
         const v = visible(scope)
         const params = [...v.params]
@@ -355,7 +495,7 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
       }
       if (name === "list_artifacts") {
         const input = listArtifactsSchema.parse(rawInput)
-        requireScope(scope, input)
+        requireScope(store, scope, input)
         const start = offset(input.cursor)
         const v = visible(scope)
         const attachmentParams = [...v.params]
@@ -408,7 +548,7 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
       }
       if (name === "search") {
         const input = searchSchema.parse(rawInput)
-        requireScope(scope, input)
+        requireScope(store, scope, input)
         const start = offset(input.cursor)
         const v = visible(scope)
         const pattern = `%${input.query.replace(/[\\%_]/g, "\\$&")}%`

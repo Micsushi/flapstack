@@ -241,6 +241,8 @@ export function invalidationForProductMcpMutation(
         runIds: compactIds(...agents.map((agent) => stringValue(agent.runId))),
       })
     }
+    case "update_chat_settings":
+      return event(["chats"], { chatIds: compactIds(chatId) })
     case "add_attachment":
       return event(["attachments"], { chatIds: compactIds(chatId) })
     case "answer_agent_question":

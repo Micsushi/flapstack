@@ -289,7 +289,7 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
   switch (toolName) {
     case "create_chat":
       return {
-        ...safe("scope", "projectId", "taskId", "harness", "model"),
+        ...safe("scope", "projectId", "taskId", "harness", "model", "reasoningEffort"),
         name: textDigest("name"),
       }
     case "create_task":
@@ -308,7 +308,7 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
       return safe("attachmentId", "worktreePath", "targetRelativePath", "overwrite")
     case "launch_run":
       return {
-        ...safe("chatId", "idempotencyKey"),
+        ...safe("chatId", "idempotencyKey", "model", "reasoningEffort"),
         initialPrompt: textDigest("initialPrompt"),
       }
     case "wait_for_chats":
@@ -414,8 +414,23 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
     case "list_chats":
     case "list_runs":
     case "list_worktrees":
+    case "read_chat":
+    case "read_messages":
+    case "read_run":
     case "list_artifacts":
       return safe("projectId", "taskId", "chatId", "runId", "cursor", "limit")
+    case "update_chat_settings":
+      return safe(
+        "chatId",
+        "harness",
+        "model",
+        "reasoningEffort",
+        "chatMode",
+        "permissionMode",
+        "customPermissions",
+      )
+    case "list_models":
+      return safe("provider")
     case "list_vault_sections":
     case "read_vault_section":
     case "list_vault_nodes":

@@ -32,6 +32,7 @@ import {
 import { projectMcpServers } from "./project-mcp"
 import { AntigravityEvents } from "./events"
 import { answerAntigravityForm, type AskAntigravityQuestion } from "./questions"
+import { antigravityEffortVariants } from "../../../../shared/antigravity-models"
 import { antigravityPermissions } from "../../../../shared/antigravity-permissions"
 
 function executable() {
@@ -321,7 +322,16 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
     if (!sessionId) throw new Error("Antigravity returned no session ID.")
     state.sessionId = sessionId
     state.mapper = new AntigravityEvents(sessionId, context.launch.controls.reasoningDisplay)
-    const selected = context.launch.model
+    let selected = context.launch.model
+    const effort = context.launch.controls.modelEffort
+    if (effort) {
+      const options = await antigravityModels()
+      const variants = antigravityEffortVariants(options, selected ?? options[0]?.id)
+      const variant = variants.efforts.find((option) => option.label === effort)
+      if (!variant)
+        throw new Error(`Antigravity does not offer ${effort} effort for this Gemini model.`)
+      selected = variant.id
+    }
     if (selected) {
       if (!selected.startsWith("gemini-"))
         throw new Error("Choose an available Gemini model for Antigravity.")
@@ -329,6 +339,21 @@ export function createAntigravityAdapter(deps: Dependencies): HarnessAdapter<Age
         connection.unstable_setSessionModel({ sessionId, modelId: selected }),
         "model selection",
       )
+      await deps.append(context.runId, [
+        {
+          provider: "flapstack",
+          kind: "opaque-metadata",
+          phase: "snapshot",
+          displayClass: "metadata",
+          privacyClass: "public",
+          providerSessionId: sessionId,
+          dedupKey: "agy-model-settings",
+          payload: {
+            eventType: "antigravity/set-session-model.settings-sent",
+            metadata: { model: selected, effort },
+          },
+        },
+      ])
     }
     await bounded(
       connection.setSessionMode({ sessionId, modeId: "default" }),
