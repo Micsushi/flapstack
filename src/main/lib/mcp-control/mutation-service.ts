@@ -249,7 +249,11 @@ export function createMcpMutationService(
           case "create_chat":
             return db
               .transaction(() =>
-                createChat(db, callerScope(db, caller), input.data as z.infer<typeof schemas.create_chat>),
+                createChat(
+                  db,
+                  callerScope(db, caller),
+                  input.data as z.infer<typeof schemas.create_chat>,
+                ),
               )
               .immediate()
           case "update_chat_settings":
