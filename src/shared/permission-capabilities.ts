@@ -1,4 +1,3 @@
-import type { RunPermissionMode } from "./harness-types"
 import { z, type RefinementCtx } from "zod"
 import type { AgentHarness, RunPermissionMode } from "./harness-types"
 
