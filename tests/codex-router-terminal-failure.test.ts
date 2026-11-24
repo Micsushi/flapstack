@@ -32,6 +32,11 @@ vi.mock("@mcpc-tech/acp-ai-provider", () => ({
   createACPProvider: mocks.createACPProvider,
 }))
 
+vi.mock("../src/main/lib/agent-runtime/codex/binary", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/main/lib/agent-runtime/codex/binary")>()),
+  resolveCodexRuntimeCommand: () => "codex",
+}))
+
 vi.mock("ai", async (importOriginal) => ({
   ...(await importOriginal<typeof import("ai")>()),
   streamText: mocks.streamText,

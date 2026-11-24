@@ -13,6 +13,10 @@ jobs:
   verify:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, Linux, X64, flapstack]
+    env:
+      VITEST_MAX_WORKERS: 2
+      CARGO_BUILD_JOBS: 2
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
     # Native qualification takes about 38 minutes before the multi-GB upload.
     timeout-minutes: 90
     concurrency:
@@ -47,6 +51,25 @@ jobs:
 
       - name: Check
         run: npm run check -- --portable-linux
+
+      - name: Cache the pinned dictation model
+        shell: bash
+        run: |
+          set -euo pipefail
+          model_file=$(node -p "require('./src/shared/parakeet-model.json').file")
+          digest=$(node -p "require('./src/shared/parakeet-model.json').sha256")
+          url=$(node -p "require('./src/shared/parakeet-model.json').url")
+          directory="${XDG_CACHE_HOME:-$HOME/.cache}/flapstack/speech-models/$digest"
+          mkdir -p "$directory"
+          model="$directory/$model_file"
+          if ! echo "$digest  $model" | sha256sum --check --status; then
+            download=$(mktemp "$directory/download.XXXXXXXX")
+            trap 'rm -f -- "$download"' EXIT
+            curl --fail --location --retry 3 --retry-all-errors --output "$download" "$url"
+            echo "$digest  $download" | sha256sum --check
+            mv -- "$download" "$model"
+          fi
+          echo "FLAPSTACK_PARAKEET_MODEL_CACHE=$model" >> "$GITHUB_ENV"
 
       - name: Build Linux Preview artifacts
         env:

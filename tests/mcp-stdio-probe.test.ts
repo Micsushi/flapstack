@@ -69,7 +69,7 @@ afterEach(() => {
       !basename(target).startsWith("flapstack-mcp-probe-")
     )
       throw new Error("Refusing cleanup outside exact fixture root")
-    rmSync(target, { recursive: true, force: true })
+    rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
   directory = undefined
 })
