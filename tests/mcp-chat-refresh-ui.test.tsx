@@ -20,7 +20,9 @@ vi.mock("../src/renderer/lib/trpc", () => {
         ),
     },
   )
-  return { trpc: { useUtils: () => utils } }
+  return {
+    trpc: { useUtils: () => utils, speech: { playbackCommands: { useSubscription: vi.fn() } } },
+  }
 })
 import { McpExternalMutationRefreshBridge } from "../src/renderer/features/mcp-safety/external-mutation-refresh"
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
