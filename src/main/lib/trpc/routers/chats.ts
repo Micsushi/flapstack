@@ -516,13 +516,13 @@ export const chatsRouter = router({
           chatId: subChats.chatId,
           created_at: subChats.createdAt,
           attentionRunId: sql<string | null>`CASE
-            WHEN ${subChats.runStatus} IN ('failure', 'failed', 'error', 'needs-input', 'waiting_for_input')
+            WHEN ${subChats.runStatus} IN ('failure', 'failed', 'error', 'needs-input', 'waiting_for_input', 'blocked')
               OR (${subChats.harness} = 'local' AND ${subChats.runStatus} = 'running' AND ${subChats.streamId} IS NULL)
             THEN (
               SELECT r.id FROM agent_runs r
               WHERE r.chat_id = sub_chats.chat_id AND r.sub_chat_id = sub_chats.id
                 AND (r.status IN ('failure', 'failed', 'error')
-                  OR sub_chats.run_status IN ('needs-input', 'waiting_for_input'))
+                  OR sub_chats.run_status IN ('needs-input', 'waiting_for_input', 'blocked'))
               ORDER BY r.started_at DESC, r.rowid DESC LIMIT 1
             )
           END`,

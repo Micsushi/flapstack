@@ -6,6 +6,7 @@ import {
   LockKeyhole,
   Mail,
   TriangleAlert,
+  createLucideIcon,
   type LucideIcon,
 } from "lucide-react"
 import { trpc } from "../../../lib/trpc"
@@ -60,6 +61,19 @@ const appearance = {
 
 const StatusContext = createContext<ReadonlyMap<string, ChatStatus>>(new Map())
 const statusSlot = "inline-flex size-4 shrink-0 items-center justify-center"
+const FilledLockKeyhole = createLucideIcon("FilledLockKeyhole", [
+  ["path", { d: "M7 10V7a5 5 0 0 1 10 0v3", key: "shackle" }],
+  [
+    "path",
+    {
+      d: "M5 9h14a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3v-8a3 3 0 0 1 3-3ZM12 14a2 2 0 1 0 0 4 2 2 0 1 0 0-4Z",
+      fill: "currentColor",
+      fillRule: "evenodd",
+      stroke: "none",
+      key: "body",
+    },
+  ],
+])
 
 export function useAcknowledgeChatAttention(chatId: string, visible: boolean) {
   const keys = useContext(StatusContext).get(chatId)?.unseenAttentionKeys
@@ -110,11 +124,11 @@ export function ChatStatusProvider({ children }: { children: ReactNode }) {
     for (const [subChatId, plan] of plans) {
       collect(needsInput, plan.parentChatId, `plan:${subChatId}:${plan.planId}`)
     }
-    const blocked = new Set<string>()
+    const blocked = new Map<string, string[]>()
     const dependencyWaitFailed = new Map<string, string[]>()
     for (const wait of data?.waits ?? []) {
       if (wait.status === "failed") collect(dependencyWaitFailed, wait.chatId, `wait:${wait.id}`)
-      else if (wait.status === "waiting") blocked.add(wait.chatId)
+      else if (wait.status === "waiting") collect(blocked, wait.chatId, `blocked-wait:${wait.id}`)
       else if (wait.status === "resuming") running.add(wait.chatId)
     }
     const ids = new Set([
@@ -122,7 +136,7 @@ export function ChatStatusProvider({ children }: { children: ReactNode }) {
       ...unread,
       ...running,
       ...needsInput.keys(),
-      ...blocked,
+      ...blocked.keys(),
       ...dependencyWaitFailed.keys(),
     ])
     const statuses = new Map<string, ChatStatus>()
@@ -134,24 +148,26 @@ export function ChatStatusProvider({ children }: { children: ReactNode }) {
       const hasUnread = unread.has(chatId)
       const inputKeys = needsInput.get(chatId)
       const waitKeys = dependencyWaitFailed.get(chatId)
+      const blockKeys = blocked.get(chatId)
       const kind = resolveChatStatus({
         unread: hasUnread,
         running: running.has(chatId),
         needsInput: Boolean(inputKeys),
-        blocked: blocked.has(chatId),
+        blocked: Boolean(blockKeys),
         dependencyWaitFailed: Boolean(waitKeys),
         runStatus: run?.runStatus,
       })
       if (!kind) continue
       const runKey = `run:${kind}:${run?.attentionRunId ?? canonicalId ?? chatId}`
       const attentionKeys =
-        kind === "needs-input"
-          ? (inputKeys ?? [runKey])
-          : kind === "dependency-wait-failed"
-            ? (waitKeys ?? [runKey])
-            : kind === "failed"
-              ? [runKey]
-              : undefined
+        kind === "running" || kind === "unread"
+          ? undefined
+          : ({
+              "needs-input": inputKeys,
+              "dependency-wait-failed": waitKeys,
+              blocked: blockKeys,
+              failed: undefined,
+            }[kind] ?? [runKey])
       statuses.set(chatId, {
         kind,
         unread: hasUnread,
@@ -182,6 +198,8 @@ export function ChatStatusSummary({ statuses }: { statuses: readonly ChatStatus[
         ? "seen"
         : undefined
   const primaryAttention = attention(statuses.filter((status) => status.kind === primary))
+  const filledLock = primary === "blocked" && primaryAttention === "new"
+  const StatusIcon = filledLock ? FilledLockKeyhole : Icon
   const labels = kinds.map((kind) => {
     const entries = statuses.filter((status) => status.kind === kind)
     const { label } = appearance[kind]
@@ -202,12 +220,13 @@ export function ChatStatusSummary({ statuses }: { statuses: readonly ChatStatus[
       data-chat-status={primary}
       data-attention={primaryAttention}
     >
-      <Icon
+      <StatusIcon
         aria-hidden
         className={cn(
           "size-4",
           color,
           primaryAttention === "new" &&
+            !filledLock &&
             "[&>:first-child]:fill-current [&>:not(:first-child)]:stroke-background",
         )}
       />
