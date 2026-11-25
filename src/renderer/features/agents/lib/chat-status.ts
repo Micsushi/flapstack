@@ -4,10 +4,7 @@ export const chatStatusPriority = [
   "failed",
   "blocked",
   "running",
-  "stopped",
   "unread",
-  "complete",
-  "unknown",
 ] as const
 
 export type ChatStatusKind = (typeof chatStatusPriority)[number]
@@ -15,9 +12,9 @@ export type ChatStatusKind = (typeof chatStatusPriority)[number]
 export type ChatStatus = {
   kind: ChatStatusKind
   unread: boolean
+  unseenAttentionKeys?: readonly string[]
 }
 
-/** A completed run establishes that the reply finished. */
 export function resolveChatStatus({
   unread,
   running,
@@ -41,8 +38,5 @@ export function resolveChatStatus({
   if (running || runStatus === "running" || runStatus === "pending") return "running"
   if (runStatus === "failure" || runStatus === "failed" || runStatus === "error") return "failed"
   if (runStatus === "blocked") return "blocked"
-  if (runStatus === "cancelled" || runStatus === "stopped") return "stopped"
-  if (unread) return "unread"
-  if (runStatus === "success" || runStatus === "completed") return "complete"
-  return runStatus ? "unknown" : null
+  return unread ? "unread" : null
 }

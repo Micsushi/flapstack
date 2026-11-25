@@ -1258,7 +1258,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
                     showPlaceholder={true}
                   />
                 </span>
-                {!isMultiSelectMode && <ChatStatusIndicator chatIds={[chatId]} />}
                 {/* Hover actions */}
                 {!isMultiSelectMode && !isMobileFullscreen && (
                   <div
@@ -1496,6 +1495,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
                     </DropdownMenu>
                   </div>
                 )}
+                {!isMultiSelectMode && <ChatStatusIndicator chatIds={[chatId]} />}
               </div>
               <div className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground/60">
                 {isRemote && <CloudIcon className="h-2.5 w-2.5 flex-shrink-0" />}
@@ -1523,6 +1523,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 {chatAgentWait && (
                   <AgentChatWaitBadge
                     wait={chatAgentWait}
+                    showStatusIcons={false}
                     onDismiss={
                       chatAgentWait.status === "failed"
                         ? () => onDismissAgentWait(chatAgentWait.id)

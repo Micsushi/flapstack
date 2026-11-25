@@ -274,6 +274,7 @@ import { SplitViewContainer } from "../ui/split-view-container"
 import { TextSelectionPopover } from "../ui/text-selection-popover"
 import { autoRenameAgentChat } from "../utils/auto-rename"
 import { ChatTitleSuggestion } from "../ui/chat-title-suggestion"
+import { useAcknowledgeChatAttention } from "../ui/chat-status-indicators"
 import { isUntitledChatName } from "../../../../shared/chat-title"
 import {
   generateCommitToPrMessage,
@@ -1921,6 +1922,7 @@ const ChatViewInner = memo(function ChatViewInner({
   const pendingInitialGeneration = pendingInitialGenerationIds.has(subChatId)
   const notifiedPendingQuestionIdsRef = useRef<Set<string>>(new Set())
   const isVisiblePane = isActive || isSplitPane
+  useAcknowledgeChatAttention(parentChatId, isVisiblePane)
   const { notifyAgentNeedsInput } = useDesktopNotifications()
 
   // Keep isActive in ref for use in callbacks (avoid stale closures)
@@ -5005,9 +5007,9 @@ const ChatViewInner = memo(function ChatViewInner({
   }
 
   // Check if there's an unapproved plan (in plan mode with completed ExitPlanMode)
-  const hasUnapprovedPlan = useMemo(() => {
+  const pendingPlanId = useMemo(() => {
     // If no longer in Plan mode, the plan is approved (mode is the source of truth).
-    if (subChatMode !== "plan") return false
+    if (subChatMode !== "plan") return null
 
     // Look for completed ExitPlanMode in messages
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -5018,12 +5020,13 @@ const ChatViewInner = memo(function ChatViewInner({
         const exitPlanPart = msg.parts.find((p: any) => p.type === "tool-ExitPlanMode")
         // Check if ExitPlanMode is completed (has output, even if empty)
         if (exitPlanPart && exitPlanPart.output !== undefined) {
-          return true
+          return exitPlanPart.toolCallId ?? msg.id
         }
       }
     }
-    return false
+    return null
   }, [messages, subChatMode])
+  const hasUnapprovedPlan = pendingPlanId !== null
 
   // Keep ref in sync for use in initializeScroll (which runs in useLayoutEffect)
   hasUnapprovedPlanRef.current = hasUnapprovedPlan
@@ -5031,20 +5034,18 @@ const ChatViewInner = memo(function ChatViewInner({
   // Update pending plan approvals atom for sidebar indicators
   const setPendingPlanApprovals = useSetAtom(pendingPlanApprovalsAtom)
   useEffect(() => {
-    setPendingPlanApprovals((prev: Map<string, string>) => {
+    setPendingPlanApprovals((prev) => {
+      const previous = prev.get(subChatId)
+      if (pendingPlanId ? previous?.planId === pendingPlanId : !previous) return prev
       const newMap = new Map(prev)
-      if (hasUnapprovedPlan) {
-        newMap.set(subChatId, parentChatId)
+      if (pendingPlanId) {
+        newMap.set(subChatId, { parentChatId, planId: pendingPlanId })
       } else {
         newMap.delete(subChatId)
       }
-      // Only return new map if it changed
-      if (newMap.size !== prev.size || ![...newMap.keys()].every((id) => prev.has(id))) {
-        return newMap
-      }
-      return prev
+      return newMap
     })
-  }, [hasUnapprovedPlan, subChatId, parentChatId, setPendingPlanApprovals])
+  }, [pendingPlanId, subChatId, parentChatId, setPendingPlanApprovals])
 
   // Keyboard shortcut: Cmd+Enter to approve plan
   useEffect(() => {
@@ -5086,7 +5087,7 @@ const ChatViewInner = memo(function ChatViewInner({
   // Clean up pending plan approval when unmounting
   useEffect(() => {
     return () => {
-      setPendingPlanApprovals((prev: Map<string, string>) => {
+      setPendingPlanApprovals((prev) => {
         if (prev.has(subChatId)) {
           const newMap = new Map(prev)
           newMap.delete(subChatId)
