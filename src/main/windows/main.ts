@@ -70,6 +70,7 @@ import { resolveWindowIconPath } from "./window-icon"
 
 // Flag to bypass close confirmation when app.quit() has already been confirmed
 let isQuitting = false
+let windowsTaskbarDetails: Parameters<BrowserWindow["setAppDetails"]>[0] | undefined
 const resolveInitialLaunchPresentation = createInitialLaunchPresentationResolver()
 let workbenchWindowSessionStore: WorkbenchWindowSessionStore | null = null
 let workbenchWindowSessionWarningLogged = false
@@ -225,6 +226,10 @@ function abortAllAgentSessions(): void {
 
 export function setIsQuitting(value: boolean): void {
   isQuitting = value
+}
+
+export function setWindowsTaskbarDetails(details: Parameters<BrowserWindow["setAppDetails"]>[0]) {
+  windowsTaskbarDetails = details
 }
 
 // Helper to get window from IPC event
@@ -1311,7 +1316,10 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
       },
     })
     const createdWindow = window
-    if (process.platform === "win32") createdWindow.setMenuBarVisibility(false)
+    if (process.platform === "win32") {
+      createdWindow.setMenuBarVisibility(false)
+      if (windowsTaskbarDetails) createdWindow.setAppDetails(windowsTaskbarDetails)
+    }
 
     // Register window with manager and get stable ID for localStorage namespacing
     stableWindowId = windowManager.register(createdWindow, options?.stableWindowId)
