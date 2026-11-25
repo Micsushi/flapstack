@@ -11,6 +11,7 @@ import { getVoiceSettings } from "./settings"
 
 const AUDIO_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const AUDIO_MAX_BYTES = 500 * 1024 * 1024
+const SPOKEN_TEXT_VERSION = 2
 
 function historyRoot() {
   return join(app.getPath("userData"), "voice-history")
@@ -251,9 +252,18 @@ export function mergeMessagesPreservingSpokenText(current: any[], incoming: any[
     incoming.flatMap((message) => (typeof message?.id === "string" ? [message.id] : [])),
   )
   const mergedIncoming = incoming.map((message) => {
-    const spokenText = currentById.get(message?.id)?.metadata?.spokenText
+    const savedMetadata = currentById.get(message?.id)?.metadata
+    const spokenText = savedMetadata?.spokenText
     if (typeof spokenText !== "string" || !spokenText.trim()) return message
-    return { ...message, metadata: { ...(message.metadata || {}), spokenText } }
+    return {
+      ...message,
+      metadata: {
+        ...(message.metadata || {}),
+        spokenText,
+        spokenReadMode: savedMetadata.spokenReadMode,
+        spokenTextVersion: savedMetadata.spokenTextVersion,
+      },
+    }
   })
   return [
     ...mergedIncoming,
@@ -281,8 +291,10 @@ export function getStoredSpokenText(
   const subChat = getDatabase().select().from(subChats).where(eq(subChats.id, subChatId)).get()
   const messages = parseMessages(subChat?.messages)
   const message = messages.find((candidate) => candidate?.id === messageId)
-  if ((message?.metadata?.spokenReadMode ?? "summary") !== mode) return null
-  const spokenText = message?.metadata?.spokenText
+  const metadata = message?.metadata
+  if (metadata?.spokenTextVersion !== SPOKEN_TEXT_VERSION || metadata.spokenReadMode !== mode)
+    return null
+  const spokenText = metadata.spokenText
   return typeof spokenText === "string" && spokenText.trim() ? spokenText : null
 }
 
@@ -301,7 +313,8 @@ export function persistSpokenText(input: {
   const message = messages[index]
   if (
     message?.metadata?.spokenText === input.text &&
-    (message.metadata.spokenReadMode ?? "summary") === (input.mode ?? "summary")
+    message.metadata.spokenReadMode === (input.mode ?? "summary") &&
+    message.metadata.spokenTextVersion === SPOKEN_TEXT_VERSION
   )
     return
   messages[index] = {
@@ -310,6 +323,7 @@ export function persistSpokenText(input: {
       ...(message.metadata || {}),
       spokenText: input.text,
       spokenReadMode: input.mode ?? "summary",
+      spokenTextVersion: SPOKEN_TEXT_VERSION,
     },
   }
   db.update(subChats)
