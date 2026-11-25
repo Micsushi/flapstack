@@ -49,15 +49,15 @@ export type AgentsPreviewConstants = typeof AGENTS_PREVIEW_CONSTANTS
 
 export type HarnessChipMeta = {
   name: string
-  color: "blue" | "orange" | "green" | "purple" | "rose" | "teal" | "gray"
+  color: "blue" | "indigo" | "orange" | "green" | "purple" | "rose" | "teal" | "gray"
   className: string
 }
 
 export const HARNESS_CHIP_META: Record<HarnessChipKind, HarnessChipMeta> = {
   antigravity: {
     name: "Gemini",
-    color: "blue",
-    className: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
+    color: "indigo",
+    className: "border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300",
   },
   codex: {
     name: "Codex",

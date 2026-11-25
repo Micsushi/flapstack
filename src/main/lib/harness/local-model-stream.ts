@@ -1,3 +1,4 @@
+import { fullContinuationHistory } from "../chat-handoff"
 import { randomUUID } from "node:crypto"
 import { and, eq, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
@@ -625,12 +626,13 @@ export function assembleLocalModelMessages(input: {
     1_000,
     500_000,
   )
-  const transcript = input.transcript
+  const importedHistory = fullContinuationHistory(input.transcript)
+  const transcript = (importedHistory ? input.transcript.slice(1) : input.transcript)
     .map(toOllamaTranscriptMessage)
     .filter((message): message is OllamaChatMessage => Boolean(message))
 
   const selected: OllamaChatMessage[] = []
-  let used = input.prompt.length
+  let used = input.prompt.length + (importedHistory?.length ?? 0)
   for (let index = transcript.length - 1; index >= 0; index -= 1) {
     const message = transcript[index]!
     if (used + message.content.length > maxChars) break
@@ -640,6 +642,7 @@ export function assembleLocalModelMessages(input: {
 
   return [
     ...(input.context.trim() ? [{ role: "system" as const, content: input.context.trim() }] : []),
+    ...(importedHistory ? [{ role: "user" as const, content: importedHistory }] : []),
     ...selected,
     { role: "user", content: input.prompt },
   ]

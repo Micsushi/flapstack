@@ -436,12 +436,14 @@ export const usageRouter = router({
           accountTag: accountTagSchema,
           source: sampleSourceSchema.optional(),
           flapstackOnly: z.boolean().optional(),
+          quotaOnly: z.boolean().optional(),
           limitPerAccount: z.number().min(1).max(100).optional(),
         })
         .optional(),
     )
     .query(async ({ input }) => {
       if (
+        !input?.quotaOnly &&
         !input?.flapstackOnly &&
         (!input?.providerId || input.providerId === "codex" || input.providerId === "anthropic")
       ) {

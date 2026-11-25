@@ -310,9 +310,11 @@ export const PlayButton = memo(function PlayButton({
   )
 })
 
-type SpeechHighlightColor = "blue" | "orange" | "green" | "purple" | "rose" | "teal" | "gray"
+type SpeechHighlightColor =
+  "blue" | "indigo" | "orange" | "green" | "purple" | "rose" | "teal" | "gray"
 const SPEECH_HIGHLIGHT_COLORS: SpeechHighlightColor[] = [
   "blue",
+  "indigo",
   "orange",
   "green",
   "purple",

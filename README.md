@@ -61,6 +61,9 @@ run. **Allow for this session** remembers the same configuration for this chat
 until Flapstack closes. Local commands and supported HTTP servers are available.
 Flapstack skips disabled servers and reports settings that ACP cannot preserve.
 
+Antigravity remaining quota is unavailable in Flapstack. Use the interactive
+`/usage` panel in Antigravity CLI to see its model-group limits.
+
 ## Product Direction
 
 Flapstack is not just a fork with a new skin. The intended product model is:

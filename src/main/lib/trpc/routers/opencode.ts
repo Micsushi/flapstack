@@ -1,3 +1,4 @@
+import { withFullContinuationHistory } from "../../chat-handoff"
 /**
  * OpenCode-backed harness router (Track E - E6/E7 backend).
  *
@@ -564,7 +565,12 @@ export const opencodeRouter = router({
             })
             const promptForModel = prependFlapstackMcpGuidance(
               prependStartupContext(
-                applyChatModeInstruction(input.prompt, input.mode),
+                applyChatModeInstruction(
+                  ownedSessionId
+                    ? input.prompt
+                    : withFullContinuationHistory(input.prompt, messages),
+                  input.mode,
+                ),
                 contextBundle.context,
               ),
               productMcpEnabledAtLaunch,

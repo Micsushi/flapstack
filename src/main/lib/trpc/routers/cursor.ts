@@ -1,3 +1,4 @@
+import { withFullContinuationHistory } from "../../chat-handoff"
 import { observable } from "@trpc/server/observable"
 import { and, eq } from "drizzle-orm"
 import { spawn, type ChildProcess } from "node:child_process"
@@ -519,7 +520,12 @@ export const cursorRouter = router({
             }
             const promptForModel = prependFlapstackMcpGuidance(
               prependStartupContext(
-                applyChatModeInstruction(input.prompt, input.mode),
+                applyChatModeInstruction(
+                  sessionId
+                    ? input.prompt
+                    : withFullContinuationHistory(input.prompt, existingMessages),
+                  input.mode,
+                ),
                 [contextBundle.context, extensionContext.context].filter(Boolean).join("\n\n"),
               ),
               productMcpEnabledAtLaunch,

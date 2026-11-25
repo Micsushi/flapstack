@@ -127,8 +127,26 @@ Agent runs was previously called Fleet; Agent workflows was called Setups.
 Questions & progress (previously Project records) shows questions, blockers,
 completed work and the work checklist, with record references and agent review
 status visible in compact rows. Work board
-shows equal-height collapsed tickets; click a title to expand its context and
-actions. Each ticket also shows a short reference such as `#42`. Expand a ticket
+shows equal-height collapsed tickets. Click a title to expand its context and
+actions. The toolbar and status headings stay visible as the board scrolls.
+The board shows a loading indicator until it has read its first Records
+snapshot. It then checks for updates every five seconds.
+If Records becomes unavailable, the board keeps the last synced tickets and
+resumes syncing when service returns.
+
+Choose **Manage projects** to move projects up or down or hide them. Open
+**Hidden projects** at the bottom or jump there from **Manage projects**.
+Choose **Show** to bring a project back. Project order and visibility are saved in the app profile. **Undo**
+and **Redo** also apply to these changes. A ticket in multiple projects stays
+visible as long as one of its projects is visible.
+
+**Active projects** shows projects that have open tasks in Current. **Needs
+you** shows unanswered questions and blockers that require an owner action.
+Clear either filter from the toolbar to restore the broader view. Known project
+ID aliases share a lane and filter entry. The underlying Records IDs and
+workflow history remain intact.
+
+Each ticket also shows a short reference such as `#42`. Expand a ticket
 and edit Reference to replace that display with a text ID such as `FLAP-42`.
 Save reference applies the change; leaving the field blank restores its original
 automatic number. Custom references must be unique in the profile, ignoring case,

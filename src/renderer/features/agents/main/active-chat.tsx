@@ -5257,6 +5257,7 @@ const ChatViewInner = memo(function ChatViewInner({
         const created = await trpcClient.chats.continueWithRuntime.mutate({
           sourceChatId: parentChatId,
           compactSourceSubChatId: subChatId,
+          fullHistory: true,
           targetHarness: targetProvider,
           targetModel,
           preference:

@@ -34,6 +34,7 @@ import { isLegacyPickerModel } from "../../../../shared/model-catalog"
 import type { ContinueWithProvider, HandoffSource } from "./compact-handoff-action"
 import { getHarnessChipMeta } from "../constants"
 import { ProviderChipIcon } from "./provider-chip-icon"
+import { quotaSeverityClass, useRemainingQuota } from "../lib/remaining-quota"
 
 const CompactHandoffAction = lazy(() => import("./compact-handoff-action"))
 
@@ -277,7 +278,7 @@ export function AgentModelTuningSelector({
           <IconChevronDown className="h-2.5 w-2.5 opacity-50" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-48 p-1" align="start">
+      <PopoverContent className="w-48 p-1" align="start" side="top" forceDark={false}>
         <div className="flex min-h-[32px] items-center justify-between px-2 py-1.5">
           <span className="flex items-center gap-1.5 text-sm">
             <Brain className="h-3.5 w-3.5 text-muted-foreground" />
@@ -379,7 +380,7 @@ function CrossProviderConfirmDialog({
             Switch to {providerName}
           </DialogTitle>
           <DialogDescription>
-            Start a child chat with a summary of this conversation.
+            Continue in a new chat with the full conversation history from this chat.
           </DialogDescription>
         </div>
         {continueAction}
@@ -431,16 +432,9 @@ export function AgentModelSelector({
     targetModelId: string
     targetModelLabel: string
   } | null>(null)
-  const [providerFilter, setProviderFilter] = useState<
-    "all" | "claude-code" | "codex" | "antigravity" | null
-  >(null)
-  const initialFilter =
-    selectedAgentId === "codex" ||
-    selectedAgentId === "claude-code" ||
-    selectedAgentId === "antigravity"
-      ? selectedAgentId
-      : "all"
-  const currentFilter = search.trim() ? "all" : (providerFilter ?? initialFilter)
+  const [providerFilter, setProviderFilter] = useState<AgentProviderId | "all" | null>(null)
+  const selectQuota = useRemainingQuota(open)
+  const currentFilter = providerFilter ?? selectedAgentId
 
   const canSelectProvider = (provider: AgentProviderId) =>
     allowProviderSwitch || selectedAgentId === provider
@@ -487,8 +481,8 @@ export function AgentModelSelector({
     }))
 
     const groups: ModelGroup[] = [
-      { id: "claude-code", label: "Claude", items: claudeItems },
       { id: "codex", label: "Codex", items: codexItems },
+      { id: "claude-code", label: "Claude", items: claudeItems },
       {
         id: "antigravity",
         label: "Gemini",
@@ -497,17 +491,19 @@ export function AgentModelSelector({
       { id: "cursor-agent", label: "Cursor", items: cursorItems },
     ]
     for (const provider of ["openrouter", "nanogpt"] as const) {
+      if (!opencode[provider].models.length && selectedAgentId !== provider) continue
       groups.push({
         id: provider,
         label: opencode[provider].label,
         items: opencode[provider].models.map((model) => ({ type: "opencode", provider, model })),
       })
     }
-    groups.push({
-      id: "local",
-      label: "Local · Ollama",
-      items: (local?.models ?? []).map((model) => ({ type: "local", model })),
-    })
+    if (local)
+      groups.push({
+        id: "local",
+        label: "Local",
+        items: (local?.models ?? []).map((model) => ({ type: "local", model })),
+      })
     return groups
   }, [
     claude,
@@ -515,17 +511,19 @@ export function AgentModelSelector({
     cursor,
     antigravity.models,
     opencode,
-    local?.models,
+    local,
     showLegacyModels,
     selectedAgentId,
   ])
 
   // Filter by search
   const filteredGroups = useMemo(() => {
-    if (!search.trim())
-      return modelGroups.filter((group) => currentFilter === "all" || group.id === currentFilter)
+    const groups = modelGroups.filter(
+      (group) => currentFilter === "all" || group.id === currentFilter,
+    )
     const q = search.toLowerCase().trim()
-    return modelGroups
+    if (!q) return groups
+    return groups
       .map((group) => ({
         ...group,
         items: group.items.filter((item) => {
@@ -592,7 +590,7 @@ export function AgentModelSelector({
           opencode[item.provider].selectedModelId === item.model.id
         )
       case "local":
-        return local?.selectedModelId === item.model.id
+        return selectedAgentId === "local" && local?.selectedModelId === item.model.id
       case "ollama":
         return selectedAgentId === "claude-code" && claude.selectedOllamaModel === item.modelName
       case "custom":
@@ -777,42 +775,13 @@ export function AgentModelSelector({
     )
   }
 
-  function getQuickHandoff(): {
-    provider: AgentProviderId
-    targetModelId: string
-    targetModelLabel: string
-  } | null {
-    if (
-      !open ||
-      !continuationSource ||
-      !onContinueWithProvider ||
-      currentFilter === selectedAgentId
-    )
-      return null
-    if (
-      currentFilter !== "codex" &&
-      currentFilter !== "claude-code" &&
-      currentFilter !== "antigravity"
-    )
-      return null
-    const models = modelGroups
-      .find((group) => group.id === currentFilter)
-      ?.items.filter((item) => !isItemDisabled(item))
-    const preferred =
-      currentFilter === "codex"
-        ? codex.selectedModelId
-        : currentFilter === "claude-code"
-          ? claude.selectedModelId
-          : antigravity.selectedModelId
-    const target = models?.find((item) => getItemModelId(item) === preferred) ?? models?.[0]
-    if (!target) return null
-    const targetModelId = getItemModelId(target)
-    return targetModelId
-      ? { provider: currentFilter, targetModelId, targetModelLabel: getItemLabel(target) }
-      : null
-  }
-
-  const quickHandoff = getQuickHandoff()
+  const sharedQuota = (provider: AgentProviderId) =>
+    provider === "claude-code" && (claude.isOffline || claude.hasCustomModelConfig)
+      ? null
+      : selectQuota(provider)
+  const filterQuota = currentFilter === "all" ? null : sharedQuota(currentFilter)
+  const showSwitchNotice =
+    currentFilter !== "all" && !canSelectProvider(currentFilter) && Boolean(onContinueWithProvider)
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
@@ -830,67 +799,54 @@ export function AgentModelSelector({
           <IconChevronDown className="h-2.5 w-2.5 shrink-0 opacity-50" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className={cn("w-64 p-0", contentClassName)} align="start">
-        <Command shouldFilter={false}>
-          <CommandInput
-            aria-label="Search all models"
-            placeholder="Search models..."
-            value={search}
-            onValueChange={setSearch}
-          />
-          <div
-            role="group"
-            aria-label="Filter by provider"
-            className="mx-1 flex gap-1 border-b pb-1"
-          >
-            {(
-              [
-                ["all", "All"],
-                ["codex", "Codex"],
-                ["claude-code", "Claude"],
-                ["antigravity", "Gemini"],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                type="button"
-                key={id}
-                aria-pressed={currentFilter === id}
-                className="flex-1 rounded px-1.5 py-1 text-xs hover:bg-accent aria-pressed:bg-muted aria-pressed:font-semibold focus-visible:outline focus-visible:outline-ring"
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") event.stopPropagation()
-                }}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  setSearch("")
-                  setProviderFilter(id)
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {quickHandoff && renderHandoffAction(quickHandoff, () => handleOpenChange(false))}
-          <label className="flex items-center justify-between px-3 py-1.5 text-xs text-muted-foreground">
-            Show legacy models
-            <Switch
-              aria-label="Show legacy models"
-              checked={showLegacyModels}
-              onCheckedChange={setShowLegacyModels}
-            />
-          </label>
-          <CommandList className="max-h-[min(360px,50vh)] overflow-y-auto">
+      <PopoverContent
+        align="start"
+        side="top"
+        collisionPadding={8}
+        forceDark={false}
+        className={cn(
+          "flex w-80 min-w-0 max-w-[calc(100vw-1rem)] flex-col overflow-hidden p-0",
+          contentClassName,
+        )}
+      >
+        <Command shouldFilter={false} className="min-h-0">
+          <CommandList className="min-h-0 max-h-[min(360px,50vh)] overflow-y-auto">
             {filteredGroups.length > 0 ? (
               filteredGroups.map((group) => {
                 const groupMeta = getHarnessChipMeta(group.id)
+                const shared = currentFilter === "all" ? sharedQuota(group.id)?.effective : null
                 return (
-                  <CommandGroup
-                    key={group.id}
-                    heading={currentFilter === "all" ? group.label : undefined}
-                  >
+                  <CommandGroup key={group.id} aria-label={group.label}>
+                    {currentFilter === "all" && (
+                      <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs">
+                        <ProviderChipIcon
+                          provider={group.id}
+                          className={cn("size-3 shrink-0 rounded-sm", groupMeta.className)}
+                        />
+                        <span className="min-w-0 flex-1 truncate font-medium">{group.label}</span>
+                        {shared && (
+                          <span
+                            className={cn(
+                              "shrink-0 tabular-nums",
+                              quotaSeverityClass[shared.severity],
+                            )}
+                          >
+                            {shared.windowLabel} {shared.stale ? "~" : ""}
+                            {shared.displayValue}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     {group.items.map((item) => {
                       const selected = isItemSelected(item)
                       const disabled = isItemDisabled(item)
-                      const crossProvider = isItemCrossProvider(item)
+                      const crossProvider =
+                        isItemCrossProvider(item) && Boolean(onContinueWithProvider)
+                      const quota =
+                        item.type === "ollama" || item.type === "custom"
+                          ? null
+                          : selectQuota(group.id, getItemModelId(item))?.effective
+                      const modelQuota = quota?.scope === "model-specific" ? quota : null
                       return (
                         <CommandItem
                           key={getItemKey(item)}
@@ -900,20 +856,34 @@ export function AgentModelSelector({
                           className={cn(
                             "gap-2 border border-transparent",
                             selected && groupMeta.className,
-                            crossProvider && "opacity-60",
                           )}
                         >
+                          <ProviderChipIcon provider={group.id} className="size-3.5 shrink-0" />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate">{getItemLabel(item)}</span>
-                            {item.type === "local" && (
-                              <span className="block truncate text-[10px] text-muted-foreground">
-                                Chat {item.model.chat} · Tools {item.model.tools}
+                            <span className="block truncate" title={getItemLabel(item)}>
+                              {getItemLabel(item)}
+                            </span>
+                            {crossProvider && (
+                              <span className="block text-[11px] text-muted-foreground">
+                                Continue in new chat
                               </span>
                             )}
+                            {item.type === "local" &&
+                              (!item.model.selectable || item.model.tools !== "supported") && (
+                                <span className="block truncate text-[11px] text-muted-foreground">
+                                  {item.model.limitations[0] ?? "Tool support unavailable"}
+                                </span>
+                              )}
                           </span>
-                          {crossProvider && (
-                            <span className="text-[10px] text-muted-foreground shrink-0">
-                              New chat
+                          {modelQuota && (
+                            <span
+                              className={cn(
+                                "shrink-0 rounded border px-1 text-[11px] tabular-nums",
+                                quotaSeverityClass[modelQuota.severity],
+                              )}
+                            >
+                              {modelQuota.stale ? "~" : ""}
+                              {modelQuota.displayValue}
                             </span>
                           )}
                           {selected && <CheckIcon className="h-4 w-4 shrink-0" />}
@@ -992,41 +962,99 @@ export function AgentModelSelector({
             )}
           </CommandList>
 
-          {onOpenModelsSettings && (
-            <div className="border-t border-border/50 py-1">
-              <button
-                onClick={() => {
-                  onOpenModelsSettings()
-                  handleOpenChange(false)
-                }}
-                className="flex items-center gap-1.5 min-h-[32px] py-[5px] px-1.5 mx-1 w-[calc(100%-8px)] rounded-md text-sm cursor-default select-none outline-none dark:hover:bg-neutral-800 hover:text-foreground transition-colors"
-              >
-                <span className="flex-1 text-left">Add Models</span>
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              </button>
+          <div className="shrink-0">
+            {filterQuota && (
+              <p className="flex flex-wrap gap-x-2 gap-y-0.5 border-t px-2.5 py-1.5 text-xs tabular-nums">
+                {filterQuota.windows.map((window) => (
+                  <span key={window.key} className={quotaSeverityClass[window.severity]}>
+                    {window.windowLabel} {window.stale ? "~" : ""}
+                    {window.displayValue}
+                  </span>
+                ))}
+              </p>
+            )}
+            {showSwitchNotice && (
+              <p className="border-t bg-amber-500/10 px-2.5 py-2 text-xs text-amber-800 dark:text-amber-200">
+                This chat uses {selectedProviderMeta.name}. Pick a{" "}
+                {getHarnessChipMeta(currentFilter).name} model to continue in a new chat with this
+                conversation’s history.
+              </p>
+            )}
+            <div
+              className="flex items-center justify-between gap-2 border-t px-2.5 py-1"
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") event.stopPropagation()
+              }}
+            >
+              {onOpenModelsSettings && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenModelsSettings()
+                    handleOpenChange(false)
+                  }}
+                  className="flex min-h-7 items-center gap-1 rounded-sm text-xs font-medium hover:underline focus-visible:outline focus-visible:outline-ring"
+                >
+                  Add Models <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+                </button>
+              )}
+              <label className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
+                Show legacy models
+                <Switch
+                  checked={showLegacyModels}
+                  onCheckedChange={setShowLegacyModels}
+                  className="scale-75"
+                />
+              </label>
             </div>
-          )}
+            <CommandInput
+              aria-label="Search models"
+              placeholder="Search models..."
+              value={search}
+              onValueChange={setSearch}
+              wrapperClassName="mx-2.5 mb-2 mt-1"
+              className="min-w-0"
+            />
+            <div
+              role="group"
+              aria-label="Filter by provider"
+              className="flex gap-1 overflow-x-auto border-t p-1.5"
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") event.stopPropagation()
+              }}
+            >
+              {[{ id: "all" as const, label: "All" }, ...modelGroups].map(({ id, label }) => {
+                const meta = id === "all" ? null : getHarnessChipMeta(id)
+                return (
+                  <button
+                    type="button"
+                    key={id}
+                    aria-pressed={currentFilter === id}
+                    className={cn(
+                      "flex shrink-0 items-center gap-1 rounded border border-transparent px-1.5 py-1 text-xs hover:bg-accent focus-visible:outline focus-visible:outline-ring",
+                      currentFilter === id && (meta?.className ?? "bg-muted text-foreground"),
+                    )}
+                    onClick={() => setProviderFilter(id)}
+                  >
+                    {id !== "all" && (
+                      <ProviderChipIcon
+                        provider={id}
+                        className={cn("size-3 rounded-sm", meta?.className)}
+                      />
+                    )}
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
         </Command>
       </PopoverContent>
 
       <CrossProviderConfirmDialog
         returnFocusRef={modelTriggerRef}
         isOpen={confirmDialogOpen}
-        providerName={
-          pendingContinuation?.provider === "codex"
-            ? "Codex"
-            : pendingContinuation?.provider === "antigravity"
-              ? "Gemini"
-              : pendingContinuation?.provider === "cursor-agent"
-                ? "Cursor"
-                : pendingContinuation?.provider === "openrouter"
-                  ? "OpenRouter"
-                  : pendingContinuation?.provider === "nanogpt"
-                    ? "NanoGPT"
-                    : pendingContinuation?.provider === "local"
-                      ? "Local"
-                      : "Claude"
-        }
+        providerName={getHarnessChipMeta(pendingContinuation?.provider).name}
         continueAction={
           pendingContinuation && renderHandoffAction(pendingContinuation, handleCloseConfirmDialog)
         }

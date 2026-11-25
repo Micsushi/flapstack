@@ -909,7 +909,16 @@ if (gotTheLock) {
                 try {
                   const { manageExternalMcpRegistration } =
                     await import("./lib/mcp-control/external-registration-menu")
-                  await manageExternalMcpRegistration(getDatabasePath(), __dirname)
+                  await manageExternalMcpRegistration(
+                    getDatabasePath(),
+                    __dirname,
+                    installedWindowsLauncher
+                      ? {
+                          configPath: join(dirname(installedWindowsLauncher), "launch-config.json"),
+                          profilePath: app.getPath("userData"),
+                        }
+                      : undefined,
+                  )
                 } catch (error) {
                   dialog.showErrorBox(
                     "External harness connection",

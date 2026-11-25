@@ -10,7 +10,7 @@
 // reads and daemon writes coexist. On SQLITE_BUSY the writer retries with
 // backoff (see withWriteRetry); samples are never silently discarded.
 
-import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm"
+import { and, desc, eq, gte, inArray, isNotNull, ne, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import * as schema from "../db/schema"
 import { prepareUsageFact } from "./attribution"
@@ -471,6 +471,7 @@ export async function listRecentSamples(
     accountTag?: string
     source?: SampleSource
     flapstackOnly?: boolean
+    quotaOnly?: boolean
     since?: Date
     limit?: number
   } = {},
@@ -480,6 +481,9 @@ export async function listRecentSamples(
   if (opts.accountTag !== undefined) conds.push(eq(schema.usageSamples.accountTag, opts.accountTag))
   if (opts.source) conds.push(eq(schema.usageSamples.source, opts.source))
   if (opts.flapstackOnly) conds.push(isNotNull(schema.usageSamples.runId))
+  if (opts.quotaOnly) {
+    conds.push(inArray(schema.usageSamples.sourceTag, ["personal-oauth", "internal", "key-limits"]))
+  }
   if (opts.since) conds.push(gte(schema.usageSamples.capturedAt, opts.since))
   return db
     .select()
@@ -498,6 +502,7 @@ export async function listCurrentSamples(
     accountTag?: string
     source?: SampleSource
     flapstackOnly?: boolean
+    quotaOnly?: boolean
     limitPerAccount?: number
   } = {},
 ): Promise<schema.UsageSample[]> {
@@ -506,6 +511,9 @@ export async function listCurrentSamples(
   if (opts.accountTag !== undefined) conds.push(eq(schema.usageSamples.accountTag, opts.accountTag))
   if (opts.source) conds.push(eq(schema.usageSamples.source, opts.source))
   if (opts.flapstackOnly) conds.push(isNotNull(schema.usageSamples.runId))
+  if (opts.quotaOnly) {
+    conds.push(inArray(schema.usageSamples.sourceTag, ["personal-oauth", "internal", "key-limits"]))
+  }
   const groups = await db
     .selectDistinct({
       providerId: schema.usageSamples.providerId,
@@ -520,6 +528,7 @@ export async function listCurrentSamples(
         accountTag: group.accountTag,
         source: opts.source,
         flapstackOnly: opts.flapstackOnly,
+        quotaOnly: opts.quotaOnly,
         limit: opts.limitPerAccount ?? 25,
       }),
     ),

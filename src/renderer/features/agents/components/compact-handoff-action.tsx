@@ -1,7 +1,6 @@
 import { useState } from "react"
 import { Button } from "../../../components/ui/button"
 import { trpc } from "../../../lib/trpc"
-import { formatPermissionMode, getHarnessChipMeta } from "../constants"
 import type { AgentProviderId } from "./agent-model-selector"
 
 export type HandoffSource = { chatId: string; subChatId: string }
@@ -34,6 +33,7 @@ export default function CompactHandoffAction({
       requestId,
       sourceChatId: source.chatId,
       compactSourceSubChatId: source.subChatId,
+      fullHistory: true,
       targetHarness: provider,
       targetModel: model,
       preference:
@@ -46,15 +46,11 @@ export default function CompactHandoffAction({
     { retry: false, refetchOnWindowFocus: false },
   )
   const snapshot = preview.data
-  const name = getHarnessChipMeta(provider).name
   const problem = error || preview.error?.message || snapshot?.availability.reason
   return (
-    <div className="space-y-2 px-2 py-2 text-xs">
-      <div className="flex items-center justify-between gap-2">
-        <span className="min-w-0 break-words text-muted-foreground">
-          {modelLabel}
-          {snapshot && " · " + formatPermissionMode(snapshot.authorityCeiling.permissionMode)}
-        </span>
+    <div className="space-y-2 px-6 pb-4 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="min-w-0 break-words text-muted-foreground">{modelLabel}</span>
         <Button
           size="sm"
           disabled={
@@ -77,16 +73,13 @@ export default function CompactHandoffAction({
             }
           }}
         >
-          Continue in {name}
+          {busy ? "Creating chat…" : "Continue in new chat"}
         </Button>
       </div>
-      {snapshot && (
-        <details>
-          <summary className="cursor-pointer text-muted-foreground">Handoff summary</summary>
-          <pre className="mt-2 max-h-44 overflow-y-auto whitespace-pre-wrap break-words font-sans">
-            {snapshot.contextText}
-          </pre>
-        </details>
+      {snapshot?.contextBudgetWarning && (
+        <p role="status" className="text-amber-700 dark:text-amber-300">
+          {snapshot.contextBudgetWarning}
+        </p>
       )}
       {problem && (
         <div role="alert" className="text-destructive">

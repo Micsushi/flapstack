@@ -9,13 +9,15 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs"
-import { dirname, isAbsolute, join } from "node:path"
+import { dirname, isAbsolute, join, resolve } from "node:path"
 import { secureCredentialFile } from "../credential-service"
 import { externalGrantPath, externalPermissionModes } from "./external-grant"
 
 export const externalClients = ["codex", "claude", "antigravity"] as const
 export const externalClientNames = ["Codex", "Claude Code", "Antigravity"] as const
 const serverName = "flapstack-app-control"
+
+export type WindowsMcpLauncher = { configPath: string; profilePath: string }
 
 export function createExternalMcpRegistration(options: {
   databasePath: string
@@ -25,6 +27,7 @@ export function createExternalMcpRegistration(options: {
   client: (typeof externalClients)[number]
   permissionMode: (typeof externalPermissionModes)[number]
   outputRoot: string
+  windowsLauncher?: WindowsMcpLauncher
 }) {
   if (
     !externalClients.includes(options.client) ||
@@ -48,17 +51,21 @@ export function createExternalMcpRegistration(options: {
   const grantPath = externalGrantPath(db, grantId)
   const directory = join(outputRoot, `flapstack-${options.client}-${grantId}`)
   const keys = generateKeyPairSync("ed25519")
+  const credentialPath = externalOwnerCredentialPath(db, grantId)
+  const token =
+    grantId + "." + keys.privateKey.export({ format: "der", type: "pkcs8" }).toString("base64url")
+  const launcher =
+    process.platform === "win32" && options.windowsLauncher
+      ? windowsStdioLauncher(options.windowsLauncher)
+      : null
   const registration = {
-    command: options.executablePath,
-    args: [options.entryPoint, "--external"],
+    command: launcher?.command ?? options.executablePath,
+    args: launcher?.args ?? [options.entryPoint, "--external"],
     env: {
       ELECTRON_RUN_AS_NODE: "1",
       FLAPSTACK_CONFIG_DIR: configDir,
       FLAPSTACK_DB_PATH: db,
-      FLAPSTACK_MCP_OWNER_TOKEN:
-        grantId +
-        "." +
-        keys.privateKey.export({ format: "der", type: "pkcs8" }).toString("base64url"),
+      FLAPSTACK_MCP_OWNER_TOKEN_FILE: credentialPath,
     },
   }
   const publicGrant = {
@@ -85,12 +92,21 @@ export function createExternalMcpRegistration(options: {
         ),
       ].join("\n")
     : JSON.stringify({ mcpServers: { [serverName]: registration } }, null, 2)
-  // Only the desktop can issue a grant. Publish its public half after the private
-  // client configuration has been saved successfully in a fresh, private folder.
+  // Publish the grant only after its private credential and client configuration exist.
   mkdirSync(dirname(grantPath), { recursive: true, mode: 0o700 })
+  mkdirSync(dirname(credentialPath), { recursive: true, mode: 0o700 })
   mkdirSync(directory, { mode: 0o700 })
   let createdConfig = false
+  let createdCredential = false
   try {
+    const credential = openSync(credentialPath, "wx", 0o600)
+    createdCredential = true
+    try {
+      secureCredentialFile(credentialPath)
+      writeFileSync(credential, token)
+    } finally {
+      closeSync(credential)
+    }
     if (settingsDir !== directory) mkdirSync(settingsDir, { mode: 0o700 })
     const fd = openSync(configPath, "wx", 0o600)
     createdConfig = true
@@ -102,10 +118,88 @@ export function createExternalMcpRegistration(options: {
     }
     writeFileSync(grantPath, JSON.stringify(publicGrant), { mode: 0o600, flag: "wx" })
   } catch (error) {
+    if (createdCredential) unlinkSync(credentialPath)
     if (createdConfig) unlinkSync(configPath)
     if (settingsDir !== directory && existsSync(settingsDir)) rmdirSync(settingsDir)
     rmdirSync(directory)
     throw error
   }
   return { grantId, grantPath, directory, configPath }
+}
+
+export function externalOwnerCredentialPath(db: string, grantId: string): string {
+  return join(dirname(db), "external-mcp-owner", grantId + ".key")
+}
+
+function windowsStdioLauncher({ configPath, profilePath }: WindowsMcpLauncher) {
+  if (!isAbsolute(configPath) || !isAbsolute(profilePath))
+    throw new Error("Use absolute paths for the Windows launcher and its profile.")
+  // Match the launcher's profile path before the OS redirects it (e.g. MSIX AppData).
+  const profile = resolve(profilePath)
+  // Relay byte streams directly to keep PowerShell from buffering MCP lines.
+  const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+try {
+  $config = Get-Content -LiteralPath '${configPath.replaceAll("'", "''")}' -Raw -Encoding UTF8 | ConvertFrom-Json
+  $exe = $config.selection.executable
+  if (!$exe -or $exe -notmatch '^(?:[a-zA-Z]:[\\/]|\\\\)' -or !(Test-Path -LiteralPath $exe -PathType Leaf)) {
+    throw 'The Flapstack launcher has no active executable.'
+  }
+  if (!$config.profile -or [IO.Path]::GetFullPath($config.profile) -ne '${profile.replaceAll("'", "''")}') {
+    throw 'The Flapstack launcher now selects a different profile.'
+  }
+  $resources = Join-Path (Split-Path -LiteralPath $exe) 'resources'
+  $bundle = if (Test-Path -LiteralPath (Join-Path $resources 'app.asar')) { 'app.asar' } else { 'app' }
+  $entry = Join-Path $resources "$bundle/out/main/mcp-control-stdio.js"
+  $start = New-Object System.Diagnostics.ProcessStartInfo
+  $start.FileName = $exe
+  $start.Arguments = '"' + $entry + '" --external'
+  $start.UseShellExecute = $false
+  $start.CreateNoWindow = $true
+  $start.RedirectStandardInput = $true
+  $start.RedirectStandardOutput = $true
+  $start.RedirectStandardError = $true
+  $child = [Diagnostics.Process]::Start($start)
+  $stdout = $child.StandardOutput.BaseStream.CopyToAsync([Console]::OpenStandardOutput())
+  $stderr = $child.StandardError.BaseStream.CopyToAsync([Console]::OpenStandardError())
+  $stdin = [Console]::OpenStandardInput()
+  $target = $child.StandardInput.BaseStream
+  $buffer = New-Object byte[] 8192
+  while (!$child.HasExited) {
+    $read = $stdin.ReadAsync($buffer, 0, $buffer.Length)
+    while (!$read.IsCompleted -and !$child.WaitForExit(50)) {}
+    if (!$read.IsCompleted -or $child.HasExited) { break }
+    $count = $read.GetAwaiter().GetResult()
+    if ($count -eq 0) { $target.Close(); break }
+    $target.Write($buffer, 0, $count)
+    $target.Flush()
+  }
+  $child.WaitForExit()
+  $null = $stdout.GetAwaiter().GetResult()
+  $null = $stderr.GetAwaiter().GetResult()
+  exit $child.ExitCode
+} catch {
+  [Console]::Error.WriteLine($_.Exception.Message)
+  exit 1
+} finally {
+  if ($child -and !$child.HasExited) { $child.Kill() }
+}
+`
+  return {
+    command: join(
+      process.env.SystemRoot || "C:/Windows",
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    ),
+    args: [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64"),
+    ],
+  }
 }

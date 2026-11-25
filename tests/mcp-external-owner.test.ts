@@ -54,7 +54,7 @@ function fixture() {
     databasePath,
     issued,
     config,
-    token: String(config.env.FLAPSTACK_MCP_OWNER_TOKEN),
+    token: readFileSync(config.env.FLAPSTACK_MCP_OWNER_TOKEN_FILE, "utf8"),
   }
 }
 afterEach(() => {

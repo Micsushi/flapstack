@@ -1,6 +1,6 @@
 import { linkPastedText } from "./attachments/pasted-reference"
 import { buildVisibleContextManifest } from "./agent-runtime/context-manifest"
-import type { HandoffMessage } from "./chat-handoff"
+import { fullContinuationHistory, type HandoffMessage } from "./chat-handoff"
 import { buildRecordTaskRunContext } from "./project-records/run-context"
 import { recordRunTimingInterval } from "./run-timings"
 import { createAntigravityAdapter } from "./agent-runtime/antigravity/adapter"
@@ -1563,12 +1563,19 @@ export class MainRuntimeLaunchService {
     try {
       const row = db
         .prepare(
-          `SELECT s.messages, r.prompt_message_id FROM sub_chats s JOIN agent_runs r ON r.sub_chat_id=s.id
-        WHERE r.id=? AND s.needs_provider_handoff=1 AND s.harness=r.harness`,
+          `SELECT s.messages, s.needs_provider_handoff, r.prompt_message_id
+        FROM sub_chats s JOIN agent_runs r ON r.sub_chat_id=s.id
+        WHERE r.id=? AND s.harness=r.harness`,
         )
-        .get(run.runId) as { messages: string; prompt_message_id: string | null } | undefined
+        .get(run.runId) as
+        | { messages: string; needs_provider_handoff: number; prompt_message_id: string | null }
+        | undefined
       if (!row) return null
-      const messages = parseStoredChatMessages(row.messages).filter(
+      const stored = parseStoredChatMessages(row.messages)
+      const history = fullContinuationHistory(stored)
+      if (history) return history + "\n# Current request\n"
+      if (!row.needs_provider_handoff) return null
+      const messages = stored.filter(
         (message) =>
           message.id !== row.prompt_message_id &&
           (message.role === "user" || message.role === "assistant"),
@@ -2072,9 +2079,7 @@ function parseStoredChatMessages(
 ): Array<{ id?: unknown; role?: unknown; parts?: unknown }> {
   try {
     const parsed = JSON.parse(value) as unknown
-    return Array.isArray(parsed)
-      ? (parsed as Array<{ id?: unknown; role?: unknown; parts?: unknown }>)
-      : []
+    return Array.isArray(parsed) ? parsed : []
   } catch {
     return []
   }

@@ -16,6 +16,25 @@ export type HandoffConversation = {
   messages: HandoffMessage[]
 }
 
+export function fullContinuationHistory(messages: readonly unknown[]): string | null {
+  const seed = messages[0] as HandoffMessage | undefined
+  if (
+    seed?.role !== "user" ||
+    typeof seed.id !== "string" ||
+    !seed.id.startsWith("runtime-context-") ||
+    seed.metadata?.kind !== "runtime-continuation-context" ||
+    seed.metadata.contextFormat !== "full-history"
+  )
+    return null
+  const part = Array.isArray(seed.parts) ? seed.parts[0] : null
+  return part?.type === "text" && typeof part.text === "string" ? part.text : null
+}
+
+export function withFullContinuationHistory(prompt: string, messages: readonly unknown[]): string {
+  const history = fullContinuationHistory(messages)
+  return history ? history + "\n# Current request\n\n" + prompt : prompt
+}
+
 export type ChatHandoffInput = {
   chat: { id: string; name: string | null; branch?: string | null; createdAt?: Date | string }
   project?: { name: string } | null

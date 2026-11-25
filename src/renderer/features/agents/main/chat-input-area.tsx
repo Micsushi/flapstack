@@ -84,6 +84,7 @@ import {
   AgentModelTuningSelector,
   type AgentProviderId,
 } from "../components/agent-model-selector"
+import { AgentQuotaPill } from "../components/agent-quota-pill"
 import { AgentSendButton, AgentVoiceButton } from "../components/agent-send-button"
 import { AgentModeSelector } from "../components/agent-mode-selector"
 import { PermissionSelector } from "../components/permission-selector"
@@ -2352,7 +2353,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                 />
               </div>
               <PromptInputActions className="w-full">
-                <div className="relative flex items-center gap-0.5 flex-1 min-w-0">
+                <div className="relative flex min-w-0 flex-[2_1_0%] items-center gap-0.5">
                   <div className="group/model-controls flex min-w-0 items-center gap-0.5">
                     <AgentModelSelector
                       antigravity={antigravity}
@@ -2526,6 +2527,27 @@ export const ChatInputArea = memo(function ChatInputArea({
                         },
                       }}
                     />
+                    {!(
+                      provider === "claude-code" &&
+                      (availableModels.isOffline || hasCustomClaudeConfig)
+                    ) && (
+                      <AgentQuotaPill
+                        provider={provider}
+                        modelId={
+                          provider === "codex"
+                            ? selectedSubChatCodexModelId
+                            : provider === "cursor-agent"
+                              ? selectedCursorModel.id
+                              : provider === "openrouter"
+                                ? selectedOpencodeModels.openrouter
+                                : selectedSubChatModelId
+                        }
+                        onOpenUsage={() => {
+                          setSettingsTab("usage")
+                          setSettingsOpen(true)
+                        }}
+                      />
+                    )}
                   </div>
 
                   <ProgressiveOverflowRow

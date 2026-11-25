@@ -17,6 +17,8 @@ import {
 import { omitTextAttachmentReferences } from "../attachments/pasted-reference"
 import { PORTABLE_SECRET_PLACEHOLDER, redactText } from "../portability/secrets"
 
+export const FULL_CONVERSATION_BYTE_LIMIT = 1_000_000
+
 type OmissionClass = VisibleContextManifest["omissions"][number]["class"]
 
 export type VisibleContextSelection = {
@@ -31,6 +33,7 @@ export function buildVisibleContextManifest(input: {
   conversations: readonly HandoffConversation[]
   selection?: VisibleContextSelection
   compact?: boolean
+  fullConversation?: boolean
   budget?: HandoffBudget
 }): { contextText: string; manifest: VisibleContextManifest } {
   const selectedIds = input.selection?.messageIds ? new Set(input.selection.messageIds) : null
@@ -42,6 +45,16 @@ export function buildVisibleContextManifest(input: {
     "This is bounded imported context, not native provider history.",
     "",
   ]
+  if (input.fullConversation) {
+    sections.splice(
+      0,
+      sections.length,
+      "# Conversation from the source chat",
+      "",
+      "Use this prior conversation as context for the current request.",
+      "",
+    )
+  }
   if (input.compact) sections.splice(0, sections.length, "# Conversation handoff", "")
   const selected: VisibleContextManifest["selected"] = []
   const candidates: Array<{
@@ -69,12 +82,13 @@ export function buildVisibleContextManifest(input: {
       const messageId = normalizedMessageId(message, conversation.subChatId, messageIndex)
       if (
         (input.compact && !recent.has(messageIndex)) ||
+        (input.fullConversation && message.role !== "user" && message.role !== "assistant") ||
         (selectedIds && !selectedIds.has(messageId))
       ) {
         addOmission(omissions, "unselected-message")
         continue
       }
-      const rendered = renderMessage(message, omissions, input.compact)
+      const rendered = renderMessage(message, omissions, input.compact || input.fullConversation)
       const candidateRole =
         typeof message.role === "string" && message.role.trim() ? message.role : "message"
       const role = containsSecret(candidateRole) ? "message" : candidateRole
@@ -100,7 +114,11 @@ export function buildVisibleContextManifest(input: {
           : role === "user"
             ? "Recent request"
             : "Assistant update"
-        : role + " · " + conversationLabel + " · " + messageId
+        : input.fullConversation
+          ? role === "user"
+            ? "User"
+            : "Assistant"
+          : role + " · " + conversationLabel + " · " + messageId
       candidates.push({
         heading,
         body: visible,
@@ -117,7 +135,8 @@ export function buildVisibleContextManifest(input: {
   const budgetNote = "Some earlier or oversized messages were omitted to fit this handoff."
   const marker = "\n[Message excerpt]"
   let remaining =
-    handoffByteBudget(input.budget) - Buffer.byteLength(sections.join("\n") + budgetNote + "\n\n")
+    (input.fullConversation ? FULL_CONVERSATION_BYTE_LIMIT : handoffByteBudget(input.budget)) -
+    Buffer.byteLength(sections.join("\n") + budgetNote + "\n\n")
   const included = new Map<number, string>()
   const latestUser = candidates.findLastIndex((item) => item.ref.role === "user")
   const latestAssistant = candidates.findLastIndex((item) => item.ref.role === "assistant")

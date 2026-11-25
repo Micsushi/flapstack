@@ -1,5 +1,5 @@
 import { dirname, isAbsolute, join } from "node:path"
-import { realpathSync } from "node:fs"
+import { readFileSync, realpathSync } from "node:fs"
 import { parseArgs } from "node:util"
 import { signExternalMcpProof, verifyExternalMcpGrant } from "./external-grant"
 import { PRODUCT_MCP_INVALIDATION_ENDPOINT_ENV } from "../../../shared/product-mcp-invalidation"
@@ -73,8 +73,18 @@ export function readMcpLaunch(
     environment.FLAPSTACK_MCP_RUN_ID !== undefined
   )
     throw new Error("A Flapstack child identity cannot use external MCP mode.")
-  const token = environment.FLAPSTACK_MCP_OWNER_TOKEN
+  const credentialPath = environment.FLAPSTACK_MCP_OWNER_TOKEN_FILE
+  let token = environment.FLAPSTACK_MCP_OWNER_TOKEN
+  if (credentialPath) {
+    if (!isAbsolute(credentialPath)) throw new Error("Use an absolute owner credential path.")
+    try {
+      token = readFileSync(credentialPath, "utf8").trim()
+    } catch {
+      throw new Error("The external MCP owner credential file is unavailable.")
+    }
+  }
   if (!token) throw new Error("External MCP requires an owner-issued credential.")
+  const ownerToken = token
   const profile = values.profile
   if (profile && !isAbsolute(profile))
     throw new Error("External MCP profile must be an absolute path.")
@@ -91,11 +101,12 @@ export function readMcpLaunch(
   if (profile && realpathSync.native(join(profile, "data", "agents.db")) !== databasePath)
     throw new Error("The requested profile and database do not match.")
   const configDir = realpathSync.native(environment.FLAPSTACK_CONFIG_DIR || dirname(databasePath))
-  const resolveExternal = () => verifyExternalMcpGrant(databasePath, token, configDir)
+  const resolveExternal = () => verifyExternalMcpGrant(databasePath, ownerToken, configDir)
   const caller = resolveExternal()
   delete environment.FLAPSTACK_MCP_OWNER_TOKEN
+  delete environment.FLAPSTACK_MCP_OWNER_TOKEN_FILE
   if (environment === process.env)
-    signDesktopRequest = (payload) => signExternalMcpProof(token, payload)
+    signDesktopRequest = (payload) => signExternalMcpProof(ownerToken, payload)
   environment.FLAPSTACK_DB_PATH = databasePath
   environment.FLAPSTACK_CONFIG_DIR = configDir
   delete environment[PRODUCT_MCP_INVALIDATION_ENDPOINT_ENV]

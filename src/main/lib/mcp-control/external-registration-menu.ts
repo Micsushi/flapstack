@@ -1,6 +1,6 @@
 import { dialog } from "electron"
-import { basename, dirname, join, resolve } from "node:path"
-import { unlinkSync } from "node:fs"
+import { basename, dirname, join } from "node:path"
+import { realpathSync, rmSync, unlinkSync } from "node:fs"
 import {
   externalGrantDirectory,
   externalGrantPath,
@@ -9,10 +9,16 @@ import {
 import {
   createExternalMcpRegistration,
   externalClients,
+  externalOwnerCredentialPath,
   externalClientNames,
+  type WindowsMcpLauncher,
 } from "./external-registration"
 
-export async function manageExternalMcpRegistration(databasePath: string, mainDirectory: string) {
+export async function manageExternalMcpRegistration(
+  databasePath: string,
+  mainDirectory: string,
+  windowsLauncher?: WindowsMcpLauncher,
+) {
   const { response } = await dialog.showMessageBox({
     message: "Connect an external harness to this Flapstack profile",
     buttons: [...externalClientNames, "Revoke a connection…", "Cancel"],
@@ -32,7 +38,7 @@ export async function manageExternalMcpRegistration(databasePath: string, mainDi
     if (selected.canceled) return
     const file = selected.filePaths[0]!
     const grantPath = externalGrantPath(databasePath, basename(file, ".json"))
-    if (resolve(file) !== grantPath)
+    if (realpathSync.native(file) !== grantPath)
       throw new Error("Select a grant belonging to this Flapstack profile.")
     const confirm = await dialog.showMessageBox({
       message: "Revoke this external connection?",
@@ -41,7 +47,13 @@ export async function manageExternalMcpRegistration(databasePath: string, mainDi
       defaultId: 0,
       cancelId: 0,
     })
-    if (confirm.response === 1) unlinkSync(grantPath)
+    if (confirm.response === 1) {
+      unlinkSync(grantPath)
+      rmSync(
+        externalOwnerCredentialPath(realpathSync.native(databasePath), basename(file, ".json")),
+        { force: true },
+      )
+    }
     return
   }
   const client = externalClients[response]
@@ -69,15 +81,16 @@ export async function manageExternalMcpRegistration(databasePath: string, mainDi
     executablePath: process.execPath,
     entryPoint: join(mainDirectory, "mcp-control-stdio.js"),
     outputRoot: destination.filePaths[0]!,
+    windowsLauncher,
   })
   const instruction =
     client === "codex"
-      ? "Set CODEX_HOME to this directory before starting Codex:"
+      ? "Copy the generated MCP server table into your regular Codex config, then start a new Codex session:"
       : client === "claude"
         ? "Start Claude Code with --strict-mcp-config --mcp-config and this file:"
         : "Start Antigravity in this directory:"
   await dialog.showMessageBox({
     message: `${externalClientNames[response]} connection created`,
-    detail: `${instruction}\n${client === "claude" ? result.configPath : result.directory}\n\nConnection ID: ${result.grantId}`,
+    detail: `${instruction}\n${client === "antigravity" ? result.directory : result.configPath}\n\nConnection ID: ${result.grantId}`,
   })
 }

@@ -1643,6 +1643,7 @@ export const chatsRouter = router({
         requestId: z.string().trim().min(8).max(200),
         name: z.string().trim().min(1).max(200).optional(),
         compactSourceSubChatId: z.string().trim().min(1).max(200).optional(),
+        fullHistory: z.literal(true).optional(),
         selectedMessageIds: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
         selectedFileRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
         selectedArtifactRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
@@ -1650,7 +1651,8 @@ export const chatsRouter = router({
     )
     .query(async ({ input }) => {
       const { lifecycle } = await probedRuntimeLifecycle(input)
-      return lifecycle.previewContinuation(input)
+      const preview = lifecycle.previewContinuation(input)
+      return input.fullHistory ? { ...preview, contextText: "" } : preview
     }),
 
   continueWithRuntime: publicProcedure
@@ -1663,6 +1665,7 @@ export const chatsRouter = router({
         requestId: z.string().trim().min(8).max(200),
         name: z.string().trim().min(1).max(200).optional(),
         compactSourceSubChatId: z.string().trim().min(1).max(200).optional(),
+        fullHistory: z.literal(true).optional(),
         selectedMessageIds: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
         selectedFileRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),
         selectedArtifactRefs: z.array(z.string().trim().min(1).max(512)).max(1_000).optional(),

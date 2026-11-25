@@ -125,7 +125,7 @@ export function createOpenRouterProvider(): UsageProvider {
           quotaUnit: "usd-micros",
           percentUsed: totalLimit && used != null ? Math.round((used / totalLimit) * 100) : null,
           rawPayload: payload,
-          dedupeKey: `openrouter|key|${key.label ?? "default"}|${ctx.now.toISOString().slice(0, 13)}`,
+          metricKey: "credits",
         },
         ...generationSamples,
       ]

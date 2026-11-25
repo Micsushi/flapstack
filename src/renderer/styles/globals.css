@@ -216,6 +216,10 @@
 ::highlight(speech-reading-blue) {
   color: rgb(147 197 253);
 }
+
+::highlight(speech-reading-indigo) {
+  color: rgb(165 180 252);
+}
 ::highlight(speech-reading-orange) {
   color: rgb(253 186 116);
 }

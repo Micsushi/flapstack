@@ -1,4 +1,5 @@
 import { normalizeChatMode, resolveChatModePermission } from "../../../shared/chat-mode"
+import { CLAUDE_MODELS, CODEX_MODELS } from "../../../shared/model-catalog"
 import { antigravityPermissions } from "../../../shared/antigravity-permissions"
 import Database from "better-sqlite3"
 import { createHash } from "node:crypto"
@@ -25,6 +26,7 @@ import { isProductMcpEnabledByDefault } from "../mcp-control/exposure"
 import { checkRuntimeCompatibility, productRuntimeForHarness } from "./compatibility"
 import {
   buildVisibleContextManifest,
+  FULL_CONVERSATION_BYTE_LIMIT,
   canonicalJson,
   createRuntimeCompositionPreview,
   sha256,
@@ -81,6 +83,7 @@ export type RuntimeContinuationInput = {
   name?: string | null
   selectedMessageIds?: string[]
   compactSourceSubChatId?: string
+  fullHistory?: boolean
   selectedFileRefs?: string[]
   selectedArtifactRefs?: string[]
   confirmedPreviewDigest?: string
@@ -93,6 +96,7 @@ export type RuntimeContinuationInput = {
 export type RuntimeContinuationPreview = RuntimeCompositionPreview & {
   contextText: string
   visibleMessageCount: number
+  contextBudgetWarning?: string | null
 }
 
 export class RuntimeChatLifecycleService {
@@ -112,7 +116,7 @@ export class RuntimeChatLifecycleService {
     harness: string
     runtime: ResolvedAgentRuntime
   } {
-    const source = this.requireChat(input.sourceChatId)
+    const source = this.continuationSource(input)
     const harness = input.targetHarness?.trim() || String(source.harness ?? "generic")
     return {
       harness,
@@ -214,9 +218,10 @@ export class RuntimeChatLifecycleService {
       sourceChatId: input.sourceChatId,
       sourceRunId: latestRunId(this.sqlite, input.sourceChatId, input.compactSourceSubChatId),
       conversations,
-      compact: Boolean(input.compactSourceSubChatId),
+      compact: Boolean(input.compactSourceSubChatId) && !input.fullHistory,
+      fullConversation: input.fullHistory,
       selection: {
-        messageIds: input.selectedMessageIds,
+        messageIds: input.fullHistory ? undefined : input.selectedMessageIds,
         fileRefs: input.selectedFileRefs,
         artifactRefs: input.selectedArtifactRefs,
       },
@@ -251,19 +256,28 @@ export class RuntimeChatLifecycleService {
         : targetProbe && !targetProbe.available
           ? (targetProbe.reason ?? targetProbe.capabilities.unavailableReason)
           : null
-    const availability = unavailableReason
+    const historyOverLimit =
+      input.fullHistory &&
+      exported.manifest.omissions.some((omission) => omission.class === "context-budget")
+    const availability = historyOverLimit
       ? {
           state: "blocked" as const,
-          reason: unavailableReason.message,
-          repair: unavailableReason.repair,
+          reason: "The full conversation exceeds the 1 MB import limit.",
+          repair: null,
         }
-      : missing.length > 0
+      : unavailableReason
         ? {
             state: "blocked" as const,
-            reason: `Target lacks required capabilities: ${missing.join(", ")}.`,
-            repair: "Probe a compatible target that advertises every required capability.",
+            reason: unavailableReason.message,
+            repair: unavailableReason.repair,
           }
-        : worktreeAvailability(this.sqlite, source)
+        : missing.length > 0
+          ? {
+              state: "blocked" as const,
+              reason: `Target lacks required capabilities: ${missing.join(", ")}.`,
+              repair: "Probe a compatible target that advertises every required capability.",
+            }
+          : worktreeAvailability(this.sqlite, source)
     const preview = createRuntimeCompositionPreview({
       mode: input.mode,
       objective: input.objective,
@@ -279,6 +293,10 @@ export class RuntimeChatLifecycleService {
       ...preview,
       contextText: exported.contextText,
       visibleMessageCount: exported.manifest.selected.length,
+      contextBudgetWarning:
+        input.fullHistory && !historyOverLimit
+          ? historyContextWarning(targetHarness, targetModel, exported.contextText)
+          : null,
     }
   }
 
@@ -357,7 +375,7 @@ export class RuntimeChatLifecycleService {
         if (!sourceConversation) {
           throw new RuntimeChatLifecycleError("chat-empty", "Source conversation is missing.")
         }
-        if (Buffer.byteLength(preview.contextText) > 1_000_000) {
+        if (Buffer.byteLength(preview.contextText) > FULL_CONVERSATION_BYTE_LIMIT) {
           throw new RuntimeChatLifecycleError(
             "history-too-large",
             "Visible history exceeds the one-megabyte continuation limit.",
@@ -428,8 +446,13 @@ export class RuntimeChatLifecycleService {
           metadata: {
             kind: "runtime-continuation-context",
             ...(input.compactSourceSubChatId
-              ? { sourceSubChatId: input.compactSourceSubChatId, contextFormat: "summary" }
+              ? { sourceSubChatId: input.compactSourceSubChatId }
               : {}),
+            ...(input.fullHistory
+              ? { contextFormat: "full-history" }
+              : input.compactSourceSubChatId
+                ? { contextFormat: "summary" }
+                : {}),
             sourceChatId: input.sourceChatId,
             targetHarness,
             runtimePreference: input.preference,
@@ -500,11 +523,11 @@ export class RuntimeChatLifecycleService {
       .immediate()
   }
 
-  private requireChat(chatId: string): Row {
+  private requireChat(chatId: string, allowArchived = false): Row {
     const chat = this.sqlite.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as
       Row | undefined
     if (!chat) throw new RuntimeChatLifecycleError("chat-missing", "Runtime chat is missing.")
-    if (chat.archived_at !== null && chat.archived_at !== undefined) {
+    if (!allowArchived && chat.archived_at != null) {
       throw new RuntimeChatLifecycleError("chat-archived", "Runtime chat is archived.")
     }
     return chat
@@ -609,7 +632,11 @@ export class RuntimeChatLifecycleService {
   }
 
   private continuationSource(input: RuntimeContinuationInput): Row {
-    const chat = this.requireChat(input.sourceChatId)
+    // An archived source is read-only. Delegation and legacy workflows keep their active-source rules.
+    const chat = this.requireChat(
+      input.sourceChatId,
+      input.fullHistory === true && input.mode !== "delegate",
+    )
     if (!input.compactSourceSubChatId) return chat
     const conversation = this.sqlite
       .prepare(
@@ -649,6 +676,17 @@ export class RuntimeChatLifecycleService {
       messages: parseMessages(conversation.messages),
     }))
   }
+}
+
+function historyContextWarning(harness: string, model: string | null, text: string): string | null {
+  const catalog =
+    harness === "codex" ? CODEX_MODELS : harness === "claude-code" ? CLAUDE_MODELS : []
+  const contextWindow = catalog.find((entry) => entry.id === model)?.contextWindow
+  const estimatedTokens = Math.ceil(Buffer.byteLength(text) / 4)
+  if (!contextWindow || estimatedTokens < contextWindow * 0.8) return null
+  return estimatedTokens >= contextWindow
+    ? "The full conversation may exceed this model’s context window."
+    : "The full conversation may nearly fill this model’s context window."
 }
 
 export function createRuntimeChatLifecycleService(

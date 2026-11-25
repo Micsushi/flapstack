@@ -130,6 +130,7 @@ import {
   AgentModelTuningSelector,
   type AgentProviderId,
 } from "../components/agent-model-selector"
+import { AgentQuotaPill } from "../components/agent-quota-pill"
 import { CreateBranchDialog } from "../components/create-branch-dialog"
 import { formatTimeAgo } from "../utils/format-time-ago"
 import { handlePasteEvent } from "../utils/paste-text"
@@ -2527,6 +2528,19 @@ export function NewChatForm({
                             ),
                         }}
                       />
+                      {!(
+                        selectedAgent.id === "claude-code" &&
+                        (availableModels.isOffline || hasCustomClaudeConfig)
+                      ) && (
+                        <AgentQuotaPill
+                          provider={selectedAgent.id}
+                          modelId={selectedChatModel}
+                          onOpenUsage={() => {
+                            setSettingsActiveTab("usage")
+                            setSettingsDialogOpen(true)
+                          }}
+                        />
+                      )}
                     </div>
                   </div>
 

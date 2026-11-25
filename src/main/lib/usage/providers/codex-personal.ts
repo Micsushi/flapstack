@@ -19,9 +19,16 @@ interface CodexWindow {
   limit_window_seconds?: number
 }
 
+type CodexRateLimit = { primary_window?: CodexWindow | null; secondary_window?: CodexWindow | null }
+
 interface CodexUsagePayload {
   plan_type?: string
-  rate_limit?: { primary_window?: CodexWindow | null; secondary_window?: CodexWindow | null }
+  rate_limit?: CodexRateLimit | null
+  additional_rate_limits?: Array<{
+    metered_feature?: string
+    limit_name?: string
+    rate_limit?: CodexRateLimit | null
+  }> | null
   code_review_rate_limit?: { primary_window?: CodexWindow | null }
   credits?: { balance?: number | string | null }
 }
@@ -67,6 +74,32 @@ export async function pollCodexPersonal(
   if (secondary) samples.push(windowSample(ctx, accountTag, "seven_day", secondary, payload))
   const review = payload.code_review_rate_limit?.primary_window
   if (review) samples.push(windowSample(ctx, accountTag, "code_review", review, payload))
+  for (const bucket of Array.isArray(payload.additional_rate_limits)
+    ? payload.additional_rate_limits
+    : []) {
+    if (!bucket?.rate_limit) continue
+    const feature = modelLimitId(bucket.metered_feature)
+    const label = modelLimitId(bucket.limit_name)
+    const model = [label, feature].find(
+      (id) => id && /^(?:gpt-\d|o[1-9](?:-|$)|codex-mini(?:-|$))/.test(id),
+    )
+    if (!model) continue
+    for (const slot of ["primary", "secondary"] as const) {
+      const window = bucket.rate_limit[slot === "primary" ? "primary_window" : "secondary_window"]
+      if (window && normalizePercent(window.used_percent) != null) {
+        samples.push({
+          ...windowSample(
+            ctx,
+            accountTag,
+            "model:" + (feature ?? model) + ":" + slot,
+            window,
+            payload,
+          ),
+          model,
+        })
+      }
+    }
+  }
   return samples
 }
 
@@ -135,6 +168,12 @@ function windowSample(
     resetAt,
     rawPayload,
   }
+}
+
+function modelLimitId(value: unknown): string | null {
+  return typeof value === "string" && /^[a-z0-9][a-z0-9._-]{0,119}$/i.test(value.trim())
+    ? value.trim().toLowerCase().replaceAll("_", "-")
+    : null
 }
 
 function normalizePercent(value: number | undefined): number | null {

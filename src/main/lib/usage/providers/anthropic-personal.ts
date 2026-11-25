@@ -11,6 +11,7 @@ const KNOWN_QUOTAS = new Set([
   "five_hour",
   "seven_day",
   "seven_day_sonnet",
+  "seven_day_opus",
   "monthly_limit",
   "extra_usage",
 ])
@@ -33,6 +34,7 @@ interface AnthropicQuotaEntry {
   is_enabled?: boolean | null
   monthly_limit?: number | null
   used_credits?: number | null
+  model?: string
 }
 
 export function detectAnthropicPersonalToken(): string | null {
@@ -89,10 +91,32 @@ export async function pollAnthropicPersonal(
   const payload = await readProviderJson<Record<string, unknown>>(response, "anthropic")
   const identity = typeof credentials === "string" ? credentials : credentials.identity
   const accountTag = `claude-${createHash("sha256").update(identity).digest("hex").slice(0, 12)}`
-  return Object.entries(payload).flatMap(([metricKey, raw]) => {
-    if (!KNOWN_QUOTAS.has(metricKey) || !isQuotaEntry(raw)) return []
-    if (raw.is_enabled === false || typeof raw.utilization !== "number") return []
-    const resetAt = raw.resets_at ? dateOrNull(raw.resets_at) : null
+  const quotas = new Map(Object.entries(payload).filter(([key]) => KNOWN_QUOTAS.has(key)))
+  if (Array.isArray(payload.limits)) {
+    for (const limit of payload.limits) {
+      const label = limit?.scope?.model?.display_name
+      if (limit?.kind !== "weekly_scoped" || limit.is_active === false || typeof label !== "string")
+        continue
+      const match = /^(opus|sonnet|haiku|fable)(?: (\d+(?:\.\d+)*))?$/i.exec(label.trim())
+      if (!match || typeof limit.percent !== "number" || !Number.isFinite(limit.percent)) continue
+      const family = match[1]!.toLowerCase()
+      const model = match[2] ? "claude-" + family + "-" + match[2].replaceAll(".", "-") : undefined
+      quotas.set(model ? "weekly:" + model : "seven_day_" + family, {
+        utilization: limit.percent,
+        resets_at: limit.resets_at,
+        model,
+      })
+    }
+  }
+  return [...quotas].flatMap(([metricKey, raw]) => {
+    if (!isQuotaEntry(raw)) return []
+    if (
+      raw.is_enabled === false ||
+      typeof raw.utilization !== "number" ||
+      !Number.isFinite(raw.utilization)
+    )
+      return []
+    const resetAt = typeof raw.resets_at === "string" ? dateOrNull(raw.resets_at) : null
     return [
       {
         providerId: "anthropic" as const,
@@ -101,6 +125,7 @@ export async function pollAnthropicPersonal(
         source: ctx.source,
         sourceTag: "personal-oauth",
         metricKey,
+        model: raw.model ?? null,
         costQuality: "provider-reported" as const,
         capturedAt: ctx.now,
         windowEnd: resetAt,

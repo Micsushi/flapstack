@@ -1,3 +1,4 @@
+import { fullContinuationHistory, withFullContinuationHistory } from "../../chat-handoff"
 import { resolveInteractiveRuntime } from "../../agent-runtime/interactive-chat"
 import { changeClaudeMcpWithUndo } from "../../claude-mcp-actions"
 import { applyMcpAction } from "../../mcp-action-history"
@@ -1454,7 +1455,12 @@ export const claudeRouter = router({
             metadata.vaultContext = vaultContext.manifest
             metadata.extensionPolicy = extensionContext.manifest
             const contextualPrompt = prependStartupContext(
-              applyChatModeInstruction(finalPrompt, input.mode),
+              applyChatModeInstruction(
+                existingSessionId || isUsingOllama
+                  ? finalPrompt
+                  : withFullContinuationHistory(finalPrompt, existingMessages),
+                input.mode,
+              ),
               [
                 contextBundle.context,
                 vaultContext.context,
@@ -1841,7 +1847,12 @@ export const claudeRouter = router({
               metadata.context = contextBundle.metadata
               const freshPrompt = buildPrompt(
                 prependStartupContext(
-                  applyChatModeInstruction(finalPrompt, input.mode),
+                  applyChatModeInstruction(
+                    isUsingOllama
+                      ? finalPrompt
+                      : withFullContinuationHistory(finalPrompt, existingMessages),
+                    input.mode,
+                  ),
                   [
                     contextBundle.context,
                     vaultContext.context,
@@ -2056,10 +2067,11 @@ export const claudeRouter = router({
             if (isUsingOllama && typeof prompt === "string") {
               // Format conversation history from existingMessages (excluding current message)
               // IMPORTANT: Include tool calls info so model knows what files were read/edited
+              const importedHistory = fullContinuationHistory(existingMessages)
               let historyText = ""
               if (existingMessages.length > 0) {
                 const historyParts: string[] = []
-                for (const msg of existingMessages) {
+                for (const msg of existingMessages.slice(importedHistory ? 1 : 0)) {
                   if (msg.role === "user") {
                     // Extract text from user message parts
                     const textParts =
@@ -2152,7 +2164,7 @@ When asked about the project, use Glob to find files and Read to examine them.
 Be concise and helpful.
 [/CONTEXT]
 
-${historyText}[CURRENT REQUEST]
+${importedHistory ? importedHistory + "\n" : ""}${historyText}[CURRENT REQUEST]
 ${prompt}
 [/CURRENT REQUEST]`
               finalQueryPrompt = ollamaContext

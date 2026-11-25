@@ -1,3 +1,4 @@
+import { withFullContinuationHistory } from "../../chat-handoff"
 import { REASONING_EFFORTS, type ReasoningEffort } from "../../../../shared/model-catalog"
 import { spawnCodexProtocolClient } from "../../agent-runtime/codex/protocol-client"
 import { requireRuntimeLaunchAuthority } from "../../agent-runtime/launch-access"
@@ -2124,12 +2125,15 @@ export const codexRouter = router({
               ...contextBundle.metadata,
               extensionPolicy: extensionContext.manifest,
             }
+            const finalPrompt = chatProfile
+              ? `${chatProfile.instructions}\n\nUser request:\n${input.prompt}`
+              : input.prompt
             const promptForModel = prependFlapstackMcpGuidance(
               prependStartupContext(
                 applyChatModeInstruction(
-                  chatProfile
-                    ? `${chatProfile.instructions}\n\nUser request:\n${input.prompt}`
-                    : input.prompt,
+                  ownedSessionId
+                    ? finalPrompt
+                    : withFullContinuationHistory(finalPrompt, existingMessages),
                   input.mode,
                 ),
                 [
