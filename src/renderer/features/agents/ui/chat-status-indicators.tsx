@@ -29,7 +29,7 @@ import {
 const appearance = {
   "needs-input": {
     Icon: CircleHelp,
-    color: "text-amber-700 dark:text-amber-400",
+    color: "text-violet-700 dark:text-violet-400",
     label: "Needs your input",
   },
   "dependency-wait-failed": {
@@ -44,7 +44,7 @@ const appearance = {
   },
   blocked: {
     Icon: LockKeyhole,
-    color: "text-violet-700 dark:text-violet-400",
+    color: "text-amber-700 dark:text-amber-400",
     label: "Blocked",
   },
   running: {
