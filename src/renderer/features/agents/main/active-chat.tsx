@@ -273,6 +273,7 @@ import { SubChatStatusCard } from "../ui/sub-chat-status-card"
 import { SplitViewContainer } from "../ui/split-view-container"
 import { TextSelectionPopover } from "../ui/text-selection-popover"
 import { autoRenameAgentChat } from "../utils/auto-rename"
+import { ChatTitleSuggestion } from "../ui/chat-title-suggestion"
 import { isUntitledChatName } from "../../../../shared/chat-title"
 import {
   generateCommitToPrMessage,
@@ -2134,9 +2135,13 @@ const ChatViewInner = memo(function ChatViewInner({
   const localUtils = trpc.useUtils()
 
   // Get sub-chat name from store
-  const subChatName = useAgentSubChatStore(
+  const storedSubChatName = useAgentSubChatStore(
     (state) => state.allSubChats.find((sc) => sc.id === subChatId)?.name || "",
   )
+  const subChatName =
+    isFirstSubChat && isUntitledChatName(storedSubChatName)
+      ? workspaceName || storedSubChatName
+      : storedSubChatName
 
   // Mutation for renaming sub-chat
   const renameSubChatMutation = api.agents.renameSubChat.useMutation({
@@ -2191,6 +2196,36 @@ const ChatViewInner = memo(function ChatViewInner({
       }
     },
     [localUtils.chats.get, localUtils.chats.list, parentChatId, subChatId],
+  )
+
+  const applySuggestedTitle = useCallback(
+    async (name: string, expectedName: string) => {
+      const rename = async (next: string, expected: string) => {
+        await trpcClient.chats.rename.mutate({
+          id: parentChatId,
+          name: next,
+          expectedName: expected,
+        })
+        subChatStore.getState().updateSubChatName(subChatId, next)
+        localUtils.chats.list.setData({}, (old) =>
+          old?.map((chat) => (chat.id === parentChatId ? { ...chat, name: next } : chat)),
+        )
+        void localUtils.chats.get.invalidate({ id: parentChatId })
+        void localUtils.chats.getMetadata.invalidate({ id: parentChatId })
+      }
+      try {
+        await rename(name, expectedName)
+      } catch (error) {
+        void localUtils.chats.getMetadata.invalidate({ id: parentChatId })
+        throw error
+      }
+      recordAppAction({
+        label: "Rename Chat",
+        undo: () => rename(expectedName, name),
+        redo: () => rename(name, expectedName),
+      })
+    },
+    [localUtils, parentChatId, subChatId, subChatStore],
   )
 
   const projectColor = useMemo(() => {
@@ -4120,6 +4155,38 @@ const ChatViewInner = memo(function ChatViewInner({
   // Keyboard shortcut: Cmd+Esc to toggle focus/blur (without stopping generation)
   useToggleFocusOnCmdEsc(editorRef, isActive && acceptsGlobalShortcuts)
 
+  // Older agent-created chats can already have a transcript when first opened.
+  useEffect(() => {
+    if (
+      !isActive ||
+      isArchived ||
+      sandboxId ||
+      !isFirstSubChat ||
+      !isUntitledChatName(subChatName) ||
+      hasTriggeredRenameRef.current
+    )
+      return
+    const firstUser = messages.find((message) => message.role === "user")
+    const nameSource = firstUser?.parts
+      ?.flatMap((part: { type?: string; text?: unknown }) =>
+        part?.type === "text" && typeof part.text === "string" ? [part.text] : [],
+      )
+      .join("\n")
+      .trim()
+    if (!nameSource) return
+    hasTriggeredRenameRef.current = true
+    onAutoRename(nameSource, subChatId)
+  }, [
+    isActive,
+    isArchived,
+    isFirstSubChat,
+    messages,
+    onAutoRename,
+    sandboxId,
+    subChatId,
+    subChatName,
+  ])
+
   // Auto-trigger AI response when we have initial message but no response yet
   // Also trigger auto-rename for initial sub-chat with pre-populated message
   // IMPORTANT: Skip if there's an active streamId (prevents double-generation on resume)
@@ -5395,6 +5462,22 @@ const ChatViewInner = memo(function ChatViewInner({
                   }
                 />
               </div>
+            )}
+
+            {isActive && isFirstSubChat && !isArchived && !sandboxId && (
+              <ChatTitleSuggestion
+                key={parentChatId}
+                chatId={parentChatId}
+                name={workspaceName ?? ""}
+                turns={transcriptTurns}
+                ready={
+                  status === "ready" &&
+                  latestRun?.status !== "pending" &&
+                  latestRun?.status !== "running"
+                }
+                onApply={applySuggestedTitle}
+                onClose={() => editorRef.current?.focus()}
+              />
             )}
 
             {isActive && (

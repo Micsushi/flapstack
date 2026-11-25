@@ -296,7 +296,7 @@ export const mcpControlTools: McpControlTool[] = [
   {
     name: "create_chat",
     description:
-      "Create a new ordinary Flapstack chat or thread for the user without starting an agent. Omit the title and destination for a blank chat alongside the current one.",
+      "Create an idle Flapstack chat or thread. Pass projectName when the user names a project, including Flapstack. Omit the destination for the current location. To send a requested first message, set the target harness here and then use launch_run.",
     tier: 1,
     requiredCapabilities: [],
     status: "implemented",
@@ -428,7 +428,7 @@ export const mcpControlTools: McpControlTool[] = [
   },
   {
     name: "launch_run",
-    description: "Launch a new agent run.",
+    description: "Send the requested message to an existing chat and queue an agent run.",
     tier: 3,
     requiredCapabilities: ["subagents", "shell"],
     status: "implemented",

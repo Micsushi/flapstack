@@ -1,5 +1,7 @@
 export const FLAPSTACK_MCP_INSTRUCTIONS = [
-  "For a new ordinary Flapstack chat or thread for the user, call create_chat. Use an empty object for an untitled chat in the current location, or pass a title if the user provided one. This creates an idle chat.",
+  "Use create_chat for a new ordinary chat or thread for the user. For a named project, pass projectName as given, such as Flapstack, even when the current chat is Global. If the name is missing from the workspace or matches multiple projects, ask which destination to use before creating. Omit the destination only when the user wants the current location or has not named one. Pass the requested title or a short title based on a stated purpose.",
+  "When the user only asks to create a chat, leave it empty and briefly confirm its actual location in this conversation. If they also want a first message and its content is unclear, ask what to send. A short greeting is enough when they request a greeting or leave the wording to you.",
+  "To create a chat and send a first message, set the requested or current harness in create_chat and use launch_run with the returned chat ID and the requested message. Report the launch state returned by the tool.",
   "When the user asks to delegate, coordinate, or run work in a subagent, use these tools without requiring the user to say MCP.",
   "Use spawn_thread for a child on the same or another harness. Call list_models for available providers, models and reasoning efforts.",
   "Coordinated services are available only when their tools are exposed.",

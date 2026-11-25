@@ -1,7 +1,9 @@
 "use client"
 
+import { Clock3 } from "lucide-react"
 import { memo } from "react"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "../../../components/ui/hover-card"
+import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
 
 export interface AgentMessageMetadata {
@@ -72,7 +74,6 @@ export function resolveChatTokenUsage(
 interface AgentMessageUsageProps {
   metadata?: AgentMessageMetadata
   isStreaming?: boolean
-  isMobile?: boolean
 }
 
 function formatTokens(tokens: number): string {
@@ -90,16 +91,25 @@ function formatDuration(ms: number): string {
   if (seconds < 60) {
     return `${seconds.toFixed(1)}s`
   }
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = Math.round(seconds % 60)
+  const roundedSeconds = Math.round(seconds)
+  const minutes = Math.floor(roundedSeconds / 60)
+  const remainingSeconds = roundedSeconds % 60
   return `${minutes}m ${remainingSeconds}s`
 }
 
 export const AgentMessageUsage = memo(function AgentMessageUsage({
   metadata,
   isStreaming = false,
-  isMobile = false,
 }: AgentMessageUsageProps) {
+  const runId = metadata?.runId
+  const { data: timing } = trpc.runs.getTimings.useQuery(
+    { runId: runId ?? "" },
+    { enabled: Boolean(runId) && !isStreaming, staleTime: Infinity },
+  )
+  const firstReply =
+    timing?.firstAnswerFromSubmitMs == null
+      ? undefined
+      : formatDuration(timing.firstAnswerFromSubmitMs)
   if (!metadata) return null
 
   const {
@@ -117,23 +127,37 @@ export const AgentMessageUsage = memo(function AgentMessageUsage({
     totalTokens: displayTokens,
   } = resolveMessageTokenUsage(metadata)
 
+  const hasDuration = durationMs !== undefined && durationMs > 0
   const hasUsage = displayTokens > 0
 
-  if (!hasUsage) return null
+  if (!hasUsage && firstReply === undefined) return null
+  const label = [
+    firstReply !== undefined && "Time to first reply: " + firstReply,
+    hasUsage && "Turn tokens: " + displayTokens.toLocaleString(),
+    isStreaming && "Live",
+  ]
+    .filter(Boolean)
+    .join(", ")
 
   return (
     <HoverCard openDelay={400} closeDelay={100}>
       <HoverCardTrigger asChild>
         <button
-          tabIndex={-1}
-          aria-label={`Token usage${isStreaming ? ", live" : ""}: ${displayTokens.toLocaleString()}`}
+          type="button"
+          aria-label={label}
           className={cn(
-            "h-5 px-1.5 flex items-center text-[10px] rounded-md",
-            "text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/50",
+            "h-5 shrink-0 px-1.5 inline-flex items-center gap-2 text-[10px] rounded-md",
+            "text-muted-foreground hover:text-foreground hover:bg-muted/50 focus-visible:ring-1 focus-visible:ring-ring",
             "transition-[background-color,transform] duration-150 ease-out",
           )}
         >
-          <span className="font-mono">{formatTokens(displayTokens)}</span>
+          {firstReply !== undefined && (
+            <span className="inline-flex items-center gap-1 font-mono">
+              <Clock3 aria-hidden="true" className="h-3 w-3" />
+              {firstReply}
+            </span>
+          )}
+          {hasUsage && <span className="font-mono">{formatTokens(displayTokens)}</span>}
         </button>
       </HoverCardTrigger>
       <HoverCardContent
@@ -143,8 +167,14 @@ export const AgentMessageUsage = memo(function AgentMessageUsage({
       >
         <div className="space-y-1.5 pb-2">
           {/* Status & Duration group */}
-          {(isStreaming || resultSubtype || (durationMs !== undefined && durationMs > 0)) && (
+          {(firstReply !== undefined || isStreaming || resultSubtype || hasDuration) && (
             <div className="space-y-1">
+              {firstReply !== undefined && (
+                <div className="flex justify-between text-xs gap-4">
+                  <span className="text-muted-foreground">Time to first reply</span>
+                  <span className="font-mono text-foreground">{firstReply}</span>
+                </div>
+              )}
               {isStreaming && (
                 <div className="flex justify-between text-xs gap-4">
                   <span className="text-muted-foreground">Status:</span>
@@ -160,9 +190,9 @@ export const AgentMessageUsage = memo(function AgentMessageUsage({
                 </div>
               )}
 
-              {durationMs !== undefined && durationMs > 0 && (
+              {hasDuration && (
                 <div className="flex justify-between text-xs gap-4">
-                  <span className="text-muted-foreground">Duration:</span>
+                  <span className="text-muted-foreground">Total run time</span>
                   <span className="font-mono text-foreground">{formatDuration(durationMs)}</span>
                 </div>
               )}
@@ -172,7 +202,7 @@ export const AgentMessageUsage = memo(function AgentMessageUsage({
           {/* Tokens group */}
           {displayTokens > 0 && (
             <div className="flex justify-between text-xs gap-4 pt-1.5 mt-1 border-t border-border/50">
-              <span className="text-muted-foreground">Tokens:</span>
+              <span className="text-muted-foreground">Turn tokens</span>
               <span className="font-mono font-medium text-foreground">
                 {displayTokens.toLocaleString()}
               </span>

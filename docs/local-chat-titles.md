@@ -30,3 +30,16 @@ setting retains the previous first-message preview. Existing non-placeholder nam
 are preserved even when their historical origin cannot be determined.
 An intentional manual name of exactly `New Chat` is indistinguishable from the
 placeholder and remains eligible. Durable title-origin tracking is not implemented.
+
+Agent-created chats store a supplied name on both the sidebar chat and its
+conversation. An untitled chat with a queued first message gets a local
+fallback title from that prompt. Older untitled conversations can receive
+their first title when opened, using the existing title setting.
+
+With automatic titles enabled, an active chat can get a title suggestion after
+every four prompts with a reply at the latest prompt. The check uses a bounded
+preview of the recent conversation. The existing local model can recognize a
+change in focus. Without one, an explicit subject change or repeated unrelated
+subject matter can still produce a suggestion. Applying a suggestion checks
+the current saved title and supports Undo and Redo. Dismissing the suggestion
+keeps the saved title.

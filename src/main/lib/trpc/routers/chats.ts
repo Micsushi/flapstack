@@ -101,7 +101,9 @@ import {
 import { AgentProfileChatBindingService } from "../../agent-profiles/chat-binding"
 import {
   CHAT_TITLE_STYLES,
+  KEEP_CHAT_TITLE,
   fallbackChatMetadata,
+  fallbackChatTitleSuggestion,
   inferHighConfidenceChatTags,
 } from "../../../../shared/chat-metadata"
 
@@ -1302,10 +1304,23 @@ export const chatsRouter = router({
    * Rename a chat
    */
   rename: publicProcedure
-    .input(z.object({ id: z.string(), name: z.string().min(1) }))
+    .input(
+      z.object({ id: z.string(), name: z.string().min(1), expectedName: z.string().optional() }),
+    )
     .mutation(({ input }) => {
       const db = getDatabase()
       return db.transaction((tx) => {
+        if (input.expectedName !== undefined) {
+          const current = tx
+            .select({ name: chats.name, archivedAt: chats.archivedAt })
+            .from(chats)
+            .where(eq(chats.id, input.id))
+            .get()
+          if (!current || current.archivedAt)
+            throw new TRPCError({ code: "NOT_FOUND", message: "Chat not found" })
+          if (current.name !== input.expectedName)
+            throw new TRPCError({ code: "CONFLICT", message: "The chat title has changed" })
+        }
         const updatedChat = tx
           .update(chats)
           .set({ name: input.name, updatedAt: new Date() })
@@ -2675,6 +2690,55 @@ export const chatsRouter = router({
 
       console.log("[generateCommitMessage] Generated fallback message:", message)
       return { message }
+    }),
+
+  suggestTitle: publicProcedure
+    .input(
+      z.object({
+        chatId: z.string().min(1),
+        promptId: z.string().min(1),
+        currentTitle: z.string().min(1).max(200),
+        titleStyle: z.enum(CHAT_TITLE_STYLES),
+        ollamaModel: z.string().nullish(),
+        recentTurns: z
+          .array(
+            z.object({
+              promptPreview: z.string().max(100),
+              responsePreview: z.string().max(164).nullable(),
+            }),
+          )
+          .min(2)
+          .max(3),
+      }),
+    )
+    .query(async ({ input }) => {
+      const chat = getDatabase()
+        .select({ name: chats.name, archivedAt: chats.archivedAt })
+        .from(chats)
+        .where(eq(chats.id, input.chatId))
+        .get()
+      if (!chat || chat.archivedAt || chat.name !== input.currentTitle) return null
+      const generated = await generateChatMetadataWithOllama({
+        currentTitle: input.currentTitle,
+        userMessage: JSON.stringify(input.recentTurns),
+        titleStyle: input.titleStyle,
+        includeTags: false,
+        model: input.ollamaModel,
+      })
+      const suggested =
+        generated?.title ??
+        fallbackChatTitleSuggestion(
+          input.currentTitle,
+          input.recentTurns.map((turn) => turn.promptPreview),
+          input.titleStyle,
+        )
+      if (
+        !suggested ||
+        suggested.toLowerCase() === KEEP_CHAT_TITLE.toLowerCase() ||
+        suggested.toLowerCase() === input.currentTitle.toLowerCase()
+      )
+        return null
+      return suggested
     }),
 
   /** Generate a title and optional high-confidence tags from the first message. */

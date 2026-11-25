@@ -27,7 +27,8 @@ import {
   createDatabaseLocalModelRunPersistence,
   LocalModelChatService,
 } from "../../harness/local-model-stream"
-import { agentRuns, chats, getDatabase, subChats } from "../../db"
+import { agentRuns, chats, getDatabase, getSqliteDatabase, subChats } from "../../db"
+import { legacyRunTimer, recordSubmittedAt } from "../../run-timings"
 import type { UIMessageChunk } from "../../claude/types"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import { parsePermissionMode } from "../../permissions"
@@ -108,6 +109,7 @@ export const localModelsRouter = router({
         chatId: z.string().min(1),
         subChatId: z.string().min(1),
         runId: z.string().min(1),
+        submittedAtMs: z.number().int().nonnegative().optional(),
         prompt: z.string().min(1),
         mode: z.enum(CHAT_MODES).default("write"),
         model: z.string().min(1),
@@ -226,6 +228,7 @@ export const localModelsRouter = router({
             if (service.diagnostics().activeRunIds.includes(input.runId))
               throw new Error("Local model run is already active.")
             ownsStream = true
+            const timing = legacyRunTimer(getDatabase, () => input.runId)
             for await (const chunk of service.stream({
               runId: input.runId,
               promptMessageId: run?.promptMessageId ?? undefined,
@@ -243,7 +246,12 @@ export const localModelsRouter = router({
               endpoint,
               ...(fixtureFetch ? { fetchImpl: fixtureFetch } : {}),
             })) {
+              if (chunk.type === "start")
+                recordSubmittedAt(getSqliteDatabase(), input.runId, input.submittedAtMs)
+              if (chunk.type === "text-delta") timing.chunk(chunk)
               safeNext(chunk)
+              if (chunk.type === "start")
+                safeNext({ type: "message-metadata", messageMetadata: { runId: input.runId } })
             }
             safeComplete()
           } catch (error) {

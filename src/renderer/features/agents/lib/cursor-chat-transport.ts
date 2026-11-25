@@ -135,6 +135,7 @@ export class CursorChatTransport implements ChatTransport<UIMessage> {
     messages: UIMessage[]
     abortSignal?: AbortSignal
   }): Promise<ReadableStream<UIMessageChunk>> {
+    const submittedAtMs = Date.now()
     const lastUser = [...options.messages].reverse().find((message) => message.role === "user")
     const prompt = this.extractText(lastUser)
     const images = this.extractImages(lastUser)
@@ -181,6 +182,7 @@ export class CursorChatTransport implements ChatTransport<UIMessage> {
             subChatId: this.config.subChatId,
             chatId: this.config.chatId,
             runId,
+            submittedAtMs,
             prompt,
             mode,
             cwd: this.config.cwd,

@@ -17,6 +17,7 @@ export async function generateChatMetadataWithOllama(input: {
   titleStyle: ChatTitleStyle
   includeTags: boolean
   model?: string | null
+  currentTitle?: string
 }): Promise<GeneratedChatMetadata | null> {
   try {
     const status = await checkOllamaStatus()
@@ -39,9 +40,8 @@ export async function generateChatMetadataWithOllama(input: {
     const metadata = data.success
       ? parseGeneratedChatMetadata(data.data.response, input.titleStyle)
       : null
-    return metadata
-      ? { ...metadata, title: singleTokenChatTitle(input.userMessage) ?? metadata.title }
-      : null
+    if (!metadata || input.currentTitle) return metadata
+    return { ...metadata, title: singleTokenChatTitle(input.userMessage) ?? metadata.title }
   } catch {
     // The caller retains its local fallback; never log message/model response contents.
     return null

@@ -81,7 +81,12 @@ const schemas = {
       scope: z
         .enum(["global", "project", "task"])
         .optional()
-        .describe("Omit scope and destination IDs to use the current chat's location."),
+        .describe("Omit the destination to use the current chat's location."),
+      projectName: name
+        .optional()
+        .describe(
+          "Exact visible project name as given by the user. Use instead of projectId or taskId. Implies project scope.",
+        ),
       projectId: id.optional().describe("Local project ID, required for explicit project scope."),
       taskId: id.optional().describe("Local task ID, required for explicit task scope."),
       harness: z.enum(AGENT_HARNESSES).optional(),
@@ -850,12 +855,35 @@ function createChat(
   scope: Scope,
   input: z.infer<typeof schemas.create_chat>,
 ): McpControlResponse {
+  const { projectName } = input
+  if (
+    projectName &&
+    (input.projectId || input.taskId || (input.scope && input.scope !== "project"))
+  ) {
+    return fail("invalid-input", "Use a project name by itself or with project scope.")
+  }
   if (!input.scope && (input.projectId || input.taskId)) {
     return fail("invalid-input", "Specify scope when providing a project or task ID.")
   }
-  const kind = input.scope ?? scope.kind
-  let projectId = input.scope ? (input.projectId ?? null) : scope.projectId
-  const taskId = input.scope ? (input.taskId ?? null) : scope.taskId
+  const requestedScope = projectName ? "project" : input.scope
+  const kind = requestedScope ?? scope.kind
+  let projectId = requestedScope ? (input.projectId ?? null) : scope.projectId
+  const taskId = requestedScope ? (input.taskId ?? null) : scope.taskId
+  if (projectName) {
+    if (scope.taskId) return fail("out-of-scope", "Chat is outside the caller task scope.")
+    const matches = db
+      .prepare(
+        "SELECT id FROM projects WHERE archived_at IS NULL AND name = ? COLLATE NOCASE AND (? IS NULL OR id = ?) LIMIT 2",
+      )
+      .all(projectName, scope.projectId, scope.projectId) as Array<{ id: string }>
+    if (matches.length === 0) return fail("stale-target", "No available project matches that name.")
+    if (matches.length > 1)
+      return fail(
+        "conflict",
+        "More than one project matches that name. Specify the intended project ID.",
+      )
+    projectId = matches[0].id
+  }
   if (!validateChatDestination({ scope: kind, projectId, taskId })) {
     return fail("invalid-input", "Scope identity must match the chat destination.")
   }
@@ -873,13 +901,22 @@ function createChat(
     return fail("out-of-scope", "Chat is outside the caller task scope.")
   if (scope.projectId && projectId !== scope.projectId)
     return fail("out-of-scope", "Chat is outside the caller project scope.")
+  const project = projectId
+    ? (db
+        .prepare(
+          "SELECT name, default_permission_mode permission_mode, default_custom_permissions custom_permissions FROM projects WHERE id = ? AND archived_at IS NULL",
+        )
+        .get(projectId) as Row | undefined)
+    : undefined
+  if (projectId && !project) return fail("stale-target", "Project is missing or archived.")
+  const destination = { scope: kind, projectId, projectName: project?.name ?? null, taskId }
   if (input.name) {
     const existing = db
       .prepare(
         "SELECT id FROM chats WHERE name = ? AND project_id IS ? AND task_id IS ? AND archived_at IS NULL",
       )
       .get(input.name, projectId, taskId) as Row | undefined
-    if (existing) return { ok: true, data: { id: existing.id, created: false } }
+    if (existing) return { ok: true, data: { id: existing.id, created: false, ...destination } }
   }
   const inherited = taskId
     ? (db
@@ -887,13 +924,7 @@ function createChat(
           "SELECT default_permission_mode permission_mode, default_custom_permissions custom_permissions FROM tasks WHERE id = ?",
         )
         .get(taskId) as Row | undefined)
-    : projectId
-      ? (db
-          .prepare(
-            "SELECT default_permission_mode permission_mode, default_custom_permissions custom_permissions FROM projects WHERE id = ?",
-          )
-          .get(projectId) as Row | undefined)
-      : null
+    : project
   const preferences = getPermissionPreferences()
   const permissionMode =
     typeof inherited?.permission_mode === "string"
@@ -924,10 +955,11 @@ function createChat(
     now,
   )
   db.prepare(
-    "INSERT INTO sub_chats (id, chat_id, harness, model, reasoning_effort, permission_mode, messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?)",
+    "INSERT INTO sub_chats (id, chat_id, name, harness, model, reasoning_effort, permission_mode, messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)",
   ).run(
     randomUUID(),
     chatId,
+    input.name ?? null,
     input.harness ?? null,
     input.model ?? null,
     input.reasoningEffort ?? null,
@@ -935,7 +967,7 @@ function createChat(
     now,
     now,
   )
-  return { ok: true, data: { id: chatId, created: true } }
+  return { ok: true, data: { id: chatId, created: true, ...destination } }
 }
 
 /**

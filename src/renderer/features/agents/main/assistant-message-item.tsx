@@ -615,7 +615,6 @@ function ProducerChips({ metadata }: { metadata: AgentMessageMetadata | undefine
 function AssistantMessageOptionsMenu({
   includeToolbarActions,
   text,
-  metadata,
   isMobile,
   chatId,
   subChatId,
@@ -625,7 +624,6 @@ function AssistantMessageOptionsMenu({
 }: {
   includeToolbarActions: boolean
   text: string
-  metadata: AgentMessageMetadata
   isMobile: boolean
   chatId: string
   subChatId: string
@@ -654,7 +652,6 @@ function AssistantMessageOptionsMenu({
               subChatId={subChatId}
               messageId={messageId}
             />
-            <AgentMessageUsage metadata={metadata} isStreaming={false} isMobile={isMobile} />
           </div>
         )}
         {onReply && <DropdownMenuItem onClick={onReply}>Reply</DropdownMenuItem>}
@@ -1266,7 +1263,6 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
                   <AssistantMessageOptionsMenu
                     includeToolbarActions
                     text={getMessageTextContent(message)}
-                    metadata={msgMetadata}
                     isMobile={isMobile}
                     chatId={chatId}
                     subChatId={subChatId}
@@ -1288,7 +1284,6 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
                   <AssistantMessageOptionsMenu
                     includeToolbarActions={false}
                     text={getMessageTextContent(message)}
-                    metadata={msgMetadata}
                     isMobile={isMobile}
                     chatId={chatId}
                     subChatId={subChatId}
@@ -1330,20 +1325,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
               </>
             )}
           </div>
-          <div className="flex items-center gap-0.5">
-            <span
-              data-message-inline-action
-              className={
-                isStreaming && isLastMessage ? "inline-flex" : "hidden @[420px]:inline-flex"
-              }
-            >
-              <AgentMessageUsage
-                metadata={msgMetadata}
-                isStreaming={isStreaming && isLastMessage}
-                isMobile={isMobile}
-              />
-            </span>
-          </div>
+          <AgentMessageUsage metadata={msgMetadata} isStreaming={isStreaming && isLastMessage} />
         </div>
       ) : null}
 

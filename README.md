@@ -195,8 +195,10 @@ the [Stage 3 execution plan](docs/stage3-execution-plan.md).
 - MCP tools for agents to inspect and control app objects.
 - Structured operations for projects, tasks, chats, runs, files, and worktrees.
 - With Flapstack MCP enabled, `create_chat` creates an idle chat. An empty
-  request creates an untitled chat in the current chat's location. The caller's
-  permissions still apply.
+  request creates an untitled chat in the current chat's location. Pass
+  `projectName` for a named project. A requested first message uses `launch_run`
+  with the new chat ID and an explicitly selected harness on the chat. The
+  caller's permissions still apply.
 - Permission gates around agent-initiated app actions.
 - Cross-harness thread spawning: Claude can create a Codex thread, Codex can
   create a Claude thread, and other supported harnesses can target each other
