@@ -472,8 +472,8 @@ export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
     "preferences-desktop-notifications",
     "preferences",
     "Desktop notifications",
-    "Notify when an agent needs input or completes",
-    ["alerts", "system notification"],
+    "Show system notifications when Flapstack is in the background",
+    ["alerts", "system notification", "foreground", "background"],
   ),
   control(
     "preferences-sound-notifications",
@@ -481,13 +481,6 @@ export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
     "Sound notifications",
     "Play completion sounds",
     ["audio", "alerts"],
-  ),
-  control(
-    "preferences-focused-notifications",
-    "preferences",
-    "Notify when focused",
-    "Show notifications while Flapstack is active",
-    ["alerts", "foreground"],
   ),
   control(
     "preferences-drag-chats",

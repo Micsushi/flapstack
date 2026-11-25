@@ -194,6 +194,9 @@ the [Stage 3 execution plan](docs/stage3-execution-plan.md).
   expanding the MCP surface; keep strict TypeScript and the full gate green.
 - MCP tools for agents to inspect and control app objects.
 - Structured operations for projects, tasks, chats, runs, files, and worktrees.
+- With Flapstack MCP enabled, `create_chat` creates an idle chat. An empty
+  request creates an untitled chat in the current chat's location. The caller's
+  permissions still apply.
 - Permission gates around agent-initiated app actions.
 - Cross-harness thread spawning: Claude can create a Codex thread, Codex can
   create a Claude thread, and other supported harnesses can target each other

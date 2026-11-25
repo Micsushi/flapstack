@@ -46,7 +46,14 @@ export type McpToolDispatch = (
   signal: AbortSignal,
 ) => Promise<McpControlResponse>
 
-const initialTools = new Set(["ping", "describe", "list_chats", "spawn_thread", "launch_run"])
+const initialTools = new Set([
+  "ping",
+  "describe",
+  "list_chats",
+  "create_chat",
+  "spawn_thread",
+  "launch_run",
+])
 const invalidCaller: McpControlResponse = {
   ok: false,
   error: {

@@ -50,7 +50,7 @@ import { toast } from "sonner"
 import { useShallow } from "zustand/react/shallow"
 import type { FileStatus } from "../../../../shared/changes-types"
 import { ChatTranscriptOverview } from "./chat-transcript-overview"
-import { buildTranscriptMarkers, type TranscriptMarker } from "./chat-transcript-overview-model"
+import { buildTranscriptTurns, type TranscriptMarker } from "./chat-transcript-overview-model"
 import {
   hydrateChatFromPersistedMessages,
   sanitizePersistedHarnessMessages,
@@ -286,6 +286,10 @@ import { ChatRuntimeActivity } from "../runtime-activity/chat-runtime-activity"
 import { RuntimeActivityFixtureControls } from "../runtime-activity/runtime-activity-fixture-controls"
 // import { selectedTeamIdAtom } from "@/lib/atoms/team"
 const selectedTeamIdAtom = atom<string | null>(null)
+const markResponseUnseenAtom = atom(null, (_get, set, chatId: string, subChatId: string) => {
+  set(agentsSubChatUnseenChangesAtom, (current) => markChatUnseen(current, subChatId))
+  set(agentsUnseenChangesAtom, (current) => markChatUnseen(current, chatId))
+})
 const AgentDiffView = lazy(() =>
   import("../ui/agent-diff-view").then((module) => ({ default: module.AgentDiffView })),
 )
@@ -2025,6 +2029,28 @@ const ChatViewInner = memo(function ChatViewInner({
     return getDistanceFromScrollBottom(container) <= threshold
   }, [])
 
+  const hasUnseenResponse = useAtomValue(agentsSubChatUnseenChangesAtom).has(subChatId)
+  const acknowledgeVisibleResponse = useCallback(() => {
+    if (
+      !isVisiblePaneRef.current ||
+      !scrollInitializedRef.current ||
+      !chatContainerRef.current?.clientHeight ||
+      document.visibilityState !== "visible" ||
+      !document.hasFocus() ||
+      !(shouldAutoScrollRef.current || isAtBottom())
+    ) {
+      return
+    }
+
+    const unseen = appStore.get(agentsSubChatUnseenChangesAtom)
+    if (!unseen.has(subChatId)) return
+    const remaining = markChatSeen(unseen, subChatId)
+    appStore.set(agentsSubChatUnseenChangesAtom, remaining)
+    if (!subChatStore.getState().allSubChats.some((subChat) => remaining.has(subChat.id))) {
+      appStore.set(agentsUnseenChangesAtom, (current) => markChatSeen(current, parentChatId))
+    }
+  }, [isAtBottom, parentChatId, subChatId, subChatStore])
+
   // Track previous scroll position to detect scroll direction
   const prevScrollTopRef = useRef(0)
 
@@ -2060,8 +2086,9 @@ const ChatViewInner = memo(function ChatViewInner({
     shouldAutoScrollRef.current = isAtBottom()
     if (shouldAutoScrollRef.current) {
       setHasUnreadBottomUpdate(false)
+      acknowledgeVisibleResponse()
     }
-  }, [isAtBottom, scheduleScrollPositionSave])
+  }, [acknowledgeVisibleResponse, isAtBottom, scheduleScrollPositionSave])
 
   // Scroll to bottom handler with ease-in-out animation
   const scrollToBottom = useCallback(() => {
@@ -2095,11 +2122,12 @@ const ChatViewInner = memo(function ChatViewInner({
         // Ensure we're at the absolute bottom
         container.scrollTop = container.scrollHeight
         isAutoScrollingRef.current = false
+        acknowledgeVisibleResponse()
       }
     }
 
     requestAnimationFrame(animateScroll)
-  }, [])
+  }, [acknowledgeVisibleResponse])
 
   // tRPC utils for cache invalidation
   const utils = api.useUtils()
@@ -4207,6 +4235,17 @@ const ChatViewInner = memo(function ChatViewInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subChatId, isVisiblePane, parentChatId])
 
+  useLayoutEffect(() => {
+    if (!hasUnseenResponse || !isVisiblePane) return
+    acknowledgeVisibleResponse()
+    window.addEventListener("focus", acknowledgeVisibleResponse)
+    document.addEventListener("visibilitychange", acknowledgeVisibleResponse)
+    return () => {
+      window.removeEventListener("focus", acknowledgeVisibleResponse)
+      document.removeEventListener("visibilitychange", acknowledgeVisibleResponse)
+    }
+  }, [acknowledgeVisibleResponse, hasUnseenResponse, isVisiblePane])
+
   // Attach scroll listener (separate effect)
   useEffect(() => {
     const container = chatContainerRef.current
@@ -5079,7 +5118,7 @@ const ChatViewInner = memo(function ChatViewInner({
   const searchBarTopOffset = isSubChatsSidebarOpen ? "52px" : undefined
   const shouldShowStatusCard = changedFilesForSubChat.length > 0
   const shouldShowStackedCards = !displayQuestions && (queue.length > 0 || shouldShowStatusCard)
-  const transcriptMarkers = useMemo(() => buildTranscriptMarkers(messages), [messages])
+  const transcriptTurns = useMemo(() => buildTranscriptTurns(messages), [messages])
   const visibleActivityCount = (activityPage?.events ?? []).filter(
     (event) => event.subChatId === subChatId && event.privacyClass === "public",
   ).length
@@ -5360,7 +5399,7 @@ const ChatViewInner = memo(function ChatViewInner({
 
             {isActive && (
               <ChatTranscriptOverview
-                markers={transcriptMarkers}
+                turns={transcriptTurns}
                 onJump={jumpToTranscriptMarker}
                 scrollElementRef={chatContainerRef}
               />
@@ -5730,10 +5769,8 @@ function ChatViewScoped({
   const hasCustomClaudeConfig = customClaudeCredentialStatus?.configured === true
   const setLoadingSubChats = useSetAtom(loadingSubChatsAtom)
   const unseenChanges = useAtomValue(agentsUnseenChangesAtom)
-  const setUnseenChanges = useSetAtom(agentsUnseenChangesAtom)
-  const setSubChatUnseenChanges = useSetAtom(agentsSubChatUnseenChangesAtom)
+  const markResponseUnseen = useSetAtom(markResponseUnseenAtom)
   const setJustCreatedIds = useSetAtom(justCreatedIdsAtom)
-  const selectedChatId = useAtomValue(selectedAgentChatIdAtom)
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   const setUndoStack = useSetAtom(undoStackAtom)
   const setSelectedFilePath = useSetAtom(selectedDiffFilePathAtom)
@@ -6183,13 +6220,6 @@ function ChatViewScoped({
   // Track changed files across all sub-chats for filtering
   const subChatFiles = useAtomValue(subChatFilesAtom)
 
-  // Standalone Chats are acknowledged when opened. Workbench panes are
-  // acknowledged by an explicit pane or tab interaction instead.
-  useEffect(() => {
-    if (workbenchActive !== undefined) return
-    setUnseenChanges((current: Set<string>) => markChatSeen(current, chatId))
-  }, [chatId, setUnseenChanges, workbenchActive])
-
   // Get this top-level Chat's scoped compatibility state.
   const scopedSubChatState = useAgentSubChatStore((state) => state)
   const { activeSubChatId, openSubChatIds, pinnedSubChatIds, allSubChats, splitPaneIds } =
@@ -6206,19 +6236,6 @@ function ChatViewScoped({
   useEffect(() => {
     setSubChatProviderOverrides({})
   }, [chatId])
-
-  // Clear sub-chat "unseen changes" indicator when sub-chat becomes active
-  useEffect(() => {
-    if (!activeSubChatId) return
-    setSubChatUnseenChanges((prev: Set<string>) => {
-      if (prev.has(activeSubChatId)) {
-        const next = new Set(prev)
-        next.delete(activeSubChatId)
-        return next
-      }
-      return prev
-    })
-  }, [activeSubChatId, setSubChatUnseenChanges])
 
   // tRPC utils for optimistic cache updates
   const utils = api.useUtils()
@@ -7864,26 +7881,9 @@ Make sure to preserve all functionality from both branches when resolving confli
           agentChatStore.clearManuallyAborted(subChatId)
           if (!wasManuallyAborted && !event?.isAbort && !event?.isError)
             prepareReplyAudio(chatId, subChatId, event?.message ?? newChat.messages.at(-1))
-          // Get CURRENT values at runtime (not stale closure values)
-          const currentActiveSubChatId = subChatStore.getState().activeSubChatId
-          const currentSelectedChatId = appStore.get(selectedAgentChatIdAtom)
+          markResponseUnseen(chatId, subChatId)
 
-          const isViewingThisSubChat = currentActiveSubChatId === subChatId
-          const isViewingThisChat = currentSelectedChatId === chatId
-
-          if (!isViewingThisSubChat) {
-            setSubChatUnseenChanges((prev: Set<string>) => {
-              const next = new Set(prev)
-              next.add(subChatId)
-              return next
-            })
-          }
-
-          // Keep completion visible until the user explicitly returns to this
-          // Chat or pane, even if it was technically selected while running.
-          setUnseenChanges((current: Set<string>) => markChatUnseen(current, chatId))
-
-          if (!isViewingThisChat) {
+          if (appStore.get(selectedAgentChatIdAtom) !== chatId) {
             // Play completion sound only if NOT manually aborted and sound is enabled
             if (!wasManuallyAborted) {
               const isSoundEnabled = appStore.get(soundNotificationsEnabledAtom)
@@ -7919,6 +7919,7 @@ Make sure to preserve all functionality from both branches when resolving confli
           const queryClient = getQueryClient()
           if (queryClient) {
             void queryClient.invalidateQueries({ queryKey: [["chats", "getFileStats"]] })
+            void queryClient.invalidateQueries({ queryKey: [["chats", "listAgentMetadata"]] })
             void queryClient.invalidateQueries({
               queryKey: [["chats", "getPendingPlanApprovals"]],
             })
@@ -7950,9 +7951,7 @@ Make sure to preserve all functionality from both branches when resolving confli
       selectedLocalModelId,
       localModelEndpoint,
       subChatProviderOverrides,
-      setSubChatUnseenChanges,
-      selectedChatId,
-      setUnseenChanges,
+      markResponseUnseen,
       notifyAgentComplete,
       notifyAgentError,
       syncFinishedMessagesToChatCache,
@@ -8229,26 +8228,9 @@ Make sure to preserve all functionality from both branches when resolving confli
           if (!wasManuallyAborted && !event?.isAbort && !event?.isError)
             prepareReplyAudio(chatId, newId, event?.message ?? newChat.messages.at(-1))
 
-          // Get CURRENT values at runtime (not stale closure values)
-          const currentActiveSubChatId = subChatStore.getState().activeSubChatId
-          const currentSelectedChatId = appStore.get(selectedAgentChatIdAtom)
+          markResponseUnseen(chatId, newId)
 
-          const isViewingThisSubChat = currentActiveSubChatId === newId
-          const isViewingThisChat = currentSelectedChatId === chatId
-
-          if (!isViewingThisSubChat) {
-            setSubChatUnseenChanges((prev: Set<string>) => {
-              const next = new Set(prev)
-              next.add(newId)
-              return next
-            })
-          }
-
-          // Keep completion visible until the user explicitly returns to this
-          // Chat or pane, even if it was technically selected while running.
-          setUnseenChanges((current: Set<string>) => markChatUnseen(current, chatId))
-
-          if (!isViewingThisChat) {
+          if (appStore.get(selectedAgentChatIdAtom) !== chatId) {
             // Play completion sound only if NOT manually aborted and sound is enabled
             if (!wasManuallyAborted) {
               const isSoundEnabled = appStore.get(soundNotificationsEnabledAtom)
@@ -8279,6 +8261,7 @@ Make sure to preserve all functionality from both branches when resolving confli
 
           // Refresh diff stats after agent finishes making changes
           fetchDiffStatsRef.current()
+          void getQueryClient()?.invalidateQueries({ queryKey: [["chats", "listAgentMetadata"]] })
 
           pruneIfDetachedAndIdle(newId)
 
@@ -8297,9 +8280,7 @@ Make sure to preserve all functionality from both branches when resolving confli
     activeSubChatId,
     inferProviderFromMessages,
     utils,
-    setSubChatUnseenChanges,
-    selectedChatId,
-    setUnseenChanges,
+    markResponseUnseen,
     notifyAgentComplete,
     notifyAgentError,
     syncFinishedMessagesToChatCache,
@@ -8758,14 +8739,7 @@ Make sure to preserve all functionality from both branches when resolving confli
   return (
     <FileOpenProvider onOpenFile={setFileViewerPath}>
       <TextSelectionProvider>
-        <div
-          className="flex h-full flex-col"
-          onPointerDownCapture={() => {
-            if (workbenchActive === undefined) {
-              setUnseenChanges((current: Set<string>) => markChatSeen(current, chatId))
-            }
-          }}
-        >
+        <div className="flex h-full flex-col">
           {/* Main content */}
           <div className="flex-1 overflow-hidden flex">
             {/* Chat Panel */}

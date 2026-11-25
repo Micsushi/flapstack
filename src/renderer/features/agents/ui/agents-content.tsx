@@ -1,6 +1,6 @@
 "use client"
 
-import { ChatStatusIndicators, ChatStatusProvider } from "./chat-status-indicators"
+import { ChatStatusIndicator, ChatStatusProvider } from "./chat-status-indicators"
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 // import { useSearchParams, useRouter } from "next/navigation" // Desktop doesn't use next/navigation
@@ -3188,9 +3188,6 @@ function AgentsContentInner() {
                     {!selectedChatIsRemote &&
                       chatWorkbenchNavigation.groups.map((group) => {
                         const isActive = chatWorkbenchNavigation.activeGroupId === group.id
-                        const hasUnseenChanges = collectChatGroups(group.layout.root).some((pane) =>
-                          pane.chatIds.some((chatId) => unseenChatIds.has(chatId)),
-                        )
                         return (
                           <ContextMenu key={group.id}>
                             <ContextMenuTrigger asChild>
@@ -3267,7 +3264,7 @@ function AgentsContentInner() {
                                   onClick={() => handleSelectWorkbenchGroup(group.id)}
                                 >
                                   <span className="min-w-0 flex-1 truncate">{group.name}</span>
-                                  <ChatStatusIndicators
+                                  <ChatStatusIndicator
                                     chatIds={collectChatGroups(group.layout.root).flatMap(
                                       (pane) => pane.chatIds,
                                     )}
@@ -3276,32 +3273,13 @@ function AgentsContentInner() {
                                 <button
                                   type="button"
                                   aria-label={`Close ${group.name}`}
-                                  className={[
-                                    "relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-foreground/70 hover:bg-foreground/20 hover:text-foreground group-hover:opacity-100",
-                                    hasUnseenChanges ? "opacity-100" : "opacity-60",
-                                  ].join(" ")}
+                                  className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-foreground/70 opacity-60 hover:bg-foreground/20 hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
                                   onClick={(event) => {
                                     event.stopPropagation()
                                     handleCloseWorkbenchGroup(group.id)
                                   }}
                                 >
-                                  {hasUnseenChanges && (
-                                    <span
-                                      aria-hidden
-                                      data-group-unseen-indicator={group.id}
-                                      className="absolute inset-0 flex items-center justify-center transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
-                                    >
-                                      <span className="h-2 w-2 rounded-full bg-[#307BD0]" />
-                                    </span>
-                                  )}
-                                  <X
-                                    className={[
-                                      "h-3.5 w-3.5",
-                                      hasUnseenChanges
-                                        ? "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-                                        : "",
-                                    ].join(" ")}
-                                  />
+                                  <X aria-hidden className="h-3.5 w-3.5" />
                                 </button>
                               </div>
                             </ContextMenuTrigger>
@@ -3428,7 +3406,6 @@ function AgentsContentInner() {
                     {openChatTabs.map((chat) => {
                       const isActive =
                         chatWorkbenchNavigation.activeGroupId === null && chat.id === selectedChatId
-                      const hasUnseenChanges = unseenChatIds.has(chat.id)
                       const underlineColor = resolveOpenChatTabUnderlineColor(
                         chat,
                         openChatProjectColors,
@@ -3522,22 +3499,15 @@ function AgentsContentInner() {
                                 <span className="min-w-0 flex-1 truncate">
                                   {chat.name || "New Chat"}
                                 </span>
-                                <ChatStatusIndicators chatIds={[chat.id]} />
-                                {hasUnseenChanges && (
-                                  <span className="sr-only">, new response</span>
-                                )}
+                                <ChatStatusIndicator chatIds={[chat.id]} />
                               </button>
                               <button
                                 type="button"
                                 data-open-chat-tab-action
                                 aria-label={`Close ${chat.name || "chat"}`}
                                 className={[
-                                  "relative flex h-8 w-8 translate-y-0.5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,box-shadow,color,opacity] hover:bg-foreground/20 hover:text-foreground hover:ring-1 hover:ring-inset hover:ring-foreground/35 group-hover:opacity-100",
-                                  hasUnseenChanges
-                                    ? "opacity-100"
-                                    : isActive
-                                      ? "opacity-60"
-                                      : "opacity-0",
+                                  "relative flex h-8 w-8 translate-y-0.5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,box-shadow,color,opacity] hover:bg-foreground/20 hover:text-foreground hover:ring-1 hover:ring-inset hover:ring-foreground/35 group-hover:opacity-100 focus-visible:opacity-100",
+                                  isActive ? "opacity-60" : "opacity-0",
                                 ].join(" ")}
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
@@ -3545,23 +3515,7 @@ function AgentsContentInner() {
                                   handleCloseOpenChatTab(chat.id)
                                 }}
                               >
-                                {hasUnseenChanges && (
-                                  <span
-                                    aria-hidden
-                                    data-open-chat-unseen-indicator={chat.id}
-                                    className="absolute inset-0 flex items-center justify-center transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
-                                  >
-                                    <span className="h-2 w-2 rounded-full bg-[#307BD0]" />
-                                  </span>
-                                )}
-                                <X
-                                  className={[
-                                    "h-4 w-4",
-                                    hasUnseenChanges
-                                      ? "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-                                      : "",
-                                  ].join(" ")}
-                                />
+                                <X aria-hidden className="h-4 w-4" />
                               </button>
                               {!isActive && (
                                 <span

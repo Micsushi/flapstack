@@ -295,14 +295,16 @@ export const mcpControlTools: McpControlTool[] = [
   },
   {
     name: "create_chat",
-    description: "Create a new chat.",
+    description:
+      "Create a new ordinary Flapstack chat or thread for the user without starting an agent. Omit the title and destination for a blank chat alongside the current one.",
     tier: 1,
     requiredCapabilities: [],
     status: "implemented",
   },
   {
     name: "spawn_thread",
-    description: "Create and optionally launch a new thread on a supported harness.",
+    description:
+      "Create a child agent chat on a supported provider and optionally start its first run. For an ordinary new chat or thread for the user, use create_chat.",
     tier: 3,
     requiredCapabilities: ["subagents", "shell"],
     status: "implemented",

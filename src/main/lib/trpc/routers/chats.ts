@@ -509,7 +509,23 @@ export const chatsRouter = router({
       labels: listAgentChatLabels(database),
       waits: listAgentChatWaits(database),
       runStatuses: getDatabase()
-        .select({ id: subChats.id, chatId: subChats.chatId, runStatus: subChats.runStatus })
+        .select({
+          id: subChats.id,
+          chatId: subChats.chatId,
+          created_at: subChats.createdAt,
+          // Older local runs could finish without clearing the cached running status.
+          runStatus: sql<string | null>`CASE
+            WHEN ${subChats.harness} = 'local'
+              AND ${subChats.runStatus} = 'running'
+              AND ${subChats.streamId} IS NULL
+            THEN COALESCE((
+              SELECT r.status FROM agent_runs r
+              WHERE r.chat_id = ${subChats.chatId} AND r.sub_chat_id = ${subChats.id}
+              ORDER BY r.started_at DESC, r.rowid DESC LIMIT 1
+            ), ${subChats.runStatus})
+            ELSE ${subChats.runStatus}
+          END`,
+        })
         .from(subChats)
         .all(),
     }

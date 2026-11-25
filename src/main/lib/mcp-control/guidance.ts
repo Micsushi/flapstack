@@ -1,6 +1,6 @@
 export const FLAPSTACK_MCP_INSTRUCTIONS = [
-  "Flapstack app-control tools can create and launch child agent chats across supported providers.",
-  "When the user asks to create, delegate to, coordinate, or run work in a subagent, use these tools without requiring the user to say MCP.",
+  "For a new ordinary Flapstack chat or thread for the user, call create_chat. Use an empty object for an untitled chat in the current location, or pass a title if the user provided one. This creates an idle chat.",
+  "When the user asks to delegate, coordinate, or run work in a subagent, use these tools without requiring the user to say MCP.",
   "Use spawn_thread for a child on the same or another harness. Call list_models for available providers, models and reasoning efforts.",
   "Coordinated services are available only when their tools are exposed.",
   "If a tool is not listed, call tool_search with its name or purpose, then refresh the tool list to get its schema.",

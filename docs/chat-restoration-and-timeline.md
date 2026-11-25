@@ -9,8 +9,10 @@ marked as already hydrated, so it can be reconsidered after the run is idle.
 
 The desktop transcript rail keeps its markers visible without a preliminary
 hover or click. Hover and keyboard focus still reveal public prompt/response
-previews. Private reasoning is excluded. Existing short-Chat suppression and
-small-screen visibility rules remain unchanged.
+previews. The long marker follows the latest prompt reached in the viewport and
+stays on that prompt while you scroll through its reply. Private reasoning is
+excluded. Existing short-Chat suppression and small-screen visibility rules
+remain unchanged.
 
 Regression tests cover empty-placeholder restoration, preservation of local
 state, deferred hydration, and a real AI SDK Chat/view subscription. Timeline

@@ -328,6 +328,8 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("app:show-notification", (event, options: DesktopNotificationOptions) => {
     try {
+      if (BrowserWindow.getFocusedWindow()) return
+
       if (!Notification.isSupported()) {
         console.warn("[Main] Notifications not supported on this system")
         return

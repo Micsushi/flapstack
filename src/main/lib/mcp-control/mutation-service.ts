@@ -53,16 +53,16 @@ import { queueChatRun } from "../run-launch-service"
 import { planProviderTransition } from "../../../shared/provider-transition"
 import { registerChatWait } from "../chat-waits"
 import { VisualArtifactStore } from "../visual-capture/artifact-store"
-import { canonicalMcpChatScope } from "./scope"
+import { canonicalMcpChatScope, type McpCanonicalChatScope } from "./scope"
 
 const itemSchema = z.enum(["project", "task", "chat"])
 const name = z.string().trim().min(1).max(200)
 const id = z.string().trim().min(1).max(128)
 
 function validateChatDestination(input: {
-  scope: "global" | "project" | "task"
-  projectId?: string
-  taskId?: string
+  scope: McpCanonicalChatScope["kind"]
+  projectId?: string | null
+  taskId?: string | null
 }): boolean {
   return !(
     (input.scope === "global" && (input.projectId || input.taskId)) ||
@@ -77,10 +77,13 @@ const schemas = {
   orchestrate_task: createOrchestrationInputSchema.partial({ initiatingChatId: true }),
   create_chat: z
     .object({
-      name,
-      scope: z.enum(["global", "project", "task"]),
-      projectId: id.optional(),
-      taskId: id.optional(),
+      name: name.optional().describe("Chat title. Omit to create a new untitled chat."),
+      scope: z
+        .enum(["global", "project", "task"])
+        .optional()
+        .describe("Omit scope and destination IDs to use the current chat's location."),
+      projectId: id.optional().describe("Local project ID, required for explicit project scope."),
+      taskId: id.optional().describe("Local task ID, required for explicit task scope."),
       harness: z.enum(AGENT_HARNESSES).optional(),
       model: name.optional(),
       reasoningEffort: reasoningEffortSchema.optional(),
@@ -190,8 +193,8 @@ export function createMcpMutationService(
         return refuseUnboundRecordsCaller()
       }
       if (
-        (operation === "create_chat" || operation === "move_chat") &&
-        !validateChatDestination(input.data as z.infer<typeof schemas.create_chat>)
+        operation === "move_chat" &&
+        !validateChatDestination(input.data as z.infer<typeof schemas.move_chat>)
       )
         return fail("invalid-input", "Scope identity must match the chat destination.")
       const db = activeDatabase?.() ?? openAppDatabase(databasePath)
@@ -757,7 +760,7 @@ function waitForChats(
   }
 }
 
-type Scope = { chatId: string; projectId: string | null; taskId: string | null; kind: string }
+type Scope = McpCanonicalChatScope
 function callerScope(db: Database.Database, caller: McpCallerIdentity): Scope {
   if (caller.callerKind === "external-owner")
     return { kind: "global", projectId: null, taskId: null, chatId: caller.chatId }
@@ -773,12 +776,7 @@ function callerScope(db: Database.Database, caller: McpCallerIdentity): Scope {
     .get(caller.chatId) as Row | undefined
   const scope = row ? canonicalMcpChatScope(row) : null
   if (!scope) throw new Error("Caller chat is stale.")
-  return {
-    chatId: scope.chatId,
-    kind: scope.kind,
-    projectId: scope.projectId,
-    taskId: scope.taskId,
-  }
+  return scope
 }
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" ? value : null
@@ -852,16 +850,16 @@ function createChat(
   scope: Scope,
   input: z.infer<typeof schemas.create_chat>,
 ): McpControlResponse {
-  let projectId = input.projectId ?? null
-  let taskId = input.taskId ?? null
-  if (input.scope === "global") {
-    projectId = null
-    taskId = null
+  if (!input.scope && (input.projectId || input.taskId)) {
+    return fail("invalid-input", "Specify scope when providing a project or task ID.")
   }
-  if (input.scope === "project" && !projectId)
-    return fail("invalid-input", "Project chats require projectId.")
-  if (input.scope === "task") {
-    if (!taskId) return fail("invalid-input", "Task chats require taskId.")
+  const kind = input.scope ?? scope.kind
+  let projectId = input.scope ? (input.projectId ?? null) : scope.projectId
+  const taskId = input.scope ? (input.taskId ?? null) : scope.taskId
+  if (!validateChatDestination({ scope: kind, projectId, taskId })) {
+    return fail("invalid-input", "Scope identity must match the chat destination.")
+  }
+  if (kind === "task" && taskId) {
     const task = db
       .prepare("SELECT project_id FROM tasks WHERE id = ? AND archived_at IS NULL")
       .get(taskId) as Row | undefined
@@ -875,12 +873,14 @@ function createChat(
     return fail("out-of-scope", "Chat is outside the caller task scope.")
   if (scope.projectId && projectId !== scope.projectId)
     return fail("out-of-scope", "Chat is outside the caller project scope.")
-  const existing = db
-    .prepare(
-      "SELECT id FROM chats WHERE name = ? AND project_id IS ? AND task_id IS ? AND archived_at IS NULL",
-    )
-    .get(input.name, projectId, taskId) as Row | undefined
-  if (existing) return { ok: true, data: { id: existing.id, created: false } }
+  if (input.name) {
+    const existing = db
+      .prepare(
+        "SELECT id FROM chats WHERE name = ? AND project_id IS ? AND task_id IS ? AND archived_at IS NULL",
+      )
+      .get(input.name, projectId, taskId) as Row | undefined
+    if (existing) return { ok: true, data: { id: existing.id, created: false } }
+  }
   const inherited = taskId
     ? (db
         .prepare(
@@ -911,8 +911,8 @@ function createChat(
     "INSERT INTO chats (id, name, scope, project_id, task_id, permission_mode, custom_permissions, mcp_exposure_enabled, harness, model, reasoning_effort, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
   ).run(
     chatId,
-    input.name,
-    input.scope,
+    input.name ?? null,
+    kind,
     projectId,
     taskId,
     permissionMode,

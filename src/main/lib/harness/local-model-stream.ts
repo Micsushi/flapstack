@@ -1431,7 +1431,7 @@ function updateLocalSubChatStatusIfAuthoritative(
           WHERE newer.sub_chat_id = ${input.subChatId}
             AND (
               newer.started_at > current.started_at OR
-              (newer.started_at = current.started_at AND newer.id > current.id)
+              (newer.started_at = current.started_at AND newer.rowid > current.rowid)
             )
         )`,
       ),

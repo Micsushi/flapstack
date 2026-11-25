@@ -1,18 +1,18 @@
 import { useEffect, useState, type RefObject } from "react"
 import { cn } from "../../../lib/utils"
-import type { TranscriptMarker } from "./chat-transcript-overview-model"
+import { selectTranscriptMarkers, type TranscriptMarker } from "./chat-transcript-overview-model"
 
 export function ChatTranscriptOverview({
-  markers,
+  turns,
   onJump,
   scrollElementRef,
 }: {
-  markers: readonly TranscriptMarker[]
+  turns: readonly TranscriptMarker[]
   onJump: (marker: TranscriptMarker) => void
   scrollElementRef?: RefObject<HTMLElement | null>
 }) {
-  const totalTurns = markers[0]?.total ?? 0
-  const [visibleTurn, setVisibleTurn] = useState<number>()
+  const totalTurns = turns.length
+  const [reachedTurn, setReachedTurn] = useState<number>()
   useEffect(() => {
     const viewport = scrollElementRef?.current
     if (!viewport || totalTurns <= 3) return
@@ -21,20 +21,19 @@ export function ChatTranscriptOverview({
     let frame = 0
     const update = () => {
       frame = 0
-      const rect = viewport.getBoundingClientRect()
-      const middle = rect.top + rect.height / 2
+      const bottom =
+        viewport.getBoundingClientRect().top + viewport.clientTop + viewport.clientHeight
       const groups = feed.querySelectorAll<HTMLElement>(":scope > [aria-posinset]")
-      let closest: number | undefined
-      let distance = Infinity
-      for (const group of Array.from(groups)) {
+      // Each group starts with its prompt. A reply can extend beyond the viewport.
+      for (let index = groups.length - 1; index >= 0; index--) {
+        const group = groups[index]!
         const bounds = group.getBoundingClientRect()
-        if (bounds.bottom <= rect.top || bounds.top >= rect.bottom) continue
-        const nextDistance = Math.max(bounds.top - middle, middle - bounds.bottom, 0)
-        if (nextDistance >= distance) continue
-        closest = Number(group.getAttribute("aria-posinset"))
-        distance = nextDistance
+        if (bounds.height > 0 && bounds.top < bottom) {
+          setReachedTurn(Number(group.getAttribute("aria-posinset")))
+          return
+        }
       }
-      if (closest !== undefined) setVisibleTurn(closest)
+      if (feed.getBoundingClientRect().top >= bottom) setReachedTurn(undefined)
     }
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(update)
@@ -42,23 +41,21 @@ export function ChatTranscriptOverview({
     const resize = new ResizeObserver(schedule)
     resize.observe(viewport)
     resize.observe(feed)
+    // The virtualizer can swap mounted groups without changing the feed's height.
+    const groups = new MutationObserver(schedule)
+    groups.observe(feed, { childList: true })
     viewport.addEventListener("scroll", schedule, { passive: true })
     schedule()
     return () => {
       cancelAnimationFrame(frame)
       resize.disconnect()
+      groups.disconnect()
       viewport.removeEventListener("scroll", schedule)
     }
   }, [scrollElementRef, totalTurns])
   if (totalTurns <= 3) return null
-  const active =
-    visibleTurn === undefined
-      ? undefined
-      : markers.reduce((closest, next) =>
-          Math.abs(next.ordinal - visibleTurn) < Math.abs(closest.ordinal - visibleTurn)
-            ? next
-            : closest,
-        )
+  const active = turns[(reachedTurn ?? 0) - 1]
+  const markers = selectTranscriptMarkers(turns, active)
 
   return (
     <>
@@ -80,8 +77,10 @@ export function ChatTranscriptOverview({
                 <span
                   aria-hidden="true"
                   className={cn(
-                    "block h-px w-2 bg-muted-foreground transition-[width,background-color] group-hover/marker:w-5 group-hover/marker:bg-foreground group-focus-visible/marker:w-5 group-focus-visible/marker:bg-foreground",
-                    active?.id === marker.id && "h-0.5 w-4 bg-foreground",
+                    "block transition-[width,background-color]",
+                    active?.id === marker.id
+                      ? "h-0.5 w-4 bg-foreground"
+                      : "h-px w-2 bg-muted-foreground group-hover/marker:w-3 group-hover/marker:bg-foreground group-focus-visible/marker:w-3 group-focus-visible/marker:bg-foreground",
                   )}
                 />
                 <span className="pointer-events-none absolute left-9 top-1/2 hidden w-80 -translate-y-1/2 rounded-xl border border-border bg-popover px-3 py-2.5 text-left text-popover-foreground shadow-lg group-hover/marker:block group-focus-visible/marker:block">
@@ -110,7 +109,7 @@ export function ChatTranscriptOverview({
           }}
         >
           <option value="" disabled>
-            {visibleTurn ? `Turn ${visibleTurn} of ${totalTurns}` : "Jump to a turn"}
+            {active ? `Turn ${active.ordinal} of ${totalTurns}` : "Jump to a turn"}
           </option>
           {markers.map((marker) => (
             <option key={marker.id} value={marker.id}>
