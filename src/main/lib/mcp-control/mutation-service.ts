@@ -53,16 +53,16 @@ import { queueChatRun } from "../run-launch-service"
 import { planProviderTransition } from "../../../shared/provider-transition"
 import { registerChatWait } from "../chat-waits"
 import { VisualArtifactStore } from "../visual-capture/artifact-store"
-import { canonicalMcpChatScope } from "./scope"
+import { canonicalMcpChatScope, type McpCanonicalChatScope } from "./scope"
 
 const itemSchema = z.enum(["project", "task", "chat"])
 const name = z.string().trim().min(1).max(200)
 const id = z.string().trim().min(1).max(128)
 
 function validateChatDestination(input: {
-  scope: "global" | "project" | "task"
-  projectId?: string
-  taskId?: string
+  scope: McpCanonicalChatScope["kind"]
+  projectId?: string | null
+  taskId?: string | null
 }): boolean {
   return !(
     (input.scope === "global" && (input.projectId || input.taskId)) ||
@@ -77,10 +77,18 @@ const schemas = {
   orchestrate_task: createOrchestrationInputSchema.partial({ initiatingChatId: true }),
   create_chat: z
     .object({
-      name,
-      scope: z.enum(["global", "project", "task"]),
-      projectId: id.optional(),
-      taskId: id.optional(),
+      name: name.optional().describe("Chat title. Omit to create a new untitled chat."),
+      scope: z
+        .enum(["global", "project", "task"])
+        .optional()
+        .describe("Omit the destination to use the current chat's location."),
+      projectName: name
+        .optional()
+        .describe(
+          "Exact visible project name as given by the user. Use instead of projectId or taskId. Implies project scope.",
+        ),
+      projectId: id.optional().describe("Local project ID, required for explicit project scope."),
+      taskId: id.optional().describe("Local task ID, required for explicit task scope."),
       harness: z.enum(AGENT_HARNESSES).optional(),
       model: name.optional(),
       reasoningEffort: reasoningEffortSchema.optional(),
@@ -190,8 +198,8 @@ export function createMcpMutationService(
         return refuseUnboundRecordsCaller()
       }
       if (
-        (operation === "create_chat" || operation === "move_chat") &&
-        !validateChatDestination(input.data as z.infer<typeof schemas.create_chat>)
+        operation === "move_chat" &&
+        !validateChatDestination(input.data as z.infer<typeof schemas.move_chat>)
       )
         return fail("invalid-input", "Scope identity must match the chat destination.")
       const db = activeDatabase?.() ?? openAppDatabase(databasePath)
@@ -757,7 +765,7 @@ function waitForChats(
   }
 }
 
-type Scope = { chatId: string; projectId: string | null; taskId: string | null; kind: string }
+type Scope = McpCanonicalChatScope
 function callerScope(db: Database.Database, caller: McpCallerIdentity): Scope {
   if (caller.callerKind === "external-owner")
     return { kind: "global", projectId: null, taskId: null, chatId: caller.chatId }
@@ -773,12 +781,7 @@ function callerScope(db: Database.Database, caller: McpCallerIdentity): Scope {
     .get(caller.chatId) as Row | undefined
   const scope = row ? canonicalMcpChatScope(row) : null
   if (!scope) throw new Error("Caller chat is stale.")
-  return {
-    chatId: scope.chatId,
-    kind: scope.kind,
-    projectId: scope.projectId,
-    taskId: scope.taskId,
-  }
+  return scope
 }
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" ? value : null
@@ -852,16 +855,39 @@ function createChat(
   scope: Scope,
   input: z.infer<typeof schemas.create_chat>,
 ): McpControlResponse {
-  let projectId = input.projectId ?? null
-  let taskId = input.taskId ?? null
-  if (input.scope === "global") {
-    projectId = null
-    taskId = null
+  const { projectName } = input
+  if (
+    projectName &&
+    (input.projectId || input.taskId || (input.scope && input.scope !== "project"))
+  ) {
+    return fail("invalid-input", "Use a project name by itself or with project scope.")
   }
-  if (input.scope === "project" && !projectId)
-    return fail("invalid-input", "Project chats require projectId.")
-  if (input.scope === "task") {
-    if (!taskId) return fail("invalid-input", "Task chats require taskId.")
+  if (!input.scope && (input.projectId || input.taskId)) {
+    return fail("invalid-input", "Specify scope when providing a project or task ID.")
+  }
+  const requestedScope = projectName ? "project" : input.scope
+  const kind = requestedScope ?? scope.kind
+  let projectId = requestedScope ? (input.projectId ?? null) : scope.projectId
+  const taskId = requestedScope ? (input.taskId ?? null) : scope.taskId
+  if (projectName) {
+    if (scope.taskId) return fail("out-of-scope", "Chat is outside the caller task scope.")
+    const matches = db
+      .prepare(
+        "SELECT id FROM projects WHERE archived_at IS NULL AND name = ? COLLATE NOCASE AND (? IS NULL OR id = ?) LIMIT 2",
+      )
+      .all(projectName, scope.projectId, scope.projectId) as Array<{ id: string }>
+    if (matches.length === 0) return fail("stale-target", "No available project matches that name.")
+    if (matches.length > 1)
+      return fail(
+        "conflict",
+        "More than one project matches that name. Specify the intended project ID.",
+      )
+    projectId = matches[0].id
+  }
+  if (!validateChatDestination({ scope: kind, projectId, taskId })) {
+    return fail("invalid-input", "Scope identity must match the chat destination.")
+  }
+  if (kind === "task" && taskId) {
     const task = db
       .prepare("SELECT project_id FROM tasks WHERE id = ? AND archived_at IS NULL")
       .get(taskId) as Row | undefined
@@ -875,25 +901,30 @@ function createChat(
     return fail("out-of-scope", "Chat is outside the caller task scope.")
   if (scope.projectId && projectId !== scope.projectId)
     return fail("out-of-scope", "Chat is outside the caller project scope.")
-  const existing = db
-    .prepare(
-      "SELECT id FROM chats WHERE name = ? AND project_id IS ? AND task_id IS ? AND archived_at IS NULL",
-    )
-    .get(input.name, projectId, taskId) as Row | undefined
-  if (existing) return { ok: true, data: { id: existing.id, created: false } }
+  const project = projectId
+    ? (db
+        .prepare(
+          "SELECT name, default_permission_mode permission_mode, default_custom_permissions custom_permissions FROM projects WHERE id = ? AND archived_at IS NULL",
+        )
+        .get(projectId) as Row | undefined)
+    : undefined
+  if (projectId && !project) return fail("stale-target", "Project is missing or archived.")
+  const destination = { scope: kind, projectId, projectName: project?.name ?? null, taskId }
+  if (input.name) {
+    const existing = db
+      .prepare(
+        "SELECT id FROM chats WHERE name = ? AND project_id IS ? AND task_id IS ? AND archived_at IS NULL",
+      )
+      .get(input.name, projectId, taskId) as Row | undefined
+    if (existing) return { ok: true, data: { id: existing.id, created: false, ...destination } }
+  }
   const inherited = taskId
     ? (db
         .prepare(
           "SELECT default_permission_mode permission_mode, default_custom_permissions custom_permissions FROM tasks WHERE id = ?",
         )
         .get(taskId) as Row | undefined)
-    : projectId
-      ? (db
-          .prepare(
-            "SELECT default_permission_mode permission_mode, default_custom_permissions custom_permissions FROM projects WHERE id = ?",
-          )
-          .get(projectId) as Row | undefined)
-      : null
+    : project
   const preferences = getPermissionPreferences()
   const permissionMode =
     typeof inherited?.permission_mode === "string"
@@ -911,8 +942,8 @@ function createChat(
     "INSERT INTO chats (id, name, scope, project_id, task_id, permission_mode, custom_permissions, mcp_exposure_enabled, harness, model, reasoning_effort, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
   ).run(
     chatId,
-    input.name,
-    input.scope,
+    input.name ?? null,
+    kind,
     projectId,
     taskId,
     permissionMode,
@@ -924,10 +955,11 @@ function createChat(
     now,
   )
   db.prepare(
-    "INSERT INTO sub_chats (id, chat_id, harness, model, reasoning_effort, permission_mode, messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?)",
+    "INSERT INTO sub_chats (id, chat_id, name, harness, model, reasoning_effort, permission_mode, messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)",
   ).run(
     randomUUID(),
     chatId,
+    input.name ?? null,
     input.harness ?? null,
     input.model ?? null,
     input.reasoningEffort ?? null,
@@ -935,7 +967,7 @@ function createChat(
     now,
     now,
   )
-  return { ok: true, data: { id: chatId, created: true } }
+  return { ok: true, data: { id: chatId, created: true, ...destination } }
 }
 
 /**

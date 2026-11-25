@@ -101,7 +101,9 @@ import {
 import { AgentProfileChatBindingService } from "../../agent-profiles/chat-binding"
 import {
   CHAT_TITLE_STYLES,
+  KEEP_CHAT_TITLE,
   fallbackChatMetadata,
+  fallbackChatTitleSuggestion,
   inferHighConfidenceChatTags,
 } from "../../../../shared/chat-metadata"
 
@@ -509,7 +511,34 @@ export const chatsRouter = router({
       labels: listAgentChatLabels(database),
       waits: listAgentChatWaits(database),
       runStatuses: getDatabase()
-        .select({ id: subChats.id, chatId: subChats.chatId, runStatus: subChats.runStatus })
+        .select({
+          id: subChats.id,
+          chatId: subChats.chatId,
+          created_at: subChats.createdAt,
+          attentionRunId: sql<string | null>`CASE
+            WHEN ${subChats.runStatus} IN ('failure', 'failed', 'error', 'needs-input', 'waiting_for_input', 'blocked')
+              OR (${subChats.harness} = 'local' AND ${subChats.runStatus} = 'running' AND ${subChats.streamId} IS NULL)
+            THEN (
+              SELECT r.id FROM agent_runs r
+              WHERE r.chat_id = sub_chats.chat_id AND r.sub_chat_id = sub_chats.id
+                AND (r.status IN ('failure', 'failed', 'error')
+                  OR sub_chats.run_status IN ('needs-input', 'waiting_for_input', 'blocked'))
+              ORDER BY r.started_at DESC, r.rowid DESC LIMIT 1
+            )
+          END`,
+          // Older local runs could finish without clearing the cached running status.
+          runStatus: sql<string | null>`CASE
+            WHEN ${subChats.harness} = 'local'
+              AND ${subChats.runStatus} = 'running'
+              AND ${subChats.streamId} IS NULL
+            THEN COALESCE((
+              SELECT r.status FROM agent_runs r
+              WHERE r.chat_id = sub_chats.chat_id AND r.sub_chat_id = sub_chats.id
+              ORDER BY r.started_at DESC, r.rowid DESC LIMIT 1
+            ), ${subChats.runStatus})
+            ELSE ${subChats.runStatus}
+          END`,
+        })
         .from(subChats)
         .all(),
     }
@@ -1286,10 +1315,23 @@ export const chatsRouter = router({
    * Rename a chat
    */
   rename: publicProcedure
-    .input(z.object({ id: z.string(), name: z.string().min(1) }))
+    .input(
+      z.object({ id: z.string(), name: z.string().min(1), expectedName: z.string().optional() }),
+    )
     .mutation(({ input }) => {
       const db = getDatabase()
       return db.transaction((tx) => {
+        if (input.expectedName !== undefined) {
+          const current = tx
+            .select({ name: chats.name, archivedAt: chats.archivedAt })
+            .from(chats)
+            .where(eq(chats.id, input.id))
+            .get()
+          if (!current || current.archivedAt)
+            throw new TRPCError({ code: "NOT_FOUND", message: "Chat not found" })
+          if (current.name !== input.expectedName)
+            throw new TRPCError({ code: "CONFLICT", message: "The chat title has changed" })
+        }
         const updatedChat = tx
           .update(chats)
           .set({ name: input.name, updatedAt: new Date() })
@@ -2659,6 +2701,55 @@ export const chatsRouter = router({
 
       console.log("[generateCommitMessage] Generated fallback message:", message)
       return { message }
+    }),
+
+  suggestTitle: publicProcedure
+    .input(
+      z.object({
+        chatId: z.string().min(1),
+        promptId: z.string().min(1),
+        currentTitle: z.string().min(1).max(200),
+        titleStyle: z.enum(CHAT_TITLE_STYLES),
+        ollamaModel: z.string().nullish(),
+        recentTurns: z
+          .array(
+            z.object({
+              promptPreview: z.string().max(100),
+              responsePreview: z.string().max(164).nullable(),
+            }),
+          )
+          .min(2)
+          .max(3),
+      }),
+    )
+    .query(async ({ input }) => {
+      const chat = getDatabase()
+        .select({ name: chats.name, archivedAt: chats.archivedAt })
+        .from(chats)
+        .where(eq(chats.id, input.chatId))
+        .get()
+      if (!chat || chat.archivedAt || chat.name !== input.currentTitle) return null
+      const generated = await generateChatMetadataWithOllama({
+        currentTitle: input.currentTitle,
+        userMessage: JSON.stringify(input.recentTurns),
+        titleStyle: input.titleStyle,
+        includeTags: false,
+        model: input.ollamaModel,
+      })
+      const suggested =
+        generated?.title ??
+        fallbackChatTitleSuggestion(
+          input.currentTitle,
+          input.recentTurns.map((turn) => turn.promptPreview),
+          input.titleStyle,
+        )
+      if (
+        !suggested ||
+        suggested.toLowerCase() === KEEP_CHAT_TITLE.toLowerCase() ||
+        suggested.toLowerCase() === input.currentTitle.toLowerCase()
+      )
+        return null
+      return suggested
     }),
 
   /** Generate a title and optional high-confidence tags from the first message. */

@@ -1,137 +1,235 @@
-import { createContext, useContext, useMemo, type ReactNode } from "react"
-import { useAtomValue } from "jotai"
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react"
+import { useAtomValue, useSetAtom } from "jotai"
 import {
-  CheckCircle2,
-  CircleCheck,
   CircleHelp,
-  CirclePause,
-  CircleX,
   LoaderCircle,
   LockKeyhole,
   Mail,
-  MessageCircleQuestion,
+  TriangleAlert,
+  createLucideIcon,
+  type LucideIcon,
 } from "lucide-react"
 import { trpc } from "../../../lib/trpc"
+import { cn } from "../../../lib/utils"
 import {
   agentsUnseenChangesAtom,
   loadingSubChatsAtom,
   pendingPlanApprovalsAtom,
   pendingUserQuestionsAtom,
+  seenChatAttentionAtom,
 } from "../atoms"
+import { resolveCanonicalConversationId } from "../lib/canonical-conversation"
 import {
-  outcomeLabels,
+  chatStatusPriority,
   resolveChatStatus,
-  summarizeChatStatuses,
   type ChatStatus,
-  type WorkOutcome,
+  type ChatStatusKind,
 } from "../lib/chat-status"
 
-const outcomes = {
-  "verified-complete": { Icon: CheckCircle2, color: "text-green-700 dark:text-green-400" },
-  "completed-unverified": {
-    Icon: CircleCheck,
-    color: "text-sky-700 dark:text-sky-400",
+const appearance = {
+  "needs-input": {
+    Icon: CircleHelp,
+    color: "text-violet-700 dark:text-violet-400",
+    label: "Needs your input",
   },
-  "stopped-incomplete": { Icon: CirclePause, color: "text-orange-700 dark:text-orange-400" },
-  blocked: { Icon: LockKeyhole, color: "text-violet-700 dark:text-violet-400" },
-  "dependency-wait-failed": { Icon: CircleX, color: "text-red-700 dark:text-red-400" },
-  failed: { Icon: CircleX, color: "text-red-700 dark:text-red-400" },
-  unknown: { Icon: CircleHelp, color: "text-slate-600 dark:text-slate-400" },
-} satisfies Record<WorkOutcome, { Icon: typeof CircleHelp; color: string }>
+  "dependency-wait-failed": {
+    Icon: TriangleAlert,
+    color: "text-red-700 dark:text-red-400",
+    label: "Dependency wait failed",
+  },
+  failed: {
+    Icon: TriangleAlert,
+    color: "text-red-700 dark:text-red-400",
+    label: "Run failed",
+  },
+  blocked: {
+    Icon: LockKeyhole,
+    color: "text-amber-700 dark:text-amber-400",
+    label: "Blocked",
+  },
+  running: {
+    Icon: LoaderCircle,
+    color: "text-cyan-700 dark:text-cyan-400 motion-safe:animate-spin",
+    label: "In progress",
+  },
+  unread: {
+    Icon: Mail,
+    color: "text-blue-700 dark:text-blue-400",
+    label: "Unread reply",
+  },
+} satisfies Record<ChatStatusKind, { Icon: LucideIcon; color: string; label: string }>
 
 const StatusContext = createContext<ReadonlyMap<string, ChatStatus>>(new Map())
+const statusSlot = "inline-flex size-4 shrink-0 items-center justify-center"
+const FilledLockKeyhole = createLucideIcon("FilledLockKeyhole", [
+  ["path", { d: "M7 10V7a5 5 0 0 1 10 0v3", key: "shackle" }],
+  [
+    "path",
+    {
+      d: "M5 9h14a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3v-8a3 3 0 0 1 3-3ZM12 14a2 2 0 1 0 0 4 2 2 0 1 0 0-4Z",
+      fill: "currentColor",
+      fillRule: "evenodd",
+      stroke: "none",
+      key: "body",
+    },
+  ],
+])
 
-/** One shared snapshot per surface, indexed once instead of scanning history per row. */
+export function useAcknowledgeChatAttention(chatId: string, visible: boolean) {
+  const keys = useContext(StatusContext).get(chatId)?.unseenAttentionKeys
+  const setSeen = useSetAtom(seenChatAttentionAtom)
+  useEffect(() => {
+    if (!visible || !keys?.length) return
+    const acknowledge = () => {
+      if (document.visibilityState !== "visible" || !document.hasFocus()) return
+      setSeen((previous) => {
+        const newKeys = keys.filter((key) => !previous.includes(key))
+        return newKeys.length ? [...previous, ...newKeys].slice(-256) : previous
+      })
+    }
+    acknowledge()
+    window.addEventListener("focus", acknowledge)
+    document.addEventListener("visibilitychange", acknowledge)
+    return () => {
+      window.removeEventListener("focus", acknowledge)
+      document.removeEventListener("visibilitychange", acknowledge)
+    }
+  }, [keys, setSeen, visible])
+}
+
 export function ChatStatusProvider({ children }: { children: ReactNode }) {
   const unread = useAtomValue(agentsUnseenChangesAtom)
   const loading = useAtomValue(loadingSubChatsAtom)
   const questions = useAtomValue(pendingUserQuestionsAtom)
   const plans = useAtomValue(pendingPlanApprovalsAtom)
+  const seen = useAtomValue(seenChatAttentionAtom)
   const { data } = trpc.chats.listAgentMetadata.useQuery(undefined, { refetchInterval: 2_000 })
   const statuses = useMemo(() => {
-    const runs = new Map<string, (string | null)[]>()
+    const runs = new Map<string, NonNullable<typeof data>["runStatuses"]>()
     for (const run of data?.runStatuses ?? []) {
       const entries = runs.get(run.chatId) ?? []
-      entries.push(run.runStatus)
+      entries.push(run)
       runs.set(run.chatId, entries)
     }
     const running = new Set(loading.values())
-    const needsHelp = new Set([
-      ...plans.values(),
-      ...[...questions.values()].map((question) => question.parentChatId),
-    ])
-    const blocked = new Set<string>()
-    const dependencyWaitFailed = new Set<string>()
+    const needsInput = new Map<string, string[]>()
+    const collect = (map: Map<string, string[]>, chatId: string, key: string) => {
+      const keys = map.get(chatId) ?? []
+      keys.push(key)
+      map.set(chatId, keys)
+    }
+    for (const [subChatId, question] of questions) {
+      collect(needsInput, question.parentChatId, `question:${subChatId}:${question.toolUseId}`)
+    }
+    for (const [subChatId, plan] of plans) {
+      collect(needsInput, plan.parentChatId, `plan:${subChatId}:${plan.planId}`)
+    }
+    const blocked = new Map<string, string[]>()
+    const dependencyWaitFailed = new Map<string, string[]>()
     for (const wait of data?.waits ?? []) {
-      if (wait.status === "failed") dependencyWaitFailed.add(wait.chatId)
-      else if (wait.status === "waiting") blocked.add(wait.chatId)
+      if (wait.status === "failed") collect(dependencyWaitFailed, wait.chatId, `wait:${wait.id}`)
+      else if (wait.status === "waiting") collect(blocked, wait.chatId, `blocked-wait:${wait.id}`)
+      else if (wait.status === "resuming") running.add(wait.chatId)
     }
     const ids = new Set([
       ...runs.keys(),
       ...unread,
       ...running,
-      ...needsHelp,
-      ...blocked,
-      ...dependencyWaitFailed,
+      ...needsInput.keys(),
+      ...blocked.keys(),
+      ...dependencyWaitFailed.keys(),
     ])
-    return new Map(
-      [...ids].map((chatId) => [
-        chatId,
-        resolveChatStatus({
-          unread: unread.has(chatId),
-          running: running.has(chatId),
-          needsHelp: needsHelp.has(chatId),
-          blocked: blocked.has(chatId),
-          dependencyWaitFailed: dependencyWaitFailed.has(chatId),
-          runStatuses: runs.get(chatId),
-        }),
-      ]),
-    )
-  }, [data?.runStatuses, data?.waits, unread, loading, questions, plans])
+    const statuses = new Map<string, ChatStatus>()
+    const seenKeys = new Set(seen)
+    for (const chatId of ids) {
+      const conversations = runs.get(chatId) ?? []
+      const canonicalId = resolveCanonicalConversationId(conversations)
+      const run = conversations.find((entry) => entry.id === canonicalId)
+      const hasUnread = unread.has(chatId)
+      const inputKeys = needsInput.get(chatId)
+      const waitKeys = dependencyWaitFailed.get(chatId)
+      const blockKeys = blocked.get(chatId)
+      const kind = resolveChatStatus({
+        unread: hasUnread,
+        running: running.has(chatId),
+        needsInput: Boolean(inputKeys),
+        blocked: Boolean(blockKeys),
+        dependencyWaitFailed: Boolean(waitKeys),
+        runStatus: run?.runStatus,
+      })
+      if (!kind) continue
+      const runKey = `run:${kind}:${run?.attentionRunId ?? canonicalId ?? chatId}`
+      const attentionKeys =
+        kind === "running" || kind === "unread"
+          ? undefined
+          : ({
+              "needs-input": inputKeys,
+              "dependency-wait-failed": waitKeys,
+              blocked: blockKeys,
+              failed: undefined,
+            }[kind] ?? [runKey])
+      statuses.set(chatId, {
+        kind,
+        unread: hasUnread,
+        unseenAttentionKeys: attentionKeys?.filter((key) => !seenKeys.has(key)),
+      })
+    }
+    return statuses
+  }, [data?.runStatuses, data?.waits, unread, loading, questions, plans, seen])
   return <StatusContext.Provider value={statuses}>{children}</StatusContext.Provider>
 }
 
-export function ChatStatusIndicators({ chatIds }: { chatIds: string[] }) {
+export function ChatStatusIndicator({ chatIds }: { chatIds: string[] }) {
   const statuses = useContext(StatusContext)
-  return (
-    <ChatStatusSummary
-      statuses={[...new Set(chatIds)].map((id) => statuses.get(id) ?? resolveChatStatus({}))}
-    />
-  )
+  const entries = [...new Set(chatIds)].flatMap((id) => statuses.get(id) ?? [])
+  return <ChatStatusSummary statuses={entries} />
 }
 
 export function ChatStatusSummary({ statuses }: { statuses: readonly ChatStatus[] }) {
-  const summary = summarizeChatStatuses(statuses)
-  const label = [
-    summary.unread ? `${summary.unread} unread` : "Read",
-    summary.running ? `${summary.running} running` : "No known running agent",
-    ...(summary.needsHelp ? [`${summary.needsHelp} needs help or input`] : []),
-    ...summary.outcomes.map((outcome) => outcomeLabels[outcome]),
-  ].join("; ")
+  const kinds = chatStatusPriority.filter((kind) => statuses.some((status) => status.kind === kind))
+  const primary = kinds[0]
+  if (!primary) return <span aria-hidden className={statusSlot} />
+
+  const { Icon, color } = appearance[primary]
+  const attention = (entries: readonly ChatStatus[]) =>
+    entries.some(({ unseenAttentionKeys }) => unseenAttentionKeys?.length)
+      ? "new"
+      : entries.some(({ unseenAttentionKeys }) => unseenAttentionKeys)
+        ? "seen"
+        : undefined
+  const primaryAttention = attention(statuses.filter((status) => status.kind === primary))
+  const filledLock = primary === "blocked" && primaryAttention === "new"
+  const StatusIcon = filledLock ? FilledLockKeyhole : Icon
+  const labels = kinds.map((kind) => {
+    const entries = statuses.filter((status) => status.kind === kind)
+    const { label } = appearance[kind]
+    const state = attention(entries)
+    const count = entries.length > 1 ? ` (${entries.length})` : ""
+    return state ? `${label}${count} (${state})` : `${label}${count}`
+  })
+  if (statuses.some(({ kind, unread }) => unread && kind !== "unread")) {
+    labels.push("Also has unread replies")
+  }
+  const label = labels.join(" · ")
   return (
     <span
       role="img"
       aria-label={label}
       title={label}
-      className="inline-flex shrink-0 items-center gap-1 align-middle"
-      data-chat-status
+      className={statusSlot}
+      data-chat-status={primary}
+      data-attention={primaryAttention}
     >
-      {summary.unread > 0 && (
-        <Mail aria-hidden className="h-3 w-3 text-blue-700 dark:text-blue-400" />
-      )}
-      {summary.running > 0 && (
-        <LoaderCircle
-          aria-hidden
-          className="h-3 w-3 text-cyan-700 dark:text-cyan-400 motion-safe:animate-spin"
-        />
-      )}
-      {summary.needsHelp > 0 && (
-        <MessageCircleQuestion aria-hidden className="h-3 w-3 text-amber-700 dark:text-amber-400" />
-      )}
-      {summary.outcomes.map((outcome) => {
-        const { Icon, color } = outcomes[outcome]
-        return <Icon key={outcome} aria-hidden className={`h-3 w-3 ${color}`} />
-      })}
+      <StatusIcon
+        aria-hidden
+        className={cn(
+          "size-4",
+          color,
+          primaryAttention === "new" &&
+            !filledLock &&
+            "[&>:first-child]:fill-current [&>:not(:first-child)]:stroke-background",
+        )}
+      />
     </span>
   )
 }

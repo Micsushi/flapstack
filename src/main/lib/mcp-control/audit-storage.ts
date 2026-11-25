@@ -315,6 +315,7 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
     case "create_chat":
       return {
         ...safe("scope", "projectId", "taskId", "harness", "model", "reasoningEffort"),
+        projectName: textDigest("projectName"),
         name: textDigest("name"),
       }
     case "create_task":

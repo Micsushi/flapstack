@@ -872,6 +872,12 @@ export const agentsSubChatsSidebarWidthAtom = atomWithStorage<number>(
 // Track chats with unseen changes (finished streaming but user hasn't opened them)
 // Updated by onFinish callback in Chat instances
 export const agentsUnseenChangesAtom = atom<Set<string>>(new Set<string>())
+export const seenChatAttentionAtom = atomWithStorage<string[]>(
+  "agents:seen-chat-attention",
+  [],
+  undefined,
+  { getOnInit: true },
+)
 
 // Current todos state per sub-chat
 // Syncs the first (creation) todo tool with subsequent updates
@@ -1167,8 +1173,9 @@ export type PendingUserQuestions = PendingUserQuestion
 export const expiredUserQuestionsAtom = atom<Map<string, PendingUserQuestion>>(new Map())
 
 // Track sub-chats with pending plan approval (plan ready but not yet implemented)
-// Map<subChatId, parentChatId> - allows filtering by workspace
-export const pendingPlanApprovalsAtom = atom<Map<string, string>>(new Map())
+export const pendingPlanApprovalsAtom = atom<Map<string, { parentChatId: string; planId: string }>>(
+  new Map(),
+)
 
 // Pending "Build plan" trigger - set by ChatView sidebar, consumed by ChatViewInner
 // Contains subChatId to approve, null when no pending approval

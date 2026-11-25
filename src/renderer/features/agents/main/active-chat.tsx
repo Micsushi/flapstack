@@ -50,7 +50,7 @@ import { toast } from "sonner"
 import { useShallow } from "zustand/react/shallow"
 import type { FileStatus } from "../../../../shared/changes-types"
 import { ChatTranscriptOverview } from "./chat-transcript-overview"
-import { buildTranscriptMarkers, type TranscriptMarker } from "./chat-transcript-overview-model"
+import { buildTranscriptTurns, type TranscriptMarker } from "./chat-transcript-overview-model"
 import {
   hydrateChatFromPersistedMessages,
   sanitizePersistedHarnessMessages,
@@ -273,6 +273,8 @@ import { SubChatStatusCard } from "../ui/sub-chat-status-card"
 import { SplitViewContainer } from "../ui/split-view-container"
 import { TextSelectionPopover } from "../ui/text-selection-popover"
 import { autoRenameAgentChat } from "../utils/auto-rename"
+import { ChatTitleSuggestion } from "../ui/chat-title-suggestion"
+import { useAcknowledgeChatAttention } from "../ui/chat-status-indicators"
 import { isUntitledChatName } from "../../../../shared/chat-title"
 import {
   generateCommitToPrMessage,
@@ -286,6 +288,10 @@ import { ChatRuntimeActivity } from "../runtime-activity/chat-runtime-activity"
 import { RuntimeActivityFixtureControls } from "../runtime-activity/runtime-activity-fixture-controls"
 // import { selectedTeamIdAtom } from "@/lib/atoms/team"
 const selectedTeamIdAtom = atom<string | null>(null)
+const markResponseUnseenAtom = atom(null, (_get, set, chatId: string, subChatId: string) => {
+  set(agentsSubChatUnseenChangesAtom, (current) => markChatUnseen(current, subChatId))
+  set(agentsUnseenChangesAtom, (current) => markChatUnseen(current, chatId))
+})
 const AgentDiffView = lazy(() =>
   import("../ui/agent-diff-view").then((module) => ({ default: module.AgentDiffView })),
 )
@@ -1916,6 +1922,7 @@ const ChatViewInner = memo(function ChatViewInner({
   const pendingInitialGeneration = pendingInitialGenerationIds.has(subChatId)
   const notifiedPendingQuestionIdsRef = useRef<Set<string>>(new Set())
   const isVisiblePane = isActive || isSplitPane
+  useAcknowledgeChatAttention(parentChatId, isVisiblePane)
   const { notifyAgentNeedsInput } = useDesktopNotifications()
 
   // Keep isActive in ref for use in callbacks (avoid stale closures)
@@ -2025,6 +2032,28 @@ const ChatViewInner = memo(function ChatViewInner({
     return getDistanceFromScrollBottom(container) <= threshold
   }, [])
 
+  const hasUnseenResponse = useAtomValue(agentsSubChatUnseenChangesAtom).has(subChatId)
+  const acknowledgeVisibleResponse = useCallback(() => {
+    if (
+      !isVisiblePaneRef.current ||
+      !scrollInitializedRef.current ||
+      !chatContainerRef.current?.clientHeight ||
+      document.visibilityState !== "visible" ||
+      !document.hasFocus() ||
+      !(shouldAutoScrollRef.current || isAtBottom())
+    ) {
+      return
+    }
+
+    const unseen = appStore.get(agentsSubChatUnseenChangesAtom)
+    if (!unseen.has(subChatId)) return
+    const remaining = markChatSeen(unseen, subChatId)
+    appStore.set(agentsSubChatUnseenChangesAtom, remaining)
+    if (!subChatStore.getState().allSubChats.some((subChat) => remaining.has(subChat.id))) {
+      appStore.set(agentsUnseenChangesAtom, (current) => markChatSeen(current, parentChatId))
+    }
+  }, [isAtBottom, parentChatId, subChatId, subChatStore])
+
   // Track previous scroll position to detect scroll direction
   const prevScrollTopRef = useRef(0)
 
@@ -2060,8 +2089,9 @@ const ChatViewInner = memo(function ChatViewInner({
     shouldAutoScrollRef.current = isAtBottom()
     if (shouldAutoScrollRef.current) {
       setHasUnreadBottomUpdate(false)
+      acknowledgeVisibleResponse()
     }
-  }, [isAtBottom, scheduleScrollPositionSave])
+  }, [acknowledgeVisibleResponse, isAtBottom, scheduleScrollPositionSave])
 
   // Scroll to bottom handler with ease-in-out animation
   const scrollToBottom = useCallback(() => {
@@ -2095,20 +2125,25 @@ const ChatViewInner = memo(function ChatViewInner({
         // Ensure we're at the absolute bottom
         container.scrollTop = container.scrollHeight
         isAutoScrollingRef.current = false
+        acknowledgeVisibleResponse()
       }
     }
 
     requestAnimationFrame(animateScroll)
-  }, [])
+  }, [acknowledgeVisibleResponse])
 
   // tRPC utils for cache invalidation
   const utils = api.useUtils()
   const localUtils = trpc.useUtils()
 
   // Get sub-chat name from store
-  const subChatName = useAgentSubChatStore(
+  const storedSubChatName = useAgentSubChatStore(
     (state) => state.allSubChats.find((sc) => sc.id === subChatId)?.name || "",
   )
+  const subChatName =
+    isFirstSubChat && isUntitledChatName(storedSubChatName)
+      ? workspaceName || storedSubChatName
+      : storedSubChatName
 
   // Mutation for renaming sub-chat
   const renameSubChatMutation = api.agents.renameSubChat.useMutation({
@@ -2163,6 +2198,36 @@ const ChatViewInner = memo(function ChatViewInner({
       }
     },
     [localUtils.chats.get, localUtils.chats.list, parentChatId, subChatId],
+  )
+
+  const applySuggestedTitle = useCallback(
+    async (name: string, expectedName: string) => {
+      const rename = async (next: string, expected: string) => {
+        await trpcClient.chats.rename.mutate({
+          id: parentChatId,
+          name: next,
+          expectedName: expected,
+        })
+        subChatStore.getState().updateSubChatName(subChatId, next)
+        localUtils.chats.list.setData({}, (old) =>
+          old?.map((chat) => (chat.id === parentChatId ? { ...chat, name: next } : chat)),
+        )
+        void localUtils.chats.get.invalidate({ id: parentChatId })
+        void localUtils.chats.getMetadata.invalidate({ id: parentChatId })
+      }
+      try {
+        await rename(name, expectedName)
+      } catch (error) {
+        void localUtils.chats.getMetadata.invalidate({ id: parentChatId })
+        throw error
+      }
+      recordAppAction({
+        label: "Rename Chat",
+        undo: () => rename(expectedName, name),
+        redo: () => rename(name, expectedName),
+      })
+    },
+    [localUtils, parentChatId, subChatId, subChatStore],
   )
 
   const projectColor = useMemo(() => {
@@ -4092,6 +4157,38 @@ const ChatViewInner = memo(function ChatViewInner({
   // Keyboard shortcut: Cmd+Esc to toggle focus/blur (without stopping generation)
   useToggleFocusOnCmdEsc(editorRef, isActive && acceptsGlobalShortcuts)
 
+  // Older agent-created chats can already have a transcript when first opened.
+  useEffect(() => {
+    if (
+      !isActive ||
+      isArchived ||
+      sandboxId ||
+      !isFirstSubChat ||
+      !isUntitledChatName(subChatName) ||
+      hasTriggeredRenameRef.current
+    )
+      return
+    const firstUser = messages.find((message) => message.role === "user")
+    const nameSource = firstUser?.parts
+      ?.flatMap((part: { type?: string; text?: unknown }) =>
+        part?.type === "text" && typeof part.text === "string" ? [part.text] : [],
+      )
+      .join("\n")
+      .trim()
+    if (!nameSource) return
+    hasTriggeredRenameRef.current = true
+    onAutoRename(nameSource, subChatId)
+  }, [
+    isActive,
+    isArchived,
+    isFirstSubChat,
+    messages,
+    onAutoRename,
+    sandboxId,
+    subChatId,
+    subChatName,
+  ])
+
   // Auto-trigger AI response when we have initial message but no response yet
   // Also trigger auto-rename for initial sub-chat with pre-populated message
   // IMPORTANT: Skip if there's an active streamId (prevents double-generation on resume)
@@ -4206,6 +4303,17 @@ const ChatViewInner = memo(function ChatViewInner({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subChatId, isVisiblePane, parentChatId])
+
+  useLayoutEffect(() => {
+    if (!hasUnseenResponse || !isVisiblePane) return
+    acknowledgeVisibleResponse()
+    window.addEventListener("focus", acknowledgeVisibleResponse)
+    document.addEventListener("visibilitychange", acknowledgeVisibleResponse)
+    return () => {
+      window.removeEventListener("focus", acknowledgeVisibleResponse)
+      document.removeEventListener("visibilitychange", acknowledgeVisibleResponse)
+    }
+  }, [acknowledgeVisibleResponse, hasUnseenResponse, isVisiblePane])
 
   // Attach scroll listener (separate effect)
   useEffect(() => {
@@ -4899,9 +5007,9 @@ const ChatViewInner = memo(function ChatViewInner({
   }
 
   // Check if there's an unapproved plan (in plan mode with completed ExitPlanMode)
-  const hasUnapprovedPlan = useMemo(() => {
+  const pendingPlanId = useMemo(() => {
     // If no longer in Plan mode, the plan is approved (mode is the source of truth).
-    if (subChatMode !== "plan") return false
+    if (subChatMode !== "plan") return null
 
     // Look for completed ExitPlanMode in messages
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -4912,12 +5020,13 @@ const ChatViewInner = memo(function ChatViewInner({
         const exitPlanPart = msg.parts.find((p: any) => p.type === "tool-ExitPlanMode")
         // Check if ExitPlanMode is completed (has output, even if empty)
         if (exitPlanPart && exitPlanPart.output !== undefined) {
-          return true
+          return exitPlanPart.toolCallId ?? msg.id
         }
       }
     }
-    return false
+    return null
   }, [messages, subChatMode])
+  const hasUnapprovedPlan = pendingPlanId !== null
 
   // Keep ref in sync for use in initializeScroll (which runs in useLayoutEffect)
   hasUnapprovedPlanRef.current = hasUnapprovedPlan
@@ -4925,20 +5034,18 @@ const ChatViewInner = memo(function ChatViewInner({
   // Update pending plan approvals atom for sidebar indicators
   const setPendingPlanApprovals = useSetAtom(pendingPlanApprovalsAtom)
   useEffect(() => {
-    setPendingPlanApprovals((prev: Map<string, string>) => {
+    setPendingPlanApprovals((prev) => {
+      const previous = prev.get(subChatId)
+      if (pendingPlanId ? previous?.planId === pendingPlanId : !previous) return prev
       const newMap = new Map(prev)
-      if (hasUnapprovedPlan) {
-        newMap.set(subChatId, parentChatId)
+      if (pendingPlanId) {
+        newMap.set(subChatId, { parentChatId, planId: pendingPlanId })
       } else {
         newMap.delete(subChatId)
       }
-      // Only return new map if it changed
-      if (newMap.size !== prev.size || ![...newMap.keys()].every((id) => prev.has(id))) {
-        return newMap
-      }
-      return prev
+      return newMap
     })
-  }, [hasUnapprovedPlan, subChatId, parentChatId, setPendingPlanApprovals])
+  }, [pendingPlanId, subChatId, parentChatId, setPendingPlanApprovals])
 
   // Keyboard shortcut: Cmd+Enter to approve plan
   useEffect(() => {
@@ -4980,7 +5087,7 @@ const ChatViewInner = memo(function ChatViewInner({
   // Clean up pending plan approval when unmounting
   useEffect(() => {
     return () => {
-      setPendingPlanApprovals((prev: Map<string, string>) => {
+      setPendingPlanApprovals((prev) => {
         if (prev.has(subChatId)) {
           const newMap = new Map(prev)
           newMap.delete(subChatId)
@@ -5079,7 +5186,7 @@ const ChatViewInner = memo(function ChatViewInner({
   const searchBarTopOffset = isSubChatsSidebarOpen ? "52px" : undefined
   const shouldShowStatusCard = changedFilesForSubChat.length > 0
   const shouldShowStackedCards = !displayQuestions && (queue.length > 0 || shouldShowStatusCard)
-  const transcriptMarkers = useMemo(() => buildTranscriptMarkers(messages), [messages])
+  const transcriptTurns = useMemo(() => buildTranscriptTurns(messages), [messages])
   const visibleActivityCount = (activityPage?.events ?? []).filter(
     (event) => event.subChatId === subChatId && event.privacyClass === "public",
   ).length
@@ -5358,9 +5465,25 @@ const ChatViewInner = memo(function ChatViewInner({
               </div>
             )}
 
+            {isActive && isFirstSubChat && !isArchived && !sandboxId && (
+              <ChatTitleSuggestion
+                key={parentChatId}
+                chatId={parentChatId}
+                name={workspaceName ?? ""}
+                turns={transcriptTurns}
+                ready={
+                  status === "ready" &&
+                  latestRun?.status !== "pending" &&
+                  latestRun?.status !== "running"
+                }
+                onApply={applySuggestedTitle}
+                onClose={() => editorRef.current?.focus()}
+              />
+            )}
+
             {isActive && (
               <ChatTranscriptOverview
-                markers={transcriptMarkers}
+                turns={transcriptTurns}
                 onJump={jumpToTranscriptMarker}
                 scrollElementRef={chatContainerRef}
               />
@@ -5730,10 +5853,8 @@ function ChatViewScoped({
   const hasCustomClaudeConfig = customClaudeCredentialStatus?.configured === true
   const setLoadingSubChats = useSetAtom(loadingSubChatsAtom)
   const unseenChanges = useAtomValue(agentsUnseenChangesAtom)
-  const setUnseenChanges = useSetAtom(agentsUnseenChangesAtom)
-  const setSubChatUnseenChanges = useSetAtom(agentsSubChatUnseenChangesAtom)
+  const markResponseUnseen = useSetAtom(markResponseUnseenAtom)
   const setJustCreatedIds = useSetAtom(justCreatedIdsAtom)
-  const selectedChatId = useAtomValue(selectedAgentChatIdAtom)
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   const setUndoStack = useSetAtom(undoStackAtom)
   const setSelectedFilePath = useSetAtom(selectedDiffFilePathAtom)
@@ -6183,13 +6304,6 @@ function ChatViewScoped({
   // Track changed files across all sub-chats for filtering
   const subChatFiles = useAtomValue(subChatFilesAtom)
 
-  // Standalone Chats are acknowledged when opened. Workbench panes are
-  // acknowledged by an explicit pane or tab interaction instead.
-  useEffect(() => {
-    if (workbenchActive !== undefined) return
-    setUnseenChanges((current: Set<string>) => markChatSeen(current, chatId))
-  }, [chatId, setUnseenChanges, workbenchActive])
-
   // Get this top-level Chat's scoped compatibility state.
   const scopedSubChatState = useAgentSubChatStore((state) => state)
   const { activeSubChatId, openSubChatIds, pinnedSubChatIds, allSubChats, splitPaneIds } =
@@ -6206,19 +6320,6 @@ function ChatViewScoped({
   useEffect(() => {
     setSubChatProviderOverrides({})
   }, [chatId])
-
-  // Clear sub-chat "unseen changes" indicator when sub-chat becomes active
-  useEffect(() => {
-    if (!activeSubChatId) return
-    setSubChatUnseenChanges((prev: Set<string>) => {
-      if (prev.has(activeSubChatId)) {
-        const next = new Set(prev)
-        next.delete(activeSubChatId)
-        return next
-      }
-      return prev
-    })
-  }, [activeSubChatId, setSubChatUnseenChanges])
 
   // tRPC utils for optimistic cache updates
   const utils = api.useUtils()
@@ -7864,26 +7965,9 @@ Make sure to preserve all functionality from both branches when resolving confli
           agentChatStore.clearManuallyAborted(subChatId)
           if (!wasManuallyAborted && !event?.isAbort && !event?.isError)
             prepareReplyAudio(chatId, subChatId, event?.message ?? newChat.messages.at(-1))
-          // Get CURRENT values at runtime (not stale closure values)
-          const currentActiveSubChatId = subChatStore.getState().activeSubChatId
-          const currentSelectedChatId = appStore.get(selectedAgentChatIdAtom)
+          markResponseUnseen(chatId, subChatId)
 
-          const isViewingThisSubChat = currentActiveSubChatId === subChatId
-          const isViewingThisChat = currentSelectedChatId === chatId
-
-          if (!isViewingThisSubChat) {
-            setSubChatUnseenChanges((prev: Set<string>) => {
-              const next = new Set(prev)
-              next.add(subChatId)
-              return next
-            })
-          }
-
-          // Keep completion visible until the user explicitly returns to this
-          // Chat or pane, even if it was technically selected while running.
-          setUnseenChanges((current: Set<string>) => markChatUnseen(current, chatId))
-
-          if (!isViewingThisChat) {
+          if (appStore.get(selectedAgentChatIdAtom) !== chatId) {
             // Play completion sound only if NOT manually aborted and sound is enabled
             if (!wasManuallyAborted) {
               const isSoundEnabled = appStore.get(soundNotificationsEnabledAtom)
@@ -7919,6 +8003,7 @@ Make sure to preserve all functionality from both branches when resolving confli
           const queryClient = getQueryClient()
           if (queryClient) {
             void queryClient.invalidateQueries({ queryKey: [["chats", "getFileStats"]] })
+            void queryClient.invalidateQueries({ queryKey: [["chats", "listAgentMetadata"]] })
             void queryClient.invalidateQueries({
               queryKey: [["chats", "getPendingPlanApprovals"]],
             })
@@ -7950,9 +8035,7 @@ Make sure to preserve all functionality from both branches when resolving confli
       selectedLocalModelId,
       localModelEndpoint,
       subChatProviderOverrides,
-      setSubChatUnseenChanges,
-      selectedChatId,
-      setUnseenChanges,
+      markResponseUnseen,
       notifyAgentComplete,
       notifyAgentError,
       syncFinishedMessagesToChatCache,
@@ -8229,26 +8312,9 @@ Make sure to preserve all functionality from both branches when resolving confli
           if (!wasManuallyAborted && !event?.isAbort && !event?.isError)
             prepareReplyAudio(chatId, newId, event?.message ?? newChat.messages.at(-1))
 
-          // Get CURRENT values at runtime (not stale closure values)
-          const currentActiveSubChatId = subChatStore.getState().activeSubChatId
-          const currentSelectedChatId = appStore.get(selectedAgentChatIdAtom)
+          markResponseUnseen(chatId, newId)
 
-          const isViewingThisSubChat = currentActiveSubChatId === newId
-          const isViewingThisChat = currentSelectedChatId === chatId
-
-          if (!isViewingThisSubChat) {
-            setSubChatUnseenChanges((prev: Set<string>) => {
-              const next = new Set(prev)
-              next.add(newId)
-              return next
-            })
-          }
-
-          // Keep completion visible until the user explicitly returns to this
-          // Chat or pane, even if it was technically selected while running.
-          setUnseenChanges((current: Set<string>) => markChatUnseen(current, chatId))
-
-          if (!isViewingThisChat) {
+          if (appStore.get(selectedAgentChatIdAtom) !== chatId) {
             // Play completion sound only if NOT manually aborted and sound is enabled
             if (!wasManuallyAborted) {
               const isSoundEnabled = appStore.get(soundNotificationsEnabledAtom)
@@ -8279,6 +8345,7 @@ Make sure to preserve all functionality from both branches when resolving confli
 
           // Refresh diff stats after agent finishes making changes
           fetchDiffStatsRef.current()
+          void getQueryClient()?.invalidateQueries({ queryKey: [["chats", "listAgentMetadata"]] })
 
           pruneIfDetachedAndIdle(newId)
 
@@ -8297,9 +8364,7 @@ Make sure to preserve all functionality from both branches when resolving confli
     activeSubChatId,
     inferProviderFromMessages,
     utils,
-    setSubChatUnseenChanges,
-    selectedChatId,
-    setUnseenChanges,
+    markResponseUnseen,
     notifyAgentComplete,
     notifyAgentError,
     syncFinishedMessagesToChatCache,
@@ -8758,14 +8823,7 @@ Make sure to preserve all functionality from both branches when resolving confli
   return (
     <FileOpenProvider onOpenFile={setFileViewerPath}>
       <TextSelectionProvider>
-        <div
-          className="flex h-full flex-col"
-          onPointerDownCapture={() => {
-            if (workbenchActive === undefined) {
-              setUnseenChanges((current: Set<string>) => markChatSeen(current, chatId))
-            }
-          }}
-        >
+        <div className="flex h-full flex-col">
           {/* Main content */}
           <div className="flex-1 overflow-hidden flex">
             {/* Chat Panel */}

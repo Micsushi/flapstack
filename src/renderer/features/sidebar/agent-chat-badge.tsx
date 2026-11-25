@@ -75,11 +75,13 @@ export function AgentChatWaitBadge({
   wait,
   compact = false,
   header = false,
+  showStatusIcons = true,
   onDismiss,
 }: {
   wait: AgentChatWaitView
   compact?: boolean
   header?: boolean
+  showStatusIcons?: boolean
   onDismiss?: () => void
 }) {
   const targets = wait.targetNames.join(", ")
@@ -109,11 +111,15 @@ export function AgentChatWaitBadge({
             : "gap-1 px-1.5",
       )}
     >
-      <Bot className={iconSize} aria-hidden="true" />
-      {failed ? (
-        <AlertTriangle className={iconSize} aria-hidden="true" />
-      ) : (
-        <Clock3 className={iconSize} aria-hidden="true" />
+      {showStatusIcons && (
+        <>
+          <Bot className={iconSize} aria-hidden="true" />
+          {failed ? (
+            <AlertTriangle className={iconSize} aria-hidden="true" />
+          ) : (
+            <Clock3 className={iconSize} aria-hidden="true" />
+          )}
+        </>
       )}
       {!compact && (
         <span>{failed ? "Wait failed" : wait.status === "resuming" ? "Resuming" : "Waiting"}</span>

@@ -13,7 +13,6 @@ import {
   desktopNotificationsEnabledAtom,
   groupCloseBehaviorAtom,
   reasoningOutputEnabledAtom,
-  notifyWhenFocusedAtom,
   newChatDraftReminderEnabledAtom,
   soundNotificationsEnabledAtom,
   preferredEditorAtom,
@@ -148,7 +147,6 @@ export function AgentsPreferencesTab() {
   const [desktopNotificationsEnabled, setDesktopNotificationsEnabled] = useAtom(
     desktopNotificationsEnabledAtom,
   )
-  const [notifyWhenFocused, setNotifyWhenFocused] = useAtom(notifyWhenFocusedAtom)
   const [analyticsOptOut, setAnalyticsOptOut] = useAtom(analyticsOptOutAtom)
   const [autoAdvanceTarget, setAutoAdvanceTarget] = useAtom(autoAdvanceTargetAtom)
   const [crossScopeMoveEnabled, setCrossScopeMoveEnabled] = useAtom(crossScopeMoveEnabledAtom)
@@ -314,7 +312,7 @@ export function AgentsPreferencesTab() {
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Desktop Notifications</span>
             <span className="text-xs text-muted-foreground">
-              Show system notifications when agent needs input or completes work
+              Show system notifications when Flapstack is in the background
             </span>
           </div>
           <Switch
@@ -338,24 +336,6 @@ export function AgentsPreferencesTab() {
             aria-label="Sound Notifications"
             checked={soundEnabled}
             onCheckedChange={setSoundEnabled}
-          />
-        </div>
-        <div
-          className="flex items-center justify-between p-4 border-t border-border outline-none"
-          data-settings-id="preferences-focused-notifications"
-          tabIndex={-1}
-        >
-          <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Notify When Focused</span>
-            <span className="text-xs text-muted-foreground">
-              Show notifications even when the app window is active
-            </span>
-          </div>
-          <Switch
-            aria-label="Notify When Focused"
-            checked={notifyWhenFocused}
-            onCheckedChange={setNotifyWhenFocused}
-            disabled={!desktopNotificationsEnabled}
           />
         </div>
       </div>

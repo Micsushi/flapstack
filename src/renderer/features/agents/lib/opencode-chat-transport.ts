@@ -141,6 +141,7 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
     messages: UIMessage[]
     abortSignal?: AbortSignal
   }): Promise<ReadableStream<UIMessageChunk>> {
+    const submittedAtMs = Date.now()
     const lastUser = [...options.messages].reverse().find((message) => message.role === "user")
     const prompt = extractChatMessageText(lastUser)
     const images = this.extractImages(lastUser)
@@ -169,6 +170,7 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
             chatId: this.config.chatId,
             subChatId: this.config.subChatId,
             runId,
+            submittedAtMs,
             provider: this.config.provider,
             model: this.config.model,
             prompt,

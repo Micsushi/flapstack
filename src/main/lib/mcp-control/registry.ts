@@ -295,14 +295,16 @@ export const mcpControlTools: McpControlTool[] = [
   },
   {
     name: "create_chat",
-    description: "Create a new chat.",
+    description:
+      "Create an idle Flapstack chat or thread. Pass projectName when the user names a project, including Flapstack. Omit the destination for the current location. To send a requested first message, set the target harness here and then use launch_run.",
     tier: 1,
     requiredCapabilities: [],
     status: "implemented",
   },
   {
     name: "spawn_thread",
-    description: "Create and optionally launch a new thread on a supported harness.",
+    description:
+      "Create a child agent chat on a supported provider and optionally start its first run. For an ordinary new chat or thread for the user, use create_chat.",
     tier: 3,
     requiredCapabilities: ["subagents", "shell"],
     status: "implemented",
@@ -426,7 +428,7 @@ export const mcpControlTools: McpControlTool[] = [
   },
   {
     name: "launch_run",
-    description: "Launch a new agent run.",
+    description: "Send the requested message to an existing chat and queue an agent run.",
     tier: 3,
     requiredCapabilities: ["subagents", "shell"],
     status: "implemented",

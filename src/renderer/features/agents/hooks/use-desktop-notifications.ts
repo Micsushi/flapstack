@@ -6,11 +6,7 @@
 import { useCallback, useRef, useEffect } from "react"
 import { useAtomValue } from "jotai"
 import { isDesktopApp } from "../../../lib/utils/platform"
-import {
-  desktopNotificationsEnabledAtom,
-  notifyWhenFocusedAtom,
-  soundNotificationsEnabledAtom,
-} from "../../../lib/atoms"
+import { desktopNotificationsEnabledAtom, soundNotificationsEnabledAtom } from "../../../lib/atoms"
 
 // throttle interval to prevent notification spam (ms)
 const NOTIFICATION_THROTTLE_MS = 3000
@@ -71,7 +67,6 @@ interface AgentNotificationTarget {
 
 export function useDesktopNotifications() {
   const notificationsEnabled = useAtomValue(desktopNotificationsEnabledAtom)
-  const notifyWhenFocused = useAtomValue(notifyWhenFocusedAtom)
   const soundEnabled = useAtomValue(soundNotificationsEnabledAtom)
 
   // track last notification time to throttle rapid-fire notifications
@@ -100,8 +95,7 @@ export function useDesktopNotifications() {
         subChatId?: string
       },
     ) => {
-      // Check if notifications are enabled
-      if (!notificationsEnabled) {
+      if (!notificationsEnabled || document.hasFocus()) {
         return
       }
 
@@ -173,11 +167,6 @@ export function useDesktopNotifications() {
 
   const notifyAgentComplete = useCallback(
     (chatName: string, target?: AgentNotificationTarget) => {
-      // Skip if window is focused and user hasn't opted into focused notifications
-      if (!notifyWhenFocused && document.hasFocus()) {
-        return
-      }
-
       const title = "Agent Complete"
       const parentChatName = target?.parentChatName
       const body =
@@ -192,12 +181,11 @@ export function useDesktopNotifications() {
         subChatId: target?.subChatId,
       })
     },
-    [showNotification, notifyWhenFocused],
+    [showNotification],
   )
 
   const notifyAgentError = useCallback(
     (errorMessage: string, target?: AgentNotificationTarget) => {
-      // always notify on errors, even if window is focused
       const title = "Agent Error"
       const body = errorMessage.length > 100 ? errorMessage.slice(0, 100) + "..." : errorMessage
       showNotification(title, body, {
@@ -232,17 +220,13 @@ export function useDesktopNotifications() {
 
   const notifyPlanReady = useCallback(
     (chatName: string) => {
-      if (!notifyWhenFocused && document.hasFocus()) {
-        return
-      }
-
       const title = "Plan Ready"
       const body = chatName
         ? `"${chatName}" has a plan ready for approval`
         : "A plan is ready for your approval"
       showNotification(title, body, { priority: "plan" })
     },
-    [showNotification, notifyWhenFocused],
+    [showNotification],
   )
 
   const requestPermission = useCallback(async (): Promise<NotificationPermission> => {

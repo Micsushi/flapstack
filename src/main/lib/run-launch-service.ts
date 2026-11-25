@@ -18,6 +18,9 @@ import { mcpTargetPermissionAllowed } from "./mcp-control/permission-ceiling"
 import type { McpCallerIdentity } from "./mcp-control/types"
 import { redactMcpAuditSummary } from "./mcp-control/audit-storage"
 import { nowEpochSeconds } from "./db/timestamps"
+import { applyAutomaticChatTitle } from "./automatic-chat-title"
+import { isUntitledChatName } from "../../shared/chat-title"
+import { fallbackChatMetadata } from "../../shared/chat-metadata"
 import { claimPendingRunWithinUsageBudget } from "./usage/budgets"
 import { createDatabaseLocalModelRunPersistence } from "./harness/local-model-stream"
 import {
@@ -108,7 +111,7 @@ export function queueChatRun(
   }
   const subChat = db
     .prepare(
-      "SELECT id, messages, mode, harness, permission_mode, worktree_path, model, reasoning_effort FROM sub_chats WHERE chat_id = ? AND (? IS NULL OR id = ?) ORDER BY created_at, id LIMIT 1",
+      "SELECT id, name, messages, mode, harness, permission_mode, worktree_path, model, reasoning_effort FROM sub_chats WHERE chat_id = ? AND (? IS NULL OR id = ?) ORDER BY created_at, id LIMIT 1",
     )
     .get(input.chatId, input.subChatId ?? null, input.subChatId ?? null) as Row | undefined
   if (!subChat) {
@@ -267,6 +270,19 @@ export function queueChatRun(
       ...runtimeSnapshotSqlValues(runtimeSnapshot),
       nowEpochSeconds(),
     )
+    if (
+      isUntitledChatName(chat.name as string | null) &&
+      isUntitledChatName(subChat.name as string | null)
+    ) {
+      const { title } = fallbackChatMetadata(input.initialPrompt, "concise")
+      if (!isUntitledChatName(title)) {
+        applyAutomaticChatTitle(db, {
+          parentChatId: input.chatId,
+          subChatId: String(subChat.id),
+          name: title,
+        })
+      }
+    }
   })
   try {
     transaction.immediate()

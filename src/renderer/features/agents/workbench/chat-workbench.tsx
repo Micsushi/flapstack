@@ -1,4 +1,4 @@
-import { ChatStatusIndicators } from "../ui/chat-status-indicators"
+import { ChatStatusIndicator } from "../ui/chat-status-indicators"
 import {
   useEffect,
   useLayoutEffect,
@@ -1383,13 +1383,12 @@ function ChatGroup({
                           {getTerminalPresentationChatId(chatId) && (
                             <SquareTerminal className="h-3.5 w-3.5 shrink-0" aria-hidden />
                           )}
-                          <span className="truncate">{presentationName(chatId)}</span>
-                          {!getTerminalPresentationChatId(chatId) && (
-                            <ChatStatusIndicators chatIds={[chatId]} />
-                          )}
+                          <span className="min-w-0 flex-1 truncate">
+                            {presentationName(chatId)}
+                          </span>
                           {readOnlyChatIds.has(chatId) ? " (read only)" : ""}
-                          {unseenChatIds.has(chatId) && (
-                            <span className="sr-only">, new response</span>
+                          {!getTerminalPresentationChatId(chatId) && (
+                            <ChatStatusIndicator chatIds={[chatId]} />
                           )}
                         </button>
                         <button
@@ -1397,27 +1396,11 @@ function ChatGroup({
                           aria-label={`Close ${presentationName(chatId)} presentation`}
                           className={cn(
                             "relative mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-0 hover:bg-muted group-hover/tab:opacity-100 focus-visible:opacity-100",
-                            chatId === activeChatId && !unseenChatIds.has(chatId) && "opacity-60",
-                            unseenChatIds.has(chatId) && "opacity-100",
+                            chatId === activeChatId && "opacity-60",
                           )}
                           onClick={() => dispatch({ type: "close-tab", groupId: group.id, chatId })}
                         >
-                          {unseenChatIds.has(chatId) && (
-                            <span
-                              aria-hidden
-                              data-chat-unseen-indicator={chatId}
-                              className="absolute inset-0 flex items-center justify-center transition-opacity group-hover/tab:opacity-0 group-focus-within/tab:opacity-0"
-                            >
-                              <span className="h-2 w-2 rounded-full bg-[#307BD0]" />
-                            </span>
-                          )}
-                          <X
-                            className={cn(
-                              "h-3.5 w-3.5",
-                              unseenChatIds.has(chatId) &&
-                                "opacity-0 transition-opacity group-hover/tab:opacity-100 group-focus-within/tab:opacity-100",
-                            )}
-                          />
+                          <X aria-hidden className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     </ContextMenuTrigger>

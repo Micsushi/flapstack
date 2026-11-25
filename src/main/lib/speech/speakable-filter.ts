@@ -1,3 +1,5 @@
+import { MAX_SPOKEN_SUMMARY_CHARS } from "./spoken-summary"
+
 const SPOKEN_HEADING =
   /^[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*|__)?[ \t]*Spoken[ \t]*:?[ \t]*(?:\*\*|__)?[ \t]*$/imu
 const SECTION_HEADING =
@@ -71,7 +73,10 @@ export function styleSpokenText(input: string, options: { maxSentences?: number 
     .replace(/\s+/g, " ")
     .trim()
 
-  const trimmed = maxSentences > 0 ? keepFirstUsefulSentences(text, maxSentences) : text
+  const trimmed =
+    maxSentences > 0 && text.length > MAX_SPOKEN_SUMMARY_CHARS
+      ? keepFirstUsefulSentences(text, maxSentences)
+      : text
   return trimmed.replace(/(^|[.!?]\s+)([a-z])/g, (_match, prefix, letter: string) => {
     return `${prefix}${letter.toUpperCase()}`
   })

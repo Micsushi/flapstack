@@ -15,7 +15,15 @@ import {
 import { captureCheckpoint } from "../../checkpoints"
 import { cancelStaleRunningRuns, completeAgentRun } from "../../agent-run-lifecycle"
 import { assertSubChatNotRewinding } from "../../sub-chat-rewind-guard"
-import { agentRuns, chats, getDatabase, getDatabasePath, subChats } from "../../db"
+import {
+  agentRuns,
+  chats,
+  getDatabase,
+  getDatabasePath,
+  getSqliteDatabase,
+  subChats,
+} from "../../db"
+import { legacyRunTimer, recordSubmittedAt } from "../../run-timings"
 import {
   buildCursorEnv,
   CursorAgentNotFoundError,
@@ -369,6 +377,7 @@ export const cursorRouter = router({
         subChatId: z.string(),
         chatId: z.string(),
         runId: z.string(),
+        submittedAtMs: z.number().int().nonnegative().optional(),
         prompt: z.string(),
         mode: z.enum(CHAT_MODES).default("write"),
         model: z.string().optional(),
@@ -391,10 +400,12 @@ export const cursorRouter = router({
 
         let isActive = true
         let runCompleted = false
+        const timing = legacyRunTimer(getDatabase, () => input.runId)
 
         const safeEmit = (chunk: any): boolean => {
           if (!isActive) return false
           try {
+            if (chunk.type === "text-delta") timing.chunk(chunk)
             emit.next(chunk)
             return true
           } catch {
@@ -556,6 +567,7 @@ export const cursorRouter = router({
               worktreePath: input.cwd || null,
               promptMessageId,
             })
+            recordSubmittedAt(getSqliteDatabase(), input.runId, input.submittedAtMs)
 
             if (productMcpEnabledAtLaunch) {
               productMcpPlugin = writeCursorProductMcpPlugin(

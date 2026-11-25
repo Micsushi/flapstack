@@ -136,6 +136,7 @@ import {
   getWindow,
   getAllWindows,
   setIsQuitting,
+  setWindowsTaskbarDetails,
 } from "./windows/main"
 import { windowManager } from "./windows/window-manager"
 import {
@@ -184,6 +185,8 @@ const APP_DISPLAY_NAME = IS_CONTROL_DEV
   : IS_PREVIEW
     ? "Flapstack Preview"
     : "Flapstack"
+const WINDOWS_INSTALLED_APP_ID = "dev.flapstack.app.installed"
+let installedWindowsLauncher: string | undefined
 
 if (process.platform === "darwin" && IS_DEV) {
   const expectedCheckout = process.env.FLAPSTACK_DEV_CHECKOUT?.trim()
@@ -300,22 +303,34 @@ if (IS_CONTROL_DEV) {
 } else if (IS_PREVIEW) {
   const instance = process.env.FLAPSTACK_PREVIEW_INSTANCE?.trim()
   const explicitProfile = app.commandLine.getSwitchValue("user-data-dir")
+  const hasExplicitProfile = !instance && isAbsolute(explicitProfile)
   let previewUserData = join(app.getPath("userData"), "..", resolvePreviewUserDataName(instance))
-  if (!instance && explicitProfile && isAbsolute(explicitProfile)) {
-    previewUserData = explicitProfile
-  } else if (!instance && process.platform === "win32") {
-    const configPath = join(dirname(process.execPath), "..", "Launcher", "launch-config.json")
+  if (hasExplicitProfile) previewUserData = explicitProfile
+  if (!instance && process.platform === "win32") {
+    const launcherDir = join(dirname(process.execPath), "..", "Launcher")
+    const configPath = join(launcherDir, "launch-config.json")
     if (existsSync(configPath)) {
-      const config = JSON.parse(readFileSync(configPath, "utf8").replace(/^\uFEFF/, ""))
-      if (
-        typeof config.selection?.executable === "string" &&
-        resolve(config.selection.executable).toLowerCase() ===
-          resolve(process.execPath).toLowerCase()
-      ) {
-        if (typeof config.profile !== "string" || !isAbsolute(config.profile)) {
-          throw new Error("The installed Flapstack launcher has no absolute profile path.")
+      try {
+        const config = JSON.parse(readFileSync(configPath, "utf8").replace(/^\uFEFF/, ""))
+        if (
+          typeof config.selection?.executable === "string" &&
+          resolve(config.selection.executable).toLowerCase() ===
+            resolve(process.execPath).toLowerCase()
+        ) {
+          if (typeof config.profile !== "string" || !isAbsolute(config.profile)) {
+            throw new Error("The installed Flapstack launcher has no absolute profile path.")
+          }
+          if (!hasExplicitProfile) previewUserData = config.profile
+          const launcher = join(launcherDir, "Flapstack.exe")
+          if (
+            resolve(previewUserData).toLowerCase() === resolve(config.profile).toLowerCase() &&
+            existsSync(launcher)
+          ) {
+            installedWindowsLauncher = launcher
+          }
         }
-        previewUserData = config.profile
+      } catch (error) {
+        if (!hasExplicitProfile) throw error
       }
     }
   }
@@ -794,15 +809,26 @@ if (gotTheLock) {
       handleDeepLink(url, "open-url")
     })
 
-    // Set app user model ID for Windows (different in dev to avoid taskbar conflicts)
+    // Keep the Installed launcher and standalone Preview in separate taskbar groups.
     if (process.platform === "win32") {
       app.setAppUserModelId(
-        IS_CONTROL_DEV
-          ? "dev.flapstack.app.dev"
-          : IS_PREVIEW
-            ? "dev.flapstack.app.preview"
-            : "dev.flapstack.app",
+        installedWindowsLauncher
+          ? WINDOWS_INSTALLED_APP_ID
+          : IS_CONTROL_DEV
+            ? "dev.flapstack.app.dev"
+            : IS_PREVIEW
+              ? "dev.flapstack.app.preview"
+              : "dev.flapstack.app",
       )
+      if (installedWindowsLauncher) {
+        const launcherIcon = join(dirname(installedWindowsLauncher), "Flapstack.ico")
+        setWindowsTaskbarDetails({
+          appId: WINDOWS_INSTALLED_APP_ID,
+          appIconPath: existsSync(launcherIcon) ? launcherIcon : installedWindowsLauncher,
+          relaunchCommand: `"${installedWindowsLauncher}"`,
+          relaunchDisplayName: "Flapstack",
+        })
+      }
     }
 
     console.log(`[App] Starting ${APP_DISPLAY_NAME}...`)

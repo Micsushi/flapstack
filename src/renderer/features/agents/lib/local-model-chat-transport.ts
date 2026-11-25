@@ -34,6 +34,7 @@ export class LocalModelChatTransport implements ChatTransport<UIMessage> {
     messages: UIMessage[]
     abortSignal?: AbortSignal
   }): Promise<ReadableStream<UIMessageChunk>> {
+    const submittedAtMs = Date.now()
     const config = this.config
     const model = config.model
     if (!model?.trim()) {
@@ -61,6 +62,7 @@ export class LocalModelChatTransport implements ChatTransport<UIMessage> {
             chatId: config.chatId,
             subChatId: config.subChatId,
             runId,
+            submittedAtMs,
             prompt,
             mode,
             model,

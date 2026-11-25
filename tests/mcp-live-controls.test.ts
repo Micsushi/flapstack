@@ -256,6 +256,7 @@ describe("live app control", () => {
         "ping",
         "describe",
         "list_chats",
+        "create_chat",
         "spawn_thread",
         "launch_run",
         "tool_search",

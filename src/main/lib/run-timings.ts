@@ -160,6 +160,7 @@ export function readRunTimings(db: Database.Database, runId: string) {
     spawnContextMs: elapsed("provider-ready", "spawn-start") ?? elapsed("spawn-end", "spawn-start"),
     firstProgressMs: elapsed("first-progress"),
     firstAnswerMs: elapsed("first-answer"),
+    firstAnswerFromSubmitMs: elapsed("first-answer", "submitted"),
     afterCheckpointMs: elapsed("after-end", "after-start"),
     postRunMs: elapsed("end", "after-start"),
     totalMs: elapsed("end"),

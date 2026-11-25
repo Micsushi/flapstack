@@ -1,7 +1,7 @@
 "use client"
 
 import { recordsNavigationAtom } from "../project-records/shared-records-board"
-import { ChatStatusIndicators, ChatStatusProvider } from "../agents/ui/chat-status-indicators"
+import { ChatStatusIndicator, ChatStatusProvider } from "../agents/ui/chat-status-indicators"
 import React from "react"
 import { useProjectSelectionGuard } from "./use-project-selection-guard"
 import { useState, useRef, useMemo, useEffect, useCallback, memo } from "react"
@@ -140,7 +140,6 @@ import {
   selectedDraftIdAtom,
   showNewChatFormAtom,
   loadingSubChatsAtom,
-  agentsUnseenChangesAtom,
   agentsDebugModeAtom,
   selectedChatScopeAtom,
   selectedProjectAtom,
@@ -883,7 +882,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
   globalIndex,
   isSelected,
   isLoading,
-  hasUnseenChanges,
   hasPendingPlan,
   hasPendingQuestion,
   isMultiSelectMode,
@@ -955,7 +953,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
   globalIndex: number
   isSelected: boolean
   isLoading: boolean
-  hasUnseenChanges: boolean
   hasPendingPlan: boolean
   hasPendingQuestion: boolean
   isMultiSelectMode: boolean
@@ -1261,7 +1258,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
                     showPlaceholder={true}
                   />
                 </span>
-                {!isMultiSelectMode && <ChatStatusIndicators chatIds={[chatId]} />}
                 {/* Hover actions */}
                 {!isMultiSelectMode && !isMobileFullscreen && (
                   <div
@@ -1499,6 +1495,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
                     </DropdownMenu>
                   </div>
                 )}
+                {!isMultiSelectMode && <ChatStatusIndicator chatIds={[chatId]} />}
               </div>
               <div className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground/60">
                 {isRemote && <CloudIcon className="h-2.5 w-2.5 flex-shrink-0" />}
@@ -1526,6 +1523,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 {chatAgentWait && (
                   <AgentChatWaitBadge
                     wait={chatAgentWait}
+                    showStatusIcons={false}
                     onDismiss={
                       chatAgentWait.status === "failed"
                         ? () => onDismissAgentWait(chatAgentWait.id)
@@ -1821,7 +1819,6 @@ function chatListSectionPropsAreEqual(
 
   // Check Sets by reference - Jotai atoms return same reference if unchanged
   if (prevProps.loadingChatIds !== nextProps.loadingChatIds) return false
-  if (prevProps.unseenChanges !== nextProps.unseenChanges) return false
   if (prevProps.workspacePendingPlans !== nextProps.workspacePendingPlans) return false
   if (prevProps.workspacePendingQuestions !== nextProps.workspacePendingQuestions) return false
   if (prevProps.selectedChatIds !== nextProps.selectedChatIds) return false
@@ -1892,7 +1889,6 @@ interface ChatListSectionProps {
   selectedChatIsRemote: boolean
   focusedChatIndex: number
   loadingChatIds: Set<string>
-  unseenChanges: Set<string>
   workspacePendingPlans: Set<string>
   workspacePendingQuestions: Set<string>
   isMultiSelectMode: boolean
@@ -1996,7 +1992,6 @@ const ChatListSection = React.memo(function ChatListSection({
   selectedChatIsRemote,
   focusedChatIndex,
   loadingChatIds,
-  unseenChanges,
   workspacePendingPlans,
   workspacePendingQuestions,
   isMultiSelectMode,
@@ -2845,7 +2840,6 @@ const ChatListSection = React.memo(function ChatListSection({
                       globalIndex={globalIndex}
                       isSelected={isSelected}
                       isLoading={isLoading}
-                      hasUnseenChanges={unseenChanges.has(chat.id)}
                       hasPendingPlan={hasPendingPlan}
                       hasPendingQuestion={hasPendingQuestion}
                       isMultiSelectMode={isMultiSelectMode}
@@ -3217,8 +3211,6 @@ function AgentsSidebarInner({
     [newChatDraftReminderEnabled, setNewChatDraftReminderEnabled],
   )
 
-  // Read unseen changes from global atoms
-  const unseenChanges = useAtomValue(agentsUnseenChangesAtom)
   const justCreatedIds = useAtomValue(justCreatedIdsAtom)
 
   // Haptic feedback
@@ -7082,7 +7074,6 @@ function AgentsSidebarInner({
     selectedChatIsRemote,
     focusedChatIndex,
     loadingChatIds,
-    unseenChanges,
     workspacePendingPlans,
     workspacePendingQuestions,
     isMultiSelectMode,

@@ -45,7 +45,15 @@ import { captureOpenCodeRunUsageBatch } from "../../usage/run-usage"
 import { getUsageProvider } from "../../usage/registry"
 import { getUsageSecret } from "../../usage/secrets"
 import { getUsageSettings } from "../../usage/settings"
-import { agentRuns, chats, getDatabase, getDatabasePath, subChats } from "../../db"
+import {
+  agentRuns,
+  chats,
+  getDatabase,
+  getDatabasePath,
+  getSqliteDatabase,
+  subChats,
+} from "../../db"
+import { legacyRunTimer, recordSubmittedAt } from "../../run-timings"
 import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
 import { prependFlapstackMcpGuidance } from "../../mcp-control/guidance"
 import { buildMcpStdioRegistration } from "../../mcp-control/registration"
@@ -279,6 +287,7 @@ export const opencodeRouter = router({
         subChatId: z.string(),
         chatId: z.string(),
         runId: z.string().optional(),
+        submittedAtMs: z.number().int().nonnegative().optional(),
         provider: providerSchema,
         model: z.string().min(1),
         prompt: z.string().min(1),
@@ -307,6 +316,7 @@ export const opencodeRouter = router({
         const controller = new AbortController()
         const runId = input.runId || crypto.randomUUID()
         const startedAt = Date.now()
+        const timing = legacyRunTimer(getDatabase, () => runId)
         const productMcpEnabledAtLaunch = getChatMcpExposure(input.chatId)
         const releaseProductMcpSession = productMcpEnabledAtLaunch
           ? registerActiveProductMcpSession({
@@ -323,6 +333,7 @@ export const opencodeRouter = router({
         const safeEmit = (chunk: any) => {
           if (!active) return
           try {
+            if (chunk.type === "text-delta") timing.chunk(chunk)
             emit.next(chunk)
           } catch {
             active = false
@@ -489,6 +500,7 @@ export const opencodeRouter = router({
                 .run()
             }
             runPersisted = true
+            recordSubmittedAt(getSqliteDatabase(), runId, input.submittedAtMs)
             safeEmit({
               type: "message-metadata",
               messageMetadata: { runId, startedAt },

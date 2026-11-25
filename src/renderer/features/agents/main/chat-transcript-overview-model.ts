@@ -24,6 +24,7 @@ const PRIVATE_KINDS = new Set<AgentActivityKind>([
 const COMPLETED_PLAN_STATES = new Set(["built", "completed", "done", "finished"])
 const PROMPT_PREVIEW_LIMIT = 96
 const RESPONSE_PREVIEW_LIMIT = 160
+const MAX_TRANSCRIPT_MARKERS = 12
 
 export function summarizeChatProgress(input: {
   events: readonly AgentActivityEvent[]
@@ -60,10 +61,7 @@ export function summarizeChatProgress(input: {
   }
 }
 
-export function buildTranscriptMarkers(
-  messages: readonly unknown[],
-  maximum = 12,
-): TranscriptMarker[] {
+export function buildTranscriptTurns(messages: readonly unknown[]): TranscriptMarker[] {
   const turns: Array<Pick<TranscriptMarker, "id" | "promptPreview" | "responsePreview">> = []
   for (const message of messages) {
     if (!message || typeof message !== "object") continue
@@ -85,17 +83,32 @@ export function buildTranscriptMarkers(
       }
     }
   }
-  if (turns.length === 0) return []
-  const count = Math.max(1, Math.min(maximum, turns.length))
-  const indexes = new Set<number>()
-  for (let marker = 0; marker < count; marker++) {
-    indexes.add(count === 1 ? 0 : Math.round((marker * (turns.length - 1)) / (count - 1)))
-  }
-  return [...indexes].map((index) => ({
-    ...turns[index]!,
+  return turns.map((turn, index) => ({
+    ...turn,
     ordinal: index + 1,
     total: turns.length,
   }))
+}
+
+export function selectTranscriptMarkers(
+  turns: readonly TranscriptMarker[],
+  active: TranscriptMarker | undefined,
+): readonly TranscriptMarker[] {
+  if (turns.length <= MAX_TRANSCRIPT_MARKERS) return turns
+  const indexes = Array.from({ length: MAX_TRANSCRIPT_MARKERS }, (_, index) =>
+    Math.round((index * (turns.length - 1)) / (MAX_TRANSCRIPT_MARKERS - 1)),
+  )
+  const activeIndex = (active?.ordinal ?? 0) - 1
+  if (activeIndex > 0 && !indexes.includes(activeIndex)) {
+    // Keep room for the current prompt without dropping either end of the rail.
+    const nearest = indexes
+      .slice(1, -1)
+      .reduce((closest, index) =>
+        Math.abs(index - activeIndex) < Math.abs(closest - activeIndex) ? index : closest,
+      )
+    indexes[indexes.indexOf(nearest)] = activeIndex
+  }
+  return indexes.map((index) => turns[index]!)
 }
 
 function publicTextPreview(parts: unknown, maximumLength: number): string {
