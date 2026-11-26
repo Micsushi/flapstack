@@ -16,7 +16,6 @@ import {
   type ProjectRecordWriteResult,
 } from "../../../shared/project-records"
 
-// Records permits 16 MiB documents; allow bounded envelope/serialization overhead.
 const MAX_TOKEN_BYTES = 4096
 const PAIR_PATHS = new Set([
   "/v1/yap/chat-pair/read",
@@ -118,19 +117,19 @@ export class ProjectRecordsClient {
 
   private async request(path: string, body?: unknown, board = false) {
     const controller = new AbortController()
-    const timer = setTimeout(
-      () => controller.abort(),
-      this.options.timeoutMs ??
-        ((path === "/v1/yap/inference" || path === "/v1/yap/proposal/generate") &&
-        body !== undefined
-          ? // The service permits two five-minute passes, plus response/cleanup time.
-            630_000
-          : body !== undefined &&
-              ["/v1/agents/start", "/v1/agents/resume", "/v1/agents/continue-answer"].includes(path)
-            ? // Isolated Git preparation can exceed ten seconds on Windows.
-              60_000
-            : 10_000),
-    )
+    const route = path.split("?", 1)[0]
+    let timeoutMs = this.options.timeoutMs
+    if (timeoutMs === undefined) {
+      if (body !== undefined && ["/v1/yap/inference", "/v1/yap/proposal/generate"].includes(route)) {
+        timeoutMs = 630_000
+      } else if (body !== undefined && ["/v1/agents/start", "/v1/agents/resume", "/v1/agents/continue-answer"].includes(route)) {
+        timeoutMs = 60_000
+      } else if (route === "/v1/storage" || route.startsWith("/v1/agents") || route.startsWith("/v1/setup")) {
+        timeoutMs = 10_000
+      }
+      // Document writes, history and media finalization can take as long as the stored content requires.
+    }
+    const timer = timeoutMs === undefined ? undefined : setTimeout(() => controller.abort(), timeoutMs)
     try {
       const response = await (this.options.fetch ?? fetch)(`${this.endpoint}${path}`, {
         method: body === undefined ? "GET" : "POST",

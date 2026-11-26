@@ -15,6 +15,23 @@ const response = (status = 200, data: unknown = snapshot) =>
   new Response(JSON.stringify(data), { status })
 
 describe("canonical records client", () => {
+  it("allows slow document reads while honoring an explicit caller deadline", async () => {
+    vi.useFakeTimers()
+    try {
+      const options = {
+        endpoint: "http://127.0.0.1:47831",
+        token: "secret",
+        fetch: () => new Promise<Response>((resolve) => setTimeout(() => resolve(response()), 11_000)),
+      }
+      const ordinary = expect(new ProjectRecordsClient(options).read(path)).resolves.toEqual(snapshot)
+      const limited = expect(new ProjectRecordsClient({ ...options, timeoutMs: 500 }).read(path))
+        .rejects.toThrow("Project records is unavailable")
+      await vi.advanceTimersByTimeAsync(11_000)
+      await Promise.all([ordinary, limited])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it("binds durable associations to authenticated SQLite identity, never the transport port", async () => {
     const fetch = vi
       .fn()
