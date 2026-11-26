@@ -102,14 +102,14 @@ describe("canonical records client", () => {
     await expect(client.read(path)).rejects.toThrow("different document")
   })
 
-  it("bounds response bytes and redacts transport errors", async () => {
-    const fetch = vi.fn().mockResolvedValue(new Response("x".repeat(32 * 1024 * 1024 + 1)))
+  it("reads responses above 32 MiB and redacts transport errors", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(snapshot) + " ".repeat(32 * 1024 * 1024)))
     const client = new ProjectRecordsClient({
       endpoint: "http://127.0.0.1:47831",
       token: "secret",
       fetch,
     })
-    await expect(client.read(path)).rejects.toThrow("too large")
+    await expect(client.read(path)).resolves.toEqual(snapshot)
     fetch.mockRejectedValue(new Error("request failed with private-token"))
     await expect(client.read(path)).rejects.toThrow("Project records is unavailable")
   })

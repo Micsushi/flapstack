@@ -91,10 +91,7 @@ export const projectRecordsRouter = router({
         .object({
           path: z.string().max(2000),
           method: z.enum(["GET", "POST"]),
-          body: z
-            .string()
-            .max(256 * 1024)
-            .optional(),
+          body: z.string().optional(),
         })
         .strict(),
     )

@@ -84,13 +84,12 @@ this setting does not create grants or select repositories automatically. Keep
 the file private and outside commits. In connected mode, configure the external
 Records service directly; Flapstack ignores this setting.
 
-The compatible Records engine accepts documents up to 16 MiB. Flapstack bounds
-service responses at 32 MiB to allow envelope and serialization overhead; a
-larger response still fails explicitly. Individual changes remain limited to
-256 KiB. Large histories should be imported through the service's documented
-storage migration, then edited with small revision-checked patches, not posted
-back as whole documents. Upgrade the engine and client together before using
-documents beyond the earlier 4 MiB limit.
+The Work Board reads growing documents from the configured Records service.
+The client accepts large document responses and owner edits. The service
+validates each operation and stores revision history. Images and videos travel
+in chunks and retain a content digest. The workspace owner may move an
+unclaimed task to In progress or Done directly from the board. The verified
+completion workflow remains available for work backed by evidence.
 
 For example, in PowerShell for a development checkout:
 

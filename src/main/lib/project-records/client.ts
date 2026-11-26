@@ -17,7 +17,6 @@ import {
 } from "../../../shared/project-records"
 
 // Records permits 16 MiB documents; allow bounded envelope/serialization overhead.
-const MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 const MAX_TOKEN_BYTES = 4096
 const PAIR_PATHS = new Set([
   "/v1/yap/chat-pair/read",
@@ -132,7 +131,6 @@ export class ProjectRecordsClient {
               60_000
             : 10_000),
     )
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
     try {
       const response = await (this.options.fetch ?? fetch)(`${this.endpoint}${path}`, {
         method: body === undefined ? "GET" : "POST",
@@ -158,18 +156,8 @@ export class ProjectRecordsClient {
         )
       }
       if (!response.body) throw new Error("Project records returned an empty response.")
-      reader = response.body.getReader()
-      const chunks: Uint8Array[] = []
-      let size = 0
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        size += value.byteLength
-        if (size > MAX_RESPONSE_BYTES) throw new Error("Project records response is too large.")
-        chunks.push(value)
-      }
+      const raw = await response.text()
       controller.signal.throwIfAborted()
-      const raw = Buffer.concat(chunks).toString("utf8")
       return {
         conflict: response.status === 409,
         status: response.status,
@@ -184,10 +172,6 @@ export class ProjectRecordsClient {
     } finally {
       clearTimeout(timer)
       controller.abort()
-      if (reader) {
-        await reader.cancel().catch(() => undefined)
-        reader.releaseLock()
-      }
     }
   }
 
@@ -285,8 +269,6 @@ export class ProjectRecordsClient {
         "/v1/yap/proposal/cancel-generation",
       ].includes(input.path)
     if (!read && !write) throw new Error("Project records board endpoint is unsupported.")
-    if (input.body && Buffer.byteLength(input.body) > 256 * 1024)
-      throw new Error("Project records change is too large.")
     if (read && input.body) throw new Error("Project records reads cannot contain changes.")
     const result = await this.request(
       input.path,
@@ -306,9 +288,6 @@ export class ProjectRecordsClient {
 
   async patch(input: ProjectRecordPatch): Promise<ProjectRecordWriteResult> {
     const parsed = patchProjectRecordSchema.parse(input)
-    if (Buffer.byteLength(JSON.stringify(parsed)) > 256 * 1024) {
-      throw new Error("Project records change is too large.")
-    }
     // The writer resolves the authenticated owner/worker principal.  Actor
     // labels are deliberately not part of the public mutation contract.
     const response = await this.request("/v1/record", parsed)
@@ -406,8 +385,6 @@ export class ProjectRecordsClient {
       (body === undefined && postOnly.has(url.pathname))
     )
       throw new Error("Project records operation has an unsupported method.")
-    if (body !== undefined && Buffer.byteLength(JSON.stringify(body)) > 256 * 1024)
-      throw new Error("Project records change is too large.")
     const response = await this.request(path, body, true)
     let details: unknown
     try {
