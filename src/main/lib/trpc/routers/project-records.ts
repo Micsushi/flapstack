@@ -31,7 +31,7 @@ export const projectRecordsRouter = router({
         .object({
           path: projectRecordPathSchema,
           recordId: z.string().min(1).max(200),
-          answer: z.string().min(1).max(16_384),
+          answer: z.string().min(1),
           requestId: z.string().uuid(),
           storeIdentity: z.string().regex(/^[a-f0-9]{64}$/),
         })
@@ -89,7 +89,7 @@ export const projectRecordsRouter = router({
     .input(
       z
         .object({
-          path: z.string().max(2000),
+          path: z.string().min(1),
           method: z.enum(["GET", "POST"]),
           body: z.string().optional(),
         })
@@ -105,7 +105,7 @@ export const projectRecordsRouter = router({
           projectId: z.string().optional(),
           kind: z.string().optional(),
           query: z.string().optional(),
-          limit: z.number().int().min(1).max(500).optional(),
+          limit: z.number().int().min(1).optional(),
         })
         .strict()
         .default({}),
@@ -118,7 +118,7 @@ export const projectRecordsRouter = router({
           query: z.string().trim().min(1),
           projectId: z.string().optional(),
           kind: z.string().optional(),
-          limit: z.number().int().min(1).max(500).optional(),
+          limit: z.number().int().min(1).optional(),
         })
         .strict(),
     )

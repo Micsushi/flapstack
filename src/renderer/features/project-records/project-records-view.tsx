@@ -630,7 +630,6 @@ function QuestionAnswer({
               aria-label={`Answer to ${record.title}`}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              maxLength={16_384}
               rows={3}
               className="resize-y"
             />

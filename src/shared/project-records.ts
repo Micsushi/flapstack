@@ -73,7 +73,7 @@ export const projectQuestionReviewSchema = z
 export const projectQuestionFollowUpSchema = z
   .object({
     id: z.string().min(1).max(200),
-    title: z.string().min(1).max(1000),
+    title: z.string().min(1),
     state: z.enum([
       "open",
       "answered",
@@ -109,7 +109,7 @@ const questionFollowUpsSchema = z.array(projectQuestionFollowUpSchema).superRefi
 export const projectRecordSchema = z
   .object({
     id: z.string().min(1).max(200),
-    title: z.string().min(1).max(1000),
+    title: z.string().min(1),
     kind: z.enum(["feature", "question", "outcome", "blocker", "task", "note", "decision"]),
     state: z.string().min(1).max(100),
     history: z.array(z.unknown()),
@@ -149,7 +149,7 @@ export const projectRecordSchema = z
 export const projectRecordDocumentSchema = z.object({
   schemaVersion: z.literal(1),
   title: z.string(),
-  records: z.array(projectRecordSchema).max(10_000),
+  records: z.array(projectRecordSchema),
 })
 export const projectRecordSnapshotSchema = z.object({
   schemaVersion: z.literal(1),
@@ -159,15 +159,13 @@ export const projectRecordSnapshotSchema = z.object({
 })
 export const projectRecordIndexSchema = z.object({
   schemaVersion: z.literal(1),
-  documents: z
-    .array(
-      z.object({
-        path: projectRecordPathSchema,
-        title: z.string(),
-        revision: z.string().regex(/^[a-f0-9]{64}$/),
-      }),
-    )
-    .max(10_000),
+  documents: z.array(
+    z.object({
+      path: projectRecordPathSchema,
+      title: z.string(),
+      revision: z.string().regex(/^[a-f0-9]{64}$/),
+    }),
+  ),
 })
 export const patchProjectRecordSchema = z
   .object({
